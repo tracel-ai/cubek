@@ -67,6 +67,14 @@ pub struct MemData<T: Numeric> {
     /// below see the verb the caller used.
     #[cube(comptime)]
     pub(crate) init_from: InitFrom,
+    /// Where this tile's cells sit inside the buffer they were *filled from*, when that is not
+    /// the buffer they live in.
+    ///
+    /// `None` for every tile that reads its source directly: there [`window`](Self::window)
+    /// already is the source window, so a boundary question is answered against it. `Some` only
+    /// for a gathered stage, whose fill replaced out-of-bounds samples with the boundary's value
+    /// and whose own window can no longer say which those were.
+    pub(crate) source_window: ComptimeOption<SourceWindow>,
 }
 
 /// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
@@ -397,6 +405,7 @@ impl<T: Numeric> Tile<T> {
                     comptime!(coords.may_underflow()),
                     comptime!(spec.boundaries.clone()),
                 ),
+                source_window: ComptimeOption::new_None(),
                 projection: comptime!(coords),
                 map,
                 offsets,
@@ -491,6 +500,8 @@ impl<T: Numeric> MemData<T> {
                         stage,
                         projection,
                         &operand.runtime_map(),
+                        operand.window_signed(),
+                        operand.window_boundaries(),
                     )
                 }
             }
@@ -573,7 +584,7 @@ impl<T: Numeric> MemData<T> {
             vector_size,
             stage,
         });
-        MemData::smem_with_form(meta, form, map)
+        MemData::smem_with_form(meta, form, map, ComptimeOption::new_None())
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -591,6 +602,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] stage: StagePlan,
         #[comptime] projection: Projection,
         map: &RuntimeMap,
+        #[comptime] signed: bool,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     ) -> Tile<T> {
         let form = comptime!(StageForm::gathered(
             &space,
@@ -613,7 +626,12 @@ impl<T: Numeric> MemData<T> {
             vector_size,
             stage,
         });
-        MemData::smem_with_form(meta, form, stage_map)
+        let source = MemData::<T>::pending_source_window(
+            comptime!(form.steps.clone()),
+            comptime!(signed),
+            comptime!(boundaries),
+        );
+        MemData::smem_with_form(meta, form, stage_map, ComptimeOption::new_Some(source))
     }
 
     /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
@@ -621,10 +639,11 @@ impl<T: Numeric> MemData<T> {
         #[comptime] meta: StageMeta,
         #[comptime] form: StageForm,
         map: RuntimeMap,
+        source: ComptimeOption<SourceWindow>,
     ) -> Tile<T> {
         let size!(W) = meta.vector_size;
         let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
-        MemData::smem_over(meta, &smem, ComptimeOption::new_None(), form, map)
+        MemData::smem_over(meta, &smem, ComptimeOption::new_None(), form, map, source)
     }
 
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
@@ -652,7 +671,7 @@ impl<T: Numeric> MemData<T> {
             vector_size,
             stage,
         });
-        MemData::smem_over(meta, &smem, quant, form, map)
+        MemData::smem_over(meta, &smem, quant, form, map, ComptimeOption::new_None())
     }
 
     /// The body every smem constructor shares: everything but the allocation's element (which is why
@@ -665,6 +684,7 @@ impl<T: Numeric> MemData<T> {
         quant: ComptimeOption<QuantInfo>,
         #[comptime] form: StageForm,
         map: RuntimeMap,
+        source: ComptimeOption<SourceWindow>,
     ) -> Tile<T> {
         let buffer = unsafe {
             smem.inner_ref()
@@ -706,8 +726,34 @@ impl<T: Numeric> MemData<T> {
                 }),
                 lane_share: comptime!(LaneShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
+                source_window: source,
             }),
             space: comptime!(meta.space),
+        }
+    }
+
+    /// An unfilled [`SourceWindow`] for a gathered stage: the comptime geometry is the stage's own,
+    /// while the origin and bound are written by each [`fill_from`](MemData::fill_from) from the
+    /// operand that fill reads.
+    fn pending_source_window(
+        #[comptime] steps: SmallVec<[usize; MAX_AXES]>,
+        #[comptime] signed: bool,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+    ) -> SourceWindow {
+        let rank = comptime!(steps.len());
+        let mut origin = Coords::<i32>::new();
+        let mut bound = Coords::<u32>::new();
+        #[unroll]
+        for _ in 0..rank {
+            origin.push(0i32);
+            bound.push(0u32);
+        }
+        SourceWindow {
+            origin,
+            bound,
+            steps: comptime!(steps),
+            signed: comptime!(signed),
+            boundaries: comptime!(boundaries),
         }
     }
 }
@@ -775,6 +821,16 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn fill_from(&mut self, src: &MemData<T>, #[comptime] space: Space) {
         let size!(W) = comptime!(self.store.vector_size);
         let gathered = comptime!(!src.projection.is_direct());
+        // A gathered stage keeps where it read from: the copy below writes the boundary's value
+        // for every tap outside `src`, and nothing in the staged window says which those were.
+        #[comptime]
+        match &mut self.source_window {
+            ComptimeOption::Some(source) => {
+                source.origin = src.window.origin.clone();
+                source.bound = src.window.bound.clone();
+            }
+            ComptimeOption::None => {}
+        }
         if comptime!(self.store.quant.is_some()) {
             // Unreachable in practice: `Tile::of_impl` already asserts `quant.is_none() ||
             // coords.is_direct()` at construction, so a gathered `src` never carries a quantized
@@ -1823,6 +1879,9 @@ impl<T: Numeric> MemData<T> {
             // down the descent. The offsets only placed the top window, which `origin` above
             // already carries.
             projection: comptime!(proj),
+            // A region step moves this window and the source window by the same physical delta,
+            // so the source window rides down as it was filled and only `origin` above moves.
+            source_window: self.source_window.clone(),
             map,
             offsets: self.offsets.clone(),
             window_start: start,
@@ -2186,6 +2245,9 @@ pub(crate) struct StageForm {
     positional: Projection,
     /// How the staged tile's logical axes address those extents.
     projection: Projection,
+    /// What a stage coordinate is multiplied by to land on the source, per physical axis. All `1`
+    /// for a dense stage, which is a copy of the tile and shares its coordinates.
+    steps: SmallVec<[usize; MAX_AXES]>,
 }
 
 impl StageForm {
@@ -2200,6 +2262,7 @@ impl StageForm {
             // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
             // whatever the operand it stages was gathered through.
             projection: Projection::direct_over(space),
+            steps: SmallVec::new(),
         }
     }
 
@@ -2225,6 +2288,7 @@ impl StageForm {
         StageForm {
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
             projection: compaction.projection().clone(),
+            steps: compaction.steps().iter().copied().collect(),
             extents,
         }
     }
@@ -2647,6 +2711,94 @@ impl Window {
             boundaries,
         }
     }
+
+    /// Whether `pos` is valid on the selected physical axes. This is the factor-local form of
+    /// [`Layout::is_in_bounds`]: separable normalization must mask the source axes moved by one
+    /// tap without letting another factor's tap affect that decision.
+    #[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
+    pub(crate) fn axes_in_bounds(&self, pos: &CoordsDyn, #[comptime] axes: Vec<usize>) -> bool {
+        let mut valid = true;
+        #[unroll]
+        for a in 0..comptime!(axes.len()) {
+            let i = comptime!(axes[a]);
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
+                valid = valid && self.axis_in_bounds(pos[i], i);
+            }
+        }
+        valid
+    }
+
+    /// The scalar physical-axis check behind [`axes_in_bounds`](Self::axes_in_bounds).
+    pub(crate) fn axis_in_bounds(&self, pos: u32, #[comptime] axis: usize) -> bool {
+        if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
+            let abs = self.origin.at(axis).fadd(pos.fcast::<i32>());
+            if comptime!(self.signed) {
+                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)
+            } else {
+                abs.fcast::<u32>() < self.bound.at(axis)
+            }
+        } else {
+            true.runtime()
+        }
+    }
+}
+
+/// Where a gathered stage sits inside the buffer it was filled from.
+///
+/// A stage is addressed by [`Compaction`](crate::Compaction)'s projection, which keeps the source
+/// map's terms and drops its offset, so a staged coordinate `c` lands on `origin + c * step` in
+/// the source. The fill wrote the boundary's value wherever that landed outside, and the staged
+/// window cannot say which cells those were; this is what lets a reader put the question to the
+/// source rectangle instead.
+///
+/// Invariant under [`at`](MemData::at): a region step moves the staged window and the source
+/// window by the same physical delta, so only the staged origin has to move and this stays as it
+/// was filled.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct SourceWindow {
+    /// The source window's origin, as [`fill_from`](MemData::fill_from) found it.
+    pub(crate) origin: Coords<i32>,
+    /// The source buffer's logical extent, which is what a tap is in bounds against.
+    pub(crate) bound: Coords<u32>,
+    /// What a stage coordinate is multiplied by to land on the source, per physical axis.
+    #[cube(comptime)]
+    pub(crate) steps: SmallVec<[usize; MAX_AXES]>,
+    /// Whether the source origin can be negative.
+    #[cube(comptime)]
+    pub(crate) signed: bool,
+    /// The source's per-axis boundary handling. Same meaning as [`Window::boundaries`], read off
+    /// the operand the stage was filled from rather than the stage's own (empty) list.
+    #[cube(comptime)]
+    pub(crate) boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+}
+
+#[cube]
+impl SourceWindow {
+    /// Whether one physical coordinate of the staged window lands inside the source.
+    ///
+    /// `stage_origin` is the staged window's own origin on this axis and `pos` the offset within
+    /// it, so `stage_origin + pos` is the stage coordinate the caller is asking about. An axis the
+    /// source did not pad is in bounds by construction, exactly as it is on a [`Window`].
+    pub(crate) fn axis_in_bounds(
+        &self,
+        stage_origin: i32,
+        pos: u32,
+        #[comptime] axis: usize,
+    ) -> bool {
+        if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
+            let step = comptime!(self.steps.get(axis).copied().unwrap_or(1) as i32);
+            let cell = (stage_origin + pos.fcast::<i32>()) * step;
+            let abs = self.origin.at(axis) + cell;
+            if comptime!(self.signed) {
+                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)
+            } else {
+                abs.fcast::<u32>() < self.bound.at(axis)
+            }
+        } else {
+            true.runtime()
+        }
+    }
 }
 
 #[cube]
@@ -2719,22 +2871,10 @@ impl Layout for Window {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        let mut valid = true;
-        // `origin`, not `bound`: the two share a rank on every window a mode can reach, and this
-        // is the one `pos` and `boundaries` are indexed by.
-        #[unroll]
-        for i in 0..self.origin.len() {
-            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
-                let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
-                let inside = if comptime!(self.signed) {
-                    abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(i)
-                } else {
-                    abs.fcast::<u32>() < self.bound.at(i)
-                };
-                valid = valid && inside;
-            }
-        }
-        valid
+        self.axes_in_bounds(
+            &pos,
+            comptime!((0..self.boundaries.len()).collect::<Vec<_>>()),
+        )
     }
 }
 

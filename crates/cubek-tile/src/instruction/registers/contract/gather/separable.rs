@@ -1,20 +1,21 @@
 //! Cell-major gather for expensive procedural filters separable over the contracted axes.
 
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::instruction::registers::block;
 use crate::*;
 
 use super::{
     GatherProblem, LhsRole,
-    coords::{cell_position, cell_read, offset_last},
+    coords::{cell_position, offset_last},
 };
 
 /// Cache each factor's 1-D tap walk before consuming their Cartesian product for one cell.
 ///
-/// The walk is cached per accumulator row unless the lhs spans the column: with no factor reading the
-/// accumulator's innermost axis the weights cannot vary along it, so evaluating them per cell
-/// repeats one identical walk `nr` times.
+/// The walk is cached per accumulator row unless the lhs spans the column: with no factor
+/// reading the accumulator's innermost axis the weights cannot vary along it, so evaluating them
+/// per cell repeats one identical walk `nr` times.
 ///
 /// That same condition decides the nesting. Where no factor reads the innermost axis, a tap's
 /// coordinate and its factor product are invariant along it, so the taps go outside the lines and
@@ -27,10 +28,11 @@ use super::{
 /// accumulator's own column axis at coefficient `1`
 /// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so their source
 /// coordinates differ in that axis alone and one cell apart. The taps above them move only the
-/// contracted axes, which a resampling map steps outside its floor, so the whole run shares one
-/// anchor ([`AxisProjection::anchor`]) and each read is that anchor plus an addition. Re-running
-/// the map would spell every term again, and under a rational axis a divide with them, per line
-/// and per tap.
+/// contracted axes, which a resampling map steps outside its floor. Where the lhs does not span the
+/// column axis, the whole run shares one anchor ([`AxisProjection::anchor`]) per row; where it
+/// spans the column axis, each `(i, n)` cell anchors once and steps its taps via
+/// [`AxisProjection::advance`]. In both cases, reads and mask tests use the stepped physical
+/// coordinates rather than evaluating the projection terms per tap.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut MemData<E>,
@@ -91,10 +93,25 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             if comptime!(problem.lhs != LhsRole::FreeOfColumn) {
                 #[unroll(unroll)]
                 for n in 0..nr {
+                    let anchor = rhs_reader.map.anchor(
+                        cell_position(
+                            &batch,
+                            i as u32,
+                            n as u32,
+                            &factor_coords(comptime!(factors), 0usize, 0usize),
+                            comptime!(problem.rhs_space.clone()),
+                            comptime!(problem.clone()),
+                            comptime!(problem.block.vw),
+                        ),
+                        comptime!(problem.block.reduce.clone()),
+                    );
                     let mut weights = Array::<EL>::new(taps);
-                    tap_walk::<EL>(
+                    tap_walk::<EL, ER>(
                         &mut weights,
                         lhs,
+                        rhs,
+                        &rhs_reader.map,
+                        &anchor,
                         &batch,
                         i as u32,
                         n as u32,
@@ -114,16 +131,20 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             comptime!(factors),
                             comptime!(problem.offsets.clone()),
                         );
-                        let value = Vector::<E, V>::cast_from(cell_read::<ER, V>(
-                            &rhs_reader.view,
-                            &batch,
-                            i as u32,
-                            n as u32,
-                            &reduce_coords,
-                            comptime!(problem.rhs_space.clone()),
-                            comptime!(problem.clone()),
-                            comptime!(problem.block.vw),
-                        ));
+                        let base = rhs_reader.map.advance(
+                            &anchor,
+                            cell_position(
+                                &batch,
+                                i as u32,
+                                n as u32,
+                                &reduce_coords,
+                                comptime!(problem.rhs_space.clone()),
+                                comptime!(problem.clone()),
+                                comptime!(problem.block.vw),
+                            ),
+                            comptime!(problem.block.reduce.clone()),
+                        );
+                        let value = Vector::<E, V>::cast_from(rhs_reader.view.read(base));
                         // One semiring step, for the reason [`block::rank1_update`] gives.
                         c[i * nr + n] = semiring.step::<Vector<E, V>>(
                             Vector::<E, V>::cast_from(weight),
@@ -133,17 +154,6 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                     }
                 }
             } else {
-                let mut weights = Array::<EL>::new(taps);
-                tap_walk::<EL>(
-                    &mut weights,
-                    lhs,
-                    &batch,
-                    i as u32,
-                    0u32,
-                    comptime!(factors),
-                    comptime!(problem.clone()),
-                );
-
                 // The taps are the only coordinates moving under this row, so the map's rational
                 // axes carry the same numerator at all `kc` of them: their floor is taken once
                 // here and each tap steps the result.
@@ -158,6 +168,20 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                         comptime!(problem.block.vw),
                     ),
                     comptime!(problem.block.reduce.clone()),
+                );
+
+                let mut weights = Array::<EL>::new(taps);
+                tap_walk::<EL, ER>(
+                    &mut weights,
+                    lhs,
+                    rhs,
+                    &rhs_reader.map,
+                    &anchor,
+                    &batch,
+                    i as u32,
+                    0u32,
+                    comptime!(factors),
+                    comptime!(problem.clone()),
                 );
 
                 #[unroll(unroll_taps)]
@@ -217,29 +241,93 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
 /// Evaluate every factor's 1-D tap walk at one accumulator cell.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn tap_walk<EL: Numeric>(
+fn tap_walk<EL: Numeric, ER: Numeric>(
     weights: &mut Array<EL>,
     lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    rhs_map: &AxisProjection,
+    anchor: &CoordsDyn,
     batch: &Coords<u32>,
     row: u32,
     col: u32,
     #[comptime] factors: usize,
     #[comptime] problem: GatherProblem,
 ) {
-    #[unroll]
-    for f in 0..factors {
-        #[unroll]
-        for k in 0..comptime!(problem.block.reduce_extents[f]) {
-            let pos = cell_position(
-                batch,
-                row,
-                col,
-                &factor_coords(comptime!(factors), f, k),
-                comptime!(problem.lhs_space.clone()),
-                comptime!(problem.clone()),
-                1usize,
-            );
-            weights[comptime!(problem.offsets[f] + k)] = lhs.separable_factor(pos, f);
+    match comptime!(problem.normalization) {
+        None =>
+        {
+            #[unroll]
+            for f in 0..factors {
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    let pos = cell_position(
+                        batch,
+                        row,
+                        col,
+                        &factor_coords(comptime!(factors), f, k),
+                        comptime!(problem.lhs_space.clone()),
+                        comptime!(problem.clone()),
+                        1usize,
+                    );
+                    weights[comptime!(problem.offsets[f] + k)] = lhs.separable_factor(pos, f);
+                }
+            }
+        }
+        Some((mask, guard)) =>
+        {
+            #[unroll]
+            for f in 0..factors {
+                let mut sum = EL::from_int(0);
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    let reduce_coords = factor_coords(comptime!(factors), f, k);
+                    let lhs_pos = cell_position(
+                        batch,
+                        row,
+                        col,
+                        &reduce_coords,
+                        comptime!(problem.lhs_space.clone()),
+                        comptime!(problem.clone()),
+                        1usize,
+                    );
+                    let weight = lhs.separable_factor(lhs_pos, f);
+                    let weight = match comptime!(mask) {
+                        TapMask::Masked => {
+                            let rhs_pos = cell_position(
+                                batch,
+                                row,
+                                col,
+                                &reduce_coords,
+                                comptime!(problem.rhs_space.clone()),
+                                comptime!(problem.clone()),
+                                comptime!(problem.block.vw),
+                            );
+                            let physical_pos = rhs_map.advance(
+                                anchor,
+                                rhs_pos,
+                                comptime!(problem.block.reduce.clone()),
+                            );
+                            select(
+                                rhs.separable_physical_tap_in_bounds(
+                                    &physical_pos,
+                                    comptime!(problem.block.reduce[f]),
+                                ),
+                                weight,
+                                EL::from_int(0),
+                            )
+                        }
+                        TapMask::Unmasked => weight,
+                    };
+                    weights[comptime!(problem.offsets[f] + k)] = weight;
+                    sum += weight;
+                }
+
+                let reciprocal = guarded_recip_numeric::<EL>(sum, guard);
+                #[unroll]
+                for k in 0..comptime!(problem.block.reduce_extents[f]) {
+                    weights[comptime!(problem.offsets[f] + k)] *= reciprocal;
+                }
+            }
         }
     }
 }

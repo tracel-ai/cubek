@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Coords, Fold, FoldExpand, Region, Space, StagePlan};
+use crate::{Axis, Coords, DivGuard, Fold, FoldExpand, Region, Space, StagePlan, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -24,9 +24,19 @@ pub struct ProceduralData<T: Numeric> {
     /// descends, because the leaf space alone no longer records an ancestor's overhang.
     #[cube(comptime)]
     pub(crate) bounds_check: bool,
+    /// The statically overhanging axes. Keeping this comptime avoids emitting a per-tap bound
+    /// comparison when only an unrelated axis has a trailing partial tile.
+    #[cube(comptime)]
+    bounded_axes: Vec<Axis>,
+    /// Requested factor normalization and the space whose complete factor runs it describes.
+    /// Only a separable contraction consumes it, because only that leaf knows the tap run
+    /// belonging to each factor. The original space lets the leaf reject an ancestor split that
+    /// would otherwise normalize each chunk independently.
+    #[cube(comptime)]
+    pub(crate) normalization: Option<(TapMask, DivGuard, Space)>,
     recipe: VirtualRecipe<T>,
     #[cube(comptime)]
-    space: Space,
+    pub(crate) space: Space,
     /// Where this source lives at each level below. A recipe has no bytes to leave in place, so
     /// [`Tile::procedural`](crate::Tile::procedural) stages nothing; a level asking for a stage
     /// through [`Tile::procedural_resident`](crate::Tile::procedural_resident) cooperatively
@@ -58,15 +68,18 @@ impl<T: Numeric> ProceduralData<T> {
             });
             bound.push(extent);
         }
-        let bounds_check = comptime!(
+        let bounded_axes = comptime!(
             space
                 .axes()
-                .any(|a| !space.is_dynamic(a) && space.overhangs(a))
+                .filter(|&a| !space.is_dynamic(a) && space.overhangs(a))
+                .collect::<Vec<_>>()
         );
         ProceduralData::<T> {
             origin,
             bound,
-            bounds_check,
+            bounds_check: comptime!(!bounded_axes.is_empty()),
+            bounded_axes,
+            normalization: None,
             recipe,
             space,
             stage,
@@ -86,6 +99,8 @@ impl<T: Numeric> ProceduralData<T> {
             origin,
             bound: self.bound.clone(),
             bounds_check: comptime!(self.bounds_check),
+            bounded_axes: comptime!(self.bounded_axes.clone()),
+            normalization: comptime!(self.normalization.clone()),
             recipe: self.recipe.clone(),
             space: comptime!(space.divide()),
             stage: comptime!(self.stage.descend()),
@@ -115,6 +130,18 @@ impl<T: Numeric> ProceduralData<T> {
         }
         let absolute = RecipeCoords::new(&self.origin, &coords, space);
         self.recipe.evaluate_factor(&absolute, factor)
+    }
+
+    /// Whether `pos` remains inside the original procedural box on one logical axis. Factor-local
+    /// normalization asks only about the axis its tap moves, so another factor's placeholder
+    /// coordinate cannot mask this one.
+    pub(crate) fn axis_in_bounds(&self, pos: &CoordsDyn, #[comptime] axis: Axis) -> bool {
+        if comptime!(self.bounded_axes.contains(&axis) && self.space.contains(axis)) {
+            let p = comptime!(self.space.position(axis));
+            self.origin.at(p) + pos[p] < self.bound.at(p)
+        } else {
+            true.runtime()
+        }
     }
 
     /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
@@ -147,6 +174,12 @@ impl<T: Numeric> ProceduralData<T> {
 }
 
 impl<T: Numeric> Vectorized for ProceduralData<T> {}
+
+impl<T: Numeric> ProceduralDataExpand<T> {
+    pub(crate) fn factor_count(&self, scope: &Scope) -> Option<usize> {
+        self.recipe.__expand_factors_method(scope)
+    }
+}
 
 impl<T: Numeric> VectorizedExpand for ProceduralDataExpand<T> {
     fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {

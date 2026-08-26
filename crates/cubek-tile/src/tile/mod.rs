@@ -34,6 +34,8 @@ use cubecl::{
     },
 };
 
+use cubecl::zspace::SmallVec;
+
 use crate::*;
 
 impl<T: Numeric> Tile<T> {
@@ -65,6 +67,9 @@ impl<T: Numeric> Tile<T> {
         space: Space,
         recipe: R::ExpandType,
     ) -> TileExpand<T> {
+        // A separable procedural tile is always evaluated in place. This invariant is load-bearing
+        // for normalization: staging a recipe into shared memory would drop its factorization and
+        // normalization metadata without diagnostic.
         Self::__expand_procedural_virtual(
             scope,
             space,
@@ -689,6 +694,40 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// This operand's window sign, for a stage recording where it was filled from.
+    pub(crate) fn window_signed(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.signed),
+            _ => comptime!(false),
+        }
+    }
+
+    /// This operand's per-axis boundary handling, read by a stage filled from it: the stage's own
+    /// list is empty (it never overhangs its buffer), so the padding policy has to come from here.
+    pub(crate) fn window_boundaries(
+        &self,
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.boundaries.clone()),
+            _ => comptime!(SmallVec::new()),
+        }
+    }
+
+    /// The separable factor-normalization request, if one was attached to this procedural tile.
+    /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
+    pub(crate) fn factor_normalization(
+        &self,
+    ) -> comptime_type!(Option<(TapMask, DivGuard, Space)>) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => comptime!(data.normalization.clone()),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(None),
+        }
+    }
+
     /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
     /// that factor reads matters, which is what lets the contraction walk it in 1-D.
     ///
@@ -1014,6 +1053,79 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 panic!("Tile::drain_cast_into: only a partition drains with a cast")
+            }
+        }
+    }
+
+    /// Whether one factor tap lands inside the input axes that factor moves. The physical position
+    /// is already stepped from the row's hoisted anchor; the memory window then checks only the
+    /// physical carriers of `axis`, avoiding rebuilding the projection per tap.
+    pub(crate) fn separable_physical_tap_in_bounds(
+        &self,
+        pos: &CoordsDyn,
+        #[comptime] axis: Axis,
+    ) -> bool {
+        match &self.tile_kind {
+            TileKind::Gmem(data) => {
+                let projection = comptime!(data.projection.clone());
+                if comptime!(projection.logical_axes().contains(&axis)) {
+                    let carriers = comptime!(projection.carriers(axis));
+                    let mut valid = true;
+                    #[unroll]
+                    for c in 0..comptime!(carriers.len()) {
+                        let pa = comptime!(carriers[c]);
+                        if comptime!(
+                            data.window.boundaries.get(pa).copied().flatten()
+                                == Some(Boundary::Zero)
+                        ) {
+                            valid = valid && data.window.axis_in_bounds(pos[pa], pa);
+                        }
+                    }
+                    valid
+                } else {
+                    true.runtime()
+                }
+            }
+            // A staged operand answers against the window it was *filled from*: the fill wrote
+            // the boundary's value wherever a tap fell outside, and this window no longer says
+            // which cells those were. A stage recorded with no source window was never gathered,
+            // so nothing it holds came from a boundary and every tap is in bounds.
+            TileKind::Smem(data) => {
+                let projection = comptime!(data.projection.clone());
+                #[comptime]
+                match &data.source_window {
+                    ComptimeOption::Some(source) => {
+                        if comptime!(projection.logical_axes().contains(&axis)) {
+                            let carriers = comptime!(projection.carriers(axis));
+                            let mut valid = true;
+                            #[unroll]
+                            for c in 0..comptime!(carriers.len()) {
+                                let pa = comptime!(carriers[c]);
+                                if comptime!(
+                                    source.boundaries.get(pa).copied().flatten()
+                                        == Some(Boundary::Zero)
+                                ) {
+                                    valid = valid
+                                        && source.axis_in_bounds(
+                                            data.window.origin.at(pa),
+                                            pos[pa],
+                                            pa,
+                                        );
+                                }
+                            }
+                            valid
+                        } else {
+                            true.runtime()
+                        }
+                    }
+                    ComptimeOption::None => true.runtime(),
+                }
+            }
+            TileKind::Procedural(data) => data.axis_in_bounds(pos, axis),
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) | TileKind::TmaGmem(_) => {
+                panic!(
+                    "Tile::separable_physical_tap_in_bounds: a separable gather needs an addressable rhs"
+                )
             }
         }
     }
