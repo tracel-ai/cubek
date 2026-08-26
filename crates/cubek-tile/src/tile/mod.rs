@@ -674,12 +674,12 @@ impl<T: Numeric> Tile<T> {
     /// describes the tile is the N-D one ([`nd`](Tile::nd)) and no window of it is dense.
     ///
     /// False for a [`direct`](Projection::direct) operand, and equally for one whose axes
-    /// [partition](Composition::Digits) a physical axis: a partition is a bijection, so its
+    /// [partition](Composition::Disjoint) a physical axis: a partition is a bijection, so its
     /// windows tile rather than overlap and every dense path still describes it. A fragment or a
     /// tensor map has no buffer to gather from.
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
-        comptime!(projection.composition() == Composition::Affine)
+        comptime!(projection.composition() == Composition::Overlapping)
     }
 
     /// Whether this tile evaluates values from coordinates instead of a backing buffer.

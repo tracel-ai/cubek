@@ -360,7 +360,7 @@ impl<T: Numeric> Tile<T> {
         // padded stage width, which `StridedTileSource` already checked for the specs it builds;
         // this catches hand-built ones too.
         comptime!(projection.validate(vector_size));
-        // A `Digits` claim is about the axes' extents, and this is the one place the projection
+        // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
         // and the space are both in hand.
         comptime!(projection.validate_composition(|axis| space.extent(axis)));
         comptime!(spec.validate_stage_width(vector_size, packing != Packing::Plain));

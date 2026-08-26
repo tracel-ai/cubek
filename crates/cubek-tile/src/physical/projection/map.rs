@@ -150,27 +150,26 @@ pub struct AxisTerm {
     pub scale: Scale,
 }
 
-/// How a physical axis's terms sit on it: whether they tile it or may land on the same cell.
+/// Whether a physical axis's terms can land on the same cell.
 ///
-/// The coefficients alone cannot say. `affine(&[(A, 2), (B, 1)])` tiles the axis when `B` has
+/// The coefficients alone cannot say. `affine(&[(A, 2), (B, 1)])` partitions the axis when `B` has
 /// extent `2` and is a stride-2 stencil when it has extent `3` — same map, different structure —
 /// so the caller states which it means and [`validate_composition`](crate::Projection) checks the
 /// claim against the extents.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Composition {
-    /// The terms are this axis's *digits*, coarsest first: each coefficient is the product of the
-    /// finer axes' extents, so the terms partition the axis and the map is a bijection. Every
-    /// window stays a dense box, exactly as for the one-term identity, which is the degenerate
-    /// case of this.
+    /// No two logical positions share a cell: each coefficient is the product of the finer axes'
+    /// extents, so the terms partition the axis and the map is a bijection. Every window stays a
+    /// dense box, exactly as for the one-term identity, which is the degenerate case of this.
     ///
     /// The mirror of storage tiling, which spreads one logical axis over several physical ones.
     /// Here several logical axes share one physical axis, for the opposite reason: the operands
-    /// distinguish the digits. A quantization block is this — one axis for the block index, one
-    /// for the position inside it — because the scales vary over the first and not the second.
-    Digits,
-    /// An affine combination whose windows may overlap, so a physical cell does not determine the
-    /// logical position: a stencil's taps, a resample's ratio.
-    Affine,
+    /// tell them apart. A quantization block is this — one axis for the block index, one for the
+    /// position inside it — because the scales vary over the first and not the second.
+    Disjoint,
+    /// Two positions may land on the same cell, so a cell does not determine the position: a
+    /// stencil's taps, a resample's ratio.
+    Overlapping,
 }
 
 /// One [`PhysicalAxis`](crate::PhysicalAxis) as an affine combination of logical axes' digits
@@ -196,21 +195,21 @@ impl PhysicalAxisMap {
             }]),
             offset: Offset::Static(0),
             divisor: Divisor::Static(1),
-            composition: Composition::Digits,
+            composition: Composition::Disjoint,
         }
     }
 
-    /// This physical axis as the digits of several logical ones, coarsest first: `digits(&[(KB,
-    /// 32), (KI, 1)])` is `k = kb * 32 + ki`, the axis partitioned into 32-wide blocks with one
-    /// axis counting blocks and one counting inside them.
+    /// This physical axis partitioned by several logical ones, coarsest first:
+    /// `disjoint(&[(KB, 32), (KI, 1)])` is `k = kb * 32 + ki`, the axis cut into 32-wide blocks
+    /// with one axis counting blocks and one counting inside them.
     ///
     /// The same arithmetic as [`affine`](Self::affine), and deliberately a different constructor:
-    /// this one claims the terms *tile* the axis, which keeps every window dense and every read on
-    /// the direct path, and a claim that the extents contradict is refused at
+    /// this one claims no two positions share a cell, which keeps every window dense and every
+    /// read on the direct path, and a claim the extents contradict is refused at
     /// [`Tile::of`](crate::Tile::of).
-    pub fn digits(terms: &[(Axis, usize)]) -> Self {
+    pub fn disjoint(terms: &[(Axis, usize)]) -> Self {
         let mut map = Self::affine(terms);
-        map.composition = Composition::Digits;
+        map.composition = Composition::Disjoint;
         map
     }
 
@@ -250,11 +249,11 @@ impl PhysicalAxisMap {
         let offset = offset.into();
         // One axis stepping by one is the identity however it was spelled, and the identity
         // partitions its axis. Anything else is ambiguous from the coefficients alone, so it takes
-        // the [`Affine`](Composition::Affine) reading unless a caller claims otherwise
-        // ([`digits`](Self::digits)).
+        // the [`Overlapping`](Composition::Overlapping) reading unless a caller claims
+        // otherwise ([`disjoint`](Self::disjoint)).
         let composition = match (terms, offset) {
-            ([(_, Scale::Static(1))], Offset::Static(0)) => Composition::Digits,
-            _ => Composition::Affine,
+            ([(_, Scale::Static(1))], Offset::Static(0)) => Composition::Disjoint,
+            _ => Composition::Overlapping,
         };
         PhysicalAxisMap {
             terms: terms
@@ -291,7 +290,7 @@ impl PhysicalAxisMap {
         self.divisor = divisor;
         // A division coarsens: several logical positions land on one physical cell, which is the
         // one thing a partition never does.
-        self.composition = Composition::Affine;
+        self.composition = Composition::Overlapping;
         self.reduced()
     }
 
@@ -338,16 +337,16 @@ impl PhysicalAxisMap {
         self.composition
     }
 
-    /// The radices a [`Digits`](Composition::Digits) map claims, coarsest first: each term's
+    /// The radices a [`Disjoint`](Composition::Disjoint) map claims, coarsest first: each term's
     /// coefficient must be the product of the finer axes' extents, and the finest must be `1`.
     /// Returns the axis whose extent each coefficient stands for, so the caller can check the
     /// claim against a space it holds.
     ///
-    /// Empty for an [`Affine`](Composition::Affine) map: it claims nothing to check.
+    /// Empty for an [`Overlapping`](Composition::Overlapping) map: it claims nothing to check.
     pub fn claimed_radices(&self) -> SmallVec<[(Axis, usize); MAX_AXES]> {
         match self.composition {
-            Composition::Affine => SmallVec::new(),
-            Composition::Digits => self
+            Composition::Overlapping => SmallVec::new(),
+            Composition::Disjoint => self
                 .terms
                 .iter()
                 .map(|t| (t.axis, t.scale.bound()))
@@ -611,12 +610,12 @@ mod tests {
     #[test]
     fn the_same_coefficients_partition_or_overlap() {
         assert_eq!(
-            PhysicalAxisMap::digits(&[(A, 2), (B, 1)]).composition(),
-            Composition::Digits
+            PhysicalAxisMap::disjoint(&[(A, 2), (B, 1)]).composition(),
+            Composition::Disjoint
         );
         assert_eq!(
             PhysicalAxisMap::affine(&[(A, 2), (B, 1)]).composition(),
-            Composition::Affine
+            Composition::Overlapping
         );
     }
 
@@ -624,18 +623,18 @@ mod tests {
     /// coefficient past one skips cells, so it does not.
     #[test]
     fn the_identity_partitions_whichever_door_minted_it() {
-        assert_eq!(PhysicalAxisMap::of(A).composition(), Composition::Digits);
+        assert_eq!(PhysicalAxisMap::of(A).composition(), Composition::Disjoint);
         assert_eq!(
             PhysicalAxisMap::affine(&[(A, 1)]).composition(),
-            Composition::Digits
+            Composition::Disjoint
         );
         assert_eq!(
             PhysicalAxisMap::scaled(&[(A, Scale::Static(1))]).composition(),
-            Composition::Digits
+            Composition::Disjoint
         );
         assert_eq!(
             PhysicalAxisMap::affine(&[(A, 2)]).composition(),
-            Composition::Affine
+            Composition::Overlapping
         );
     }
 
@@ -644,7 +643,7 @@ mod tests {
     fn a_coarsening_is_never_a_partition() {
         assert_eq!(
             PhysicalAxisMap::of(A).over(4).composition(),
-            Composition::Affine
+            Composition::Overlapping
         );
     }
 
@@ -652,7 +651,7 @@ mod tests {
     /// coarser one steps over everything below it.
     #[test]
     fn a_partition_claims_its_radices() {
-        let map = PhysicalAxisMap::digits(&[(A, 32), (B, 1)]);
+        let map = PhysicalAxisMap::disjoint(&[(A, 32), (B, 1)]);
         assert_eq!(&map.claimed_radices()[..], &[(A, 32), (B, 1)]);
         assert!(
             PhysicalAxisMap::affine(&[(A, 32), (B, 1)])

@@ -29,7 +29,7 @@ const DEPTH: usize = BLOCK * BLOCKS;
 
 /// `k = kb · BLOCK + ki`: the physical contracted axis as the two logical ones' digits.
 fn blocked() -> PhysicalAxisMap {
-    PhysicalAxisMap::digits(&[(KB, BLOCK), (KI, 1)])
+    PhysicalAxisMap::disjoint(&[(KB, BLOCK), (KI, 1)])
 }
 
 fn lhs_data() -> Vec<f32> {

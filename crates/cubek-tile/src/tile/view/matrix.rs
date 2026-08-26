@@ -23,7 +23,7 @@ pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 /// One type because there is one concept. A plain batched matmul pins its leading axes and exposes
 /// exactly two, so both axes hold one axis and the unravels are the identity. A convolution
 /// contracts over its taps *and* its channels, which no pinning exposes as one edge, so its `k`
-/// group holds several. A [partitioned](Composition::Digits) axis is the same again: an operand
+/// group holds several. A [partitioned](Composition::Disjoint) axis is the same again: an operand
 /// spanning `(M, KB, KI)` reads as `M·KB` rows by `KI` columns, and the block index rides in the
 /// row group at extent `1`.
 #[derive(CubeType, Clone)]
@@ -305,7 +305,7 @@ pub(crate) fn projected_batch_matrix(
     i: usize,
 ) -> ProjectedMatrix {
     // A partition is not a gather: its windows tile, so the window still sizes every logical axis.
-    let gathered = comptime!(projection.composition() == Composition::Affine);
+    let gathered = comptime!(projection.composition() == Composition::Overlapping);
     ProjectedMatrix::new(
         batch_matrix(bound, comptime!(&space), gathered, vector_size, axes, i),
         axis_projection(comptime!(space), comptime!(projection), map, vector_size),

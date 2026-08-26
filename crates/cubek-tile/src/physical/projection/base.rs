@@ -415,28 +415,29 @@ impl Projection {
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
     /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell,
     /// applies a constant offset, or divides.
-    /// How this operand's logical coordinates sit on its buffer's physical axes: [`Digits`] where
-    /// every physical axis is partitioned by the axes addressing it, so a logical position
-    /// determines a cell and no two share one; [`Affine`] where any axis may overlap.
+    /// How this operand's logical coordinates sit on its buffer's physical axes: [`Disjoint`]
+    /// where every physical axis is partitioned by the axes addressing it, so a position
+    /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
     ///
     /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one —
-    /// one axis per physical axis, in order — and a [`Digits`] projection of higher logical rank
+    /// one axis per physical axis, in order — and a [`Disjoint`] projection of higher logical rank
     /// answers the same for the same reason: nothing aliases, every window is a box.
     ///
-    /// [`Digits`]: Composition::Digits
-    /// [`Affine`]: Composition::Affine
+    /// [`Disjoint`]: Composition::Disjoint
+    /// [`Overlapping`]: Composition::Overlapping
     pub fn composition(&self) -> Composition {
         match self
             .physical
             .iter()
-            .all(|m| m.composition() == Composition::Digits && m.divisor().is_unit())
+            .all(|m| m.composition() == Composition::Disjoint && m.divisor().is_unit())
         {
-            true => Composition::Digits,
-            false => Composition::Affine,
+            true => Composition::Disjoint,
+            false => Composition::Overlapping,
         }
     }
 
-    /// Refuse a [`Digits`](Composition::Digits) claim the extents contradict: coarsest first, each
+    /// Refuse a [`Disjoint`](Composition::Disjoint) claim the extents contradict: coarsest first,
+    /// each
     /// coefficient must be the product of the finer axes' extents, so the terms really partition
     /// the physical axis instead of overlapping on it.
     ///
@@ -1141,7 +1142,7 @@ mod tests {
     }
 
     /// A projection is a partition when every one of its axes is, whatever the ranks: three
-    /// logical axes over two physical ones still answers `Digits` when the pair partitions its
+    /// logical axes over two physical ones still answers `Disjoint` when the pair partitions its
     /// axis, which is what keeps a blocked operand on the dense path.
     #[test]
     fn a_partition_of_higher_logical_rank_is_still_dense() {
@@ -1149,10 +1150,10 @@ mod tests {
             &[A, B, R],
             &[
                 PhysicalAxisMap::of(A),
-                PhysicalAxisMap::digits(&[(B, 32), (R, 1)]),
+                PhysicalAxisMap::disjoint(&[(B, 32), (R, 1)]),
             ],
         );
-        assert_eq!(blocked.composition(), Composition::Digits);
+        assert_eq!(blocked.composition(), Composition::Disjoint);
         assert!(!blocked.is_direct());
 
         let gathered = Projection::new(
@@ -1162,7 +1163,7 @@ mod tests {
                 PhysicalAxisMap::affine(&[(B, 32), (R, 1)]),
             ],
         );
-        assert_eq!(gathered.composition(), Composition::Affine);
+        assert_eq!(gathered.composition(), Composition::Overlapping);
     }
 
     /// The radices are checked against the extents, which is the only place the claim can be
@@ -1178,7 +1179,7 @@ mod tests {
             &[A, B, R],
             &[
                 PhysicalAxisMap::of(A),
-                PhysicalAxisMap::digits(&[(B, 32), (R, 1)]),
+                PhysicalAxisMap::disjoint(&[(B, 32), (R, 1)]),
             ],
         )
         .validate_composition(extents);
@@ -1196,7 +1197,7 @@ mod tests {
             &[A, B, R],
             &[
                 PhysicalAxisMap::of(A),
-                PhysicalAxisMap::digits(&[(B, 16), (R, 1)]),
+                PhysicalAxisMap::disjoint(&[(B, 16), (R, 1)]),
             ],
         )
         .validate_composition(extents);
