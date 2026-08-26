@@ -1,10 +1,63 @@
 use crate::definition::NearestMode;
 use cubecl::prelude::*;
 use cubecl::{
+    calculate_cube_count_elemwise,
+    client::ComputeClient,
+    ir::UIntKind,
     num_traits::Zero,
+    prelude::TensorBinding,
     std::FastDivmod,
-    std::tensor::layout::{linear::LinearLayout, *},
+    std::tensor::layout::{linear::{LinearLayout, LinearLayoutLaunch, LinearViewLayoutLaunch}, *},
+    tensor_vector_size_parallel,
 };
+
+pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
+    client: &ComputeClient<R>,
+    out_grad: TensorBinding<R>,
+    output: TensorBinding<R>,
+    nearest_mode: NearestMode,
+    dtype: ElemType,
+) -> Result<(), crate::definition::InterpolateError> {
+    let vector_size = tensor_vector_size_parallel(
+        client.io_optimized_vector_sizes(dtype.size()),
+        &out_grad.shape,
+        &out_grad.strides,
+        out_grad.shape.len() - 1,
+    );
+    let shape_out = shape_divmod(&output);
+    let out_layout = linear_layout(&output, vector_size);
+    let working_units = output.shape.iter().product::<usize>() / vector_size as usize;
+    let cube_dim = CubeDim::new(client, working_units);
+    let cube_count = calculate_cube_count_elemwise(client, working_units, cube_dim);
+    let address_type = out_grad
+        .required_address_type(dtype.size())
+        .max(output.required_address_type(dtype.size()));
+
+    unsafe {
+        execute_interpolate_nearest_backward::launch_unchecked(
+            client, cube_count, cube_dim, address_type, vector_size, out_grad.into_tensor_arg(),
+            output.clone().into_tensor_arg(), shape_out, out_layout, nearest_mode, dtype,
+        )
+    };
+    Ok(())
+}
+
+fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDivmod<usize>> {
+    let mut out_seq = SequenceArg::new();
+    for dim in binding.shape.iter() {
+        out_seq.push(*dim);
+    }
+    out_seq
+}
+
+fn linear_layout<R: Runtime>(binding: &TensorBinding<R>, vector_size: u8) -> LinearLayoutLaunch<R> {
+    LinearLayoutLaunch::from_shape_strides(
+        binding.shape.clone(),
+        binding.strides.clone(),
+        Type::new(ElemType::UInt(UIntKind::U32)).with_vector_size(vector_size),
+        LinearViewLayoutLaunch::new(),
+    )
+}
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 pub fn execute_interpolate_nearest_backward<F: Float, N: Size>(
