@@ -1,14 +1,17 @@
 use crate::{
     InterpolateError,
     {
-        components::global::{execute_interpolate, execute_interpolate_nearest_backward},
+        multi_level::{
+            accumulator_dtype,
+            components::{execute_interpolate, execute_interpolate_nearest_backward},
+            routines::{
+                ForwardRoutine, GlobalMemoryRoutine, InterpolateBlueprint, SharedMemoryRoutine,
+            },
+        },
         definition::{
-            InterpolateForwardProblem, InterpolateOptions, NearestMode, accumulator_dtype,
+            InterpolateForwardProblem, InterpolateOptions, NearestMode,
         },
-        launch::InterpolateStrategy,
-        routines::{
-            ForwardRoutine, GlobalMemoryRoutine, InterpolateBlueprint, SharedMemoryRoutine,
-        },
+        strategy::Strategy,
     },
 };
 use cubecl::{
@@ -25,7 +28,7 @@ pub fn interpolate_launch<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
-    strategy: InterpolateStrategy,
+    strategy: Strategy,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     let acc_dtype = accumulator_dtype(dtype);
@@ -55,14 +58,14 @@ pub fn interpolate_launch<R: Runtime>(
         .max(output.required_address_type(dtype.size()));
 
     let (blueprint, settings) = match strategy {
-        InterpolateStrategy::GlobalMemoryStrategy(strategy) => GlobalMemoryRoutine::prepare(
+        Strategy::GlobalMemoryStrategy(strategy) => GlobalMemoryRoutine::prepare(
             client,
             &problem,
             strategy,
             vector_size,
             bytes_per_element,
         )?,
-        InterpolateStrategy::SharedMemoryStrategy(strategy) => SharedMemoryRoutine::prepare(
+        Strategy::SharedMemoryStrategy(strategy) => SharedMemoryRoutine::prepare(
             client,
             &problem,
             strategy,

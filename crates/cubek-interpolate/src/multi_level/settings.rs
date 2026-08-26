@@ -1,8 +1,4 @@
-use crate::{
-    InterpolateError,
-    definition::{InterpolateForwardProblem, TileSize},
-    routines::InterpolateBlueprint,
-};
+use crate::{definition::InterpolateForwardProblem, multi_level::TileSize};
 use cubecl::prelude::*;
 
 #[derive(Debug, Clone)]
@@ -13,24 +9,6 @@ pub struct InterpolateLaunchSettings {
     pub num_vectors: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BlueprintStrategy<R: ForwardRoutine> {
-    Forced(R::Blueprint),
-    Inferred(R::Strategy),
-}
-
-pub trait ForwardRoutine: core::fmt::Debug + Clone + Sized {
-    type Strategy: core::fmt::Debug + Clone + Send + 'static;
-    type Blueprint: core::fmt::Debug + Clone + Send + 'static;
-
-    fn prepare<R: Runtime>(
-        client: &ComputeClient<R>,
-        problem: &InterpolateForwardProblem,
-        strategy: BlueprintStrategy<Self>,
-        vector_size: usize,
-        bytes_per_element: usize,
-    ) -> Result<(InterpolateBlueprint, InterpolateLaunchSettings), InterpolateError>;
-}
 
 pub fn build_settings<R: Runtime>(
     client: &ComputeClient<R>,

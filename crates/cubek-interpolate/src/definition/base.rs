@@ -1,7 +1,7 @@
 use crate::{
-    components::readers::ReaderType,
+    multi_level::components::ReaderType,
     definition::{Bicubic, Bilinear, InterpolatePrecision, Lanczos3, Nearest, Transform},
-    routines::InterpolateBlueprint,
+    multi_level::routines::InterpolateBlueprint,
 };
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};

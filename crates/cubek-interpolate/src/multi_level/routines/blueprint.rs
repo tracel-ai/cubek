@@ -1,4 +1,7 @@
-use crate::definition::{InterpolateOptions, TileSize, Transform};
+use crate::{
+    definition::{InterpolateOptions, Transform},
+    multi_level::TileSize,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterpolateBlueprint {

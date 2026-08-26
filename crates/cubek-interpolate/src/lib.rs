@@ -1,13 +1,16 @@
-pub mod components;
 pub mod definition;
+pub mod multi_level;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
-pub mod launch;
-pub mod routines;
+mod launch;
+pub mod strategy;
+pub mod tiled;
+pub mod tune_key;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
+    launch::{interpolate_launch, interpolate_nearest_backward_launch},
+    strategy::Strategy,
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -22,7 +25,7 @@ pub fn interpolate<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
-    strategy: InterpolateStrategy,
+    strategy: Strategy,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     validate_strategy(client, &strategy)?;
@@ -71,7 +74,7 @@ pub fn interpolate_backward<R: Runtime>(
 /// Checks if the strategy is valid for the current client
 fn validate_strategy<R: Runtime>(
     client: &ComputeClient<R>,
-    strategy: &InterpolateStrategy,
+    strategy: &Strategy,
 ) -> Result<(), InterpolateError> {
     // If the client is not running on a CPU, we don't need to validate the strategy
     if client.properties().hardware.num_cpu_cores.is_none() {
@@ -80,8 +83,8 @@ fn validate_strategy<R: Runtime>(
 
     // If the client is running on a CPU, we need to validate the strategy
     match strategy {
-        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
-        InterpolateStrategy::SharedMemoryStrategy(_) => Err(InterpolateError::UnsupportedMode(
+        Strategy::GlobalMemoryStrategy(_) => Ok(()),
+        Strategy::SharedMemoryStrategy(_) => Err(InterpolateError::UnsupportedMode(
             "interpolation shared memory strategy is not supported on CPU".to_string(),
         )),
     }

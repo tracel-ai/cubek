@@ -1,13 +1,13 @@
 use crate::{
-    components::{
-        readers::{GlobalMemoryReader, ReaderType, SharedMemoryReader},
-        writers::Writer,
+    multi_level::{
+        components::{GlobalMemoryReader, ReaderType, SharedMemoryReader, Writer},
+        routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
+        InterpolatePrecision,
+        tile_size::tile_absolute_coords,
     },
     definition::{
-        InterpolateMode, InterpolateOptions, InterpolatePrecision, Transform, compute_value,
-        get_halo, tile_absolute_coords,
+        InterpolateMode, InterpolateOptions, Transform, compute_value, get_halo,
     },
-    routines::{GlobalInterpolateBlueprint, InterpolateBlueprint},
 };
 use cubecl::{
     prelude::*,

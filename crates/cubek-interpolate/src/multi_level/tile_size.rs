@@ -1,4 +1,4 @@
-use crate::routines::InterpolateBlueprint;
+use crate::multi_level::routines::InterpolateBlueprint;
 use cubecl::prelude::*;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]

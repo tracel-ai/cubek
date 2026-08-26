@@ -4,7 +4,7 @@ use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
-    launch::{TileConfig, interpolate_tile_launch},
+    tiled::{TileConfig, interpolate_tile_launch},
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
 use cubek_tile::Residence;

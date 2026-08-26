@@ -1,8 +1,9 @@
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, TileSize},
-    launch::{InterpolateStrategy, TileConfig, interpolate_tile_launch},
-    routines::{
+    strategy::Strategy as InterpolateStrategy,
+    tiled::{TileConfig, interpolate_tile_launch},
+    multi_level::routines::{
         BlueprintStrategy, GlobalMemoryRoutine, GlobalMemoryStrategy, SharedMemoryRoutine,
         SharedMemoryStrategy,
     },

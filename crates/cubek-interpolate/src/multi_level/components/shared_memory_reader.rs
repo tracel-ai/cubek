@@ -1,4 +1,7 @@
-use crate::{components::readers::GlobalMemoryReader, routines::SharedMemoryBlueprint};
+use crate::multi_level::{
+    components::GlobalMemoryReader,
+    routines::SharedMemoryBlueprint,
+};
 use cubecl::prelude::*;
 
 #[derive(CubeType, Clone)]

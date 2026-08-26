@@ -12,7 +12,8 @@ use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
-    launch::{InterpolateStrategy, TileConfig, interpolate_tile_launch},
+    strategy::Strategy as InterpolateStrategy,
+    tiled::{TileConfig, interpolate_tile_launch},
 };
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{

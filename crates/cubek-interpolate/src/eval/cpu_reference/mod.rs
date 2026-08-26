@@ -3,7 +3,8 @@ mod forward;
 
 use crate::{
     definition::{InterpolateOptions, InterpolateProblem},
-    launch::{InterpolateStrategy, TileConfig},
+    strategy::Strategy as InterpolateStrategy,
+    tiled::TileConfig,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};

@@ -2,9 +2,12 @@ use cubek_test_utils::CatalogEntry;
 use cubek_tile::Residence;
 
 use crate::{
-    definition::TileSize,
-    launch::{InterpolateStrategy, TileConfig},
-    routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
+    multi_level::{
+        TileSize,
+        routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
+    },
+    strategy::Strategy as InterpolateStrategy,
+    tiled::TileConfig,
 };
 
 /// The established interpolation implementations and the experimental tile path.

@@ -9,7 +9,7 @@ use cubek_interpolate::{
     definition::{InterpolateForwardProblem, InterpolateOptions},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
-    launch::InterpolateStrategy,
+    strategy::Strategy as InterpolateStrategy,
 };
 use cubek_test_utils::TestInput;
 

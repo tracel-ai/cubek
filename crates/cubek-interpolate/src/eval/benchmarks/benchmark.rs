@@ -15,8 +15,8 @@ use cubek_tile::Residence;
 use crate::{
     definition::{InterpolateCost, InterpolateProblem},
     interpolate, interpolate_backward,
-    launch::InterpolateStrategy,
-    launch::interpolate_tile_launch,
+    strategy::Strategy as InterpolateStrategy,
+    tiled::interpolate_tile_launch,
 };
 
 use super::InterpolateBenchmarkStrategy;

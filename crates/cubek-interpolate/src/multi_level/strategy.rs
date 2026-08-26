@@ -1,4 +1,4 @@
-use crate::routines::{BlueprintStrategy, GlobalMemoryRoutine, SharedMemoryRoutine};
+use crate::multi_level::routines::{BlueprintStrategy, GlobalMemoryRoutine, SharedMemoryRoutine};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum InterpolateStrategy {

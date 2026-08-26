@@ -1,10 +1,10 @@
 use crate::{
     InterpolateError,
-    definition::{InterpolateForwardProblem, InterpolateMode, TileSize, get_transform},
-    routines::{
+    definition::{InterpolateForwardProblem, InterpolateMode, get_transform},
+    multi_level::{TileSize, routines::{
         BlueprintStrategy, ForwardRoutine, GlobalInterpolateBlueprint, GlobalMemoryBlueprint,
-        InterpolateBlueprint, InterpolateLaunchSettings, build_settings,
-    },
+        InterpolateBlueprint,
+    }, settings::{InterpolateLaunchSettings, build_settings}},
 };
 use cubecl::prelude::*;
 
