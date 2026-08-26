@@ -42,7 +42,7 @@ fn gemm_cmma_timing_vs_multi_level() {
             "{id}: median {:?} over {} samples, {:.2} TFLOPS",
             ds[ds.len() / 2],
             ds.len(),
-            samples.tflops.unwrap_or(0.0)
+            samples.tflops().unwrap_or(0.0)
         );
     }
 }
@@ -176,7 +176,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
                     "{id}: median {:?} over {} samples, {:.2} TFLOPS",
                     ds[ds.len() / 2],
                     ds.len(),
-                    samples.tflops.unwrap_or(0.0)
+                    samples.tflops().unwrap_or(0.0)
                 );
             }
             Err(e) => println!("{id}: setup error: {e}"),
@@ -224,7 +224,7 @@ fn gemm_cyclic_cmma_sweep() {
             let samples = bench(s, &problem, 10).unwrap();
             let mut ds = samples.durations.clone();
             ds.sort();
-            (ds[ds.len() / 2], samples.tflops.unwrap_or(0.0))
+            (ds[ds.len() / 2], samples.tflops().unwrap_or(0.0))
         };
 
         // Multi-level flattens its cube count and wgpu rejects >= 65536 cubes (device-thread

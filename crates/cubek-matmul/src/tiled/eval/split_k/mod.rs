@@ -35,6 +35,7 @@
 //!
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
+use crate::definition::{MatmulElems, compute_peak_ops_per_s};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -423,6 +424,8 @@ pub fn bench(
     let cube_count = space.cube_count();
     let cube_dim = mapping.cube_dim(&space, &client);
     let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
+    // The tile inputs are built as f32 and the accumulator contracts in f32.
+    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()
@@ -435,7 +438,7 @@ pub fn bench(
     let bench = SplitKBench {
         problem: *problem,
         mapping,
-        client,
+        client: client.clone(),
         samples: num_samples,
         cube_count,
         cube_dim,
@@ -450,7 +453,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(flops))
+    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
 }
 
 /// The down-proj family: `m = 1`, `k = 8192`, N sweeping the regime where it stops being able to

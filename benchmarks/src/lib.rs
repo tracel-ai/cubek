@@ -70,17 +70,26 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
             println!("---- {} / {} ----", strategy.label, problem.label);
             match category.run(&strategy.id, &problem.id, samples) {
                 Ok(samples) => {
-                    if let Some(tflops) = samples.tflops {
-                        println!("{tflops:.3} TFLOPS");
+                    // Both ceilings, so a row says which one the kernel ran into
+                    // rather than only how fast it went.
+                    if let Some(compute) = &samples.compute {
+                        let achieved_tflops = compute.achieved_ops_per_s / 1e12;
+                        match compute.peak_ops_per_s {
+                            Some(peak) if peak > 0.0 => {
+                                let pct = 100.0 * compute.achieved_ops_per_s / peak;
+                                println!("{achieved_tflops:.3} TFLOPS ({pct:.0}% of compute peak)");
+                            }
+                            _ => println!("{achieved_tflops:.3} TFLOPS (compute peak unavailable)"),
+                        }
                     }
                     if let Some(bandwidth) = &samples.bandwidth {
                         let achieved_gb_s = bandwidth.achieved_bytes_per_s / 1e9;
                         match bandwidth.peak_bytes_per_s {
                             Some(peak) if peak > 0.0 => {
                                 let pct = 100.0 * bandwidth.achieved_bytes_per_s / peak;
-                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of write peak)");
+                                println!("{achieved_gb_s:.1} GB/s ({pct:.0}% of memory peak)");
                             }
-                            _ => println!("{achieved_gb_s:.1} GB/s (write peak unavailable)"),
+                            _ => println!("{achieved_gb_s:.1} GB/s (memory peak unavailable)"),
                         }
                     }
                     let durations = BenchmarkDurations {
