@@ -126,12 +126,8 @@ fn unpack_q<F: Float, NF: Size, QS: Int>(
         // software so the read lowers on every backend rather than only where the conversion
         // intrinsic exists. Mirrors `encode_minifloat` in `quantize.rs`.
         QuantValue::E2M1 => e2m1_bits_to_float::<F, NF>(fields),
-        QuantValue::E4M3 => {
-            Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E4M3))
-        }
-        QuantValue::E5M2 => {
-            Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E5M2))
-        }
+        QuantValue::E4M3 => Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E4M3)),
+        QuantValue::E5M2 => Vector::cast_from(fp8_bits_to_f32::<NF>(fields, Fp8Format::E5M2)),
         QuantValue::Q8F
         | QuantValue::Q8S
         | QuantValue::Q4F
