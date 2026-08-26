@@ -36,7 +36,9 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(problem.flops()))
+    // Too little arithmetic per byte to approach the flop ceiling, so there is no compute
+    // peak worth judging this against.
+    Ok(RunSamples::new(durations).with_flops(problem.flops(), None))
 }
 
 struct DepthwiseBench {
