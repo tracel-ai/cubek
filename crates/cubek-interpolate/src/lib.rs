@@ -6,7 +6,7 @@ pub mod tune_key;
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    kernel::{TileConfig, forward::interpolate_launch, interpolate_nearest_backward_launch},
+    kernel::{InterpolateConfig, forward::interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -21,7 +21,7 @@ pub fn interpolate<R: Runtime>(
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
-    config: TileConfig,
+    config: InterpolateConfig,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;

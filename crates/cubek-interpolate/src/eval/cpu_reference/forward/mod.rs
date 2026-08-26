@@ -12,18 +12,17 @@ use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
-    strategy::Strategy as InterpolateStrategy,
-    tiled::{TileConfig, interpolate_tile_launch},
+    kernel::InterpolateConfig,
 };
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
 
-pub fn tile_result(
+pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateForwardProblem,
-    config: TileConfig,
+    config: InterpolateConfig,
     seed: u64,
 ) -> Result<HostData, String> {
     let dtype = f32_elem_type();
@@ -33,46 +32,12 @@ pub fn tile_result(
     let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
 
     let outcome = launch_and_capture_outcome(&client, |c| {
-        interpolate_tile_launch::<TestRuntime>(
-            c,
-            input_handle.clone().binding(),
-            output_handle.clone().binding(),
-            problem.options,
-            dtype,
-            config,
-        )
-        .into()
-    });
-
-    match outcome {
-        ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),
-        ExecutionOutcome::Executed => Ok(HostData::from_tensor_handle(
-            &client,
-            output_handle,
-            HostDataType::F32,
-        )),
-    }
-}
-
-pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
-    problem: InterpolateForwardProblem,
-    strategy: InterpolateStrategy,
-    seed: u64,
-) -> Result<HostData, String> {
-    let dtype = f32_elem_type();
-    let input_shape = problem.input_shape().to_vec();
-    let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
-
-    let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
-
-    let outcome = launch_and_capture_outcome(&client, |c| {
         interpolate::<TestRuntime>(
             c,
             input_handle.clone().binding(),
             output_handle.clone().binding(),
             problem.options,
-            strategy,
+            config,
             dtype,
         )
         .into()

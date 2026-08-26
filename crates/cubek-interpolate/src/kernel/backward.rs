@@ -7,7 +7,10 @@ use cubecl::{
     num_traits::Zero,
     prelude::TensorBinding,
     std::FastDivmod,
-    std::tensor::layout::{linear::{LinearLayout, LinearLayoutLaunch, LinearViewLayoutLaunch}, *},
+    std::tensor::layout::{
+        linear::{LinearLayout, LinearLayoutLaunch, LinearViewLayoutLaunch},
+        *,
+    },
     tensor_vector_size_parallel,
 };
 
@@ -35,8 +38,17 @@ pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
 
     unsafe {
         execute_interpolate_nearest_backward::launch_unchecked(
-            client, cube_count, cube_dim, address_type, vector_size, out_grad.into_tensor_arg(),
-            output.clone().into_tensor_arg(), shape_out, out_layout, nearest_mode, dtype,
+            client,
+            cube_count,
+            cube_dim,
+            address_type,
+            vector_size,
+            out_grad.into_tensor_arg(),
+            output.clone().into_tensor_arg(),
+            shape_out,
+            out_layout,
+            nearest_mode,
+            dtype,
         )
     };
     Ok(())
@@ -50,7 +62,10 @@ fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDi
     out_seq
 }
 
-fn linear_layout<R: Runtime>(binding: &TensorBinding<R>, vector_size: u8) -> LinearLayoutLaunch<R> {
+fn linear_layout<R: Runtime>(
+    binding: &TensorBinding<R>,
+    vector_size: usize,
+) -> LinearLayoutLaunch<R> {
     LinearLayoutLaunch::from_shape_strides(
         binding.shape.clone(),
         binding.strides.clone(),

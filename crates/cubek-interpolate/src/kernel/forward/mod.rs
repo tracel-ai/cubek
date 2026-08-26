@@ -4,10 +4,10 @@
 //! samples, a procedural tile supplies separable filter weights, and the ordinary tile MMA
 //! reduces the taps into NHWC output channels.
 
+mod compute;
 mod coordinate;
 mod filter;
 mod geometry;
-mod compute;
 mod launch;
 mod space;
 

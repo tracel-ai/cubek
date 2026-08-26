@@ -1,9 +1,14 @@
-mod bicubic;
-mod bilinear;
-mod lanczos3;
-mod nearest;
+use super::InterpolateMode;
 
-pub use bicubic::*;
-pub use bilinear::*;
-pub use lanczos3::*;
-pub use nearest::*;
+pub fn get_halo(mode: InterpolateMode) -> usize {
+    match mode {
+        InterpolateMode::Nearest(_) => 1,
+        InterpolateMode::Bilinear => 2,
+        InterpolateMode::Bicubic => 4,
+        InterpolateMode::Lanczos3 => 6,
+    }
+}
+
+pub fn get_requires_bound_check(mode: InterpolateMode) -> bool {
+    matches!(mode, InterpolateMode::Lanczos3)
+}

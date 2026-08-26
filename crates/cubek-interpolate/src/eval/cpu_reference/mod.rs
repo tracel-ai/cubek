@@ -3,8 +3,7 @@ mod forward;
 
 use crate::{
     definition::{InterpolateOptions, InterpolateProblem},
-    strategy::Strategy as InterpolateStrategy,
-    tiled::TileConfig,
+    kernel::InterpolateConfig,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
@@ -35,29 +34,15 @@ pub(crate) fn make_zero_handle(
         .generate_without_host_data()
 }
 
-pub fn strategy_result(
+pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateProblem,
-    strategy: InterpolateStrategy,
+    config: InterpolateConfig,
     seed: u64,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateProblem::Forward(prob) => forward::strategy_result(client, prob, strategy, seed),
+        InterpolateProblem::Forward(prob) => forward::kernel_result(client, prob, config, seed),
         InterpolateProblem::Backward(prob) => backward::strategy_result(client, prob, seed),
-    }
-}
-
-pub fn tile_result(
-    client: ComputeClient<TestRuntime>,
-    problem: InterpolateProblem,
-    config: TileConfig,
-    seed: u64,
-) -> Result<HostData, String> {
-    match problem {
-        InterpolateProblem::Forward(prob) => forward::tile_result(client, prob, config, seed),
-        InterpolateProblem::Backward(_) => {
-            Err("tile interpolation does not support backward problems".to_string())
-        }
     }
 }
 

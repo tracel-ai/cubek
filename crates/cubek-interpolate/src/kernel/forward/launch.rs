@@ -1,8 +1,8 @@
 use super::{
+    compute::interpolate_tile_kernel,
     coordinate::Rational,
     filter::{BicubicFilter, BilinearFilter, Lanczos3Filter, NearestFilter, SeparableFilterFamily},
     geometry::TileGeometry,
-    compute::interpolate_tile_kernel,
     space::{self, CHANNEL},
 };
 use crate::{
@@ -28,7 +28,7 @@ use cubek_tile::Residence;
 /// so `InPlace` makes the whole tile operation in-place while `Smem` stages that input. Which one
 /// a problem wants swings both ways by up to 4x, which is why it is stated rather than guessed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TileConfig {
+pub struct InterpolateConfig {
     pub input_residence: Residence,
     pub planes_per_cube: usize,
     pub rows_per_plane: usize,
@@ -37,7 +37,7 @@ pub struct TileConfig {
     pub channel_block: Option<usize>,
 }
 
-impl TileConfig {
+impl InterpolateConfig {
     pub const fn new(
         input_residence: Residence,
         planes_per_cube: usize,
@@ -84,7 +84,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     output: TensorBinding<R>,
     options: InterpolateOptions,
     dtype: ElemType,
-    config: TileConfig,
+    config: InterpolateConfig,
 ) -> Result<(), InterpolateError> {
     let geometry = config.geometry(
         output.shape[3],
@@ -113,7 +113,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    config: TileConfig,
+    config: InterpolateConfig,
 ) -> Result<(), InterpolateError> {
     let (input_h, input_w, output_h, output_w) = (
         input.shape[1],

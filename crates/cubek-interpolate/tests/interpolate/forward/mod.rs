@@ -1,4 +1,4 @@
-mod tile;
+mod kernel;
 
 use cubek_interpolate::definition::{InterpolateForwardProblem, InterpolateOptions};
 

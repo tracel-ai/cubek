@@ -3,7 +3,7 @@ use cubek_test_utils::{HostData, Progress};
 
 use crate::{
     definition::InterpolateProblem,
-    eval::cpu_reference::{cpu_reference_result, strategy_result, tile_result},
+    eval::cpu_reference::{cpu_reference_result, kernel_result},
 };
 
 use super::InterpolateBenchmarkStrategy;
@@ -22,14 +22,7 @@ impl cubek_test_utils::Correctness for InterpolateCorrectness {
     ) -> Result<HostData, String> {
         let device = <TestRuntime as Runtime>::Device::default();
         let client = <TestRuntime as Runtime>::client(&device);
-        match strategy {
-            InterpolateBenchmarkStrategy::Standard(strategy) => {
-                strategy_result(client, problem.clone(), *strategy, seeds[0])
-            }
-            InterpolateBenchmarkStrategy::Tile(config) => {
-                tile_result(client, problem.clone(), *config, seeds[0])
-            }
-        }
+        kernel_result(client, problem.clone(), *strategy, seeds[0])
     }
 
     fn reference_result(

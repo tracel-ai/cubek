@@ -5,28 +5,29 @@ use cubek_interpolate::{
     definition::{InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
-    kernel::TileConfig,
+    kernel::InterpolateConfig,
 };
 use cubek_test_utils::{TestInput, assert_equals_approx};
 use cubek_tile::Residence;
 
-use super::{build_output_tensor, make_problem, output_host_f32, validate_test};
+use super::super::{build_output_tensor, output_host_f32, validate_test};
+use super::make_problem;
 
 const TOLERANCE: f32 = 0.0001;
 
 /// The geometry these tests validate against: the shape the plane-derived split produced
 /// before every choice became the caller's.
-const BASELINE: TileConfig = TileConfig::new(Residence::InPlace, 4, 2, 1);
+const BASELINE: InterpolateConfig = InterpolateConfig::new(Residence::InPlace, 4, 2, 1);
 
-fn tile_output(options: InterpolateOptions) {
-    tile_output_with(options, BASELINE);
+fn kernel_output(options: InterpolateOptions) {
+    kernel_output_with(options, BASELINE);
 }
 
-fn tile_output_with(options: InterpolateOptions, config: TileConfig) {
-    tile_output_shaped(options, config, 4);
+fn kernel_output_with(options: InterpolateOptions, config: InterpolateConfig) {
+    kernel_output_shaped(options, config, 4);
 }
 
-fn tile_output_shaped(options: InterpolateOptions, config: TileConfig, channels: usize) {
+fn kernel_output_shaped(options: InterpolateOptions, config: InterpolateConfig, channels: usize) {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem([2, 8, 9, channels], [13, 15], options);
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
@@ -48,29 +49,29 @@ fn tile_output_shaped(options: InterpolateOptions, config: TileConfig, channels:
 }
 
 #[test]
-fn test_interpolate_tile_staging_configurations() {
+fn test_interpolate_kernel_staging_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for config in [
-        TileConfig::new(Residence::Smem, 4, 2, 1),
-        TileConfig::new(Residence::InPlace, 4, 2, 1),
+        InterpolateConfig::new(Residence::Smem, 4, 2, 1),
+        InterpolateConfig::new(Residence::InPlace, 4, 2, 1),
     ] {
-        tile_output_with(options, config);
+        kernel_output_with(options, config);
     }
 }
 
 #[test]
-fn test_interpolate_tile_geometry_configurations() {
+fn test_interpolate_kernel_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for config in [
-        TileConfig::new(Residence::InPlace, 1, 1, 1),
-        TileConfig::new(Residence::Smem, 1, 1, 1),
-        TileConfig::new(Residence::InPlace, 1, 2, 1),
-        TileConfig::new(Residence::InPlace, 4, 2, 2),
-        TileConfig::new(Residence::InPlace, 4, 4, 1),
-        TileConfig::new(Residence::InPlace, 2, 2, 1),
-        TileConfig::new(Residence::InPlace, 2, 4, 2),
+        InterpolateConfig::new(Residence::InPlace, 1, 1, 1),
+        InterpolateConfig::new(Residence::Smem, 1, 1, 1),
+        InterpolateConfig::new(Residence::InPlace, 1, 2, 1),
+        InterpolateConfig::new(Residence::InPlace, 4, 2, 2),
+        InterpolateConfig::new(Residence::InPlace, 4, 4, 1),
+        InterpolateConfig::new(Residence::InPlace, 2, 2, 1),
+        InterpolateConfig::new(Residence::InPlace, 2, 4, 2),
     ] {
-        tile_output_with(options, config);
+        kernel_output_with(options, config);
     }
 }
 
@@ -78,13 +79,13 @@ fn test_interpolate_tile_geometry_configurations() {
 /// narrower splits are reachable only by stating them, and each one moves the accumulator's
 /// innermost extent under the same contraction.
 #[test]
-fn test_interpolate_tile_channel_block_configurations() {
+fn test_interpolate_kernel_channel_block_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for residence in [Residence::InPlace, Residence::Smem] {
         for block in [1, 2, 4] {
-            tile_output_with(
+            kernel_output_with(
                 options,
-                TileConfig::new(residence, 4, 2, 1).with_channel_block(block),
+                InterpolateConfig::new(residence, 4, 2, 1).with_channel_block(block),
             );
         }
     }
@@ -97,13 +98,13 @@ fn test_interpolate_tile_channel_block_configurations() {
 /// fourth lane is padding, dropped by the sink's own overhang mask, so the result has to equal the
 /// reference exactly as the unpadded block of `3` does.
 #[test]
-fn test_interpolate_tile_padded_channel_stage() {
+fn test_interpolate_kernel_padded_channel_stage() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for channels in [3, 2] {
         for block in [channels, 4] {
-            tile_output_shaped(
+            kernel_output_shaped(
                 options,
-                TileConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(block),
+                InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(block),
                 channels,
             );
         }
@@ -113,16 +114,16 @@ fn test_interpolate_tile_padded_channel_stage() {
 /// The padded stage under every filter: the tap count is what the contraction amortizes the
 /// scalar sink writes over, so each `kc` has to land on the reference too.
 #[test]
-fn test_interpolate_tile_padded_channel_stage_every_mode() {
+fn test_interpolate_kernel_padded_channel_stage_every_mode() {
     // Lanczos3 is left out: masked tap normalization requires the input window to remain in place.
     for mode in [
         InterpolateMode::Nearest(NearestMode::Exact),
         InterpolateMode::Bilinear,
         InterpolateMode::Bicubic,
     ] {
-        tile_output_shaped(
+        kernel_output_shaped(
             InterpolateOptions::new(mode).with_align_corners(false),
-            TileConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+            InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
             3,
         );
     }
@@ -131,35 +132,35 @@ fn test_interpolate_tile_padded_channel_stage_every_mode() {
 /// A channel axis the padded block covers in several whole blocks, the last part padding: the
 /// mask has to drop the tail of *that* block rather than of the axis.
 #[test]
-fn test_interpolate_tile_padded_channel_stage_multi_block() {
+fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    tile_output_shaped(
+    kernel_output_shaped(
         options,
-        TileConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+        InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
         6,
     );
 }
 
 #[test]
-fn test_interpolate_tile_nearest_exact() {
-    tile_output(
+fn test_interpolate_kernel_nearest_exact() {
+    kernel_output(
         InterpolateOptions::new(InterpolateMode::Nearest(NearestMode::Exact))
             .with_align_corners(false),
     );
 }
 
 #[test]
-fn test_interpolate_tile_bicubic() {
-    tile_output(InterpolateOptions::new(InterpolateMode::Bicubic).with_align_corners(false));
+fn test_interpolate_kernel_bicubic() {
+    kernel_output(InterpolateOptions::new(InterpolateMode::Bicubic).with_align_corners(false));
 }
 
 #[test]
-fn test_interpolate_tile_lanczos3() {
-    tile_output(InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false));
+fn test_interpolate_kernel_lanczos3() {
+    kernel_output(InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false));
 }
 
 #[test]
-fn test_interpolate_tile_lanczos3_identity() {
+fn test_interpolate_kernel_lanczos3_identity() {
     let client = TestRuntime::client(&Default::default());
     let options = InterpolateOptions::new(InterpolateMode::Lanczos3);
     let problem = make_problem([2, 8, 9, 4], [8, 9], options);

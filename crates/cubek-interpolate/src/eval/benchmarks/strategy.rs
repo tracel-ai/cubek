@@ -1,21 +1,9 @@
 use cubek_test_utils::CatalogEntry;
 use cubek_tile::Residence;
 
-use crate::{
-    multi_level::{
-        TileSize,
-        routines::{BlueprintStrategy, GlobalMemoryStrategy, SharedMemoryStrategy},
-    },
-    strategy::Strategy as InterpolateStrategy,
-    tiled::TileConfig,
-};
+use crate::kernel::InterpolateConfig;
 
-/// The established interpolation implementations and the experimental tile path.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum InterpolateBenchmarkStrategy {
-    Standard(InterpolateStrategy),
-    Tile(TileConfig),
-}
+pub type InterpolateBenchmarkStrategy = InterpolateConfig;
 
 /// How much of the tile geometry space one run sweeps.
 ///
@@ -142,32 +130,7 @@ fn powers_of_two(max: usize) -> impl Iterator<Item = usize> {
     core::iter::successors(Some(1usize), move |n| (n * 2 <= max).then_some(n * 2))
 }
 
-/// The two baselines the tile path is measured against. Present at every tier, since a tile time
-/// with nothing to compare it to says nothing.
-fn baselines() -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
-    vec![
-        CatalogEntry::new(
-            "global_memory",
-            "Global Memory",
-            InterpolateBenchmarkStrategy::Standard(InterpolateStrategy::GlobalMemoryStrategy(
-                BlueprintStrategy::Inferred(GlobalMemoryStrategy {
-                    tile_size: TileSize::new(16, 16),
-                }),
-            )),
-        ),
-        CatalogEntry::new(
-            "shared_memory",
-            "Shared Memory",
-            InterpolateBenchmarkStrategy::Standard(InterpolateStrategy::SharedMemoryStrategy(
-                BlueprintStrategy::Inferred(SharedMemoryStrategy {
-                    tile_size: TileSize::new(16, 16),
-                }),
-            )),
-        ),
-    ]
-}
-
-fn tile_entry(
+fn kernel_entry(
     residence: Residence,
     (planes, rows, cols): (usize, usize, usize),
 ) -> CatalogEntry<InterpolateBenchmarkStrategy> {
@@ -176,9 +139,9 @@ fn tile_entry(
         _ => ("in_place", "in-place"),
     };
     CatalogEntry::new(
-        format!("tile_{tag}_p{planes}_r{rows}_c{cols}"),
-        format!("Tile {label} (p={planes}, r={rows}, c={cols})"),
-        InterpolateBenchmarkStrategy::Tile(TileConfig::new(residence, planes, rows, cols)),
+        format!("{tag}_p{planes}_r{rows}_c{cols}"),
+        format!("{label} (p={planes}, r={rows}, c={cols})"),
+        InterpolateConfig::new(residence, planes, rows, cols),
     )
 }
 
@@ -187,10 +150,10 @@ pub fn strategies_at(
     tier: BenchTier,
     target: BenchTarget,
 ) -> Vec<CatalogEntry<InterpolateBenchmarkStrategy>> {
-    let mut entries = baselines();
+    let mut entries = Vec::new();
     for &residence in target.residences() {
         for geometry in target.geometries(tier) {
-            entries.push(tile_entry(residence, geometry));
+            entries.push(kernel_entry(residence, geometry));
         }
     }
     entries
@@ -317,24 +280,7 @@ mod tests {
     fn the_cpu_catalogue_stages_nothing() {
         for tier in TIERS {
             for entry in strategies_at(tier, BenchTarget::Cpu) {
-                if let InterpolateBenchmarkStrategy::Tile(config) = entry.value {
-                    assert_ne!(config.input_residence, Residence::Smem, "{}", entry.id);
-                }
-            }
-        }
-    }
-
-    /// The baselines are what a tile time is read against, so no tier may drop them.
-    #[test]
-    fn every_tier_keeps_the_baselines() {
-        for tier in TIERS {
-            for target in TARGETS {
-                let ids: HashSet<_> = strategies_at(tier, target)
-                    .into_iter()
-                    .map(|e| e.id)
-                    .collect();
-                assert!(ids.contains("global_memory"), "{tier:?}/{target:?}");
-                assert!(ids.contains("shared_memory"), "{tier:?}/{target:?}");
+                assert_ne!(entry.value.input_residence, Residence::Smem, "{}", entry.id);
             }
         }
     }
