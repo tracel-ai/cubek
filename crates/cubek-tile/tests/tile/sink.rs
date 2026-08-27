@@ -1,4 +1,4 @@
-//! A tile whose destination is an [`ErasedSink`] stores where a buffer-backed
+//! A tile whose destination is an [`ErasedTensor`] stores where a buffer-backed
 //! one stores.
 //!
 //! The point of a sink is that the address is never formed: the tile walks its
@@ -11,7 +11,12 @@
 //! that lands one element over shows up as another cell's value instead of as a
 //! near miss.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::ErasedSink, zspace::shape};
+use cubecl::{
+    Runtime, TestRuntime,
+    prelude::*,
+    std::tensor::{ErasedTensor, WriteOnly},
+    zspace::shape,
+};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput};
 use cubek_tile::*;
 
@@ -63,7 +68,7 @@ fn sink_kernel<E: Float>(
         shape.push(out.tensor.shape(i) as u32);
         strides.push(out.tensor.stride(i) as u32);
     }
-    let sink = ErasedSink::<E>::of_tensor::<Const<1>>(out.tensor);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.tensor);
     let mut dst = Tile::<E>::of_sink(
         sink,
         shape,
@@ -201,7 +206,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         shape.push(c.tensor.shape(i) as u32);
         strides.push(c.tensor.stride(i) as u32);
     }
-    let sink = ErasedSink::<E>::of_tensor::<Const<1>>(c.tensor);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
     let c = Tile::<E>::of_sink(
         sink,
         shape,

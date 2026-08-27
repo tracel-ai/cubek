@@ -14,7 +14,7 @@ use cubecl::{
 };
 
 use crate::*;
-use cubecl::std::tensor::ErasedSink;
+use cubecl::std::tensor::{ErasedTensor, WriteOnly};
 
 /// A lifetime-erased buffer, how to address it ([`layout`](GmemLayout)), and which part of it this
 /// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem
@@ -94,8 +94,9 @@ pub enum Destination<T: Numeric> {
     /// only: the real binding/alloc element is `Vector<T, vector_size>`, so
     /// re-grouping to lines at that width is a no-op.
     Buffer(Box<[T]>),
-    /// A destination that is not memory. See [`ErasedSink`].
-    Sink(ErasedSink<T>),
+    /// A destination that is not memory: written through its layout and never read,
+    /// which is what [`WriteOnly`] states. See [`ErasedTensor`].
+    Sink(ErasedTensor<T, WriteOnly>),
 }
 
 /// What a [`MemData`]'s values are and mean: where they go, the width they group into lines at,
@@ -418,7 +419,7 @@ impl<T: Numeric> Tile<T> {
     /// through exactly the layout those describe, so a caller that states the
     /// product's own metadata gets the store the unfused kernel would have made.
     pub fn of_sink(
-        sink: ErasedSink<T>,
+        sink: ErasedTensor<T, WriteOnly>,
         shape: Coords<u32>,
         strides: Coords<u32>,
         #[comptime] vector_size: usize,
@@ -1554,7 +1555,9 @@ impl<T: Numeric> MemData<T> {
                 .as_vectorized_mut()
                 .with_vector_size_mut::<W>()
                 .view_mut(layout),
-            Destination::Sink(sink) => ViewMut::new::<&mut ErasedSink<T>, Coords1d>(sink, layout),
+            Destination::Sink(sink) => {
+                ViewMut::new::<&mut ErasedTensor<T, WriteOnly>, Coords1d>(sink, layout)
+            }
         }
     }
 
