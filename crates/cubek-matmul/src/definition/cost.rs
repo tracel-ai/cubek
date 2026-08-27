@@ -58,12 +58,8 @@ impl MatmulCost {
         self.batches * self.m * self.n * (2 * self.k).saturating_sub(1)
     }
 
-    /// Compulsory global traffic in bytes, reading the operands and writing the
-    /// output once each, split by direction.
-    ///
-    /// Split because reads and writes have their own ceilings and a roofline
-    /// scores them separately. [`work`](Self::work) is their sum, which is what
-    /// an autotune bound wants.
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
     pub fn traffic(&self) -> (usize, usize) {
         let elements = |rows: usize, cols: usize| self.batches * rows * cols;
 

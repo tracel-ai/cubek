@@ -14,7 +14,6 @@ use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use crate::ReduceStrategy;
-use crate::components::instructions::ReduceOperationConfig;
 use crate::launch::ReduceDtypes;
 use crate::routines::ReduceCost;
 
@@ -56,13 +55,8 @@ impl cubek_test_utils::Category for Category {
         Some(&ReduceCorrectness)
     }
 
-    /// No honest compute count (a reduce is a mix of adds and comparisons depending
-    /// on `config`), so this declares reads and writes only. `TwoLaunch` reads the
-    /// input twice and writes both halves separately; `Fused` reads it once but still
-    /// writes both halves; `Single` does neither extra.
-    /// The kernel's own cost model, scaled by the passes this row's shape makes
-    /// over it: a two-launch reduction reads the input and writes the output
-    /// twice, which is the harness's doing rather than the reduction's.
+    /// Scaled by the passes the harness makes over the cost model: a two-launch
+    /// reduction reads and writes twice, which is the harness's doing.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
         let dtype = f32::elem_type_native();
         let input_elems: usize = problem.shape.iter().product();

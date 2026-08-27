@@ -48,9 +48,7 @@ impl cubek_test_utils::Category for Category {
     }
 
     /// One multiply-add per output pixel per kernel tap, and both maps plus the
-    /// filter moved once. A depthwise pass has too little arithmetic per byte to
-    /// be anything but bandwidth-bound, so the read and write counts are the ones
-    /// that decide its row.
+    /// filter moved once.
     fn work(&self, problem: &DepthwiseProblem) -> Option<CategoryWork> {
         let dtype = f32::elem_type_native();
         let elem_size = dtype.size();

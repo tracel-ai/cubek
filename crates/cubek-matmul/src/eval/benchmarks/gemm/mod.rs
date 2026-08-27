@@ -51,12 +51,6 @@ impl cubek_test_utils::Category for Category {
         Some(&GemmCorrectness)
     }
 
-    /// The kernel's own cost model, which burn already scores autotune bounds
-    /// against, rather than a second count of the same matmul.
-    ///
-    /// It also picks the compute probe, which matters here: a strategy issuing
-    /// MMA runs on hardware the scalar peak does not describe, and judged
-    /// against that peak the tensor-core strategies read 145 to 236% of it.
     fn work(&self, problem: &GemmProblem) -> Option<CategoryWork> {
         let dtype = match problem.precision {
             Precision::F32 => f32::elem_type_native(),

@@ -57,11 +57,7 @@ impl cubek_test_utils::Category for Category {
         Some(&AttentionCorrectness)
     }
 
-    /// The kernel's own cost model, which burn already scores autotune bounds
-    /// against, rather than a second count of the same attention.
-    ///
-    /// `bench` always runs in `half::f16`, mask included, which is why every
-    /// operand takes that type here.
+    /// `bench` always runs in `half::f16`, mask included.
     fn work(&self, problem: &AttentionSpec) -> Option<CategoryWork> {
         let dtype = half::f16::elem_type_native();
 

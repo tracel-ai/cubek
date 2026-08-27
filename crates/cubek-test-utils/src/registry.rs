@@ -28,11 +28,10 @@ pub fn client() -> ComputeClient<TestRuntime> {
     <TestRuntime as Runtime>::client(&device)
 }
 
-/// Process-wide memo of measured peaks, keyed by [`ThroughputKey`].
+/// Process-wide memo of measured peaks.
 ///
-/// `measure_peak_throughput` allocates and primes a probe buffer before it
-/// consults its own per-device cache, so calling it between two timed rows
-/// moves real memory even when the peak is already known.
+/// `measure_peak_throughput` primes a probe buffer before consulting its own
+/// cache, so calling it between two timed rows moves real memory regardless.
 static PEAKS: LazyLock<Mutex<HashMap<ThroughputKey, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -150,11 +149,8 @@ impl RunSamples {
     }
 }
 
-/// What a category's `(strategy, problem)` run honestly moves and computes:
-/// bytes per direction and, where meaningful, a compute op count. The blanket
-/// [`BenchmarkCategory`] adapter turns this into [`ResourceBound`]s against
-/// measured device peaks. A category builds this from `problem` alone
-/// (shapes and dtypes), never from a measurement of its own run.
+/// What a `(strategy, problem)` run honestly moves and computes, built from
+/// `problem` alone and never from a measurement of its own run.
 #[derive(Debug, Clone, Copy)]
 pub struct CategoryWork {
     /// The compute the run performs, with the probe its ceiling comes from.
@@ -169,10 +165,8 @@ pub struct CategoryWork {
 
 /// Operations a run performs, and the probe whose peak they are judged against.
 ///
-/// The probe is part of the declaration because the two compute ceilings are
-/// different hardware. A kernel issuing MMA judged against the scalar peak
-/// reports several times its own ceiling: on a 4070 Ti SUPER the tensor-core
-/// matmuls read 145 to 236% of a peak they were never running against.
+/// The probe is declared because the two compute ceilings are different
+/// hardware: an MMA kernel does not run where the scalar peak is measured.
 #[derive(Debug, Clone, Copy)]
 pub struct ComputeWork {
     /// Counted the way `key`'s probe counts them, so a multiply-add is 2 for
@@ -196,13 +190,9 @@ impl ComputeWork {
 }
 
 impl CategoryWork {
-    /// Every resource this work declares, one entry per non-zero field, as
-    /// `(kind, amount, key)` in the order the adapter scores them: Compute,
-    /// Read, Write, Launch.
-    ///
-    /// Launch joins them only under [`TimingMethod::System`]; a device-timed
-    /// row's timestamps begin once the dispatch is already paid for. It counts
-    /// one, so a strategy launching several leaves the bound a floor.
+    /// Launch joins the declared resources only under [`TimingMethod::System`];
+    /// a device-timed row's timestamps begin once the dispatch is already paid
+    /// for. It counts one, so a strategy launching several leaves it a floor.
     fn declared_resources(
         &self,
         timing: TimingMethod,
@@ -258,10 +248,8 @@ impl CategoryWork {
     }
 }
 
-/// Scores `work` against measured device peaks and fills `samples`'s
-/// `tflops`/`binding` from the median sample duration. Left unfilled (and
-/// `samples` returned as is) when there are no samples or the median duration
-/// is zero.
+/// Scores `work` against measured device peaks, from the median sample
+/// duration. Left unfilled when there are no samples or the median is zero.
 fn score(mut samples: RunSamples, work: &CategoryWork, timing: TimingMethod) -> RunSamples {
     let Some(median_secs) = samples.median_secs() else {
         return samples;
@@ -275,10 +263,8 @@ fn score(mut samples: RunSamples, work: &CategoryWork, timing: TimingMethod) -> 
     samples
 }
 
-/// The pure half of [`score`]: given already-measured resource bounds, scores
-/// them at `median_secs` and picks the binding one. Split out so the selection
-/// logic (which resource binds, what `tflops` reads) is testable against
-/// fabricated bounds instead of a device's actual measured peaks.
+/// The pure half of [`score`], so the selection is testable against fabricated
+/// bounds rather than a device's measured peaks.
 fn score_bounds(
     median_secs: f64,
     resources: &[(ResourceKind, ResourceBound)],
@@ -329,11 +315,8 @@ pub trait Category: Sync {
         num_samples: usize,
     ) -> Result<RunSamples, String>;
 
-    /// The work `problem` honestly represents, for the blanket adapter to score
-    /// against measured device peaks. Built from the problem's shapes and
-    /// dtypes alone, the same for every strategy that runs it. `None` (the
-    /// default) when no honest count exists for this problem; its run then
-    /// reports plain durations, unscored.
+    /// The work `problem` represents, the same for every strategy that runs it.
+    /// `None` leaves the run unscored, reporting plain durations.
     fn work(&self, _problem: &Self::Problem) -> Option<CategoryWork> {
         None
     }
@@ -670,12 +653,7 @@ mod tests {
         assert_eq!(binding.fraction_of_peak, 3.0);
     }
 
-    /// Mirrors the upstream roofline test this adapter builds on: a compute
-    /// bound that would finish quickly at its own peak, alongside a read bound
-    /// that would still take longer even running flat out. The slower-at-peak
-    /// resource binds even though it moves far more amount, and `tflops` still
-    /// reads the compute entry's own achieved rate regardless of which one
-    /// bound the run.
+    /// `tflops` reads the compute entry whichever resource bound the run.
     #[test]
     fn score_bounds_mixed_picks_the_slower_at_peak_resource() {
         let duration = 1.0;

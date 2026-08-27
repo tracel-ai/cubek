@@ -66,11 +66,10 @@ impl AttentionCost {
         qk_ops + sv_ops
     }
 
-    /// Compulsory global traffic in bytes, split by direction.
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
     ///
-    /// Split because reads and writes have their own ceilings and a roofline scores
-    /// them separately. [`work`](Self::work) is their sum, which is what an autotune
-    /// bound wants. Attention bias is excluded, as fast paths do not read one.
+    /// Attention bias is excluded, as fast paths do not read one.
     pub fn traffic(&self) -> (usize, usize) {
         let AttentionDims {
             batch,

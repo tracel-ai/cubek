@@ -43,11 +43,8 @@ impl ReduceCost {
         self.reduce_count * self.reduce_len.saturating_sub(1) * self.ops_per_step()
     }
 
-    /// Compulsory global traffic in bytes, split by direction.
-    ///
-    /// Split because reads and writes have their own ceilings and a roofline
-    /// scores them separately. [`work`](Self::work) is their sum, which is what
-    /// an autotune bound wants.
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
     pub fn traffic(&self) -> (usize, usize) {
         let outputs = self.reduce_count * self.outputs_per_fold();
 

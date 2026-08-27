@@ -33,9 +33,45 @@ impl InterpolateCost {
     /// selects and comparisons included, so a mode that spends its time choosing between
     /// branches is not scored as free.
     pub fn work(&self) -> Work {
+        let (read, written) = self.traffic();
+
+        Work {
+            compute_ops: self.compute_ops(),
+            bytes: read + written,
+        }
+    }
+
+    /// Operations the filter emits, selects and comparisons included.
+    pub fn compute_ops(&self) -> usize {
         match &self.problem {
-            InterpolateProblem::Forward(prob) => self.forward_work(prob),
-            InterpolateProblem::Backward(prob) => self.backward_work(prob),
+            InterpolateProblem::Forward(prob) => self.forward_work(prob).compute_ops,
+            InterpolateProblem::Backward(prob) => self.backward_work(prob).compute_ops,
+        }
+    }
+
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
+    pub fn traffic(&self) -> (usize, usize) {
+        let size = self.dtype.size();
+
+        match &self.problem {
+            InterpolateProblem::Forward(prob) => {
+                let planes = prob.batch * prob.channels;
+                let outputs = planes * prob.output_height * prob.output_width;
+                let taps = mode_properties(prob.options.mode).taps;
+                let rows_read = prob.input_height.min(prob.output_height * taps);
+                let cols_read = prob.input_width.min(prob.output_width * taps);
+
+                (planes * rows_read * cols_read * size, outputs * size)
+            }
+            InterpolateProblem::Backward(prob) => {
+                let [batch, grad_height, grad_width, channels] = prob.out_grad_shape;
+                let planes = batch * channels;
+                let grads = planes * grad_height * grad_width;
+                let outputs = planes * prob.input_size[0] * prob.input_size[1];
+
+                (grads * size, outputs * size)
+            }
         }
     }
 
