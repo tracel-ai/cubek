@@ -10,15 +10,18 @@ use cubecl::quant::scheme::QuantScheme;
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Instruction, LoadMethod, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
-    validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, IndexPolicy, IndexedTileArgLaunch, IndirectionSpec,
+    Instruction, LoadMethod, PhysicalAxis, Projection, QuantTileArgLaunch, Residence, Space,
+    StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
 pub struct Set;
 /// Typestate marker: a required [`StridedTileSource`] field is still missing.
 pub struct Unset;
+/// Typestate marker: [`indexed`](StridedTileSource::indexed) was called, so
+/// [`build`](StridedTileSource::build) yields an [`IndexedOperand`].
+pub struct Indexed;
 
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, R: Runtime> {
@@ -45,6 +48,18 @@ struct TileSourceData<'a, R: Runtime> {
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization<R>>,
+    /// Present when the operand is routed through an index tensor
+    /// ([`indexed`](StridedTileSource::indexed)).
+    indirection: Option<IndexTable<R>>,
+}
+
+/// How an operand is routed: the index tensor beside its values and the comptime
+/// [`IndirectionSpec`] saying what a table entry means. The launch-side twin of the kernel's
+/// [`Indirection`](crate::Indirection), and one thing for the same reason [`Quantization`] is: a
+/// table without a spec cannot be read, and a spec without a table has nothing to read.
+pub struct IndexTable<R: Runtime> {
+    pub table: TensorArg<R>,
+    pub spec: IndirectionSpec,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -78,6 +93,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 stage_width: None,
                 units: 0,
                 quant: None,
+                indirection: None,
             },
             _state: PhantomData,
         }
@@ -274,6 +290,40 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
             _state: PhantomData,
         }
     }
+
+    /// Route this operand through `table`: one `u32` entry per tile of `index_axis`, displacing
+    /// `target_axis`'s window origin to the entry it reads. MoE expert selection is exactly this
+    /// (`index_axis = M`, `target_axis = EXPERT`, the weights holding `EXPERT` at
+    /// [`Static(1)`](crate::Extent::Static)), and so is a `cu_seqlens` base offset.
+    ///
+    /// The indirection is a side-channel, not a mapping: the operand stays
+    /// [`direct`](Projection::direct) and untiled, so nothing below it loses a dense, cmma or
+    /// straight-fill path. Flips the typestate: `build` now yields an [`IndexedOperand`], and
+    /// [`quantized`](Self::quantized) is no longer reachable in either order (both read from the
+    /// window origin, and the lookup moves it). [`gathered`](Self::gathered) and
+    /// [`tiling`](Self::tiling) stay reachable and are refused by [`build`](Self::build) instead:
+    /// neither leaves a single dim carrying the target axis alone.
+    pub fn indexed(
+        mut self,
+        table: TensorBinding<R>,
+        index_axis: Axis,
+        target_axis: Axis,
+        policy: IndexPolicy,
+    ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
+        assert!(
+            self.data.projection.is_none(),
+            "StridedTileSource::indexed: an indirection rides beside a direct mapping, so a \
+             gathered operand has no origin for it to displace"
+        );
+        self.data.indirection = Some(IndexTable {
+            table: table.into_tensor_arg(),
+            spec: IndirectionSpec::indexed(index_axis, target_axis, policy),
+        });
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
 }
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
@@ -404,6 +454,28 @@ impl<R: Runtime> QuantOperand<R> {
     }
 }
 
+/// A built indirect operand: the values tensor and its spec, plus the index tensor and the
+/// comptime [`IndirectionSpec`] that routes it. [`StridedOperand`]'s twin.
+pub struct IndexedOperand<R: Runtime> {
+    pub tensor: TensorArg<R>,
+    pub vector_size: usize,
+    pub spec: TileSpec,
+    pub indirection: IndexTable<R>,
+}
+
+impl<R: Runtime> IndexedOperand<R> {
+    /// The operand as the kernel's [`IndexedTileArg`](crate::IndexedTileArg) launch argument:
+    /// values, table and spec as one thing.
+    pub fn arg<E: Numeric, V: Size>(self) -> IndexedTileArgLaunch<'static, E, V, R> {
+        IndexedTileArgLaunch::new(
+            self.tensor,
+            self.indirection.table,
+            self.spec,
+            self.indirection.spec,
+        )
+    }
+}
+
 impl<R: Runtime> StridedOperand<R> {
     /// Start describing a strided tile kernel operand sourced from `binding`: a
     /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
@@ -425,6 +497,7 @@ struct Realized<R: Runtime> {
     vector_size: usize,
     spec: TileSpec,
     quant: Option<Quantization<R>>,
+    indirection: Option<IndexTable<R>>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -447,6 +520,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             stage_width,
             units,
             quant,
+            indirection,
         } = self.data;
         let space = space.unwrap();
 
@@ -549,11 +623,20 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             );
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
+        if let Some(indirection) = &indirection {
+            // On the caller's thread, so a plan whose lookup never fires (or fires at a level
+            // that splits a table entry) fails with a host backtrace rather than as zeroed
+            // output from a device assert. `Tile::of_indexed` re-runs it for hand-built specs.
+            indirection
+                .spec
+                .validate(space, &space.project(spec.axes()), &spec.projection);
+        }
         Realized {
             tensor: binding.into_tensor_arg(),
             vector_size: v,
             spec,
             quant,
+            indirection,
         }
     }
 }
@@ -676,6 +759,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             vector_size,
             spec,
             quant,
+            ..
         } = self.realize();
         QuantOperand {
             tensor,
@@ -690,6 +774,25 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
     /// Build the quantized operand.
     pub fn build(self) -> QuantOperand<R> {
         self.build_quant()
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Indexed, R> {
+    /// Build the indirect operand: the plain derivation plus the index tensor that routes it.
+    pub fn build(self) -> IndexedOperand<R> {
+        let Realized {
+            tensor,
+            vector_size,
+            spec,
+            indirection,
+            ..
+        } = self.realize();
+        IndexedOperand {
+            tensor,
+            vector_size,
+            spec,
+            indirection: indirection.unwrap(),
+        }
     }
 }
 

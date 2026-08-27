@@ -10,6 +10,7 @@
 use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
@@ -18,14 +19,24 @@ pub(crate) struct SlotOperand<'a> {
     residence: Residence,
     source: StageSource,
     space: &'a Space,
+    /// The axes addressing this operand's index tensor, empty for a plain one. Carried because a
+    /// walk over one of them moves an indirect operand's window even though its own space says
+    /// nothing about that axis (see [`Space::walk_invariant`]).
+    index_axes: SmallVec<[Axis; MAX_AXES]>,
 }
 
 impl<'a> SlotOperand<'a> {
-    pub(crate) fn new(residence: Residence, source: StageSource, space: &'a Space) -> Self {
+    pub(crate) fn new(
+        residence: Residence,
+        source: StageSource,
+        space: &'a Space,
+        index_axes: SmallVec<[Axis; MAX_AXES]>,
+    ) -> Self {
         SlotOperand {
             residence,
             source,
             space,
+            index_axes,
         }
     }
 }
@@ -79,7 +90,7 @@ impl SlotPlan {
                 // is nothing to fill and nothing whose invariance could save a fill.
                 let payload = if op.residence == Residence::InPlace {
                     SlotPayload::AtRegion
-                } else if can_fix_invariants && op_space.walk_invariant(op.space) {
+                } else if can_fix_invariants && op_space.walk_invariant(op.space, &op.index_axes) {
                     SlotPayload::Windowed(WindowMode::Fixed)
                 } else {
                     SlotPayload::Windowed(WindowMode::Streamed)
@@ -199,10 +210,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let rhs_residence = rhs.residence(comptime!(&out));
         let lhs_source = lhs.stage_source();
         let rhs_source = rhs.stage_source();
+        let lhs_index_axes = lhs.index_axes();
+        let rhs_index_axes = rhs.index_axes();
         let plan = comptime!(SlotPlan::new(
             &[
-                SlotOperand::new(lhs_residence, lhs_source, &lhs.space),
-                SlotOperand::new(rhs_residence, rhs_source, &rhs.space),
+                SlotOperand::new(lhs_residence, lhs_source, &lhs.space, lhs_index_axes),
+                SlotOperand::new(rhs_residence, rhs_source, &rhs.space, rhs_index_axes),
             ],
             &op_space,
         ));
@@ -326,8 +339,14 @@ impl<T: Numeric> Ring<Tile<T>> {
     ) -> Ring<Tile<T>> {
         let residence = input.residence(comptime!(&out));
         let source = input.stage_source();
+        let index_axes = input.index_axes();
         let plan = comptime!(SlotPlan::new(
-            &[SlotOperand::new(residence, source, &input.space)],
+            &[SlotOperand::new(
+                residence,
+                source,
+                &input.space,
+                index_axes
+            )],
             &op_space,
         ));
 
@@ -490,13 +509,23 @@ mod tests {
     }
 
     fn operand(residence: Residence, delivery: Delivery, space: &Space) -> SlotOperand<'_> {
-        SlotOperand::new(residence, StageSource::Transport(delivery), space)
+        SlotOperand::new(
+            residence,
+            StageSource::Transport(delivery),
+            space,
+            SmallVec::new(),
+        )
     }
 
     /// An operand a level above already materialized into registers: no delivery, since nothing
     /// moves it.
     fn fragment(residence: Residence, space: &Space) -> SlotOperand<'_> {
-        SlotOperand::new(residence, StageSource::ResidentFragment, space)
+        SlotOperand::new(
+            residence,
+            StageSource::ResidentFragment,
+            space,
+            SmallVec::new(),
+        )
     }
 
     #[test]

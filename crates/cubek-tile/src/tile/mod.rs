@@ -399,6 +399,262 @@ impl QuantInfo {
     }
 }
 
+/// What an out-of-range table entry means.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum IndexPolicy {
+    /// The launch guarantees every entry addresses a live slice of the target axis; no test is
+    /// emitted and the window is placed wherever the entry says.
+    Trusted,
+    /// The displaced window is masked against the target axis's own bound, so an entry past it
+    /// reads as the window's [`Boundary`]. The operand must state a boundary on that axis, else
+    /// there is nothing to mask with.
+    Checked,
+}
+
+/// The comptime half of an [`Indirection`]: everything that decides *where* to look, with no
+/// buffer. Part of a kernel's identity, so two granularities never share a compiled kernel.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct IndirectionSpec {
+    /// The operand axis whose window origin the lookup displaces.
+    pub target: Axis,
+    /// Elements of `target` per table entry: a page size for a paged cache, `1` for a slice index.
+    /// Comptime so the divide folds and the divisibility rules are checkable on the host.
+    pub granularity: usize,
+    /// Which axes' region coordinates address the table, outer to inner.
+    pub index_axes: SmallVec<[Axis; MAX_AXES]>,
+    pub policy: IndexPolicy,
+}
+
+impl IndirectionSpec {
+    /// A per-tile slice index: one entry per `index_axis` tile, displacing `target`'s origin to
+    /// the entry outright (`granularity = 1`). MoE expert routing and `cu_seqlens` are both this.
+    pub fn indexed(index_axis: Axis, target: Axis, policy: IndexPolicy) -> Self {
+        IndirectionSpec {
+            target,
+            granularity: 1,
+            index_axes: SmallVec::from_slice(&[index_axis]),
+            policy,
+        }
+    }
+
+    /// Refuse a plan whose lookup could not fire correctly. `kernel` is the whole launched space,
+    /// the only one that names the index axes (an indirect operand does not span them);
+    /// `operand` is its projection onto this operand's own axes, and `projection` that operand's
+    /// mapping.
+    ///
+    /// Every rule here is also an in-kernel assumption, but a kernel-side assert fires on a
+    /// worker thread, where it reads as zeroed output rather than as a rejection, so this is the
+    /// one gate. The rules: the operand carries the target axis and does not carry it innermost
+    /// (that window is addressed in lines, not elements); the mapping is direct and untiled, so
+    /// one dim carries the target alone; some level's cut of `target` fits inside one table entry
+    /// (else the lookup never fires); that level's cut divides the entry (else a child window
+    /// starts mid-entry); every level above steps whole entries (else a window below the fire
+    /// level straddles two); and every index axis is distributed across cubes or planes rather
+    /// than lanes (a per-lane origin would hand `dense_lines` and `window_offset` a divergent
+    /// base pointer).
+    ///
+    /// One rule has no host-side site and is asserted in [`Indirection::advanced_base`]: that the
+    /// *operation*'s region actually spans each index axis. Which operands meet at a level is not
+    /// known here, and [`Region::coord`] answers `0` for an axis its space omits, so an index axis
+    /// no operand of the op spans would silently read one entry for every tile.
+    pub(crate) fn validate(&self, kernel: &Space, operand: &Space, projection: &Projection) {
+        assert!(
+            operand.contains(self.target),
+            "Indirection: the operand does not span its target axis {:?}",
+            self.target
+        );
+        let rank = projection.physical_rank();
+        assert!(
+            operand.position(self.target) + 1 < rank,
+            "Indirection: {:?} is the operand's innermost axis, whose window is addressed \
+             in lines rather than elements; a displacement there has no line to land on",
+            self.target
+        );
+        // The whole design rests on this: an indirection is a side-channel that moves a window,
+        // never a mapping that re-addresses one. A gathered dim holds the receptive field several
+        // axes reach over and a storage-tiled one splits the extent across dims, so neither has a
+        // single dim the displacement could land on.
+        assert!(
+            projection.untiled().is_direct() && !projection.is_tiled(),
+            "Indirection: an indirection rides beside a direct, untiled mapping; a gathered or \
+             storage-tiled operand has no single dim carrying {:?} alone",
+            self.target
+        );
+        assert!(
+            !self.index_axes.is_empty(),
+            "Indirection: an indirection with no index axis reads one entry for every tile"
+        );
+        assert!(
+            !self.index_axes.contains(&self.target),
+            "Indirection: {:?} both addresses the table and is displaced by it",
+            self.target
+        );
+        for &axis in self.index_axes.iter() {
+            assert!(
+                kernel.contains(axis),
+                "Indirection: {axis:?} addresses the table but is not an axis of the launched \
+                 space, so no region could ever carry a coordinate for it"
+            );
+        }
+
+        let mut partitioner = kernel.partitioner();
+        let mut fires = false;
+        while !partitioner.is_final() {
+            let edge = partitioner.edge(self.target);
+            if fires {
+                // Below the fire level nothing may move: the child window is dense by
+                // construction and carries no indirection at all.
+            } else if edge <= self.granularity {
+                assert!(
+                    self.granularity.is_multiple_of(edge),
+                    "Indirection: a level cuts {:?} into {edge}-element windows, which do \
+                     not divide the {}-element table entry, so a child window would start \
+                     mid-entry",
+                    self.target,
+                    self.granularity
+                );
+                fires = true;
+            } else {
+                assert!(
+                    edge.is_multiple_of(self.granularity),
+                    "Indirection: a level above the lookup cuts {:?} into {edge}-element \
+                     windows, which are not whole {}-element table entries, so a window below \
+                     would straddle two",
+                    self.target,
+                    self.granularity
+                );
+            }
+            for &axis in self.index_axes.iter() {
+                let scope = partitioner.distribution(axis).scope();
+                assert!(
+                    !matches!(scope, Some(ComputeScope::Unit)),
+                    "Indirection: {axis:?} addresses the table but is distributed across \
+                     lanes, so each lane would resolve a different window origin while the \
+                     dense and fragment reads below share one base pointer"
+                );
+            }
+            partitioner = partitioner.next();
+        }
+        assert!(
+            fires,
+            "Indirection: no level cuts {:?} down to a {}-element table entry, so the \
+             lookup never resolves",
+            self.target, self.granularity
+        );
+    }
+}
+
+/// A data-dependent displacement of one axis's window origin, resolved exactly once during the
+/// descent. Rides beside [`QuantInfo`] on [`MemData`] and follows its shape: the index tensor is a
+/// lifetime-erased `Box<[u32]>`, and everything deciding *where* to look is comptime
+/// ([`IndirectionSpec`]).
+///
+/// The invariant that keeps every fast path intact is that this is a side-channel, never a
+/// [`Projection`]: an indirect operand stays [`direct`](Projection::direct) and untiled, so
+/// `dense_lines`, the cmma matrix view and the straight-line fill all still describe it. Above the
+/// fire level nothing has moved; below it the sub-tile is dense and carries no indirection.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct Indirection {
+    /// The index tensor, lifetime-erased like every other tile buffer.
+    pub(crate) table: Box<[u32]>,
+    /// The offset into `table` this descent has accumulated, advanced at each
+    /// [`at`](MemData::at) by the index axes' region coordinates. Accumulated rather than read
+    /// off the window's origin: the operand need not span the index axes at all, which is the
+    /// whole point for MoE (`weights` is indexed by the token tile it never spans).
+    pub(crate) table_base: u32,
+    /// One runtime stride per entry of [`IndirectionSpec::index_axes`], same order.
+    pub(crate) table_strides: Coords<u32>,
+    #[cube(comptime)]
+    pub(crate) spec: IndirectionSpec,
+}
+
+impl IndirectionSpec {
+    /// Whether the level `space` describes is the one that resolves the lookup: its cut of the
+    /// target axis fits inside a single table entry, so the child window it is about to build
+    /// lies wholly in one slice. [`validate`](Self::validate) has already proven such a level
+    /// exists and that no window straddles an entry.
+    pub(crate) fn fires_at(&self, space: &Space) -> bool {
+        space.partitioner().edge(self.target) <= self.granularity
+    }
+}
+
+#[cube]
+impl Indirection {
+    /// This indirection with its table base advanced by `region`'s index-axis coordinates, for the
+    /// child of a level that does not yet resolve it.
+    pub(crate) fn advance(&self, region: &Region) -> Indirection {
+        Indirection {
+            table: unsafe { self.table.as_boxed_unchecked() },
+            table_base: self.advanced_base(region),
+            table_strides: self.table_strides.clone(),
+            spec: comptime!(self.spec.clone()),
+        }
+    }
+
+    /// The table offset this level reaches: the parent's, plus each index axis's region
+    /// coordinate times its stride. Read off the *region*, whose space is the operation's, not off
+    /// the window: an indirect operand need not span its index axes at all, which is the whole
+    /// point for MoE (the weights are routed by the token tile they never span).
+    fn advanced_base(&self, region: &Region) -> u32 {
+        let mut parts = Sequence::<u32>::new();
+        parts.push(self.table_base);
+        #[unroll]
+        for a in 0..comptime!(self.spec.index_axes.len()) {
+            let axis = comptime!(self.spec.index_axes[a]);
+            let spans = region.spans(axis);
+            comptime!(assert!(
+                spans,
+                "Indirection: {axis:?} addresses the table but this level's region does not span \
+                 it, so every tile would read the same entry"
+            ));
+            parts.push(
+                region
+                    .coord(axis)
+                    .fcast::<u32>()
+                    .fmul(self.table_strides.at(a)),
+            );
+        }
+        parts.fsum(comptime!(
+            (0..self.spec.index_axes.len() + 1).collect::<Vec<_>>()
+        ))
+    }
+
+    /// How far this level moves the target axis's window origin, in elements of that axis; `0`
+    /// above the level that resolves the lookup.
+    ///
+    /// The entry is addressed by the *absolute* logical coordinate `origin[target] + index·edge`,
+    /// never by the region coordinate alone: below the top level a region coordinate is a
+    /// within-parent tile index, and addressing a table with one reads garbage.
+    pub(crate) fn displacement(
+        &self,
+        region: &Region,
+        origin: &Coords<i32>,
+        #[comptime] space: Space,
+    ) -> i32 {
+        if comptime!(self.spec.fires_at(&space)) {
+            let target = comptime!(self.spec.target);
+            let edge = comptime!(space.partitioner().edge(target) as i32);
+            let granularity = comptime!(self.spec.granularity as i32).runtime();
+            let t = origin.at(comptime!(space.position(target))).fadd(
+                region
+                    .coord(target)
+                    .fcast::<i32>()
+                    .fmul(comptime!(edge).runtime()),
+            );
+            let entry = t.fdiv(granularity);
+            let base = self.advanced_base(region);
+            let found = self.table[base.fadd(entry.fcast::<u32>()).fcast::<usize>()];
+            found
+                .fcast::<i32>()
+                .fmul(granularity)
+                .fsub(entry.fmul(granularity))
+        } else {
+            0i32.runtime()
+        }
+    }
+}
+
 /// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it
 /// projects. `T` is the element the tile serves and computes in; its physical vector width is a
 /// storage detail inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
@@ -784,12 +1040,45 @@ impl<T: Numeric> Tile<T> {
     pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();
+        // An axis an indirection targets is the fourth way an operand spans one without being
+        // able to answer for it: its bound is the index tensor's range (a whole KV cache, every
+        // expert's weights), never the operation's extent along that axis.
+        let indirect = self.indirection_target();
         comptime!(
             bounded
+                && indirect != Some(axis)
                 && self.space.contains(axis)
                 && self.space.is_dynamic(axis)
                 && bound_states(&projection, axis).is_some()
         )
+    }
+
+    /// Which axes' region coordinates address this operand's index tensor; empty for an operand
+    /// with no indirection. Comptime, and read by the staging plan
+    /// ([`Space::walk_invariant`](crate::Space::walk_invariant)).
+    pub fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.index_axes(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(SmallVec::new())
+            }
+        }
+    }
+
+    /// The axis an indirection displaces on this operand, if it carries one.
+    pub(crate) fn indirection_target(&self) -> comptime_type!(Option<Axis>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.indirection_target(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(None::<Axis>)
+            }
+        }
     }
 
     /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source

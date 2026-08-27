@@ -414,9 +414,16 @@ impl Space {
     /// walk actually steps (more than one tile) is absent from the operand: the same
     /// structural fact as broadcast omission. A staged walk fills such an operand once, above
     /// the loop. Host-side, static extents.
-    pub fn walk_invariant(&self, operand: &Space) -> bool {
-        self.axes()
-            .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
+    ///
+    /// `index_axes` are the axes that address an indirect operand's index tensor
+    /// ([`Indirection`](crate::Indirection)), empty for a plain one. They belong here because
+    /// they break the equivalence the rule rests on: an operand routed by an axis it does not
+    /// span still moves when that axis steps, so reading invariance off its own space alone
+    /// would fill one expert's weights once and contract every later tile against them.
+    pub fn walk_invariant(&self, operand: &Space, index_axes: &[Axis]) -> bool {
+        self.axes().all(|axis| {
+            self.count(axis) == 1 || (!operand.contains(axis) && !index_axes.contains(&axis))
+        })
     }
 
     /// What the plane's lanes hold of this space's cells: a `Unit` axis the space doesn't span is
@@ -855,5 +862,53 @@ mod contraction_tests {
                 l
             })
             .build()
+    }
+}
+
+#[cfg(test)]
+mod invariance_tests {
+    use crate::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+    const EXPERT: Axis = Axis(3);
+
+    /// The level a MoE contraction stages its weights at: it steps `M` and cuts nothing else.
+    fn level() -> Space {
+        Tiling::new()
+            .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(1))
+            })
+            .build()
+    }
+
+    /// The structural fact the rule has always rested on: the walk steps `M` and the weights do
+    /// not span it, so their window never moves and one fill serves the whole level.
+    #[test]
+    fn an_operand_omitting_the_stepped_axis_is_invariant() {
+        let weights = level().project(&[EXPERT, K, N]);
+        assert!(level().walk_invariant(&weights, &[]));
+    }
+
+    /// The same operand routed by `M`: its window moves with every step even though its own space
+    /// still says nothing about `M`. Fixing it here would contract every later token tile against
+    /// the first tile's expert, silently.
+    #[test]
+    fn an_operand_routed_by_the_stepped_axis_is_not_invariant() {
+        let weights = level().project(&[EXPERT, K, N]);
+        assert!(!level().walk_invariant(&weights, &[M]));
+    }
+
+    /// An index axis the walk does not step leaves the operand invariant: the lookup resolves to
+    /// the same entry at every region, so one fill is still one window.
+    #[test]
+    fn an_index_axis_the_walk_does_not_step_stays_invariant() {
+        let weights = level().project(&[EXPERT, K, N]);
+        assert!(level().walk_invariant(&weights, &[N]));
     }
 }

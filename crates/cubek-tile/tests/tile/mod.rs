@@ -6,6 +6,7 @@ mod depthwise;
 mod instruction;
 mod launcher;
 mod matmul;
+mod moe;
 mod packed;
 mod procedural;
 mod quant;
