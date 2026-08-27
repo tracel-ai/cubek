@@ -46,6 +46,7 @@ fn peak_per_s(kind: ResourceKind, key: ThroughputKey) -> f64 {
         match kind {
             ResourceKind::Compute => value.ops_per_s(),
             ResourceKind::Read | ResourceKind::Write => value.bytes_per_s(&key),
+            ResourceKind::Launch => 1.0 / value.duration_per_op().as_secs_f64(),
         }
     })
 }
@@ -98,6 +99,8 @@ pub enum ResourceKind {
     Compute,
     Read,
     Write,
+    /// Getting the kernel onto the device at all, whatever it then does.
+    Launch,
 }
 
 /// The resource that bound a run's duration, the slowest of the declared
@@ -170,9 +173,16 @@ pub struct CategoryWork {
 impl CategoryWork {
     /// Every resource this work declares, one entry per non-zero field, as
     /// `(kind, amount, key)` in the order the adapter scores them: Compute,
-    /// Read, Write.
-    fn declared_resources(&self) -> Vec<(ResourceKind, usize, ThroughputKey)> {
-        let mut out = Vec::with_capacity(3);
+    /// Read, Write, Launch.
+    ///
+    /// Launch joins them only under [`TimingMethod::System`]; a device-timed
+    /// row's timestamps begin once the dispatch is already paid for. It counts
+    /// one, so a strategy launching several leaves the bound a floor.
+    fn declared_resources(
+        &self,
+        timing: TimingMethod,
+    ) -> Vec<(ResourceKind, usize, ThroughputKey)> {
+        let mut out = Vec::with_capacity(4);
 
         if self.compute_ops > 0 {
             let key = ThroughputKey {
@@ -198,14 +208,20 @@ impl CategoryWork {
             };
             out.push((ResourceKind::Write, self.bytes_written, key));
         }
+        if !out.is_empty() && timing == TimingMethod::System {
+            let key = ThroughputKey {
+                mode: ThroughputMode::Launch,
+            };
+            out.push((ResourceKind::Launch, 1, key));
+        }
 
         out
     }
 
     /// The declared resources as `(kind, bound)` pairs, peaks pulled from the
     /// process-wide memo (see [`peak_per_s`]).
-    fn resources(&self) -> Vec<(ResourceKind, ResourceBound)> {
-        self.declared_resources()
+    fn resources(&self, timing: TimingMethod) -> Vec<(ResourceKind, ResourceBound)> {
+        self.declared_resources(timing)
             .into_iter()
             .map(|(kind, amount, key)| {
                 (
@@ -224,12 +240,12 @@ impl CategoryWork {
 /// `tflops`/`binding` from the median sample duration. Left unfilled (and
 /// `samples` returned as is) when there are no samples or the median duration
 /// is zero.
-fn score(mut samples: RunSamples, work: &CategoryWork) -> RunSamples {
+fn score(mut samples: RunSamples, work: &CategoryWork, timing: TimingMethod) -> RunSamples {
     let Some(median_secs) = samples.median_secs() else {
         return samples;
     };
 
-    let resources = work.resources();
+    let resources = work.resources(timing);
     let (tflops, binding) = score_bounds(median_secs, &resources);
     samples.tflops = tflops;
     samples.binding = binding;
@@ -436,7 +452,7 @@ impl<C: Category> BenchmarkCategory for C {
             let Some(work) = Category::work(self, &problem.value) else {
                 continue;
             };
-            for (kind, _, key) in work.declared_resources() {
+            for (kind, _, key) in work.declared_resources(Category::timing_method(self)) {
                 if seen.insert(key) {
                     peak_per_s(kind, key);
                 }
@@ -463,7 +479,7 @@ impl<C: Category> BenchmarkCategory for C {
             .ok_or_else(|| format!("unknown strategy: {strategy_id}"))?;
         let samples = Category::bench(self, &strategy.value, &problem.value, num_samples)?;
         Ok(match Category::work(self, &problem.value) {
-            Some(work) => score(samples, &work),
+            Some(work) => score(samples, &work, Category::timing_method(self)),
             None => samples,
         })
     }
@@ -519,11 +535,15 @@ mod tests {
         }
     }
 
-    /// Zero-ops, zero-bytes work declares no resource: nothing to score, so the
-    /// adapter's row falls back to plain durations.
+    /// The timing method that charges nothing for the dispatch.
+    const NO_LAUNCH: TimingMethod = TimingMethod::Device;
+
+    /// Zero-ops, zero-bytes work declares no resource, the launch it would
+    /// still pay for included: the dispatch bound rides along with declared
+    /// work rather than standing in for it.
     #[test]
     fn zero_work_declares_no_resources() {
-        let resources = work(0, 0, 0).resources();
+        let resources = work(0, 0, 0).resources(TimingMethod::System);
         assert!(resources.is_empty());
 
         let (tflops, binding) = score_bounds(1.0, &resources);
@@ -535,7 +555,7 @@ mod tests {
     /// declared byte count as its `amount`; no `Write` or `Compute` entry.
     #[test]
     fn read_only_work_declares_a_single_read_resource() {
-        let resources = work(0, 4096, 0).resources();
+        let resources = work(0, 4096, 0).resources(NO_LAUNCH);
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Read);
         assert_eq!(resources[0].1.amount, 4096);
@@ -545,7 +565,7 @@ mod tests {
     /// the read-only case.
     #[test]
     fn write_only_work_declares_a_single_write_resource() {
-        let resources = work(0, 0, 2048).resources();
+        let resources = work(0, 0, 2048).resources(NO_LAUNCH);
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Write);
         assert_eq!(resources[0].1.amount, 2048);
@@ -555,7 +575,7 @@ mod tests {
     /// field's amount, compute first.
     #[test]
     fn mixed_work_declares_compute_read_and_write_resources() {
-        let resources = work(1_000_000, 4096, 1024).resources();
+        let resources = work(1_000_000, 4096, 1024).resources(NO_LAUNCH);
         assert_eq!(resources.len(), 3);
         assert_eq!(
             resources.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
@@ -573,9 +593,9 @@ mod tests {
     /// Same-shaped work keys to the same `ThroughputKey`; a different shape does not.
     #[test]
     fn declared_resources_key_on_shape_not_identity() {
-        let a = work(0, 4096, 0).declared_resources();
-        let b = work(0, 4096, 0).declared_resources();
-        let c = work(0, 8192, 0).declared_resources();
+        let a = work(0, 4096, 0).declared_resources(NO_LAUNCH);
+        let b = work(0, 4096, 0).declared_resources(NO_LAUNCH);
+        let c = work(0, 8192, 0).declared_resources(NO_LAUNCH);
 
         assert_eq!(a[0].2, b[0].2);
         assert_ne!(a[0].2, c[0].2);
@@ -661,5 +681,67 @@ mod tests {
         let binding = binding.expect("a usable peak binds");
         assert_eq!(binding.resource, ResourceKind::Read);
         assert_eq!(binding.fraction_of_peak, 0.9);
+    }
+
+    /// A device-timed row's timestamps start once the dispatch is already
+    /// paid for, so charging it for one would score it against time it never
+    /// spent.
+    #[test]
+    fn launch_is_declared_only_when_the_timing_measures_it() {
+        let timed = work(0, 0, 2048).declared_resources(TimingMethod::System);
+        assert_eq!(timed.len(), 2);
+        assert_eq!(timed[1].0, ResourceKind::Launch);
+        assert_eq!(timed[1].1, 1);
+        assert_eq!(
+            timed[1].2,
+            ThroughputKey {
+                mode: ThroughputMode::Launch
+            }
+        );
+
+        let untimed = work(0, 0, 2048).declared_resources(TimingMethod::Device);
+        assert_eq!(untimed.len(), 1);
+        assert_eq!(untimed[0].0, ResourceKind::Write);
+    }
+
+    /// A launch bound's fraction of peak is the share of the run the dispatch
+    /// cost, not a rate: 8us of overhead in a 10us run reads 80%.
+    #[test]
+    fn score_bounds_binds_on_launch_for_a_run_that_barely_outlasts_it() {
+        let write = ResourceBound {
+            amount: 16_384,
+            peak_per_s: 20e9,
+        }; // 0.8us at peak, 8% of the run
+        let launch = ResourceBound {
+            amount: 1,
+            peak_per_s: 125_000.0,
+        }; // one launch every 8us
+
+        let resources = vec![(ResourceKind::Write, write), (ResourceKind::Launch, launch)];
+        let (_, binding) = score_bounds(10e-6, &resources);
+
+        let binding = binding.expect("a usable peak binds");
+        assert_eq!(binding.resource, ResourceKind::Launch);
+        assert!((binding.fraction_of_peak - 0.8).abs() < 1e-9);
+    }
+
+    /// The same two resources on a run long enough to bury the dispatch.
+    #[test]
+    fn score_bounds_ignores_launch_once_the_run_outgrows_it() {
+        let write = ResourceBound {
+            amount: 2_000_000_000,
+            peak_per_s: 20e9,
+        }; // 0.1s at peak, the whole run
+        let launch = ResourceBound {
+            amount: 1,
+            peak_per_s: 125_000.0,
+        }; // 8us of a 0.1s run
+
+        let resources = vec![(ResourceKind::Write, write), (ResourceKind::Launch, launch)];
+        let (_, binding) = score_bounds(0.1, &resources);
+
+        let binding = binding.expect("a usable peak binds");
+        assert_eq!(binding.resource, ResourceKind::Write);
+        assert_eq!(binding.fraction_of_peak, 1.0);
     }
 }

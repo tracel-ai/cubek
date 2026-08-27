@@ -74,6 +74,7 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
     }
 
     let mut any_over_peak = false;
+    let mut any_launch_bound = false;
 
     for problem in category.problems() {
         for strategy in category.strategies() {
@@ -92,6 +93,10 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                         let suffix = if over_peak { ", over peak" } else { "" };
                         let achieved_gb_s = binding.achieved_per_s / 1e9;
                         match binding.resource {
+                            ResourceKind::Launch => {
+                                any_launch_bound = true;
+                                println!("launch overhead: {pct:.0}% of the run{suffix}");
+                            }
                             ResourceKind::Compute => {
                                 println!("bound by compute ({pct:.0}% of peak{suffix})");
                             }
@@ -116,6 +121,12 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
                 Err(err) => println!("error: {err}"),
             }
         }
+    }
+
+    if any_launch_bound {
+        println!(
+            "note: a row reporting \"launch overhead\" spent more of its wall time being dispatched than doing the work it declares. The percentage is the share of the run that dispatch cost, so a small one says the run is not explained by anything the roofline knows about, not that the dispatch was cheap."
+        );
     }
 
     if any_over_peak {
