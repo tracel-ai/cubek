@@ -1,4 +1,4 @@
-//! Top-k past `TOPK_UNROLL_LIMIT`.
+//! Top-k past `TOPK_UNROLL_BUDGET`.
 //!
 //! `plane_topk_insert`, `plane_topk_merge` and `topk_finalize_*` each walk all
 //! `k` accumulator slots for each of their `k` candidates. Both levels used to
@@ -24,8 +24,9 @@ use cubek_reduce::{
 
 use crate::reduce::it::test_case::TestCase;
 
-/// Past `TOPK_UNROLL_LIMIT`, which is 8.
-const K: usize = 12;
+/// Past the budget for the `k`-by-`k` nests, which roll once `k * k` exceeds
+/// `TOPK_UNROLL_BUDGET`. The `k * k * vector_size` nests roll well before this.
+const K: usize = 40;
 
 fn case(routine: RoutineStrategy, parallel_output_vectorization: bool) -> TestCase {
     TestCase::new::<f32>(
@@ -69,8 +70,8 @@ fn unit() -> RoutineStrategy {
 /// minutes between `k = 64` and `k = 128`, and never returned at 300 — so
 /// without the fix this test does not finish rather than reporting red.
 ///
-/// The `k = 12` cases below are the correctness half: they cover the rolled form
-/// of every selection network, but they pass either way, since `k = 12` unrolled
+/// The `K` cases below are the correctness half: they cover the rolled form of
+/// every selection network, but they pass either way, since that `k` unrolled
 /// still compiles.
 #[test]
 fn topk_300_terminates_and_matches_reference() {
