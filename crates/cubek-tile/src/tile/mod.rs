@@ -57,10 +57,10 @@ impl<T: Numeric> Tile<T> {
 
     /// Create a procedural tile while preserving the recipe's factorization for contraction: the
     /// consumer sees one factor per contracted axis instead of one opaque field.
-    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(
-        _space: Space,
-        _recipe: R,
-    ) -> Self {
+    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(_space: Space, _recipe: R) -> Self
+    where
+        R::ExpandType: RecipeAxisDeps,
+    {
         unexpanded!()
     }
 
@@ -68,7 +68,10 @@ impl<T: Numeric> Tile<T> {
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
-    ) -> TileExpand<T> {
+    ) -> TileExpand<T>
+    where
+        R::ExpandType: SeparableRecipeOps<T>,
+    {
         // A separable procedural tile is always evaluated in place. This invariant is load-bearing
         // for normalization: staging a recipe into shared memory would drop its factorization and
         // normalization metadata without diagnostic.
@@ -716,6 +719,23 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether a selected separable factor reads an axis of its recipe coordinates. Backed and
+    /// opaque tiles answer conservatively because no separable schedule may index them anyway.
+    pub(crate) fn factor_addresses(
+        &self,
+        #[comptime] factor: usize,
+        #[comptime] axis: Axis,
+    ) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.factor_addresses(factor, axis),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(true),
+        }
+    }
+
     /// This operand's window sign, for a stage recording where it was filled from.
     pub(crate) fn window_signed(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
@@ -732,6 +752,28 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.boundaries.clone()),
             _ => comptime!(SmallVec::new()),
+        }
+    }
+
+    /// The physical boundaries factor-local normalization tests. A shared-memory tile preserves
+    /// these on its source window even though its resident window itself no longer overhangs.
+    pub(crate) fn separable_boundaries(
+        &self,
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) => comptime!(d.window.boundaries.clone()),
+            TileKind::Smem(d) =>
+            {
+                #[comptime]
+                match &d.source_window {
+                    ComptimeOption::Some(source) => comptime!(source.boundaries.clone()),
+                    ComptimeOption::None => comptime!(SmallVec::new()),
+                }
+            }
+            TileKind::Procedural(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(SmallVec::new()),
         }
     }
 
@@ -1150,6 +1192,43 @@ impl<T: Numeric> Tile<T> {
                 )
             }
         }
+    }
+}
+
+impl<T: Numeric> Tile<T> {
+    pub(crate) fn factor_dependencies(
+        &self,
+        _factors: Option<usize>,
+        _row: Axis,
+        _col: Axis,
+    ) -> comptime_type!(Option<Vec<(bool, bool)>>) {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> TileExpand<T> {
+    pub(crate) fn __expand_factor_dependencies_method(
+        &self,
+        scope: &Scope,
+        factors: Option<usize>,
+        row: Axis,
+        col: Axis,
+    ) -> Option<Vec<(bool, bool)>> {
+        factors.map(|factors| {
+            (0..factors)
+                .map(|f| match &self.tile_kind {
+                    TileKindExpand::Procedural(data) => (
+                        data.__expand_factor_addresses_method(scope, f, row),
+                        data.__expand_factor_addresses_method(scope, f, col),
+                    ),
+                    TileKindExpand::Gmem(_)
+                    | TileKindExpand::Smem(_)
+                    | TileKindExpand::PlaneTile(_)
+                    | TileKindExpand::PlanePartition(_)
+                    | TileKindExpand::TmaGmem(_) => (true, true),
+                })
+                .collect()
+        })
     }
 }
 

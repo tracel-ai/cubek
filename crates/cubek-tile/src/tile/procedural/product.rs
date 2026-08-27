@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use super::{Recipe, RecipeCoords, RecipeExpand};
+use super::{Recipe, RecipeAxisDeps, RecipeCoords, RecipeExpand};
 
 /// A recipe that factorizes into one factor per contracted axis, `R(coords) = ∏ᵢ Rᵢ(coords)`,
 /// factor `i` varying only along the `i`-th contracted axis. The gather microkernel uses this
@@ -39,6 +39,16 @@ impl<T: Numeric, A: Recipe<T>, B: Recipe<T>> Recipe<T> for Product<A, B> {
     }
 }
 
+impl<A: CubeType, B: CubeType> RecipeAxisDeps for ProductExpand<A, B>
+where
+    A::ExpandType: RecipeAxisDeps,
+    B::ExpandType: RecipeAxisDeps,
+{
+    fn addresses(&self, scope: &Scope, axis: crate::Axis) -> bool {
+        self.lhs.addresses(scope, axis) || self.rhs.addresses(scope, axis)
+    }
+}
+
 /// The product of one factor per contracted axis, in contraction order: the separable kernel
 /// `K₀ ⊗ K₁ ⊗ … ⊗ Kₙ₋₁`. Rank is the sequence's length, so one type serves a 1-D, 2-D or
 /// volumetric filter, and each factor is free to read a different axis of the same recipe
@@ -50,6 +60,20 @@ impl<T: Numeric, A: Recipe<T>, B: Recipe<T>> Recipe<T> for Product<A, B> {
 #[derive(CubeType, Clone)]
 pub struct SeparableProduct<R: CubeType> {
     pub factors: Sequence<R>,
+}
+
+impl<R: CubeType> RecipeAxisDeps for SeparableProductExpand<R>
+where
+    R::ExpandType: RecipeAxisDeps,
+{
+    fn addresses(&self, scope: &Scope, axis: crate::Axis) -> bool {
+        (0..self.factors.len()).any(|f| {
+            let f = NativeExpand::from_lit(scope, f);
+            self.factors
+                .__expand_index_method(scope, f)
+                .addresses(scope, axis)
+        })
+    }
 }
 
 /// Construct a [`SeparableProduct`] from its factors, for the reason [`sum_of`](super::sum_of)
