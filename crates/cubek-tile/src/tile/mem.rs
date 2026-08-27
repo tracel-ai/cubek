@@ -14,6 +14,7 @@ use cubecl::{
 };
 
 use crate::*;
+use cubecl::prelude::ReadOnly;
 use cubecl::std::tensor::{ErasedTensor, WriteOnly};
 
 /// A lifetime-erased buffer, how to address it ([`layout`](GmemLayout)), and which part of it this
@@ -78,18 +79,24 @@ pub struct MemData<T: Numeric> {
     pub(crate) source_window: ComptimeOption<SourceWindow>,
 }
 
-/// Where a [`MemData`]'s values go, and what they mean when they get there.
+/// What backs a [`MemData`]'s values, and what can be done with them there.
 ///
-/// The two are not two spellings of one thing. A [`Buffer`](Destination::Buffer)
-/// has an address: it can be read back, sliced, re-typed, staged into shared
-/// memory, handed to a tensor-map load. A [`Sink`](Destination::Sink) has none —
-/// storing to it is a *call*, which is what lets a kernel hand its values to a
-/// generated epilogue instead of writing them — so every one of those is a
-/// comptime panic rather than a fallback, and the only thing it serves is the
-/// layout-addressed write ([`MemData::write_view`]).
+/// These are not three spellings of one thing. A [`Buffer`](Backing::Buffer) has
+/// an address: it can be read back, sliced, re-typed, staged into shared memory,
+/// handed to a tensor-map load. The erased two have none — reaching them is a
+/// *call*, which is what lets a kernel hand its values to a generated epilogue,
+/// or take them from a generated producer, instead of moving them through
+/// memory. So every address-shaped operation is a comptime panic rather than a
+/// fallback, and what each serves is one layout-addressed view:
+/// [`write_view`](MemData::write_view) for the sink,
+/// [`read_view`](MemData::read_view) for the source.
+///
+/// The visibility markers carry the halves the prose used to. A sink is written
+/// and never read, a source read and never written, and neither can be handed
+/// where the other belongs without the type saying so.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum Destination<T: Numeric> {
+pub enum Backing<T: Numeric> {
     /// Bytes this kernel addresses directly. Scalar-typed by Rust-side erasure
     /// only: the real binding/alloc element is `Vector<T, vector_size>`, so
     /// re-grouping to lines at that width is a no-op.
@@ -97,6 +104,10 @@ pub enum Destination<T: Numeric> {
     /// A destination that is not memory: written through its layout and never read,
     /// which is what [`WriteOnly`] states. See [`ErasedTensor`].
     Sink(ErasedTensor<T, WriteOnly>),
+    /// A source that is not memory: read through its layout and never written,
+    /// which is what [`ReadOnly`] states. The fuse-on-read twin of
+    /// [`Sink`](Backing::Sink).
+    Source(ErasedTensor<T, ReadOnly>),
 }
 
 /// What a [`MemData`]'s values are and mean: where they go, the width they group into lines at,
@@ -106,8 +117,8 @@ pub enum Destination<T: Numeric> {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Store<T: Numeric> {
-    /// Where the values go.
-    pub(crate) destination: Destination<T>,
+    /// What backs the values.
+    pub(crate) backing: Backing<T>,
     /// Physical line size (`Vector<T, vector_size>`) of the destination, `1` when
     /// unvectorized; held comptime so `size!` can read it.
     #[cube(comptime)]
@@ -133,11 +144,16 @@ impl<T: Numeric> Store<T> {
     // suggestion does not apply.
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer(&self) -> &Box<[T]> {
-        match &self.destination {
-            Destination::Buffer(buffer) => buffer,
-            Destination::Sink(_) => panic!(
-                "Store::buffer: this tile's destination is a sink, which has no address — it can \
+        match &self.backing {
+            Backing::Buffer(buffer) => buffer,
+            Backing::Sink(_) => panic!(
+                "Store::buffer: this tile's backing is a sink, which has no address — it can \
                  only be written through its layout"
+            ),
+            Backing::Source(_) => panic!(
+                "Store::buffer: this tile's backing is an erased source, which has no address — \
+                 it can only be read through its layout (MemData::read_view), so the slice-shaped \
+                 paths (a dense run, a re-typed quant storage, a tensor-map load) are closed to it"
             ),
         }
     }
@@ -145,11 +161,14 @@ impl<T: Numeric> Store<T> {
     /// The mutable twin of [`buffer`](Self::buffer).
     #[allow(clippy::borrowed_box)]
     pub(crate) fn buffer_mut(&mut self) -> &mut Box<[T]> {
-        match &mut self.destination {
-            Destination::Buffer(buffer) => buffer,
-            Destination::Sink(_) => panic!(
-                "Store::buffer_mut: this tile's destination is a sink, which has no address — it \
+        match &mut self.backing {
+            Backing::Buffer(buffer) => buffer,
+            Backing::Sink(_) => panic!(
+                "Store::buffer_mut: this tile's backing is a sink, which has no address — it \
                  can only be written through its layout"
+            ),
+            Backing::Source(_) => panic!(
+                "Store::buffer_mut: this tile's backing is an erased source, which is read-only"
             ),
         }
     }
@@ -381,14 +400,14 @@ impl<T: Numeric> Tile<T> {
             shape.push(tensor.shape(i) as u32);
             strides.push(tensor.stride(i) as u32);
         }
-        let destination = Destination::<T>::new_Buffer(unsafe {
+        let backing = Backing::<T>::new_Buffer(unsafe {
             tensor
                 .as_slice()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         });
         Tile::<T>::of_impl(
-            destination,
+            backing,
             shape,
             strides,
             tensor.vector_size(),
@@ -401,7 +420,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// A tile whose values are handed to `sink` instead of stored — see
-    /// [`Destination`].
+    /// [`Backing`].
     ///
     /// The geometry is *stated* rather than read, because a destination with no
     /// address has none to read: `shape` and `strides` are the physical extents
@@ -418,7 +437,41 @@ impl<T: Numeric> Tile<T> {
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
         Tile::<T>::of_impl(
-            Destination::<T>::new_Sink(sink),
+            Backing::<T>::new_Sink(sink),
+            shape,
+            strides,
+            vector_size,
+            space,
+            spec,
+            ComptimeOption::new_None(),
+            Coords::<u32>::new(),
+            Coords::<i32>::new(),
+        )
+    }
+
+    /// A tile whose values come from `source` instead of from memory — the
+    /// fuse-on-read twin of [`of_sink`](Tile::of_sink). See [`Backing`].
+    ///
+    /// The geometry is *stated* for the same reason it is there: a source with
+    /// no address has none to read off. `shape` and `strides` are the physical
+    /// extents and strides in scalars the operand *would* have had, and
+    /// `vector_size` the line width the source serves. The tile reads through
+    /// exactly the layout those describe, so a caller that states the producer's
+    /// own metadata gets the reads the unfused kernel would have made.
+    ///
+    /// A source serves the layout-addressed reads and only those. It cannot be
+    /// staged into shared memory, read dense, quantized, or loaded by a tensor
+    /// map: each of those wants an address rather than a call, and says so.
+    pub fn of_source(
+        source: ErasedTensor<T, ReadOnly>,
+        shape: Coords<u32>,
+        strides: Coords<u32>,
+        #[comptime] vector_size: usize,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        Tile::<T>::of_impl(
+            Backing::<T>::new_Source(source),
             shape,
             strides,
             vector_size,
@@ -432,7 +485,7 @@ impl<T: Numeric> Tile<T> {
 
     #[allow(clippy::too_many_arguments)]
     fn of_impl(
-        destination: Destination<T>,
+        backing: Backing<T>,
         // `shape` and `strides` are the destination's physical extents and
         // strides in scalars, one per physical axis; `bound_width` the binding's
         // own line width, on top of which a packed destination serves
@@ -566,7 +619,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind: TileKind::new_Gmem(MemData::<T> {
                 store: Store::<T> {
-                    destination,
+                    backing,
                     vector_size: comptime!(vector_size),
                     quant,
                     packing: comptime!(packing),
@@ -883,7 +936,7 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         // Shared memory is always an address: a stage is read back by the
         // instruction that consumes it, which is the one thing a sink cannot do.
-        let destination = Destination::<T>::new_Buffer(unsafe {
+        let backing = Backing::<T>::new_Buffer(unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
@@ -896,7 +949,7 @@ impl<T: Numeric> MemData<T> {
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
-                    destination,
+                    backing,
                     vector_size: meta.vector_size,
                     quant,
                     packing: comptime!(packing),
@@ -970,7 +1023,8 @@ impl<T: Numeric> Tile<T> {
                          (Tile::copy_from, Tile::matrix_transparent)"
                     )
                 }
-                g.lines::<W>().view(g.base()).view(g.window())
+                let base = g.base();
+                g.read_view::<W>(base).view(g.window())
             }
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -1528,6 +1582,12 @@ impl<T: Numeric> MemData<T> {
     /// The buffer re-grouped into `Vector<T, W>` lines, which the line-unit base/window
     /// layouts address. `W` is the width the buffer already has, so the regroup is a
     /// no-op; only the cmma row stride widens back to scalars ([`row_stride`](MemData::row_stride)).
+    ///
+    /// Buffers only, and only where a *slice* is what is wanted:
+    /// [`dense_lines`](MemData::dense_lines) addresses one contiguous run by
+    /// index and has no layout to walk. Every layout-addressed read goes through
+    /// [`read_view`](MemData::read_view) instead, which an erased source serves
+    /// and this cannot.
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.store.buffer().as_vectorized().with_vector_size::<W>()
     }
@@ -1544,23 +1604,52 @@ impl<T: Numeric> MemData<T> {
             .with_vector_size_mut::<W>()
     }
 
-    /// The destination as a [`ViewMut`] addressed by `layout` — the write path,
-    /// and the only one a [`Sink`](Destination::Sink) serves.
+    /// The backing as a [`ViewMut`] addressed by `layout` — the write path, and
+    /// the only one a [`Sink`](Backing::Sink) serves.
     ///
-    /// The layout is the same for both destinations, which is the point: a sink
-    /// is addressed by the tile's own `GmemLayout` exactly as a buffer is, and
-    /// what differs is only what happens at the end of the address — a store, or
-    /// a call. So every mutable view above composes onto this and none of them
-    /// has to know which destination it has.
+    /// The layout is the same for every backing, which is the point: a sink is
+    /// addressed by the tile's own `GmemLayout` exactly as a buffer is, and what
+    /// differs is only what happens at the end of the address — a store, or a
+    /// call. So every mutable view above composes onto this and none of them has
+    /// to know what it is writing to.
     fn write_view<W: Size>(&mut self, layout: GmemLayout) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
-        match &mut self.store.destination {
-            Destination::Buffer(buffer) => buffer
+        match &mut self.store.backing {
+            Backing::Buffer(buffer) => buffer
                 .as_vectorized_mut()
                 .with_vector_size_mut::<W>()
                 .view_mut(layout),
-            Destination::Sink(sink) => {
+            Backing::Sink(sink) => {
                 ViewMut::new::<&mut ErasedTensor<T, WriteOnly>, Coords1d>(sink, layout)
             }
+            Backing::Source(_) => panic!(
+                "MemData::write_view: this tile's backing is an erased source, which is read-only"
+            ),
+        }
+    }
+
+    /// The backing as a [`View`] addressed by `layout` — the read path, and the
+    /// only one a [`Source`](Backing::Source) serves.
+    ///
+    /// The mirror of [`write_view`](MemData::write_view), and for the same
+    /// reason: every read view above composes onto this rather than onto
+    /// [`lines`](MemData::lines), so a source that has no slice to hand out is
+    /// still read exactly where a buffer is read.
+    ///
+    /// What that leaves out is the slice-shaped half, and deliberately. A dense
+    /// run wants a contiguous slice; a quantized read re-types the buffer to its
+    /// storage element; a tma load wants a tensor map. None of the three is a
+    /// view over `Coords1d`, so none of them narrows to a call, and each keeps
+    /// saying so through [`Store::buffer`].
+    fn read_view<W: Size>(&self, layout: GmemLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
+        match &self.store.backing {
+            Backing::Buffer(buffer) => buffer.as_vectorized().with_vector_size::<W>().view(layout),
+            Backing::Source(source) => {
+                View::new::<&ErasedTensor<T, ReadOnly>, Coords1d>(source, layout)
+            }
+            Backing::Sink(_) => panic!(
+                "MemData::read_view: this tile's backing is a sink, which is written and never \
+                 read"
+            ),
         }
     }
 
@@ -1689,8 +1778,7 @@ impl<T: Numeric> MemData<T> {
             )
         }
         MaskedView::new(
-            self.lines::<W>()
-                .view(self.base())
+            self.read_view::<W>(self.base())
                 .view(self.window().with_guard(guard))
                 .view(layout),
             comptime!(guard.checks() && self.access.overhang.masks()),
@@ -1735,8 +1823,7 @@ impl<T: Numeric> MemData<T> {
     /// carrying the `check` flag so a flat scan masks the overhang without being asked.
     pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         FlatView::new(
-            self.lines::<W>()
-                .view(self.base())
+            self.read_view::<W>(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
             comptime!(self.access.overhang.masks()),
@@ -2121,7 +2208,7 @@ impl<T: Numeric> MemData<T> {
 
         MemData::<T> {
             store: Store::<T> {
-                destination: self.store.destination.clone(),
+                backing: self.store.backing.clone(),
                 vector_size: comptime!(self.store.vector_size),
                 quant,
                 packing: comptime!(self.store.packing),

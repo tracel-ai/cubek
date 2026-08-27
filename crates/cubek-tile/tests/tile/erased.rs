@@ -1,13 +1,16 @@
-//! A tile whose destination is an [`ErasedTensor`] stores where a buffer-backed
-//! one stores.
+//! A tile backed by an [`ErasedTensor`] reads and stores where a buffer-backed
+//! one reads and stores.
 //!
-//! The point of a sink is that the address is never formed: the tile walks its
-//! layout exactly as it would over memory, and what happens at the end of the
-//! walk is a call rather than a store. So the property worth pinning is that the
-//! walk is *unchanged* — the same kernel, over the same space and the same spec,
-//! must put the same value in the same place whichever destination it was given.
+//! The point of an erased backing is that the address is never formed: the tile
+//! walks its layout exactly as it would over memory, and what happens at the end
+//! of the walk is a call rather than a load or a store. So the property worth
+//! pinning is that the walk is *unchanged* — the same kernel, over the same
+//! space and the same spec, must touch the same place whichever backing it was
+//! given. That is what makes a fused operand a drop-in for the kernel it
+//! replaces, on either side: [`WriteOnly`] for fuse-on-write, [`ReadOnly`] for
+//! fuse-on-read.
 //!
-//! The values are `row * COLS + col` rather than anything smooth, so a store
+//! The values are `row * COLS + col` rather than anything smooth, so a touch
 //! that lands one element over shows up as another cell's value instead of as a
 //! near miss.
 
@@ -304,6 +307,55 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
+/// The same contraction again, this time reading its **lhs** through an erased source.
+///
+/// The mirror of [`sink_matmul`], and the reason the read path had to become a view: an operand
+/// tile reads through `matrix_transparent`, which composes onto `MemData::read_view` exactly as
+/// the drain composes onto `write_view`. Nothing about the leaf changes — it asks the same layout
+/// for the same coordinates, and what answers is a call instead of a load.
+#[cube(launch)]
+fn source_matmul<E: Numeric, EA: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    // The geometry a source cannot be asked for, taken off the tensor behind it.
+    let mut shape = Coords::<u32>::new();
+    let mut strides = Coords::<u32>::new();
+    #[unroll]
+    for i in 0..2usize {
+        shape.push(a.tensor.shape(i) as u32);
+        strides.push(a.tensor.stride(i) as u32);
+    }
+    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.tensor);
+    let a = Tile::<E>::of_source(
+        source,
+        shape,
+        strides,
+        1usize,
+        comptime!(space.clone()),
+        comptime!(a.spec.clone()),
+    );
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// Which backing the contraction under test is given.
+#[derive(Clone, Copy)]
+enum Backed {
+    /// Every operand and the destination in memory: the control.
+    Buffer,
+    /// The destination erased — fuse-on-write.
+    Sink,
+    /// The lhs erased — fuse-on-read.
+    Source,
+}
+
 /// The output operand: register-resident at the level the accumulator opens, in place below it.
 fn accumulator_in_registers(space: &Space) -> Operand {
     let mut out = Operand::new(&[M, N], f32::elem_type_native());
@@ -330,7 +382,7 @@ fn matmul_space() -> Space {
     Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner)
 }
 
-fn run_matmul(sink: bool) -> HostData {
+fn run_matmul(backed: Backed) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let space = matmul_space();
@@ -349,11 +401,12 @@ fn run_matmul(sink: bool) -> HostData {
         .uniform(4242, 10., 100.);
 
     let instructed = space.clone().with_instruction(Instruction::registers(16));
-    match sink {
-        true => sink_matmul::launch::<TestRuntime>(
+    let (count, dim) = (space.cube_count(), space.cube_dim(&client));
+    match backed {
+        Backed::Sink => sink_matmul::launch::<TestRuntime>(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            count,
+            dim,
             a.arg(),
             b.arg(),
             c.arg(),
@@ -361,10 +414,21 @@ fn run_matmul(sink: bool) -> HostData {
             dtype,
             dtype,
         ),
-        false => buffer_matmul::launch::<TestRuntime>(
+        Backed::Source => source_matmul::launch::<TestRuntime>(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            count,
+            dim,
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            instructed,
+            dtype,
+            dtype,
+        ),
+        Backed::Buffer => buffer_matmul::launch::<TestRuntime>(
+            &client,
+            count,
+            dim,
             a.arg(),
             b.arg(),
             c.arg(),
@@ -381,8 +445,8 @@ fn run_matmul(sink: bool) -> HostData {
 #[test]
 fn a_register_accumulator_drains_into_a_sink() {
     let (m, n, k) = (4usize, 4usize, 16usize);
-    let through_sink = run_matmul(true);
-    let through_buffer = run_matmul(false);
+    let through_sink = run_matmul(Backed::Sink);
+    let through_buffer = run_matmul(Backed::Buffer);
     // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
     for i in 0..m {
         for j in 0..n {
@@ -395,6 +459,34 @@ fn a_register_accumulator_drains_into_a_sink() {
                 (through_sink.get_f32(&[i, j]) - expected).abs() < 1e-3,
                 "the sink contraction is wrong at [{i}, {j}]: got {}, want {expected}",
                 through_sink.get_f32(&[i, j])
+            );
+        }
+    }
+}
+
+/// The read half of the same contract: an operand read through an erased source contracts to
+/// what the same operand read out of memory contracts to.
+///
+/// The other direction of fusion. A sink lets a kernel hand its result to a generated epilogue;
+/// a source lets it take its input from a generated producer, and the leaf must not be able to
+/// tell — same space, same spec, same coordinates, a call where the load was.
+#[test]
+fn a_contraction_reads_its_lhs_through_a_source() {
+    let (m, n, k) = (4usize, 4usize, 16usize);
+    let through_source = run_matmul(Backed::Source);
+    let through_buffer = run_matmul(Backed::Buffer);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    for i in 0..m {
+        for j in 0..n {
+            let expected: f32 = (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum();
+            assert!(
+                (through_buffer.get_f32(&[i, j]) - expected).abs() < 1e-3,
+                "the buffer contraction is wrong at [{i}, {j}], so the comparison means nothing"
+            );
+            assert!(
+                (through_source.get_f32(&[i, j]) - expected).abs() < 1e-3,
+                "the source contraction is wrong at [{i}, {j}]: got {}, want {expected}",
+                through_source.get_f32(&[i, j])
             );
         }
     }
