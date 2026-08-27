@@ -64,18 +64,11 @@ fn sink_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
-    let mut shape = Coords::<u32>::new();
-    let mut strides = Coords::<u32>::new();
-    #[unroll]
-    for i in 0..2usize {
-        shape.push(out.tensor.shape(i) as u32);
-        strides.push(out.tensor.stride(i) as u32);
-    }
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.tensor);
     let mut dst = Tile::<E>::of_sink(
         sink,
-        shape,
-        strides,
+        geometry,
         1usize,
         comptime!(space.clone()),
         comptime!(out.spec.clone()),
@@ -182,15 +175,12 @@ fn derived_sink_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     // The settled geometry, arriving as scalars because the host is where it was settled.
-    let mut shape = Coords::<u32>::new();
-    shape.push(rows);
-    shape.push(cols);
-    let mut strides = Coords::<u32>::new();
-    strides.push(row_stride);
-    strides.push(col_stride);
+    let mut geometry = RuntimeGeometry::new();
+    geometry.push(rows, row_stride);
+    geometry.push(cols, col_stride);
 
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
-    let mut dst = Tile::<E>::of_sink(sink, shape, strides, 1usize, comptime!(space.clone()), spec);
+    let mut dst = Tile::<E>::of_sink(sink, geometry, 1usize, comptime!(space.clone()), spec);
     let src = Tile::<E>::procedural::<Position>(space, Position {});
     dst.copy_from(&src);
 }
@@ -211,22 +201,21 @@ fn a_launcher_derived_spec_addresses_the_sink() {
     // What the destination would have been, had it been a tensor to bind.
     let derived = launcher.spec(
         &Operand::new(&[ROW, COL], dtype),
-        &[ROWS, COLS],
-        &[COLS, 1],
+        &Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]),
         1,
     );
-    assert_eq!(derived.shape, vec![ROWS, COLS]);
-    assert_eq!(derived.strides, vec![COLS, 1]);
+    assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
+    assert_eq!(derived.geometry.strides(), [COLS, 1]);
 
     derived_sink_kernel::launch::<TestRuntime>(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
         output.clone().binding().into_tensor_arg(),
-        derived.shape[0] as u32,
-        derived.shape[1] as u32,
-        derived.strides[0] as u32,
-        derived.strides[1] as u32,
+        derived.geometry.shape()[0] as u32,
+        derived.geometry.shape()[1] as u32,
+        derived.geometry.strides()[0] as u32,
+        derived.geometry.strides()[1] as u32,
         launcher.space().clone(),
         derived.spec,
         dtype,
@@ -287,18 +276,11 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
-    let mut shape = Coords::<u32>::new();
-    let mut strides = Coords::<u32>::new();
-    #[unroll]
-    for i in 0..2usize {
-        shape.push(c.tensor.shape(i) as u32);
-        strides.push(c.tensor.stride(i) as u32);
-    }
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
     let c = Tile::<E>::of_sink(
         sink,
-        shape,
-        strides,
+        geometry,
         1usize,
         comptime!(space.clone()),
         comptime!(c.spec.clone()),
@@ -323,18 +305,11 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     #[define(EA)] _acc_dtype: ElemType,
 ) {
     // The geometry a source cannot be asked for, taken off the tensor behind it.
-    let mut shape = Coords::<u32>::new();
-    let mut strides = Coords::<u32>::new();
-    #[unroll]
-    for i in 0..2usize {
-        shape.push(a.tensor.shape(i) as u32);
-        strides.push(a.tensor.stride(i) as u32);
-    }
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.tensor, 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.tensor);
     let a = Tile::<E>::of_source(
         source,
-        shape,
-        strides,
+        geometry,
         1usize,
         comptime!(space.clone()),
         comptime!(a.spec.clone()),

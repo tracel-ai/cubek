@@ -3,8 +3,8 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Residence, StorageTiling, Tiling,
-    WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
+    Tiling, WalkOrder,
 };
 
 use crate::{
@@ -221,7 +221,14 @@ pub fn launch_ref<R: Runtime>(
     // owns the gate: both operands unchecked and `N`-contiguous, the width dividing their
     // inner extents and the `N` leaf edge.
     let rhs = rhs.into_data();
-    let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], sz);
+    let v = launch.vector_size(
+        N,
+        &[
+            (&Geometry::from(&rhs), &[K, N]),
+            (&Geometry::from(&out), &[M, N]),
+        ],
+        sz,
+    );
 
     // Bind each operand to its binding: the subspace comes off the operand, the batch list and
     // storage tiling are per-binding launch facts. All operands get the full output batch-axis

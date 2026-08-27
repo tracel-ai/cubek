@@ -9,6 +9,7 @@
 mod arg;
 mod axis;
 mod delivery;
+mod geometry;
 mod layout;
 mod projection;
 mod source;
@@ -16,6 +17,7 @@ mod source;
 pub use arg::*;
 pub use axis::*;
 pub use delivery::*;
+pub use geometry::*;
 pub use layout::*;
 pub use projection::*;
 pub use source::*;

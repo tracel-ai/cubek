@@ -6,8 +6,9 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Offset, Operand, PhysicalAxisMap,
-    Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling, WalkOrder,
+    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Geometry, Offset, Operand,
+    PhysicalAxisMap, Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling,
+    WalkOrder,
 };
 
 const M: Axis = Axis(0);
@@ -220,13 +221,13 @@ fn spec_derives_what_a_bound_operand_derives() {
     // k = 18 overhangs its leaf (4), so the derivation has a check to arm and something to say.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let operand = staged_operand(&[M, K]);
-    let (shape, strides) = (&[64usize, 18][..], &[18usize, 1][..]);
+    let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
 
     let bound = launch
-        .bind(&operand, binding(&client, shape))
+        .bind(&operand, binding(&client, geometry.shape()))
         .vectorize(1)
         .build();
-    let derived = launch.spec(&operand, shape, strides, 1);
+    let derived = launch.spec(&operand, &geometry, 1);
 
     assert_eq!(derived.spec, bound.spec);
     assert_eq!(derived.vector_size, bound.vector_size);
@@ -242,11 +243,18 @@ fn spec_returns_the_geometry_it_settled_on() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
-    let derived = launch.spec(&staged_operand(&[M, K]), &[64, 16], &[16, 1], 1);
+    let derived = launch.spec(
+        &staged_operand(&[M, K]),
+        &Geometry::of_dims(&[(64, 16), (16, 1)]),
+        1,
+    );
 
-    assert_eq!(derived.shape, vec![64, 16]);
-    assert_eq!(derived.strides, vec![16, 1]);
-    assert_eq!(derived.spec.projection.physical_rank(), derived.shape.len());
+    assert_eq!(derived.geometry.shape(), [64, 16]);
+    assert_eq!(derived.geometry.strides(), [16, 1]);
+    assert_eq!(
+        derived.spec.projection.physical_rank(),
+        derived.geometry.rank()
+    );
 }
 
 /// A leading broadcast dim is refused, not silently folded away. `spec` labels the operand's own
@@ -259,18 +267,11 @@ fn spec_refuses_a_dim_it_cannot_label() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
-    let _ = launch.spec(&staged_operand(&[M, K]), &[1, 64, 16], &[1024, 16, 1], 1);
-}
-
-/// Two slices over the same dims. A bound operand copies both off one binding and cannot
-/// disagree; a stated one can, and unchecked it would index off the end of the strides.
-#[test]
-#[should_panic(expected = "2 extents but 1 strides")]
-fn spec_refuses_geometry_whose_halves_disagree() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
-
-    let _ = launch.spec(&staged_operand(&[M, K]), &[64, 16], &[1], 1);
+    let _ = launch.spec(
+        &staged_operand(&[M, K]),
+        &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
+        1,
+    );
 }
 
 // ---- StridedTileSource::gathered -------------------------------------------
@@ -566,8 +567,10 @@ fn vector_size_picks_widest_qualifying_line() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // Everything divides: N's leaf edge is 8, both inner extents are 64.
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
-    let rhs = binding(&client, &[16, 64]);
-    let out = binding(&client, &[64, 64]);
+    // Off real bindings, not hand-written dims: the strides are the allocator's, so a pitched
+    // one that padded a row is what the gate sees.
+    let rhs = Geometry::from(&binding(&client, &[16, 64]));
+    let out = Geometry::from(&binding(&client, &[64, 64]));
 
     let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>());
     // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (8).
@@ -585,20 +588,19 @@ fn vector_size_picks_widest_qualifying_line() {
 fn vector_size_falls_back_to_scalar() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
-    let out = binding(&client, &[64, 64]);
+    let out = Geometry::from(&binding(&client, &[64, 64]));
 
     // An overhanging operand (k = 18 vs leaf 4) stays scalar: its masked accesses report
     // their length in lines and would wrongly clip.
     let overhang = batched_space(1, 1, 64, 64, 18).launcher(&client);
-    let rhs = binding(&client, &[18, 64]);
+    let rhs = Geometry::from(&binding(&client, &[18, 64]));
     assert_eq!(
         overhang.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>()),
         1
     );
 
     // Col-major (innermost stride ≠ 1): lines wouldn't land on contiguous scalars.
-    let mut col_major = binding(&client, &[16, 64]);
-    col_major.strides = vec![1, 16].into();
+    let col_major = Geometry::of_dims(&[(16, 1), (64, 16)]);
     assert_eq!(
         launch.vector_size(
             N,
@@ -609,7 +611,7 @@ fn vector_size_falls_back_to_scalar() {
     );
 
     // An inner extent no width divides (63) blocks every line size.
-    let odd = binding(&client, &[16, 63]);
+    let odd = Geometry::from(&binding(&client, &[16, 63]));
     assert_eq!(
         launch.vector_size(N, &[(&odd, &[K, N])], size_of::<f32>()),
         1
@@ -700,7 +702,7 @@ fn vector_size_axis_must_label_innermost() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
     let lhs = binding(&client, &[64, 16]);
     // lhs's innermost dim is K, not N: asking for N-lines over it is a labeling bug.
-    let _ = launch.vector_size(N, &[(&lhs, &[M, K])], size_of::<f32>());
+    let _ = launch.vector_size(N, &[(&Geometry::from(&lhs), &[M, K])], size_of::<f32>());
 }
 
 #[test]

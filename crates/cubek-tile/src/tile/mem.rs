@@ -395,13 +395,6 @@ impl<T: Numeric> Tile<T> {
         offsets: Coords<i32>,
     ) -> Tile<T> {
         let rank = comptime!(spec.projection.physical_rank());
-        let mut shape = Coords::<u32>::new();
-        let mut strides = Coords::<u32>::new();
-        #[unroll]
-        for i in 0..rank {
-            shape.push(tensor.shape(i) as u32);
-            strides.push(tensor.stride(i) as u32);
-        }
         let backing = Backing::<T>::new_Buffer(unsafe {
             tensor
                 .as_slice()
@@ -410,8 +403,7 @@ impl<T: Numeric> Tile<T> {
         });
         Tile::<T>::of_impl(
             backing,
-            shape,
-            strides,
+            RuntimeGeometry::of_tensor::<E>(tensor, rank),
             tensor.vector_size(),
             space,
             spec,
@@ -425,23 +417,26 @@ impl<T: Numeric> Tile<T> {
     /// gets, and only its last step is a call rather than a store.
     ///
     /// The geometry is *stated* rather than read, because a destination with no
-    /// address has none to read: `shape` and `strides` are the physical extents
-    /// and strides in scalars that the product would have had, and
-    /// `vector_size` the line width the sink takes. The tile addresses the sink
-    /// through exactly the layout those describe, so a caller that states the
-    /// product's own metadata gets the store the unfused kernel would have made.
+    /// address has none to read: it is the physical extents and strides in
+    /// scalars that the product would have had, and `vector_size` the line width
+    /// the sink takes. The tile addresses the sink through exactly the layout
+    /// those describe, so a caller that states the product's own metadata gets
+    /// the store the unfused kernel would have made.
+    ///
+    /// A sink serves the layout-addressed writes and only those. It cannot be
+    /// staged into shared memory, written dense ([`Tile::dense_mut`]), quantized,
+    /// or filled by a tensor map: each of those wants an address rather than a
+    /// call, and says so.
     pub fn of_sink(
         sink: ErasedTensor<T, WriteOnly>,
-        shape: Coords<u32>,
-        strides: Coords<u32>,
+        geometry: RuntimeGeometry,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
         Tile::<T>::of_impl(
             Backing::<T>::new_WriteCall(sink),
-            shape,
-            strides,
+            geometry,
             vector_size,
             space,
             spec,
@@ -455,27 +450,25 @@ impl<T: Numeric> Tile<T> {
     /// fuse-on-read twin of [`of_sink`](Tile::of_sink).
     ///
     /// The geometry is *stated* for the same reason it is there: a source with
-    /// no address has none to read off. `shape` and `strides` are the physical
-    /// extents and strides in scalars the operand *would* have had, and
-    /// `vector_size` the line width the source serves. The tile reads through
-    /// exactly the layout those describe, so a caller that states the producer's
-    /// own metadata gets the reads the unfused kernel would have made.
+    /// no address has none to read off. It is the physical extents and strides in
+    /// scalars the operand *would* have had, and `vector_size` the line width the
+    /// source serves. The tile reads through exactly the layout those describe,
+    /// so a caller that states the producer's own metadata gets the reads the
+    /// unfused kernel would have made.
     ///
     /// A source serves the layout-addressed reads and only those. It cannot be
     /// staged into shared memory, read dense, quantized, or loaded by a tensor
     /// map: each of those wants an address rather than a call, and says so.
     pub fn of_source(
         source: ErasedTensor<T, ReadOnly>,
-        shape: Coords<u32>,
-        strides: Coords<u32>,
+        geometry: RuntimeGeometry,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
         Tile::<T>::of_impl(
             Backing::<T>::new_ReadCall(source),
-            shape,
-            strides,
+            geometry,
             vector_size,
             space,
             spec,
@@ -488,12 +481,11 @@ impl<T: Numeric> Tile<T> {
     #[allow(clippy::too_many_arguments)]
     fn of_impl(
         backing: Backing<T>,
-        // `shape` and `strides` are the destination's physical extents and
-        // strides in scalars, one per physical axis; `bound_width` the binding's
-        // own line width, on top of which a packed destination serves
-        // `packing.factor()` values per stored element.
-        shape: Coords<u32>,
-        strides: Coords<u32>,
+        // `geometry` is the destination's physical extents and strides in scalars,
+        // one per physical axis; `bound_width` the binding's own line width, on top
+        // of which a packed destination serves `packing.factor()` values per stored
+        // element.
+        geometry: RuntimeGeometry,
         #[comptime] bound_width: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
@@ -528,16 +520,15 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
-        // Free for a bound operand, which builds both off the projection's own rank; the check is
-        // for a *stated* geometry ([`of_sink`](Tile::of_sink)), where a short pair panics on an
-        // opaque `Sequence` index below and a long one silently ignores its tail.
-        let shape_given = shape.len();
-        let strides_given = strides.len();
+        // Free for a bound operand, which builds its geometry off the projection's own rank; the
+        // check is for a *stated* one ([`of_sink`](Tile::of_sink)), where too few dims panic on an
+        // opaque `Sequence` index below and too many silently ignore their tail.
+        let dims_given = geometry.shape.len();
         let physical_rank = comptime!(projection.physical_rank());
         comptime!(assert!(
-            shape_given == physical_rank && strides_given == physical_rank,
-            "Tile::of: the projection addresses {physical_rank} physical dims but {shape_given} \
-             extents and {strides_given} strides were given"
+            dims_given == physical_rank,
+            "Tile::of: the projection addresses {physical_rank} physical dims but {dims_given} \
+             were given"
         ));
         let stage = comptime!(spec.stage_plan(space.instruction()));
         // How the buffer holds its values: what a quantized operand's scheme says, else what the
@@ -587,8 +578,8 @@ impl<T: Numeric> Tile<T> {
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
-            let extent = shape.at(i);
-            let stride = strides.at(i);
+            let extent = geometry.shape.at(i);
+            let stride = geometry.strides.at(i);
             if comptime!(i == last) {
                 // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
                 // are one line apart.

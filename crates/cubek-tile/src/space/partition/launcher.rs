@@ -5,7 +5,9 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, DerivedSpec, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
+use crate::{
+    Axis, DerivedSpec, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource, Unset,
+};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -105,26 +107,25 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// alone: for a destination with no tensor to bind, which is what a fused
     /// store writes through.
     ///
-    /// `shape` and `strides` are the physical extents and strides the operand
-    /// *would* have had. Everything else — the projection, the bounds-check
-    /// derived from this launcher's concrete overhang, the residence column, the
-    /// cube size — is settled exactly as it is for a bound operand, because it is
-    /// the same derivation.
+    /// `geometry` is the physical extents and strides the operand *would* have
+    /// had. Everything else — the projection, the bounds-check derived from this
+    /// launcher's concrete overhang, the residence column, the cube size — is
+    /// settled exactly as it is for a bound operand, because it is the same
+    /// derivation.
     ///
-    /// The geometry comes back in the [`DerivedSpec`], and that is the pair
+    /// The geometry comes back in the [`DerivedSpec`], and that is what
     /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. They
-    /// agree today, since `spec` labels the operand's own axes and no batches, so
-    /// the derivation has no broadcast dim to drop and refuses a rank it cannot
-    /// address. Reading the settled pair is what keeps that an implementation
+    /// agree while `spec` labels the operand's own axes and no batches, since the
+    /// derivation then has no broadcast dim to drop and refuses a rank it cannot
+    /// address. Reading the settled geometry is what keeps that an implementation
     /// detail of the derivation rather than a fact the call site depends on.
     pub fn spec<'a>(
         &'a self,
         operand: &'a Operand,
-        shape: &[usize],
-        strides: &[usize],
+        geometry: &Geometry,
         vector_size: usize,
     ) -> DerivedSpec {
-        StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(shape, strides)
+        StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
@@ -136,14 +137,18 @@ impl<'c, R: Runtime> Launcher<'c, R> {
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
     /// for all of them, since a kernel reading one operand's lines writes the other's. Each
-    /// `(binding, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
+    /// `(geometry, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
     /// subspace; a masked access reports its length in lines and would wrongly clip) and
-    /// innermost-contiguous; the width must divide each inner buffer extent, every coarser
-    /// stride, and the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
+    /// innermost-contiguous; the width must divide each inner extent, every coarser stride, and
+    /// the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
+    ///
+    /// A [`Geometry`] rather than a binding, so that an operand with no tensor to bind — the
+    /// destination of a fused store — constrains the shared width like any other. It is one
+    /// width for *all* of them, and one the destination cannot serve is not a width.
     pub fn vector_size(
         &self,
         axis: Axis,
-        operands: &[(&TensorBinding<R>, &[Axis])],
+        operands: &[(&Geometry, &[Axis])],
         type_size: usize,
     ) -> usize {
         // The width gates below test the physical innermost dim, so `axis` must be the label
@@ -155,8 +160,8 @@ impl<'c, R: Runtime> Launcher<'c, R> {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        let qualifies = operands.iter().all(|(binding, subspace)| {
-            binding.strides.last() == Some(&1)
+        let qualifies = operands.iter().all(|(geometry, subspace)| {
+            geometry.strides().last() == Some(&1)
                 && !subspace.iter().any(|&a| self.concrete.overhangs(a))
         });
         if !qualifies {
@@ -167,11 +172,11 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
-                    && operands.iter().all(|(b, _)| {
-                        b.shape.last().is_some_and(|&e| e.is_multiple_of(v))
+                    && operands.iter().all(|(g, _)| {
+                        g.shape().last().is_some_and(|&e| e.is_multiple_of(v))
                             // Coarser strides re-express in lines (`stride / v`), so `v`
                             // must divide them or a padded/sliced view truncates.
-                            && b.strides[..b.strides.len() - 1]
+                            && g.strides()[..g.rank() - 1]
                                 .iter()
                                 .all(|&s| s.is_multiple_of(v))
                     })
