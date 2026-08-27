@@ -466,3 +466,141 @@ fn a_contraction_reads_its_lhs_through_a_source() {
         }
     }
 }
+
+// ===========================================================================
+// A masked, vectorized store
+// ===========================================================================
+
+/// Five rows over a leaf of two: the last block hangs off the end, so the store is masked.
+const MASKED_ROWS: usize = 5;
+
+/// The rows overhang their leaf and the columns are served two at a time.
+///
+/// The two properties the aligned scalar spaces above cannot reach. Masking puts a guard between
+/// the walk and the write, and a served width of two makes the tile count its innermost extent in
+/// lines and re-express every coarser stride as `stride / 2` — arithmetic a stated geometry runs
+/// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
+/// innermost axis that can leave the buffer is refused outright.
+fn masked_space() -> Space {
+    Tiling::new()
+        .extents(&[(ROW, MASKED_ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+            level
+                .axis(ROW, Cut::sequential(2))
+                .axis(COL, Cut::sequential(2))
+        })
+        .build()
+}
+
+/// [`buffer_kernel`] at a served width of two.
+///
+/// The source is a bound operand rather than [`Position`]: a procedural recipe is evaluated once
+/// per *line*, so at a width of two both lanes of a line would carry one value and the test could
+/// not tell a masked store from a store one lane wide.
+#[cube(launch)]
+fn wide_buffer_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<2>>,
+    out: &TileArg<'_, E, Const<2>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let src = input.tile(comptime!(space.clone()));
+    let mut dst = out.tile(comptime!(space.clone()));
+    dst.copy_from(&src);
+}
+
+/// [`sink_kernel`] at a served width of two, over the same masked space.
+#[cube(launch)]
+fn wide_sink_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<2>>,
+    out: &TileArg<'_, E, Const<2>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let src = input.tile(comptime!(space.clone()));
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
+    let mut dst = Tile::<E>::of_sink(
+        sink,
+        geometry,
+        2usize,
+        comptime!(space.clone()),
+        comptime!(out.spec.clone()),
+    );
+    dst.copy_from(&src);
+}
+
+fn run_masked(sink: bool) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let launcher = masked_space().launcher(&client);
+    let operand = Operand::new(&[ROW, COL], dtype);
+    let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
+        .dtype(dtype)
+        .arange()
+        .generate_without_host_data();
+    let output = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+    // Bound both ways: the width and the armed check are the launcher's derivation, so the sink
+    // walks the tile the buffer kernel walks rather than one this test talked it into.
+    let src = launcher
+        .bind(&operand, input.binding())
+        .vectorize(2)
+        .build();
+    let out = launcher
+        .bind(&operand, output.clone().binding())
+        .vectorize(2)
+        .build();
+    let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
+    match sink {
+        true => wide_sink_kernel::launch::<TestRuntime>(
+            &client,
+            count,
+            dim,
+            src.arg(),
+            out.arg(),
+            launcher.space().clone(),
+            dtype,
+        ),
+        false => wide_buffer_kernel::launch::<TestRuntime>(
+            &client,
+            count,
+            dim,
+            src.arg(),
+            out.arg(),
+            launcher.space().clone(),
+            dtype,
+        ),
+    }
+    HostData::from_tensor_handle(&client, output, HostDataType::F32)
+}
+
+/// A masked store through a sink writes the cells a masked store through a buffer writes.
+///
+/// The guard is the whole question. A sink's write ends in a call, so an overhanging lane a
+/// buffer would have clipped has nothing to clip it: the call happens or it does not, and a mask
+/// dropped between the walk and `write_view` hands the epilogue coordinates off the end of the
+/// product. The width is the other half — the tile counts its innermost extent in lines and
+/// re-expresses every coarser stride as `stride / 2`, on numbers nobody read off a tensor.
+#[test]
+fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
+    let through_sink = run_masked(true);
+    let through_buffer = run_masked(false);
+    for row in 0..MASKED_ROWS {
+        for col in 0..COLS {
+            let expected = (row * COLS + col) as f32;
+            assert_eq!(
+                through_buffer.get_f32(&[row, col]),
+                expected,
+                "the buffer store is wrong at [{row}, {col}], so the comparison means nothing"
+            );
+            assert_eq!(
+                through_sink.get_f32(&[row, col]),
+                expected,
+                "the masked sink stored the wrong value at [{row}, {col}]"
+            );
+        }
+    }
+}

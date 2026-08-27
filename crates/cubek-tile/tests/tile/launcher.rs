@@ -274,6 +274,26 @@ fn spec_refuses_a_dim_it_cannot_label() {
     );
 }
 
+/// A width the operand cannot be served in is refused where it is stated, not left to truncate.
+///
+/// The kernel re-expresses the geometry in lines: a coarser stride becomes `stride / v`. A `v`
+/// that does not divide it addresses a fraction of the operand — in bounds, no fault, wrong
+/// numbers — and the only reason a bound operand never sees it is that `Launcher::vector_size`
+/// derives a width that divides. A stated one has nothing deriving it.
+#[test]
+#[should_panic(expected = "cannot be served 2 wide")]
+fn spec_refuses_a_width_the_geometry_cannot_serve() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+
+    // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
+    let _ = launch.spec(
+        &staged_operand(&[M, K]),
+        &Geometry::of_dims(&[(64, 17), (16, 1)]),
+        2,
+    );
+}
+
 // ---- StridedTileSource::gathered -------------------------------------------
 
 /// A convolution-shaped input over `batched_space`: output positions `M` at `stride` and taps `K`
@@ -623,11 +643,15 @@ fn vector_size_falls_back_to_scalar() {
 fn arg_checked_and_vectorized_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
+    //
+    // Two wide, not four: an axis overhanging a leaf of 4 has an extent 4 does not divide, so a
+    // 4-wide line would be refused by `Geometry::serves_lines` first and this would stop probing
+    // the bounds question. 18 is a whole number of 2-wide lines and still overhangs.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let _ = launch
         .arg(binding(&client, &[64, 18]))
         .subspace(&[M, K])
-        .vectorize(4)
+        .vectorize(2)
         .build();
 }
 

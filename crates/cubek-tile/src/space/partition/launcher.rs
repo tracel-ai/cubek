@@ -160,11 +160,13 @@ impl<'c, R: Runtime> Launcher<'c, R> {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        let qualifies = operands.iter().all(|(geometry, subspace)| {
-            geometry.strides().last() == Some(&1)
-                && !subspace.iter().any(|&a| self.concrete.overhangs(a))
-        });
-        if !qualifies {
+        // The one gate that is about the space rather than the geometry: a masked access reports
+        // its length in lines and would wrongly clip, so an overhanging subspace is served scalar
+        // whatever its extents and strides would allow. `serves_lines` below answers the rest.
+        let masked = operands
+            .iter()
+            .any(|(_, subspace)| subspace.iter().any(|&a| self.concrete.overhangs(a)));
+        if masked {
             return 1;
         }
         let leaf = self.concrete.final_space().extent(axis);
@@ -172,14 +174,10 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
-                    && operands.iter().all(|(g, _)| {
-                        g.shape().last().is_some_and(|&e| e.is_multiple_of(v))
-                            // Coarser strides re-express in lines (`stride / v`), so `v`
-                            // must divide them or a padded/sliced view truncates.
-                            && g.strides()[..g.rank() - 1]
-                                .iter()
-                                .all(|&s| s.is_multiple_of(v))
-                    })
+                    // The same gates `Geometry::serves_lines` refuses a stated width on: the
+                    // innermost extent counts in lines and every coarser stride re-expresses
+                    // as `stride / v`, which truncates when `v` does not divide it.
+                    && operands.iter().all(|(g, _)| g.serves_lines(v).is_ok())
             })
             .max()
             .unwrap_or(1)

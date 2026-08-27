@@ -517,6 +517,14 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         });
 
         projection.validate(v);
+        // The width against the *settled* geometry, which is the one the kernel re-expresses in
+        // lines. `Launcher::vector_size` derives a width that divides; a caller that states one
+        // — a pinned width, a fused destination the negotiation never saw — reaches here, and
+        // the failure it prevents is silent: `stride / v` truncates in bounds and addresses a
+        // fraction of the operand.
+        if let Err(why) = geometry.serves_lines(v) {
+            panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide — {why}");
+        }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
         assert!(
