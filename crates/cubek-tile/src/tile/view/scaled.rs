@@ -155,7 +155,10 @@ impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ViewOperationsExpand<Vector<
         mask_value: NativeExpand<Vector<E, V>>,
     ) -> NativeExpand<Vector<E, V>> {
         let value = self.values.clone().__expand_read_checked_method(scope, pos);
-        let scale = self.scales.clone().__expand_read_checked_method(scope, pos);
+        let scale = self
+            .scales
+            .clone()
+            .__expand_read_checked_method(scope, self.at_scale(scope, pos));
         let in_bounds = self.__expand_is_in_bounds_method(scope, pos);
         let scaled = self.scale(scope, value, scale);
         select::expand::<Vector<E, V>>(scope, in_bounds, scaled, mask_value)
