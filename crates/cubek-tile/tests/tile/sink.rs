@@ -12,7 +12,7 @@
 //! near miss.
 
 use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::ErasedSink, zspace::shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -146,6 +146,165 @@ fn a_sink_stores_where_a_buffer_stores() {
                 through_sink.get_f32(&[row, col]),
                 expected,
                 "the sink stored the wrong value at [{row}, {col}]"
+            );
+        }
+    }
+}
+
+// ===========================================================================
+// A contraction into a sink
+// ===========================================================================
+
+const M: Axis = Axis(2);
+const N: Axis = Axis(3);
+const K: Axis = Axis(4);
+
+/// The promoted matmul, storing to a buffer: `launch_promoted_matmul`'s twin, kept here so the
+/// comparison is between two kernels in one file rather than across suites.
+#[cube(launch)]
+fn buffer_matmul<E: Numeric, EA: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// The same contraction, draining into a sink.
+///
+/// The accumulator is register-resident, which is the whole point: the contraction folds `K` in
+/// the block and the scope's drain is the *only* touch of the destination. A drain writes each
+/// cell once and never reads it back, so it asks a sink for nothing a sink does not have.
+#[cube(launch)]
+fn sink_matmul<E: Numeric, EA: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    // The geometry a sink cannot be asked for, taken off the tensor behind it.
+    let mut shape = Coords::<u32>::new();
+    let mut strides = Coords::<u32>::new();
+    #[unroll]
+    for i in 0..2usize {
+        shape.push(c.tensor.shape(i) as u32);
+        strides.push(c.tensor.stride(i) as u32);
+    }
+    let sink = ErasedSink::<E>::of_tensor::<Const<1>>(c.tensor);
+    let c = Tile::<E>::of_sink(
+        sink,
+        shape,
+        strides,
+        1usize,
+        comptime!(space.clone()),
+        comptime!(c.spec.clone()),
+    );
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// The output operand: register-resident at the level the accumulator opens, in place below it.
+fn accumulator_in_registers(space: &Space) -> Operand {
+    let mut out = Operand::new(&[M, N], f32::elem_type_native());
+    out.stage(Residence::Register);
+    for _ in 1..space.partitioner().depth() {
+        out.stage(Residence::InPlace);
+    }
+    out
+}
+
+/// `K` walked in four steps above a one-block leaf: every step returns to the same promoted
+/// accumulator, so the destination is touched exactly once, on the drain.
+fn matmul_space() -> Space {
+    let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner)
+}
+
+fn run_matmul(sink: bool) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let space = matmul_space();
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
+    // that folded the destination in instead of writing it would show up as the poison.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let instructed = space.clone().with_instruction(Instruction::registers(16));
+    match sink {
+        true => sink_matmul::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            instructed,
+            dtype,
+            dtype,
+        ),
+        false => buffer_matmul::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            a.arg(),
+            b.arg(),
+            c.arg(),
+            instructed,
+            dtype,
+            dtype,
+        ),
+    }
+    HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32)
+}
+
+/// A contraction whose accumulator is promoted stores its result through a sink exactly as it
+/// stores it through a buffer.
+#[test]
+fn a_register_accumulator_drains_into_a_sink() {
+    let (m, n, k) = (4usize, 4usize, 16usize);
+    let through_sink = run_matmul(true);
+    let through_buffer = run_matmul(false);
+    // Row-major arange operands: lhs(i, p) = i·k + p, rhs(p, j) = p·n + j.
+    for i in 0..m {
+        for j in 0..n {
+            let expected: f32 = (0..k).map(|p| ((i * k + p) * (p * n + j)) as f32).sum();
+            assert!(
+                (through_buffer.get_f32(&[i, j]) - expected).abs() < 1e-3,
+                "the buffer contraction is wrong at [{i}, {j}], so the comparison means nothing"
+            );
+            assert!(
+                (through_sink.get_f32(&[i, j]) - expected).abs() < 1e-3,
+                "the sink contraction is wrong at [{i}, {j}]: got {}, want {expected}",
+                through_sink.get_f32(&[i, j])
             );
         }
     }
