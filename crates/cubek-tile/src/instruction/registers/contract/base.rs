@@ -5,6 +5,7 @@ use cubecl::prelude::*;
 
 use super::direct;
 use super::gather;
+use super::shape::ContractShape;
 use crate::*;
 
 /// Run the register instruction over each batch matrix, reading operands through the
@@ -32,8 +33,16 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
+    // several contracted axes still form one `k` edge when the operand carries them as one run,
+    // which is what a partitioned axis is.
+    let flat = comptime!(
+        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
+            .matrix_axes(&lhs.space, &rhs.space)
+            .is_some()
+    );
     let nd = comptime!(
-        Space::contracted(&[&lhs.space, &rhs.space], &space).len() > 1
+        !flat
             || lhs_gathered
             || rhs_gathered
             || lhs_procedural
@@ -46,6 +55,140 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     } else {
         direct::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config, semiring);
     }
+}
+
+/// Which factor of the term a scales operand multiplies. Read off the axes it spans, never
+/// stated: a scale over the accumulator's column axis is a fact about the rhs's columns and
+/// nothing else could fold it in; anything else scales the lhs.
+///
+/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms — the scale
+/// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
+/// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ScaleSide {
+    /// The scale spans the accumulator's rows (or the contracted axis alone): folded into the
+    /// lhs value before it forms its products.
+    Lhs,
+    /// The scale spans the accumulator's columns: folded into each rhs line.
+    Rhs,
+}
+
+/// The side a scales operand multiplies on, from the axes it spans against the accumulator's.
+///
+/// A scale over neither matrix axis (per-tensor, or one value per block of `k`) is the same
+/// number wherever it folds, so it takes the lhs side.
+pub(crate) fn scale_side(scales: &Space, output: &Space) -> ScaleSide {
+    let rank = output.rank();
+    let (rows, cols) = (output.axis_at(rank - 2), output.axis_at(rank - 1));
+    let spans = |axis| scales.axes().any(|a| a == axis);
+    assert!(
+        !(spans(rows) && spans(cols)),
+        "mm_scaled: a scales operand over both {rows:?} and {cols:?} is a scale of the output, \
+         not a factor of either operand's term"
+    );
+    match spans(cols) {
+        true => ScaleSide::Rhs,
+        false => ScaleSide::Lhs,
+    }
+}
+
+/// The block a scales operand resolves `axis` at: the divisor of the physical axis addressing it,
+/// so `PhysicalAxisMap::of(K).over(8)` answers `8` and a plain axis answers `1`. An axis the
+/// operand does not span answers [`usize::MAX`]: one scale covers every value of it, so no line
+/// along it can straddle anything.
+pub(crate) fn scale_block(projection: &Projection, axis: Axis) -> usize {
+    (0..projection.physical_rank())
+        .find(|&pa| projection.scale(pa, axis) == 1)
+        .map(|pa| projection.divisor(pa).bound())
+        .unwrap_or(usize::MAX)
+}
+
+/// Refuse a served line that straddles two scales: one line is one read and takes one scale, so
+/// the block along whichever axis the line runs must cover whole lines. The line runs along the
+/// *innermost* contracted axis, which is the one a partitioned contraction leaves at the leaf.
+///
+/// Which axis that is depends on the step: past one served value both operands line along the
+/// contracted axis, and at one the rhs lines along the accumulator's columns instead. The lhs at
+/// one served value takes a scalar `k` per step and lines along nothing.
+pub(crate) fn check_lines_hold_one_scale(
+    scales: &Projection,
+    k: Axis,
+    cols: Axis,
+    served: usize,
+    aw: usize,
+    side: ScaleSide,
+) {
+    let (axis, width) = match (served > 1, side) {
+        (true, _) => (k, served),
+        (false, ScaleSide::Rhs) => (cols, aw),
+        (false, ScaleSide::Lhs) => return,
+    };
+    let block = scale_block(scales, axis);
+    assert!(
+        block == usize::MAX || block.is_multiple_of(width),
+        "mm_scaled: a step reads {width} values of {axis:?} as one line, so its {block}-value \
+         scale blocks must cover whole lines; state a block the line divides, or a cut that \
+         serves narrower lines"
+    );
+}
+
+/// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
+/// rhs twin, whichever [`scale_side`] reads off the scales' axes.
+///
+/// The 2-D nest only, deliberately. The N-D nest reads its operands through compacted gather
+/// windows, where a step has no single scalar `k` to address a scale with; that is a second
+/// design question, not a second copy of this one, and a routine reaching it gets told so here
+/// rather than getting a wrong answer.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] space: Space,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    let lhs_procedural = lhs.is_procedural();
+    let rhs_procedural = rhs.is_procedural();
+    let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
+    // how many axes they contract over.
+    let flat = comptime!(
+        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
+            .matrix_axes(&lhs.space, &rhs.space)
+            .is_some()
+    );
+    comptime!(assert!(
+        flat && !lhs_gathered
+            && !rhs_gathered
+            && !lhs_procedural
+            && !rhs_procedural
+            && !(served == 1 && rw != aw),
+        "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
+         N-D nest, which addresses every operand at the cell instead"
+    ));
+    let side = comptime!(scale_side(&scales.space, &space));
+    let scales_projection = scales.projection();
+    comptime!(check_lines_hold_one_scale(
+        &scales_projection,
+        *Space::contracted(&[&lhs.space, &rhs.space], &space)
+            .last()
+            .unwrap(),
+        space.axis_at(space.rank() - 1),
+        served,
+        aw,
+        side,
+    ));
+    direct::contract_scaled::<E, EL, ER, ES>(
+        acc, lhs, rhs, scales, space, served, side, config, semiring,
+    );
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the

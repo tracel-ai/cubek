@@ -39,6 +39,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::gemm_cpu_tiled::Category,
         &crate::gemv::Category,
         &crate::interpolate::Category,
+        &crate::interpolate::CpuCategory,
         &crate::memcpy_async::Category,
         &crate::pool::Category,
         &crate::quantized_matmul::Category,

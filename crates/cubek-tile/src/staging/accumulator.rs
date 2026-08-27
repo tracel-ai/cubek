@@ -129,6 +129,54 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         }
     }
 
+    /// `c = (lhs ⊗ s) · rhs`, or its rhs twin: [`mm`](AccumulatorScope::mm) with one operand
+    /// scaled by a real operand, the side read off the scales' axes
+    /// ([`ScaleSide`](crate::ScaleSide)).
+    ///
+    /// A register accumulator here is what a decode gemv wants: the scaled partials never
+    /// round-trip through the sink between `K` steps.
+    pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        #[comptime] semiring: Semiring,
+    ) {
+        match self {
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                tile.mm_scaled(lhs, rhs, scales, semiring);
+                tile.drain_cast_into(sink);
+            }
+            AccumulatorScope::InPlace { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                sink.mm_scaled(lhs, rhs, scales, semiring)
+            }
+        }
+    }
+
+    /// `c += (lhs ⊗ s) · rhs`: [`mm_scaled`](AccumulatorScope::mm_scaled) with the accumulate its
+    /// name carries, folding onto an accumulator the caller [`seed`](AccumulatorScope::seed)ed.
+    pub fn mma_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        #[comptime] semiring: Semiring,
+    ) {
+        match self {
+            AccumulatorScope::Register { tile, sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                tile.mma_scaled(lhs, rhs, scales, semiring);
+                tile.drain_cast_into(sink);
+            }
+            AccumulatorScope::InPlace { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                sink.mma_scaled(lhs, rhs, scales, semiring)
+            }
+        }
+    }
+
     /// `c = fold(input)`: reduce `input` along the axes the accumulator does not span, then
     /// drain, as [`mm`](AccumulatorScope::mm) does. Owns the init the same way.
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>) {

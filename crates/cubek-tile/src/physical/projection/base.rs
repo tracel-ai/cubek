@@ -4,7 +4,8 @@
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale, StorageTiling,
+    Axis, Composition, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale,
+    StorageTiling,
 };
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
@@ -171,7 +172,12 @@ impl Projection {
             &self
                 .axes
                 .iter()
-                .map(|&axis| self.carriers(axis).len())
+                .map(|&axis| match self.addresses(axis) {
+                    // A broadcast axis is spread over no physical axis, which is not a tiling of
+                    // it: one fragment, the same answer an untiled axis gives.
+                    false => 1,
+                    true => self.carriers(axis).len(),
+                })
                 .collect::<Vec<_>>(),
         )
     }
@@ -217,6 +223,13 @@ impl Projection {
         );
         let finer = carriers.iter().copied().filter(|&q| q > pa).collect();
         (finer, (carriers[0] != pa).then_some(pa))
+    }
+
+    /// Whether this operand addresses `axis` at all. An axis it spans but maps to nothing is a
+    /// *broadcast*: the operand is defined over that axis and constant along it, which is how one
+    /// scale covers a block and how a per-row bias covers a row.
+    pub fn addresses(&self, axis: Axis) -> bool {
+        self.physical.iter().any(|m| m.addresses(axis))
     }
 
     /// The physical axes carrying `axis`, in buffer order: one entry unless the axis is
@@ -414,6 +427,65 @@ impl Projection {
     /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
     /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell,
     /// applies a constant offset, or divides.
+    /// How this operand's logical coordinates sit on its buffer's physical axes: [`Disjoint`]
+    /// where every physical axis is partitioned by the axes addressing it, so a position
+    /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
+    ///
+    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one —
+    /// one axis per physical axis, in order — and a [`Disjoint`] projection of higher logical rank
+    /// answers the same for the same reason: nothing aliases, every window is a box.
+    ///
+    /// [`Disjoint`]: Composition::Disjoint
+    /// [`Overlapping`]: Composition::Overlapping
+    pub fn composition(&self) -> Composition {
+        match self
+            .physical
+            .iter()
+            .all(|m| m.composition() == Composition::Disjoint && m.divisor().is_unit())
+        {
+            true => Composition::Disjoint,
+            false => Composition::Overlapping,
+        }
+    }
+
+    /// Refuse a [`Disjoint`](Composition::Disjoint) claim the extents contradict: coarsest first,
+    /// each
+    /// coefficient must be the product of the finer axes' extents, so the terms really partition
+    /// the physical axis instead of overlapping on it.
+    ///
+    /// Checked here rather than at construction because a map holds coefficients and the extents
+    /// live in the space; this is the one place both are in hand.
+    pub fn validate_composition(&self, extent_of: impl Fn(Axis) -> usize) {
+        for (pa, map) in self.physical.iter().enumerate() {
+            let radices = map.claimed_radices();
+            if radices.is_empty() {
+                continue;
+            }
+            assert!(
+                map.offset() == Offset::Static(0),
+                "Projection: physical axis {pa} claims to be partitioned by its axes, but carries \
+                 the offset {:?}; a partition starts at 0",
+                map.offset()
+            );
+            // Finest last, so walk back up multiplying extents: the finest digit steps by one,
+            // and each coarser one steps over everything below it. Only the extents *below* the
+            // coarsest term are ever read, which is what keeps a `Dynamic` top-level axis (whose
+            // size is a runtime fact) out of a comptime check: the identity reads none at all.
+            let mut expected = 1;
+            for (i, (axis, coefficient)) in radices.iter().enumerate().rev() {
+                assert!(
+                    *coefficient == expected,
+                    "Projection: physical axis {pa} claims its axes partition it, so {axis:?} \
+                     must step by {expected} (the extents below it); it steps by {coefficient}"
+                );
+                if i == 0 {
+                    break;
+                }
+                expected *= extent_of(*axis);
+            }
+        }
+    }
+
     pub fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
             m.offset() == Offset::Static(0)
@@ -446,21 +518,27 @@ impl Projection {
         // would mix lines into an element count.
         if vector_size > 1 {
             let innermost = self.axes[self.axes.len() - 1];
+            let last = &self.physical[self.physical.len() - 1];
+            // A partition steps its finest digit by one, which is the same arithmetic the line
+            // count needs: consecutive positions along that axis are consecutive cells, and the
+            // coarser digits hold still across a line. A gather has to be the identity outright.
+            let steps_by_lines = match last.composition() {
+                Composition::Disjoint => last.terms().last().map(|t| t.axis) == Some(innermost),
+                Composition::Overlapping => last.is_identity(innermost),
+            };
             assert!(
-                self.physical[self.physical.len() - 1].is_identity(innermost),
-                "Projection: the innermost physical axis must be the operand's last logical axis \
-                 at coefficient 1 (it is addressed in vector lines)"
+                steps_by_lines,
+                "Projection: the innermost physical axis must step by the operand's last logical \
+                 axis at coefficient 1 (it is addressed in vector lines)"
             );
         }
         for &axis in self.axes.iter() {
+            // An axis addressing nothing is a broadcast: the operand is defined over it and
+            // constant along it. A gathered operand must be untiled gmem, so an axis it *does*
+            // address maps to exactly one physical axis.
             let count = self.physical.iter().filter(|m| m.addresses(axis)).count();
             assert!(
-                count > 0,
-                "Projection: logical axis {axis:?} addresses no physical axis"
-            );
-            // A gathered operand must be untiled gmem, so each logical axis can map to at most one physical axis.
-            assert!(
-                count == 1,
+                count <= 1,
                 "Projection: logical axis {axis:?} addresses several physical axes, so it is \
                  either storage-tiled (a gathered operand must be untiled gmem) or read off two \
                  places at once"
@@ -588,14 +666,20 @@ mod tests {
         .validate(4);
     }
 
+    /// An axis addressing nothing is a *broadcast*, not a mistake: the operand is defined over it
+    /// and constant along it, which is what lets one scale cover a block of the values beside it.
+    ///
+    /// Nothing distinguishes it from forgetting to map the axis, and that is the trade: omission
+    /// is the design's own word for invariance, so the spelling has to mean it.
     #[test]
-    #[should_panic(expected = "addresses no physical axis")]
-    fn every_axis_must_address_a_physical_axis() {
-        Projection::new(
+    fn an_axis_addressing_nothing_is_a_broadcast() {
+        let p = Projection::new(
             &[A, R, B],
             &[PhysicalAxisMap::affine(&[(A, 2)]), PhysicalAxisMap::of(B)],
-        )
-        .validate(4);
+        );
+        p.validate(4);
+        assert!(!p.addresses(R));
+        assert!(p.addresses(A) && p.addresses(B));
     }
 
     /// A plain projection is never constrained: storage tiling is exactly what it is for.
@@ -1079,5 +1163,67 @@ mod tests {
         assert_eq!(p.dynamic_scale_index(0, 1), None);
         assert_eq!(p.dynamic_divisor_index(0), Some(1));
         assert_eq!(p.dynamic_scale_index(1, 0), Some(2));
+    }
+
+    /// A projection is a partition when every one of its axes is, whatever the ranks: three
+    /// logical axes over two physical ones still answers `Disjoint` when the pair partitions its
+    /// axis, which is what keeps a blocked operand on the dense path.
+    #[test]
+    fn a_partition_of_higher_logical_rank_is_still_dense() {
+        let blocked = Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::disjoint(&[(B, 32), (R, 1)]),
+            ],
+        );
+        assert_eq!(blocked.composition(), Composition::Disjoint);
+        assert!(!blocked.is_direct());
+
+        let gathered = Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::affine(&[(B, 32), (R, 1)]),
+            ],
+        );
+        assert_eq!(gathered.composition(), Composition::Overlapping);
+    }
+
+    /// The radices are checked against the extents, which is the only place the claim can be
+    /// wrong: `⌊k / 32⌋` blocks of 32 need the inner axis to hold exactly 32.
+    #[test]
+    fn a_partition_whose_radices_match_the_extents_is_accepted() {
+        let extents = |axis| match axis {
+            x if x == B => 4,
+            x if x == R => 32,
+            _ => 8,
+        };
+        Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::disjoint(&[(B, 32), (R, 1)]),
+            ],
+        )
+        .validate_composition(extents);
+    }
+
+    #[test]
+    #[should_panic(expected = "must step by 32")]
+    fn a_partition_whose_radices_contradict_the_extents_is_refused() {
+        let extents = |axis| match axis {
+            x if x == B => 4,
+            x if x == R => 32,
+            _ => 8,
+        };
+        Projection::new(
+            &[A, B, R],
+            &[
+                PhysicalAxisMap::of(A),
+                PhysicalAxisMap::disjoint(&[(B, 16), (R, 1)]),
+            ],
+        )
+        .validate_composition(extents);
     }
 }

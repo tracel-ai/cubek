@@ -93,6 +93,11 @@ pub struct Store<T: Numeric> {
     pub(crate) vector_size: usize,
     /// Present when the buffer holds quantized data (see [`QuantInfo`]).
     pub(crate) quant: ComptimeOption<QuantInfo>,
+    /// How the buffer's values sit in it: whether a stored element *is* a served one, and what a
+    /// read has to unpack if it is not. Stated at construction, from the operand's spec
+    /// ([`TileSpec::packed`]) or from its scheme where it has one, so no reader re-derives it.
+    #[cube(comptime)]
+    pub(crate) packing: Packing,
 }
 
 /// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
@@ -214,6 +219,31 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
+    /// [`of`](Tile::of) from a [`packed`](TileSpec::packed) operand: the binding holds stored
+    /// `u32` words and the tile serves the values inside them, `factor` per word, unpacked at the
+    /// read. The served width is the binding's width × that factor.
+    ///
+    /// No scales and no scheme: what the spec states is a fact about *these* values, and an
+    /// operand that also has scales names them as its own tensor.
+    pub fn of_packed<E: CubePrimitive>(
+        values: &Tensor<E>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        comptime!(assert!(
+            spec.packing != Packing::Plain,
+            "Tile::of_packed: the operand states no packing, so it is a plain tile (Tile::of)"
+        ));
+        Tile::<T>::of_impl::<E>(
+            values,
+            space,
+            spec,
+            ComptimeOption::new_None(),
+            Coords::<u32>::new(),
+            Coords::<i32>::new(),
+        )
+    }
+
     /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (its
     /// element's scalar is the *stored* type: `u32` words for a packed scheme, `i8` native),
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
@@ -309,21 +339,31 @@ impl<T: Numeric> Tile<T> {
             coords.dynamic_offset_count()
         ));
         let stage = comptime!(spec.stage_plan(space.instruction()));
-        // The binding type's own width, comptime; a packed store serves `pack` values per
+        // How the buffer holds its values: what a quantized operand's scheme says, else what the
+        // spec states. One statement, whichever door minted it, so nothing below asks twice.
+        let packing = #[comptime]
+        match &quant {
+            ComptimeOption::Some(info) => comptime!(scheme_packing(info.scheme)),
+            ComptimeOption::None => comptime!(spec.packing),
+        };
+        comptime!(assert!(
+            quant.is_none() || spec.packing == Packing::Plain,
+            "Tile::of: a quantized operand's scheme already states how its values are stored, so \
+             its spec may not state a packing too"
+        ));
+        // The binding type's own width, comptime; a packed store serves `factor` values per
         // stored element.
         let bound_width = tensor.vector_size();
-        let pack = #[comptime]
-        match &quant {
-            ComptimeOption::Some(info) => comptime!(info.scheme.num_quants()),
-            ComptimeOption::None => 1usize,
-        };
-        let vector_size = comptime!(bound_width * pack);
+        let vector_size = comptime!(bound_width * packing.factor());
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows. Same for a
         // padded stage width, which `StridedTileSource` already checked for the specs it builds;
         // this catches hand-built ones too.
         comptime!(projection.validate(vector_size));
-        comptime!(spec.validate_stage_width(vector_size, quant.is_some()));
+        // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
+        // and the space are both in hand.
+        comptime!(projection.validate_composition(|axis| space.extent(axis)));
+        comptime!(spec.validate_stage_width(vector_size, packing != Packing::Plain));
         let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
             spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
@@ -392,6 +432,7 @@ impl<T: Numeric> Tile<T> {
                     buffer,
                     vector_size: comptime!(vector_size),
                     quant,
+                    packing: comptime!(packing),
                 },
                 layout: GmemLayout {
                     physical_shape,
@@ -443,7 +484,7 @@ impl<T: Numeric> MemData<T> {
     /// rather than whether this window covers its backing buffer.
     pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
         comptime!(assert!(
-            self.store.quant.is_none()
+            self.store.packing == Packing::Plain
                 && self.projection.is_direct()
                 && self.store.vector_size == 1,
             "MemData::fill_procedural: procedural sources require a plain, direct scalar destination"
@@ -643,7 +684,15 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         let size!(W) = meta.vector_size;
         let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
-        MemData::smem_over(meta, &smem, ComptimeOption::new_None(), form, map, source)
+        MemData::smem_over(
+            meta,
+            &smem,
+            ComptimeOption::new_None(),
+            comptime!(Packing::Plain),
+            form,
+            map,
+            source,
+        )
     }
 
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
@@ -671,7 +720,15 @@ impl<T: Numeric> MemData<T> {
             vector_size,
             stage,
         });
-        MemData::smem_over(meta, &smem, quant, form, map, ComptimeOption::new_None())
+        MemData::smem_over(
+            meta,
+            &smem,
+            quant,
+            comptime!(scheme_packing(scheme)),
+            form,
+            map,
+            ComptimeOption::new_None(),
+        )
     }
 
     /// The body every smem constructor shares: everything but the allocation's element (which is why
@@ -682,6 +739,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] meta: StageMeta,
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
+        #[comptime] packing: Packing,
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
@@ -702,6 +760,7 @@ impl<T: Numeric> MemData<T> {
                     buffer,
                     vector_size: meta.vector_size,
                     quant,
+                    packing: comptime!(packing),
                 },
                 layout: GmemLayout {
                     physical_shape,
@@ -766,9 +825,9 @@ impl<T: Numeric> Tile<T> {
     pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                if comptime!(g.store.quant.is_some()) {
+                if comptime!(g.store.packing != Packing::Plain) {
                     panic!(
-                        "Tile::view: a quantized tile only serves dequantized reads \
+                        "Tile::view: a packed tile only serves values its read unpacks \
                          (Tile::copy_from, Tile::matrix_transparent)"
                     )
                 }
@@ -878,7 +937,9 @@ impl<T: Numeric> MemData<T> {
             }
             self.stage_scales(src);
         } else if comptime!(
-            self.access.whole && !self.access.overhang.masks() && src.store.quant.is_none()
+            self.access.whole
+                && !self.access.overhang.masks()
+                && src.store.packing == Packing::Plain
         ) {
             // Plain → plain, whole destination: fill in destination-physical order (the write is
             // linear and only the source decodes, once per line by constants on a static store).
@@ -926,7 +987,20 @@ impl<T: Numeric> MemData<T> {
                         self.store.vector_size,
                         src.access.overhang.masks()
                     ));
-                    self.scan_transparent::<T, W, W>(src)
+                    // No scales to fold in, so the source's own packing is the whole read: served
+                    // as stored, or unpacked from the words it holds into this plain destination.
+                    let packing = src.packing();
+                    match comptime!(packing) {
+                        Packing::Plain => self.scan_transparent::<T, W, W>(src),
+                        Packing::Native => panic!(
+                            "MemData::fill_from: a native store with nothing to fold in serves \
+                             its own element; bind it as that element"
+                        ),
+                        Packing::Packed { field: _ } => {
+                            let size!(WP) = comptime!(packing.physical(src.store.vector_size));
+                            self.scan_transparent::<u32, WP, W>(src)
+                        }
+                    }
                 }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     QuantStore::Native => match comptime!(info.scheme.value) {
@@ -1257,21 +1331,9 @@ impl<T: Numeric> MemData<T> {
         dequant_at
     }
 
-    /// How this store's values sit in memory, mirroring [`fill_from`](MemData::fill_from)'s
-    /// storage-element choice.
-    // The `let`-then-return is load-bearing: a bare `#[comptime] match` as the method body does not
-    // generate the `#[cube]` expand (the value must bind first).
-    #[allow(clippy::let_and_return)]
+    /// How this store's values sit in memory, as stated at construction.
     pub(crate) fn packing(&self) -> comptime_type!(Packing) {
-        let packing = #[comptime]
-        match &self.store.quant {
-            ComptimeOption::Some(info) => comptime!(match info.scheme.num_quants() {
-                1 => Packing::Native,
-                factor => Packing::Packed { factor },
-            }),
-            ComptimeOption::None => Packing::Plain,
-        };
-        packing
+        comptime!(self.store.packing)
     }
 
     /// This buffer's byte length (its length is in native lines, so widened by the physical width):
@@ -1374,8 +1436,8 @@ impl<T: Numeric> MemData<T> {
             self.projection.is_direct(),
             "MemData::dense_lines: a gathered window is not dense (sibling windows overlap)"
         ));
-        if comptime!(self.store.quant.is_some()) {
-            panic!("MemData::dense_lines: a quantized store dequantizes under Tile::copy_from")
+        if comptime!(self.store.packing != Packing::Plain) {
+            panic!("MemData::dense_lines: a packed store is served through Tile::copy_from")
         }
         let all = self.lines::<W>();
         let start = self.window_start.fcast::<usize>();
@@ -1396,8 +1458,8 @@ impl<T: Numeric> MemData<T> {
             self.projection.is_direct(),
             "MemData::dense_lines_mut: a gathered window is not dense (sibling windows overlap)"
         ));
-        if comptime!(self.store.quant.is_some()) {
-            panic!("MemData::dense_lines_mut: a quantized store cannot be written dense")
+        if comptime!(self.store.packing != Packing::Plain) {
+            panic!("MemData::dense_lines_mut: a packed store cannot be written dense")
         }
         let start = self.window_start.fcast::<usize>();
         let all = self.lines_mut::<W>();
@@ -1430,9 +1492,9 @@ impl<T: Numeric> MemData<T> {
         ));
         // A raw window serves the buffer at the element it was erased to, so a quantized store
         // would hand its stored bytes over as served values. Every other door refuses the same way.
-        if comptime!(self.store.quant.is_some()) {
+        if comptime!(self.store.packing != Packing::Plain) {
             panic!(
-                "MemData::window_slice: a quantized store has no raw element window; a fragment \
+                "MemData::window_slice: a packed store has no raw element window; a fragment \
                  load reads it through Tile::matrix_transparent"
             )
         }
@@ -1450,16 +1512,16 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
-    /// so the leaf masks without being asked. `layout` is a [`BatchMatrix`] for the 2-D matmul
+    /// so the leaf masks without being asked. `layout` is a [`TileMatrix`] for the 2-D matmul
     /// leaves and an [`AxisProjection`] for a gathered N-D read.
     pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
         layout: L,
         #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, C> {
-        if comptime!(self.store.quant.is_some()) {
+        if comptime!(self.store.packing != Packing::Plain) {
             panic!(
-                "Tile::matrix: a quantized tile only serves dequantized reads \
+                "Tile::matrix: a packed tile only serves values its read unpacks \
                  (Tile::matrix_transparent)"
             )
         }
@@ -1494,8 +1556,8 @@ impl<T: Numeric> MemData<T> {
         &mut self,
         layout: L,
     ) -> MaskedViewMut<'_, Vector<T, W>, C> {
-        if comptime!(self.store.quant.is_some()) {
-            panic!("Tile::matrix_mut: writing a quantized tile requires requantization")
+        if comptime!(self.store.packing != Packing::Plain) {
+            panic!("Tile::matrix_mut: writing a packed tile requires repacking")
         }
         let base = self.base();
         let window = self.window();
@@ -1550,7 +1612,11 @@ impl<T: Numeric> MemData<T> {
                 let dequant = info.dequant_view::<I, WP, T, W, Coords1d>(values, scales);
                 FlatView::new(dequant.view(), comptime!(self.access.overhang.masks()))
             }
-            ComptimeOption::None => self.flat::<W>(),
+            // The flat scan reads its own window whole, so it keeps the store's own mask.
+            ComptimeOption::None => self.unscaled::<WP, W, Coords1d, FlatLayout>(
+                FlatLayout::new(self.window.extent.clone()),
+                comptime!(Guard::Checked),
+            ),
         }
     }
 
@@ -1602,13 +1668,46 @@ impl<T: Numeric> MemData<T> {
                     comptime!(guard.checks() && self.access.overhang.masks()),
                 )
             }
-            ComptimeOption::None => self.masked::<W, C, L>(layout, guard),
+            ComptimeOption::None => self.unscaled::<WP, W, C, L>(layout, guard),
+        }
+    }
+
+    /// The scale-free half of [`transparent`](MemData::transparent): a plain store read as it
+    /// stands, a packed one unpacked at the read ([`PackedView`]). `WP` is the physical line the
+    /// buffer holds ([`Packing::physical`]), `W` the served one.
+    ///
+    /// Where the quantized arm needs a scheme, a scale grid and a window start to say what a read
+    /// means, this needs the field alone: a packed operand's values are values.
+    fn unscaled<WP: Size, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
+        &self,
+        layout: L,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<T, W>, C> {
+        let packing = self.packing();
+        match comptime!(packing) {
+            Packing::Plain => self.masked::<W, C, L>(layout, guard),
+            Packing::Native => panic!(
+                "MemData::transparent: a native store with nothing to fold in serves its own \
+                 element; bind it as that element and let the contraction cast it"
+            ),
+            Packing::Packed { field } => {
+                let words = self
+                    .lines_storage::<u32, WP>()
+                    .view(self.base())
+                    .view(self.window())
+                    .view(layout);
+                let values = PackedView::<WP, T, W, C>::new(words, comptime!(field));
+                MaskedView::new(
+                    values.view(),
+                    comptime!(guard.checks() && self.access.overhang.masks()),
+                )
+            }
         }
     }
 
     /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves
-    /// read. `L` is [`BatchMatrix`] for a direct operand and
-    /// [`ProjectedBatchMatrix`](super::ProjectedBatchMatrix) for a gathered one; both answer the
+    /// read. `L` is [`TileMatrix`] for a direct operand and
+    /// [`ProjectedMatrix`](super::ProjectedMatrix) for a gathered one; both answer the
     /// same [`Coords2d`] surface.
     pub(crate) fn matrix_transparent<I: Numeric, WP: Size, W: Size, L: TileLayout<Coords2d>>(
         &self,
@@ -1651,8 +1750,8 @@ impl<T: Numeric> MemData<T> {
 
     /// The mutable twin of [`flat`](MemData::flat).
     pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
-        if comptime!(self.store.quant.is_some()) {
-            panic!("Tile::flat_mut: writing a quantized tile requires requantization")
+        if comptime!(self.store.packing != Packing::Plain) {
+            panic!("Tile::flat_mut: writing a packed tile requires repacking")
         }
         let base = self.base();
         let window = self.window();
@@ -1687,9 +1786,10 @@ impl<T: Numeric> MemData<T> {
             comptime!(&space),
             false,
             comptime!(self.store.vector_size),
+            comptime!(MatrixAxes::trailing_pair(&space)),
             i,
         );
-        self.masked_mut::<W, Coords2d, BatchMatrix>(layout)
+        self.masked_mut::<W, Coords2d, TileMatrix>(layout)
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
@@ -1865,6 +1965,7 @@ impl<T: Numeric> MemData<T> {
                 buffer: unsafe { self.store.buffer.as_boxed_unchecked() },
                 vector_size: comptime!(self.store.vector_size),
                 quant,
+                packing: comptime!(self.store.packing),
             },
             // The layout addresses the whole buffer and never narrows; only the window moves.
             layout: self.layout.clone(),
@@ -2662,7 +2763,7 @@ impl Layout for GmemLayout {
 
 /// The layout [`Tile::at`] applies: shift every axis to `origin` and crop it to
 /// `extent`. Same rank as the source; the rank-reducing 2-D slice is
-/// [`BatchMatrix`](super::BatchMatrix).
+/// [`TileMatrix`](super::TileMatrix).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Window {

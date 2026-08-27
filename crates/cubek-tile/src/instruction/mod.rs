@@ -14,3 +14,4 @@ pub mod plane;
 pub mod registers;
 
 pub use algebra::*;
+pub use registers::contract::ScaleSide;

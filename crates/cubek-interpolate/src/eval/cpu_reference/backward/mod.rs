@@ -11,7 +11,7 @@ use cubek_test_utils::{
 
 use crate::interpolate_backward;
 
-pub fn strategy_result(
+pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateBackwardProblem,
     seed: u64,
@@ -93,8 +93,8 @@ pub fn reference_for_backward_interpolation_mode(
     progress: Option<&Progress>,
 ) -> HostData {
     match options.mode {
-        InterpolateMode::Nearest(_) => {
-            reference_nearest_backward(out_grad, output_shape, options.align_corners, progress)
+        InterpolateMode::Nearest(nearest_mode) => {
+            reference_nearest_backward(out_grad, output_shape, nearest_mode, progress)
         }
         InterpolateMode::Bilinear => {
             panic!("Bilinear interpolation backward is not supported by CPU reference")

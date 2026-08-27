@@ -1,13 +1,14 @@
-pub mod components;
 pub mod definition;
 #[cfg(any(feature = "cpu-reference", feature = "benchmarks"))]
 pub mod eval;
-pub mod launch;
-pub mod routines;
+mod kernel;
+pub mod tune_key;
+
+pub use definition::{InterpolateBlueprint, InterpolateStrategy, Residence};
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
-    launch::{InterpolateStrategy, interpolate_launch, interpolate_nearest_backward_launch},
+    kernel::{interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
 use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
@@ -17,6 +18,10 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 /// Supports nearest, bilinear, bicubic and lanczos3 modes.
 ///
 /// Expects input in NHWC layout.
+///
+/// The strategy states what the launch optimizes for; the device and the problem decide the rest,
+/// so a caller that has measured nothing still gets a geometry built for the hardware it runs on.
+/// [`InterpolateStrategy::Forced`] pins every choice for one that has.
 pub fn interpolate<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -25,11 +30,12 @@ pub fn interpolate<R: Runtime>(
     strategy: InterpolateStrategy,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
-    validate_strategy(client, &strategy)?;
     validate_rank(input.shape.len(), output.shape.len())?;
+    validate_shape(&input.shape)?;
+    validate_shape(&output.shape)?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
 
-    interpolate_launch(client, input, output, options, strategy, dtype)
+    interpolate_launch(client, input, output, options, dtype, strategy)
 }
 
 /// Backward interpolate operation
@@ -41,49 +47,33 @@ pub fn interpolate_backward<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     out_grad: TensorBinding<R>,
-    output: TensorBinding<R>,
+    input_grad: TensorBinding<R>,
     options: InterpolateOptions,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
-    validate_rank(input.shape.len(), output.shape.len())?;
-    validate_rank(out_grad.shape.len(), output.shape.len())?;
-    validate_nhwc_consistency(&input.shape, &output.shape)?;
-    validate_nhwc_consistency(&out_grad.shape, &output.shape)?;
+    validate_rank(input.shape.len(), input_grad.shape.len())?;
+    validate_rank(out_grad.shape.len(), input_grad.shape.len())?;
+    validate_shape(&input.shape)?;
+    validate_shape(&out_grad.shape)?;
+    validate_shape(&input_grad.shape)?;
+    validate_nhwc_consistency(&input.shape, &input_grad.shape)?;
+    validate_nhwc_consistency(&out_grad.shape, &input_grad.shape)?;
 
-    if input.shape != output.shape {
+    if input.shape != input_grad.shape {
         return Err(InterpolateError::ShapeMismatch {
             input: input.shape.to_vec(),
-            output: output.shape.to_vec(),
+            input_grad: input_grad.shape.to_vec(),
         });
     }
 
     match options.mode {
         InterpolateMode::Nearest(nearest_mode) => {
-            interpolate_nearest_backward_launch(client, out_grad, output, nearest_mode, dtype)
+            interpolate_nearest_backward_launch(client, out_grad, input_grad, nearest_mode, dtype)
         }
         _ => Err(InterpolateError::UnsupportedMode(format!(
             "{:?} interpolation backward is not supported by JIT backend",
             options.mode
         ))),
-    }
-}
-
-/// Checks if the strategy is valid for the current client
-fn validate_strategy<R: Runtime>(
-    client: &ComputeClient<R>,
-    strategy: &InterpolateStrategy,
-) -> Result<(), InterpolateError> {
-    // If the client is not running on a CPU, we don't need to validate the strategy
-    if client.properties().hardware.num_cpu_cores.is_none() {
-        return Ok(());
-    }
-
-    // If the client is running on a CPU, we need to validate the strategy
-    match strategy {
-        InterpolateStrategy::GlobalMemoryStrategy(_) => Ok(()),
-        InterpolateStrategy::SharedMemoryStrategy(_) => Err(InterpolateError::UnsupportedMode(
-            "interpolation shared memory strategy is not supported on CPU".to_string(),
-        )),
     }
 }
 
@@ -94,6 +84,26 @@ fn validate_rank(input_rank: usize, output_rank: usize) -> Result<(), Interpolat
             input: input_rank,
             output: output_rank,
         });
+    }
+    Ok(())
+}
+
+fn validate_shape(shape: &[usize]) -> Result<(), InterpolateError> {
+    for (axis, &size) in shape.iter().enumerate() {
+        if size == 0 {
+            return Err(InterpolateError::ZeroDimension {
+                shape: shape.to_vec(),
+                axis,
+            });
+        }
+        if matches!(axis, 1 | 2) && size > i32::MAX as usize {
+            return Err(InterpolateError::SpatialDimensionTooLarge {
+                shape: shape.to_vec(),
+                axis,
+                size,
+                max: i32::MAX as usize,
+            });
+        }
     }
     Ok(())
 }

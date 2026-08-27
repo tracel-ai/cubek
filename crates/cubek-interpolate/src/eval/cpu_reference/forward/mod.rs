@@ -10,16 +10,16 @@ pub(crate) use nearest::reference_nearest;
 
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
+    InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
-    launch::InterpolateStrategy,
 };
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
 
-pub fn strategy_result(
+pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateForwardProblem,
     strategy: InterpolateStrategy,
@@ -27,7 +27,7 @@ pub fn strategy_result(
 ) -> Result<HostData, String> {
     let dtype = f32_elem_type();
     let input_shape = problem.input_shape().to_vec();
-    let (input_handle, _input_host) = make_random_f32_host(&client, input_shape.clone(), seed);
+    let (input_handle, _input_host) = make_random_f32_host(&client, input_shape, seed);
 
     let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
 
