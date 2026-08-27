@@ -14,7 +14,7 @@ use cubecl::benchmark::TimingMethod;
 use cubecl::prelude::*;
 use cubecl::std::throughput::measure_peak_throughput;
 use cubecl::throughput::{
-    self, MemoryAccess, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
+    self, MemoryAccess, MemorySpec, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
 };
 use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
@@ -182,19 +182,19 @@ impl CategoryWork {
         }
         if self.bytes_read > 0 {
             let key = ThroughputKey {
-                mode: ThroughputMode::MemoryWorkingSet {
-                    access: MemoryAccess::Read,
-                    bytes: self.bytes_read as u64,
-                },
+                mode: ThroughputMode::Memory(MemorySpec::new(
+                    MemoryAccess::Read,
+                    self.bytes_read as u64,
+                )),
             };
             out.push((ResourceKind::Read, self.bytes_read, key));
         }
         if self.bytes_written > 0 {
             let key = ThroughputKey {
-                mode: ThroughputMode::MemoryWorkingSet {
-                    access: MemoryAccess::Write,
-                    bytes: self.bytes_written as u64,
-                },
+                mode: ThroughputMode::Memory(MemorySpec::new(
+                    MemoryAccess::Write,
+                    self.bytes_written as u64,
+                )),
             };
             out.push((ResourceKind::Write, self.bytes_written, key));
         }
