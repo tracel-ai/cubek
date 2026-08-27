@@ -22,13 +22,12 @@ impl<T: Numeric> RegisterData<T> {
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
     ///
-    /// A **packed lhs is served here too**. It used to be refused outright — "not wired yet" —
-    /// but the decode is [`Tile::matrix_packed`]'s and it happens per read for whichever leaf
-    /// asks, so there was nothing to wire: the refusal had outlived its reason.
-    /// `register_matmul_promoted_accumulator_quant` checks a packed lhs against a host reference
-    /// built from the quantized values and their scales.
+    /// A **packed lhs is served here too**: the decode is [`Tile::matrix_packed`]'s and it
+    /// happens per read for whichever leaf asks, so a promoted accumulator needs nothing of its
+    /// own to serve one. `register_matmul_promoted_accumulator_quant` checks a packed lhs against
+    /// a host reference built from the quantized values and their scales.
     ///
-    /// The rhs is a different question and still refused. A packed operand's `vector_size` is the
+    /// The rhs is a different question, and refused. A packed operand's `vector_size` is the
     /// *served* width — the binding's times the packing factor — and the rhs's width is the
     /// block's (asserted below), so a packed rhs would make the packing factor the accumulator's
     /// line width. Nothing reaches that: a promoted block wider than one line does not drain

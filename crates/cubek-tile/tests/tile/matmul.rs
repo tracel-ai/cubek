@@ -5109,13 +5109,13 @@ fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
     acc.mm(&a, &b, Semiring::SUM_PROD);
 }
 
-/// A packed lhs against a **promoted** accumulator.
+/// A packed lhs contracts into a register block to the product its scales and values describe.
 ///
-/// The memory-backed leaf has always served a quantized operand — it dequantizes per read, which
-/// is what `Tile::matrix_packed` does whatever leaf asks. The promoted leaf refused one outright,
-/// and this is what settles whether that refusal was a missing decode or only a missing test: the
-/// same product, contracted in a register block, against a reference built on the host from the
-/// quantized values and their scales.
+/// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
+/// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
+/// its own. What that is worth is only checkable against a reference the kernel had no hand in —
+/// built on the host from the quantized values and their scales — since a leaf that decoded
+/// wrongly and a reference that decoded the same way wrongly would agree.
 #[test]
 fn register_matmul_promoted_accumulator_quant() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
