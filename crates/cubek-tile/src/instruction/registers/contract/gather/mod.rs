@@ -41,12 +41,16 @@ pub(super) enum RhsRole {
     PerCell,
 }
 
-/// The accumulator coordinate(s) across which one factor's complete tap walk can be reused.
+/// The accumulator scope at which one factor's complete tap walk is computed and cached.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum FactorReuse {
+    /// Once for the entire accumulator block.
     Block,
+    /// Once for each accumulator row.
     Row,
+    /// Once for each accumulator column.
     Column,
+    /// Once for each accumulator cell.
     Cell,
 }
 
@@ -156,9 +160,9 @@ impl GatherProblem {
                         if matches!(normalization, Some((TapMask::Masked, _))) {
                             let tap = block.reduce[f];
                             varies_row |=
-                                masked_bound_addresses(rhs_projection, rhs_boundaries, tap, row);
+                                masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, row);
                             varies_col |=
-                                masked_bound_addresses(rhs_projection, rhs_boundaries, tap, col);
+                                masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, col);
                         }
                         match (varies_row, varies_col) {
                             (false, false) => FactorReuse::Block,
@@ -221,7 +225,7 @@ fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis]) {
 }
 
 /// Whether the physical bound tested for `tap` also moves with accumulator `axis`.
-fn masked_bound_addresses(
+fn masked_bound_depends_on(
     rhs: &Projection,
     boundaries: &[Option<Boundary>],
     tap: Axis,
@@ -470,6 +474,28 @@ mod tests {
         assert_eq!(
             problem.factor_reuse,
             vec![FactorReuse::Row, FactorReuse::Column]
+        );
+    }
+
+    #[test]
+    fn constant_and_fully_dependent_factors_choose_the_extreme_caches() {
+        let (lhs, rhs, acc) = spaces();
+        let projection = Projection::direct(&[K0, K1, N]);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        let problem = GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some(vec![(false, false), (true, true)]),
+            None,
+            &[],
+        );
+
+        assert_eq!(
+            problem.factor_reuse,
+            vec![FactorReuse::Block, FactorReuse::Cell]
         );
     }
 

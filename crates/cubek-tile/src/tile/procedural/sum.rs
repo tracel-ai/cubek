@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use super::{Recipe, RecipeAxisDeps, RecipeCoords, RecipeExpand};
+use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 
 /// Pointwise sum of two recipes: `(A + B)(coords) = A(coords) + B(coords)`. Composing
 /// [`AffineCoordinate`](super::AffineCoordinate) terms through it is how a recipe reads more than
@@ -25,12 +25,12 @@ impl<T: Numeric, A: Recipe<T>, B: Recipe<T>> Recipe<T> for Sum<A, B> {
     }
 }
 
-impl<A: CubeType, B: CubeType> RecipeAxisDeps for SumExpand<A, B>
+impl<A: CubeType, B: CubeType> RecipeAxisDependencies for SumExpand<A, B>
 where
-    A::ExpandType: RecipeAxisDeps,
-    B::ExpandType: RecipeAxisDeps,
+    A::ExpandType: RecipeAxisDependencies,
+    B::ExpandType: RecipeAxisDependencies,
 {
-    fn addresses(&self, scope: &Scope, axis: crate::Axis) -> bool {
-        self.lhs.addresses(scope, axis) || self.rhs.addresses(scope, axis)
+    fn reads_axis(&self, scope: &Scope, axis: crate::Axis) -> bool {
+        self.lhs.reads_axis(scope, axis) || self.rhs.reads_axis(scope, axis)
     }
 }

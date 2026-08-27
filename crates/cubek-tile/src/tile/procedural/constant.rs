@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use super::{Recipe, RecipeAxisDeps, RecipeCoords, RecipeExpand};
+use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 
 /// A procedural field holding one value, which may be a runtime scalar.
 #[derive(CubeType, Clone)]
@@ -15,8 +15,8 @@ impl<T: Numeric> Recipe<T> for Constant<T> {
     }
 }
 
-impl<T: Numeric> RecipeAxisDeps for ConstantExpand<T> {
-    fn addresses(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
+impl<T: Numeric> RecipeAxisDependencies for ConstantExpand<T> {
+    fn reads_axis(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
         false
     }
 }
@@ -33,8 +33,8 @@ impl<T: Numeric> Recipe<T> for Zeros {
     }
 }
 
-impl RecipeAxisDeps for ZerosExpand {
-    fn addresses(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
+impl RecipeAxisDependencies for ZerosExpand {
+    fn reads_axis(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
         false
     }
 }
@@ -50,8 +50,8 @@ impl<T: Numeric> Recipe<T> for Ones {
     }
 }
 
-impl RecipeAxisDeps for OnesExpand {
-    fn addresses(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
+impl RecipeAxisDependencies for OnesExpand {
+    fn reads_axis(&self, _scope: &Scope, _axis: crate::Axis) -> bool {
         false
     }
 }

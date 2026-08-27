@@ -26,9 +26,9 @@ use super::{
 /// accumulator's own column axis at coefficient `1`
 /// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so their source
 /// coordinates differ in that axis alone and one cell apart. The taps above them move only the
-/// contracted axes, which a resampling map steps outside its floor. Where the lhs does not span the
-/// column axis, the whole run shares one anchor ([`AxisProjection::anchor`]) per row; where it
-/// spans the column axis, each `(i, n)` cell anchors once and steps its taps via
+/// contracted axes, which a resampling map steps outside its floor. When every factor is free of
+/// the column axis, the whole run shares one anchor ([`AxisProjection::anchor`]) per row; otherwise
+/// each `(i, n)` cell anchors once and steps its taps via
 /// [`AxisProjection::advance`]. In both cases, reads and mask tests use the stepped physical
 /// coordinates rather than evaluating the projection terms per tap.
 #[cube]
@@ -57,6 +57,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     );
     let kc = comptime!(problem.block.kc);
     let taps = comptime!(problem.taps);
+    let caches_block = comptime!(problem.factor_reuse.contains(&FactorReuse::Block));
+    let caches_column = comptime!(problem.factor_reuse.contains(&FactorReuse::Column));
     let factors_span_col = comptime!(
         problem
             .factor_reuse
@@ -93,65 +95,27 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
         );
 
         let mut block_weights = Array::<EL>::new(taps);
-        let block_anchor = rhs_reader.map.anchor(
-            cell_position(
+        if comptime!(caches_block) {
+            let block_anchor = rhs_anchor(
+                &rhs_reader.map,
                 &batch,
                 0u32,
                 0u32,
-                &factor_coords(comptime!(factors), 0usize, 0usize),
-                comptime!(problem.rhs_space.clone()),
                 comptime!(problem.clone()),
-                comptime!(problem.block.vw),
-            ),
-            comptime!(problem.block.reduce.clone()),
-        );
-        #[unroll]
-        for f in 0..factors {
-            if comptime!(problem.factor_reuse[f] == FactorReuse::Block) {
-                factor_walk::<EL, ER>(
-                    &mut block_weights,
-                    comptime!(problem.offsets[f]),
-                    lhs,
-                    rhs,
-                    &rhs_reader.map,
-                    &block_anchor,
-                    &batch,
-                    0u32,
-                    0u32,
-                    f,
-                    comptime!(problem.clone()),
-                );
-            }
-        }
-
-        let mut column_weights = Array::<EL>::new(taps * nr);
-        #[unroll]
-        for f in 0..factors {
-            if comptime!(problem.factor_reuse[f] == FactorReuse::Column) {
-                #[unroll(unroll)]
-                for n in 0..nr {
-                    let anchor = rhs_reader.map.anchor(
-                        cell_position(
-                            &batch,
-                            0u32,
-                            n as u32,
-                            &factor_coords(comptime!(factors), f, 0usize),
-                            comptime!(problem.rhs_space.clone()),
-                            comptime!(problem.clone()),
-                            comptime!(problem.block.vw),
-                        ),
-                        comptime!(problem.block.reduce.clone()),
-                    );
+            );
+            #[unroll]
+            for f in 0..factors {
+                if comptime!(problem.factor_reuse[f] == FactorReuse::Block) {
                     factor_walk::<EL, ER>(
-                        &mut column_weights,
-                        n * comptime!(taps) + comptime!(problem.offsets[f]),
+                        &mut block_weights,
+                        comptime!(problem.offsets[f]),
                         lhs,
                         rhs,
                         &rhs_reader.map,
-                        &anchor,
+                        &block_anchor,
                         &batch,
                         0u32,
-                        n as u32,
+                        0u32,
                         f,
                         comptime!(problem.clone()),
                     );
@@ -159,31 +123,58 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             }
         }
 
+        let mut column_weights = Array::<EL>::new(taps * nr);
+        if comptime!(caches_column) {
+            #[unroll(unroll)]
+            for n in 0..nr {
+                let anchor = rhs_anchor(
+                    &rhs_reader.map,
+                    &batch,
+                    0u32,
+                    n as u32,
+                    comptime!(problem.clone()),
+                );
+                #[unroll]
+                for f in 0..factors {
+                    if comptime!(problem.factor_reuse[f] == FactorReuse::Column) {
+                        factor_walk::<EL, ER>(
+                            &mut column_weights,
+                            n * comptime!(taps) + comptime!(problem.offsets[f]),
+                            lhs,
+                            rhs,
+                            &rhs_reader.map,
+                            &anchor,
+                            &batch,
+                            0u32,
+                            n as u32,
+                            f,
+                            comptime!(problem.clone()),
+                        );
+                    }
+                }
+            }
+        }
+
         #[unroll(unroll)]
         for i in 0..mr {
             let mut row_weights = Array::<EL>::new(taps);
+            let row_anchor = rhs_anchor(
+                &rhs_reader.map,
+                &batch,
+                i as u32,
+                0u32,
+                comptime!(problem.clone()),
+            );
             #[unroll]
             for f in 0..factors {
                 if comptime!(problem.factor_reuse[f] == FactorReuse::Row) {
-                    let anchor = rhs_reader.map.anchor(
-                        cell_position(
-                            &batch,
-                            i as u32,
-                            0u32,
-                            &factor_coords(comptime!(factors), f, 0usize),
-                            comptime!(problem.rhs_space.clone()),
-                            comptime!(problem.clone()),
-                            comptime!(problem.block.vw),
-                        ),
-                        comptime!(problem.block.reduce.clone()),
-                    );
                     factor_walk::<EL, ER>(
                         &mut row_weights,
                         comptime!(problem.offsets[f]),
                         lhs,
                         rhs,
                         &rhs_reader.map,
-                        &anchor,
+                        &row_anchor,
                         &batch,
                         i as u32,
                         0u32,
@@ -195,17 +186,12 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             if comptime!(factors_span_col) {
                 #[unroll(unroll)]
                 for n in 0..nr {
-                    let anchor = rhs_reader.map.anchor(
-                        cell_position(
-                            &batch,
-                            i as u32,
-                            n as u32,
-                            &factor_coords(comptime!(factors), 0usize, 0usize),
-                            comptime!(problem.rhs_space.clone()),
-                            comptime!(problem.clone()),
-                            comptime!(problem.block.vw),
-                        ),
-                        comptime!(problem.block.reduce.clone()),
+                    let anchor = rhs_anchor(
+                        &rhs_reader.map,
+                        &batch,
+                        i as u32,
+                        n as u32,
+                        comptime!(problem.clone()),
                     );
                     let mut cell_weights = Array::<EL>::new(taps);
                     #[unroll]
@@ -233,7 +219,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             comptime!(problem.block.reduce_extents.clone()),
                             p.fcast::<u32>(),
                         );
-                        let weight = tap_weight_reused::<EL>(
+                        let weight = tap_weight::<EL>(
                             &block_weights,
                             &row_weights,
                             &column_weights,
@@ -271,26 +257,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                 // The taps are the only coordinates moving under this row, so the map's rational
                 // axes carry the same numerator at all `kc` of them: their floor is taken once
                 // here and each tap steps the result.
-                let anchor = rhs_reader.map.anchor(
-                    cell_position(
-                        &batch,
-                        i as u32,
-                        0u32,
-                        &factor_coords(comptime!(factors), 0usize, 0usize),
-                        comptime!(problem.rhs_space.clone()),
-                        comptime!(problem.clone()),
-                        comptime!(problem.block.vw),
-                    ),
-                    comptime!(problem.block.reduce.clone()),
-                );
-
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
                     let reduce_coords = unravel_const(
                         comptime!(problem.block.reduce_extents.clone()),
                         p.fcast::<u32>(),
                     );
-                    let weight = Vector::<E, V>::cast_from(tap_weight_row_reused::<EL>(
+                    let weight = Vector::<E, V>::cast_from(row_cached_tap_weight::<EL>(
                         &block_weights,
                         &row_weights,
                         &reduce_coords,
@@ -300,7 +273,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                     ));
 
                     let base = rhs_reader.map.advance(
-                        &anchor,
+                        &row_anchor,
                         cell_position(
                             &batch,
                             i as u32,
@@ -338,6 +311,29 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
             unroll,
         );
     }
+}
+
+/// Anchor the rhs projection at one accumulator cell with every contracted coordinate at zero.
+#[cube]
+fn rhs_anchor(
+    rhs_map: &AxisProjection,
+    batch: &Coords<u32>,
+    row: u32,
+    col: u32,
+    #[comptime] problem: GatherProblem,
+) -> CoordsDyn {
+    rhs_map.anchor(
+        cell_position(
+            batch,
+            row,
+            col,
+            &factor_coords(comptime!(problem.factors.unwrap()), 0usize, 0usize),
+            comptime!(problem.rhs_space.clone()),
+            comptime!(problem.clone()),
+            comptime!(problem.block.vw),
+        ),
+        comptime!(problem.block.reduce.clone()),
+    )
 }
 
 /// Evaluate one factor's complete 1-D tap walk at the accumulator coordinate where it is cached.
@@ -431,7 +427,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
 /// Fold one tap's per-factor weights from their maximal cache levels.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn tap_weight_reused<EL: Numeric>(
+fn tap_weight<EL: Numeric>(
     block: &Array<EL>,
     row: &Array<EL>,
     column: &Array<EL>,
@@ -443,62 +439,29 @@ fn tap_weight_reused<EL: Numeric>(
     #[comptime] offsets: Vec<usize>,
     #[comptime] reuse: Vec<FactorReuse>,
 ) -> EL {
-    let mut weight = factor_weight(
-        block,
-        row,
-        column,
-        cell,
-        reduce_coords,
-        column_index,
-        0usize,
-        taps,
-        comptime!(offsets[0]),
-        comptime!(reuse[0]),
-    );
+    let first = factor_tap(reduce_coords, 0usize, comptime!(offsets[0]));
+    let mut weight = match comptime!(reuse[0]) {
+        FactorReuse::Block => block[first],
+        FactorReuse::Row => row[first],
+        FactorReuse::Column => column[column_index * comptime!(taps) + first],
+        FactorReuse::Cell => cell[first],
+    };
     #[unroll]
     for f in 1..factors {
-        weight *= factor_weight(
-            block,
-            row,
-            column,
-            cell,
-            reduce_coords,
-            column_index,
-            f,
-            taps,
-            comptime!(offsets[f]),
-            comptime!(reuse[f]),
-        );
+        let tap = factor_tap(reduce_coords, f, comptime!(offsets[f]));
+        weight *= match comptime!(reuse[f]) {
+            FactorReuse::Block => block[tap],
+            FactorReuse::Row => row[tap],
+            FactorReuse::Column => column[column_index * comptime!(taps) + tap],
+            FactorReuse::Cell => cell[tap],
+        };
     }
     weight
 }
 
-#[cube]
-#[allow(clippy::too_many_arguments)]
-fn factor_weight<EL: Numeric>(
-    block: &Array<EL>,
-    row: &Array<EL>,
-    column: &Array<EL>,
-    cell: &Array<EL>,
-    reduce_coords: &Coords<u32>,
-    column_index: usize,
-    #[comptime] factor: usize,
-    #[comptime] taps: usize,
-    #[comptime] offset: usize,
-    #[comptime] reuse: FactorReuse,
-) -> EL {
-    let tap = factor_tap(reduce_coords, factor, offset);
-    match comptime!(reuse) {
-        FactorReuse::Block => block[tap],
-        FactorReuse::Row => row[tap],
-        FactorReuse::Column => column[column_index * comptime!(taps) + tap],
-        FactorReuse::Cell => cell[tap],
-    }
-}
-
 /// The column-free nesting only needs block- and row-cached factors.
 #[cube]
-fn tap_weight_row_reused<EL: Numeric>(
+fn row_cached_tap_weight<EL: Numeric>(
     block: &Array<EL>,
     row: &Array<EL>,
     reduce_coords: &Coords<u32>,

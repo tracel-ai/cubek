@@ -59,7 +59,7 @@ impl<T: Numeric> Tile<T> {
     /// consumer sees one factor per contracted axis instead of one opaque field.
     pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(_space: Space, _recipe: R) -> Self
     where
-        R::ExpandType: RecipeAxisDeps,
+        R::ExpandType: SeparableRecipeAxisDependencies,
     {
         unexpanded!()
     }
@@ -719,23 +719,6 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether a selected separable factor reads an axis of its recipe coordinates. Backed and
-    /// opaque tiles answer conservatively because no separable schedule may index them anyway.
-    pub(crate) fn factor_addresses(
-        &self,
-        #[comptime] factor: usize,
-        #[comptime] axis: Axis,
-    ) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::Procedural(data) => data.factor_addresses(factor, axis),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_) => comptime!(true),
-        }
-    }
-
     /// This operand's window sign, for a stage recording where it was filled from.
     pub(crate) fn window_signed(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
@@ -1214,20 +1197,20 @@ impl<T: Numeric> TileExpand<T> {
         row: Axis,
         col: Axis,
     ) -> Option<Vec<(bool, bool)>> {
-        factors.map(|factors| {
-            (0..factors)
-                .map(|f| match &self.tile_kind {
-                    TileKindExpand::Procedural(data) => (
-                        data.__expand_factor_addresses_method(scope, f, row),
-                        data.__expand_factor_addresses_method(scope, f, col),
-                    ),
-                    TileKindExpand::Gmem(_)
-                    | TileKindExpand::Smem(_)
-                    | TileKindExpand::PlaneTile(_)
-                    | TileKindExpand::PlanePartition(_)
-                    | TileKindExpand::TmaGmem(_) => (true, true),
+        factors.map(|factors| match &self.tile_kind {
+            TileKindExpand::Procedural(data) => (0..factors)
+                .map(|f| {
+                    (
+                        data.__expand_factor_reads_axis_method(scope, f, row),
+                        data.__expand_factor_reads_axis_method(scope, f, col),
+                    )
                 })
-                .collect()
+                .collect(),
+            TileKindExpand::Gmem(_)
+            | TileKindExpand::Smem(_)
+            | TileKindExpand::PlaneTile(_)
+            | TileKindExpand::PlanePartition(_)
+            | TileKindExpand::TmaGmem(_) => (0..factors).map(|_| (true, true)).collect(),
         })
     }
 }
