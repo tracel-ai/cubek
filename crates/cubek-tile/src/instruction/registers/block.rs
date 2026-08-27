@@ -163,12 +163,24 @@ fn rank1_update<
     #[comptime] unroll: bool,
     #[comptime] semiring: Semiring,
 ) {
-    #[unroll(unroll)]
-    for n in 0..nr {
-        if comptime!(served > 1) {
-            b[n] = Vector::<E, V>::cast_from(rhs.line((n as u32, k_line), 0usize));
-        } else {
-            b[n] = Vector::<E, V>::cast_from(rhs.line((k as u32, n as u32), 0usize));
+    // A rhs whose fold is indexed per column needs each line's real ordinal, which only an
+    // unconditionally unrolled walk gives; one fold per read does not care, and keeps the walk the
+    // block's own budget decided.
+    let lanes = rhs.lanes();
+    if comptime!(lanes > 1) {
+        #[unroll]
+        for n in 0..nr {
+            b[n] =
+                Vector::<E, V>::cast_from(rhs.line((k as u32, comptime!(n as u32).runtime()), n));
+        }
+    } else {
+        #[unroll(unroll)]
+        for n in 0..nr {
+            if comptime!(served > 1) {
+                b[n] = Vector::<E, V>::cast_from(rhs.line((n as u32, k_line), 0usize));
+            } else {
+                b[n] = Vector::<E, V>::cast_from(rhs.line((k as u32, n as u32), 0usize));
+            }
         }
     }
     #[unroll(unroll)]

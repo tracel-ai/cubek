@@ -192,16 +192,29 @@ can span `COL` (`tests/tile/separable.rs`, an lhs spelled `[ROW, TAP, COL]`), wh
 accumulator's own column for a row. Membership answers how far the column group reaches. It does
 not answer where the rows stop and the batch begins, and nothing needs it to.
 
-**What is left.**
+**Done.** Every step of it, and the scales are served as lines.
 
-1. **The accumulator's own view.** `MemData::matrix_mut` still takes `MatrixAxes::trailing_pair`,
-   so a split `N` reads `NB` as the row edge there even though `ContractShape` now knows better.
-   The operands are already fine: `MatrixAxes::of` searches by extent, and the extents it is given
-   are now the right products.
-2. **Split `N` in a test**, scales addressing `NB` alone, end to end.
-3. **The divisors go**: `over(bn)` out of the specs, `check_lines_hold_one_scale` deleted.
-4. **Vectorized scales.** The `Lines` impl that folds them, `run` non-zero, and the two lines that
-   nail the width shut (`direct.rs`'s `size!(S) = 1`, `scale_line`'s `extract(0)`) deleted.
+1. **The accumulator's own view** takes its `MatrixAxes` instead of assuming the trailing pair.
+2. **Split `N` end to end** (`tests/tile/blocked.rs`), which turned up three refusals: both
+   `matrix_mut`s asked whether a projection was *direct* where the read side had already been
+   relaxed to ask whether it *overlaps*; `MemData::matrix_mut` built a plain matrix layout where
+   its read twin built a projected one; and `scale_side` read the accumulator's columns off its
+   last axis. It also turned up an engine bug with nothing to do with quantization:
+   `AxisProjection` multiplied line-addressed axes by scalar coefficients, which no single-axis
+   column group could show.
+3. **The divisors are gone.** `over(bn)` is out of every scales spec and
+   `check_lines_hold_one_scale` with it; a scales operand that divides is refused outright.
+4. **The scales are served as lines.** Their matrix counts its columns in *blocks* where the
+   values' counts lines, which frees them to span only what they vary over and so leaves their
+   innermost axis one they do. `ScaledLines` folds them at the leaf rather than under a view,
+   because which lane of a scale line a value line takes is a constant only the caller knows:
+   `run` is that line's ordinal, and `Lines::lanes` is how the block knows to walk its columns
+   under one. A wide scale is refused where the ordinal is not constant — the lhs's columns are the
+   contraction, whose step is a runtime index.
+
+`tests/tile/blocked.rs::scales_are_served_several_at_a_time` pins it, and the generated kernel
+shows what it is for: one `vec4<f32>` load at one address, four constant lane extracts, where there
+were eight scalar loads.
 
 **Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
 a hardware number, so grouping it by extent is right there and stays.
