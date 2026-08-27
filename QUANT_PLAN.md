@@ -160,53 +160,51 @@ that exists, a scheme that blocks the columns keeps the rational spelling there,
 | 6 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
 | 7 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
 
-### Item 2, planned
+### Item 2, and what it turned out to be
 
-A contraction's shape is read off the accumulator's *last two axes* and off matching extent
-products. Both are guesses that happen to be right while every problem is `[batch…, M, N]`. A
-matmul's shape is not a numeric coincidence, it is which space names which axis:
+A contraction's shape was read off the accumulator's *last two axes*. Half of that is not a guess:
+the innermost axis is a column edge by construction, because it is the axis the sink lines along.
+The other half is, and it was the half refusing a split `N` — `(M, NB, NI)` takes the block index
+for a row and leaves the contraction reading a matrix that is not there.
 
-| group | rule |
-|---|---|
-| `reduce` | in `lhs ∪ rhs`, absent from the accumulator (already [`Space::contracted`]) |
-| `rows` | the accumulator's axes the lhs spans |
-| `cols` | the accumulator's axes the rhs spans |
-| `batch` | the accumulator's axes both span |
+So the column group *reaches*, and how far is read off the operands:
 
-Four groups, one rule, nothing stated and nothing searched for. An accumulator axis neither
-operand spans is already refused in `Tile::op_space`.
+```rust
+fn col_split(acc: &Space, lhs: &Space) -> usize {
+    let mut split = acc.rank() - 1;
+    while split > 1 && !lhs.contains(acc.axis_at(split - 1)) {
+        split -= 1;
+    }
+    split
+}
+```
 
-**What it unblocks.** A `[bm, bn]` scheme splits `N` into `(NB, NI)`, which today breaks
-`ContractShape` (`NB` and `NI` become the row and the column). With the split, `PhysicalAxisMap::of(N).over(bn)`
-goes, `check_lines_hold_one_scale` goes with it (a served line inside one block stops being an
-arithmetic check and becomes the shape of the axes), and a scales operand's innermost axis is a
-*block* axis — which is the only way a scales line can be wider than one value, because a line's
-width applies to the innermost axis of the operand's space and today that is the axis the scales
-omit.
+An axis the lhs spans stops the run, because an axis the lhs varies over has to be walked against
+the lhs rather than folded into a column. `mr`, `cols` and `batch_extents` all read off that one
+number. **Landed**, suite unchanged.
 
-**Phases.**
+The rule this replaced — rows are the accumulator's axes the lhs spans, columns the ones the rhs
+does, batch the ones both do — is wrong, and two shapes say so. A conv accumulator shares `N`, `OH`
+and `OW` with its image, so every lhs-spanned axis becoming a row would make one `N*OH*OW` matrix
+out of a window that is not contiguous; today `N` and `OH` are batch and only `OW` is the row edge,
+and which of the two it is is a *tiling choice*, not a fact about membership. And a resampling lhs
+can span `COL` (`tests/tile/separable.rs`, an lhs spelled `[ROW, TAP, COL]`), which would take the
+accumulator's own column for a row. Membership answers how far the column group reaches. It does
+not answer where the rows stop and the batch begins, and nothing needs it to.
 
-1. **Name the partition.** `ContractAxes { batch, rows, cols, reduce }` from the three spaces, and
-   a `MatrixAxes` built from membership in an operand's own axis order rather than from a product.
-   Groups must be contiguous and in order; anything else is refused where it is built. Behaviour
-   unchanged, and the new partition is asserted to agree with the old numbers.
-2. **`ContractShape` derives from it.** `mr`, `cols`, `kc` and `batch_extents` become products over
-   the groups; `lhs_axes` / `rhs_axes` / `matrix_axes` become lookups. `MatrixAxes::of` and `find`
-   lose their contraction callers.
-3. **The accumulator's own view.** `MemData::matrix_mut` takes its `MatrixAxes` from the caller
-   instead of assuming `trailing_pair`. This is the line that actually refuses a split `N`.
-4. **Split `N` in a test**, scales addressing `NB` alone, end to end.
-5. **The divisors go**: `over(bn)` out of the specs, `check_lines_hold_one_scale` deleted.
-6. **Vectorized scales.** The `Lines` impl that folds them, `run` non-zero, and the two lines that
+**What is left.**
+
+1. **The accumulator's own view.** `MemData::matrix_mut` still takes `MatrixAxes::trailing_pair`,
+   so a split `N` reads `NB` as the row edge there even though `ContractShape` now knows better.
+   The operands are already fine: `MatrixAxes::of` searches by extent, and the extents it is given
+   are now the right products.
+2. **Split `N` in a test**, scales addressing `NB` alone, end to end.
+3. **The divisors go**: `over(bn)` out of the specs, `check_lines_hold_one_scale` deleted.
+4. **Vectorized scales.** The `Lines` impl that folds them, `run` non-zero, and the two lines that
    nail the width shut (`direct.rs`'s `size!(S) = 1`, `scale_line`'s `extract(0)`) deleted.
 
-**Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16`
-is a hardware number, so grouping it by extent is right there and stays.
-
-**Risks.** Interleaved accumulator axes give non-contiguous groups, which the two-split
-`MatrixAxes` cannot express: refused rather than supported. An operand spanning an accumulator axis
-it does not own classifies wrong, but the numeric search misreads it today too. `spread`, `nr` and
-`served` all read `cols`, and take the group's product instead.
+**Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
+a hardware number, so grouping it by extent is right there and stays.
 
 ### Item 4, surveyed
 
