@@ -26,12 +26,20 @@ impl Rational {
     }
 
     /// Map a tap range whose zero is `radius` samples before `floor(coordinate)`.
+    ///
+    /// When `scale` is 0 (e.g., input extent of 1 under `align_corners`), the source coordinate
+    /// does not move with the output. The output term is omitted since [`PhysicalAxisMap`] rejects
+    /// zero coefficients.
     pub fn tap_axis(self, output: Axis, tap: Axis, radius: usize) -> PhysicalAxisMap {
-        PhysicalAxisMap::affine_with_offset(
-            &[(output, self.scale), (tap, self.divisor)],
-            self.offset - radius as isize * self.divisor as isize,
-        )
-        .over(self.divisor)
+        let moving = [(output, self.scale), (tap, self.divisor)];
+        let terms: &[(Axis, usize)] = if self.scale == 0 {
+            &moving[1..]
+        } else {
+            &moving
+        };
+        let offset = self.offset - (radius * self.divisor) as isize;
+
+        PhysicalAxisMap::affine_with_offset(terms, offset).over(self.divisor)
     }
 }
 
