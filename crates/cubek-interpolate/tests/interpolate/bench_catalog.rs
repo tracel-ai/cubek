@@ -3,7 +3,7 @@
 #![cfg(feature = "benchmarks")]
 
 use cubek_interpolate::eval::benchmarks::InterpolateCorrectness;
-use cubek_interpolate::{InterpolateConfig, definition::InterpolateProblem};
+use cubek_interpolate::{InterpolateStrategy, definition::InterpolateProblem};
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -21,7 +21,7 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 fn run(strategy_id: &str, problem_id: &str) {
     use cubek_interpolate::eval::benchmarks::{every_strategy, problems};
 
-    let strategy: InterpolateConfig = lookup(every_strategy(), strategy_id);
+    let strategy: InterpolateStrategy = lookup(every_strategy(), strategy_id);
     let problem: InterpolateProblem = lookup(problems(), problem_id);
 
     let actual = match InterpolateCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
@@ -37,8 +37,9 @@ fn run(strategy_id: &str, problem_id: &str) {
         .enforce();
 }
 
-/// The catalogue id of the baseline geometry. The old `global_memory` and `shared_memory` ids
-/// went with the strategies they named; a geometry is what the catalogue lists now.
+/// The catalogue id of the baseline geometry. The catalogue also lists the selector's own intents,
+/// but these tests pin one geometry so a reference mismatch names a launch and not a choice the
+/// device made.
 const STRATEGY: &str = "in_place_p4_r2_c1";
 
 /// The id above has to name a real catalogue entry. Without this, a catalogue rename leaves every

@@ -2,7 +2,7 @@ use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::{
-    InterpolateConfig,
+    InterpolateStrategy,
     definition::InterpolateProblem,
     eval::cpu_reference::{cpu_reference_result, kernel_result},
 };
@@ -11,11 +11,11 @@ pub struct InterpolateCorrectness;
 
 impl cubek_test_utils::Correctness for InterpolateCorrectness {
     type Problem = InterpolateProblem;
-    type Strategy = InterpolateConfig;
+    type Strategy = InterpolateStrategy;
 
     fn kernel_result(
         &self,
-        strategy: &InterpolateConfig,
+        strategy: &InterpolateStrategy,
         problem: &InterpolateProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {

@@ -1,4 +1,5 @@
 use super::coordinate::gcd;
+use crate::definition::InterpolateBlueprint;
 
 /// How the output is spread over cubes, over a cube's planes, and over a plane's lanes.
 ///
@@ -7,7 +8,7 @@ use super::coordinate::gcd;
 /// `lane_channels * channel_block` adjacent elements at a time. Lanes ride the output columns only
 /// for whatever width the channel axis cannot absorb.
 ///
-/// Every tuning choice is the caller's. Only the lane split is derived, because
+/// The blueprint states everything but the lane split, which is derived here because
 /// [`interpolate_space`](super::space::interpolate_space) requires
 /// `lane_cols * lane_channels == lanes` exactly and most stated combinations would not hold it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,23 +25,18 @@ pub struct TileGeometry {
 }
 
 impl TileGeometry {
-    /// Build a geometry from the stated tuning choices, solving the lane split around them.
+    /// Build a geometry from a resolved blueprint, solving the lane split around it.
     ///
-    /// `channel_block` is the lane's channel run, `None` to solve it with the rest of the split.
-    pub fn from_config(
-        channels: usize,
-        lanes: usize,
-        planes_per_cube: usize,
-        rows_per_plane: usize,
-        cols_per_lane: usize,
-        channel_block: Option<usize>,
-    ) -> Self {
-        let (lane_cols, lane_channels, channel_block) = lane_split(channels, lanes, channel_block);
+    /// The blueprint's channel block is the lane's channel run, `None` to solve it with the rest
+    /// of the split.
+    pub fn from_blueprint(blueprint: InterpolateBlueprint, channels: usize, lanes: usize) -> Self {
+        let (lane_cols, lane_channels, channel_block) =
+            lane_split(channels, lanes, blueprint.channel_block);
         Self {
-            planes_per_cube,
-            rows_per_plane,
+            planes_per_cube: blueprint.planes_per_cube,
+            rows_per_plane: blueprint.rows_per_plane,
             lane_cols,
-            cols_per_lane,
+            cols_per_lane: blueprint.cols_per_lane,
             lane_channels,
             channel_block,
         }
@@ -101,6 +97,7 @@ fn divisor_at_most(n: usize, cap: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cubek_tile::Residence;
 
     /// The split covers the plane exactly, which is what `interpolate_space` asserts.
     #[test]
@@ -131,7 +128,8 @@ mod tests {
     #[test]
     fn a_plane_of_one_lane_covers_every_channel() {
         for channels in [2, 3, 16] {
-            let geometry = TileGeometry::from_config(channels, 1, 4, 8, 8, None);
+            let blueprint = InterpolateBlueprint::new(Residence::InPlace, 4, 8, 8);
+            let geometry = TileGeometry::from_blueprint(blueprint, channels, 1);
             assert_eq!(geometry.lane_cols, 1);
             assert_eq!(geometry.lane_channels, 1);
             assert_eq!(geometry.channels_per_cube(), channels);
@@ -167,10 +165,11 @@ mod tests {
         assert_eq!(lane_cols * lane_channels, 32);
     }
 
-    /// The stated choices reach the geometry untouched.
+    /// The blueprint's choices reach the geometry untouched.
     #[test]
-    fn the_config_states_every_tuning_choice() {
-        let geometry = TileGeometry::from_config(3, 32, 2, 4, 8, None);
+    fn the_blueprint_states_every_tuning_choice() {
+        let blueprint = InterpolateBlueprint::new(Residence::InPlace, 2, 4, 8);
+        let geometry = TileGeometry::from_blueprint(blueprint, 3, 32);
         assert_eq!(geometry.planes_per_cube, 2);
         assert_eq!(geometry.rows_per_plane, 4);
         assert_eq!(geometry.cols_per_lane, 8);

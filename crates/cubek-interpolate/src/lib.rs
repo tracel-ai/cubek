@@ -4,7 +4,7 @@ pub mod eval;
 mod kernel;
 pub mod tune_key;
 
-pub use kernel::{InterpolateConfig, Residence};
+pub use definition::{InterpolateBlueprint, InterpolateStrategy, Residence};
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},
@@ -18,21 +18,24 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 /// Supports nearest, bilinear, bicubic and lanczos3 modes.
 ///
 /// Expects input in NHWC layout.
+///
+/// The strategy states what the launch optimizes for; the device and the problem decide the rest,
+/// so a caller that has measured nothing still gets a geometry built for the hardware it runs on.
+/// [`InterpolateStrategy::Forced`] pins every choice for one that has.
 pub fn interpolate<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
-    config: InterpolateConfig,
+    strategy: InterpolateStrategy,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {
     validate_rank(input.shape.len(), output.shape.len())?;
     validate_shape(&input.shape)?;
     validate_shape(&output.shape)?;
     validate_nhwc_consistency(&input.shape, &output.shape)?;
-    config.validate()?;
 
-    interpolate_launch(client, input, output, options, dtype, config)
+    interpolate_launch(client, input, output, options, dtype, strategy)
 }
 
 /// Backward interpolate operation

@@ -10,7 +10,7 @@ pub(crate) use nearest::reference_nearest;
 
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::{
-    InterpolateConfig,
+    InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
 };
@@ -22,7 +22,7 @@ use cubek_test_utils::{
 pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateForwardProblem,
-    config: InterpolateConfig,
+    strategy: InterpolateStrategy,
     seed: u64,
 ) -> Result<HostData, String> {
     let dtype = f32_elem_type();
@@ -37,7 +37,7 @@ pub fn kernel_result(
             input_handle.clone().binding(),
             output_handle.clone().binding(),
             problem.options,
-            config,
+            strategy,
             dtype,
         )
         .into()

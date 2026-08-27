@@ -6,129 +6,74 @@ use super::{
     space::{self, CHANNEL},
 };
 use crate::{
-    InterpolateError,
-    definition::{InterpolateMode, InterpolateOptions, get_transform},
+    InterpolateError, InterpolateStrategy,
+    definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
 use cubek_tile::Residence;
 
-/// Every choice the tile-backed interpolation launch makes.
-///
-/// Nothing here is inferred. The launch has no default and no derivation: a caller states the
-/// geometry and the gathered input's residence, and gets exactly that. Only the lane split is
-/// solved, by [`TileGeometry::from_config`], because the space asserts an exact plane cover.
-///
-/// [`channel_block`](Self::channel_block) is the one choice inside that split a caller may still
-/// pin. It is the lane's channel run, so it is the accumulator's innermost extent and sets `nr`
-/// in the contraction: the separable schedule's cost is per tap, and `nr` multiplies it. Solving
-/// it only ever reaches the widest divisor one line holds, which leaves the other splits of a
-/// deep channel axis unreachable.
-///
-/// The output is always written directly to global memory. Only the gathered input can be staged,
-/// so `InPlace` makes the whole tile operation in-place while `Smem` stages that input. Which one
-/// a problem wants swings both ways by up to 4x, which is why it is stated rather than guessed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InterpolateConfig {
-    pub input_residence: Residence,
-    pub planes_per_cube: usize,
-    pub rows_per_plane: usize,
-    pub cols_per_lane: usize,
-    /// The lane's channel run, `None` to solve it with the rest of the lane split.
-    pub channel_block: Option<usize>,
-}
-
-impl InterpolateConfig {
-    pub const fn new(
-        input_residence: Residence,
-        planes_per_cube: usize,
-        rows_per_plane: usize,
-        cols_per_lane: usize,
-    ) -> Self {
-        Self {
-            input_residence,
-            planes_per_cube,
-            rows_per_plane,
-            cols_per_lane,
-            channel_block: None,
-        }
-    }
-
-    /// Pin the lane's channel run rather than solving it. A final block may overhang the channel
-    /// count; reads and writes in that padded tail are masked.
-    pub const fn with_channel_block(self, block: usize) -> Self {
-        Self {
-            channel_block: Some(block),
-            ..self
-        }
-    }
-
-    /// The geometry these choices describe, over a plane of `lanes`.
-    pub(crate) fn geometry(&self, channels: usize, lanes: usize) -> TileGeometry {
-        TileGeometry::from_config(
-            channels,
-            lanes,
-            self.planes_per_cube,
-            self.rows_per_plane,
-            self.cols_per_lane,
-            self.channel_block,
-        )
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), InterpolateError> {
-        if self.planes_per_cube == 0 {
-            return Err(InterpolateError::ZeroPlanesPerCube);
-        }
-        if self.rows_per_plane == 0 {
-            return Err(InterpolateError::ZeroRowsPerPlane);
-        }
-        if self.cols_per_lane == 0 {
-            return Err(InterpolateError::ZeroColsPerLane);
-        }
-        if self.channel_block == Some(0) {
-            return Err(InterpolateError::ZeroChannelBlock);
-        }
-        Ok(())
-    }
-}
-
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
-/// The config is required: this path is under evaluation and every choice it makes is meant to be
-/// stated by whatever is measuring it.
+/// Resolves the strategy against the device and the problem, then dispatches on the mode.
 pub(crate) fn interpolate_launch<R: Runtime>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
     output: TensorBinding<R>,
     options: InterpolateOptions,
     dtype: ElemType,
-    config: InterpolateConfig,
+    strategy: InterpolateStrategy,
 ) -> Result<(), InterpolateError> {
-    if config.input_residence == Residence::Smem
-        && client.properties().hardware.num_cpu_cores.is_some()
-    {
+    let hardware = &client.properties().hardware;
+    let problem = InterpolateForwardProblem::from_input_output_shapes(
+        &input.shape,
+        &[output.shape[1], output.shape[2]],
+        options,
+    );
+    let blueprint = strategy.blueprint(hardware, &problem);
+    blueprint.validate()?;
+
+    if blueprint.input_residence == Residence::Smem && hardware.num_cpu_cores.is_some() {
         return Err(InterpolateError::SharedMemoryUnsupportedOnCpu);
     }
 
-    let geometry = config.geometry(
-        output.shape[3],
-        client.properties().hardware.plane_size_max as usize,
-    );
+    // Where the input reads from when the device cannot hold the staged window, or `None` to
+    // refuse instead.
+    //
+    // The window is sized from the real extents, which an autotune key only buckets: two problems
+    // that share a key can want stages several-fold apart, so a cached result that staged when it
+    // was measured can meet a device that will not serve it when it is reused. An intent is a
+    // preference, so it reads in place there and stays launchable whatever it is handed. A stated
+    // blueprint keeps the refusal, because a sweep that asked for a stage wants to be told it did
+    // not get one rather than to record the in-place kernel under the staged name.
+    let fallback = match strategy {
+        InterpolateStrategy::Forced(_) => None,
+        _ => Some(Residence::InPlace),
+    };
+
+    let geometry =
+        TileGeometry::from_blueprint(blueprint, output.shape[3], hardware.plane_size_max as usize);
+    let residence = blueprint.input_residence;
     match options.mode {
-        InterpolateMode::Nearest(_) => {
-            launch::<R, NearestFilter>(client, input, output, options, dtype, geometry, config)
-        }
-        InterpolateMode::Bilinear => {
-            launch::<R, BilinearFilter>(client, input, output, options, dtype, geometry, config)
-        }
-        InterpolateMode::Bicubic => {
-            launch::<R, BicubicFilter>(client, input, output, options, dtype, geometry, config)
-        }
-        InterpolateMode::Lanczos3 => {
-            launch::<R, Lanczos3Filter>(client, input, output, options, dtype, geometry, config)
-        }
+        InterpolateMode::Nearest(_) => launch::<R, NearestFilter>(
+            client, input, output, options, dtype, geometry, residence, fallback,
+        ),
+        InterpolateMode::Bilinear => launch::<R, BilinearFilter>(
+            client, input, output, options, dtype, geometry, residence, fallback,
+        ),
+        InterpolateMode::Bicubic => launch::<R, BicubicFilter>(
+            client, input, output, options, dtype, geometry, residence, fallback,
+        ),
+        InterpolateMode::Lanczos3 => launch::<R, Lanczos3Filter>(
+            client, input, output, options, dtype, geometry, residence, fallback,
+        ),
     }
 }
 
+/// Dispatch `residence`, falling back where the device cannot hold the stage it asked for.
+///
+/// Capacity is only knowable once the space is built and its vectorization solved, so the fallback
+/// reads the refusal rather than predicting it. Nothing has been dispatched by then.
+#[allow(clippy::too_many_arguments)]
 fn launch<R: Runtime, F: SeparableFilterFamily>(
     client: &ComputeClient<R>,
     input: TensorBinding<R>,
@@ -136,7 +81,37 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    config: InterpolateConfig,
+    residence: Residence,
+    fallback: Option<Residence>,
+) -> Result<(), InterpolateError> {
+    let Some(fallback) = fallback.filter(|_| residence == Residence::Smem) else {
+        return dispatch::<R, F>(client, input, output, options, dtype, geometry, residence);
+    };
+
+    match dispatch::<R, F>(
+        client,
+        input.clone(),
+        output.clone(),
+        options,
+        dtype,
+        geometry,
+        residence,
+    ) {
+        Err(InterpolateError::SharedMemoryLimitExceeded { .. }) => {
+            dispatch::<R, F>(client, input, output, options, dtype, geometry, fallback)
+        }
+        result => result,
+    }
+}
+
+fn dispatch<R: Runtime, F: SeparableFilterFamily>(
+    client: &ComputeClient<R>,
+    input: TensorBinding<R>,
+    output: TensorBinding<R>,
+    options: InterpolateOptions,
+    dtype: ElemType,
+    geometry: TileGeometry,
+    residence: Residence,
 ) -> Result<(), InterpolateError> {
     let (input_h, input_w, output_h, output_w) = (
         input.shape[1],
@@ -169,7 +144,7 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         geometry,
         space::instruction(client),
         dtype,
-        config.input_residence,
+        residence,
     );
     let launch = space.launcher_over(client, &[]);
 
@@ -188,7 +163,6 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
     // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
     // the device actually serves is worth asking for, and only over a stage that exists.
-    let residence = config.input_residence;
     let stage_width = (residence == Residence::Smem
         && geometry.channel_block != vector_size
         && client
@@ -202,8 +176,8 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     // own overhang mask drops those columns), but the reads still have to be in bounds.
     let checked = !in_bounds || stage_width.is_some();
 
-    // The residence is stated, so the only thing left to decide is whether the device can serve
-    // it. Capacity is a hard limit rather than a preference, so it refuses instead of falling back.
+    // Capacity is a hard limit, so it refuses here rather than trimming the window to fit. Whether
+    // that refusal ends the launch or sends it back in place is the caller's to decide.
     if residence == Residence::Smem {
         let available = client.properties().hardware.max_shared_memory_size;
         let requested = space::stage_window_bytes(

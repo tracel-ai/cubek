@@ -12,13 +12,13 @@ pub use strategy::{BenchTarget, BenchTier, every_strategy, strategies, strategie
 use cubecl::benchmark::TimingMethod;
 use cubek_test_utils::{CatalogEntry, RunSamples};
 
-use crate::{InterpolateConfig, definition::InterpolateProblem};
+use crate::{InterpolateStrategy, definition::InterpolateProblem};
 
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {
     type Problem = InterpolateProblem;
-    type Strategy = InterpolateConfig;
+    type Strategy = InterpolateStrategy;
 
     fn id(&self) -> &'static str {
         "interpolate"
@@ -32,13 +32,13 @@ impl cubek_test_utils::Category for Category {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<InterpolateConfig>> {
+    fn strategies(&self) -> Vec<CatalogEntry<InterpolateStrategy>> {
         strategies(BenchTarget::Gpu)
     }
 
     fn bench(
         &self,
-        strategy: &InterpolateConfig,
+        strategy: &InterpolateStrategy,
         problem: &InterpolateProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
@@ -53,7 +53,7 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<
         &dyn cubek_test_utils::Correctness<
             Problem = InterpolateProblem,
-            Strategy = InterpolateConfig,
+            Strategy = InterpolateStrategy,
         >,
     > {
         Some(&InterpolateCorrectness)
@@ -73,7 +73,7 @@ pub struct CpuCategory;
 
 impl cubek_test_utils::Category for CpuCategory {
     type Problem = InterpolateProblem;
-    type Strategy = InterpolateConfig;
+    type Strategy = InterpolateStrategy;
 
     fn id(&self) -> &'static str {
         "interpolate_cpu"
@@ -87,13 +87,13 @@ impl cubek_test_utils::Category for CpuCategory {
         problems_scaled(CPU_DIVISOR)
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<InterpolateConfig>> {
+    fn strategies(&self) -> Vec<CatalogEntry<InterpolateStrategy>> {
         strategies(BenchTarget::Cpu)
     }
 
     fn bench(
         &self,
-        strategy: &InterpolateConfig,
+        strategy: &InterpolateStrategy,
         problem: &InterpolateProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
@@ -109,7 +109,7 @@ impl cubek_test_utils::Category for CpuCategory {
     ) -> Option<
         &dyn cubek_test_utils::Correctness<
             Problem = InterpolateProblem,
-            Strategy = InterpolateConfig,
+            Strategy = InterpolateStrategy,
         >,
     > {
         Some(&InterpolateCorrectness)

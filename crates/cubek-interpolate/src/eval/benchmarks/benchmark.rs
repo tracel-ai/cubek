@@ -16,10 +16,10 @@ use crate::{
     interpolate, interpolate_backward,
 };
 
-use crate::InterpolateConfig;
+use crate::InterpolateStrategy;
 
 pub fn bench(
-    strategy: &InterpolateConfig,
+    strategy: &InterpolateStrategy,
     problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
@@ -65,7 +65,7 @@ fn memory_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
 
 struct InterpolateBench {
     problem: InterpolateProblem,
-    strategy: InterpolateConfig,
+    strategy: InterpolateStrategy,
     device: <TestRuntime as Runtime>::Device,
     client: ComputeClient<TestRuntime>,
     dtype: ElemType,

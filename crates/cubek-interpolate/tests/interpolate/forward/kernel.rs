@@ -2,12 +2,12 @@
 
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
-    InterpolateConfig, Residence,
-    definition::{InterpolateMode, InterpolateOptions, NearestMode},
+    InterpolateBlueprint, InterpolateStrategy, Residence,
+    definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
 };
-use cubek_test_utils::TestInput;
+use cubek_test_utils::{HostData, TestInput};
 
 use super::super::{build_output_tensor, output_host_f32, validate_test};
 use super::make_problem;
@@ -16,26 +16,54 @@ const TOLERANCE: f32 = 0.0001;
 
 /// The geometry these tests validate against: the shape the plane-derived split produced
 /// before every choice became the caller's.
-const BASELINE: InterpolateConfig = InterpolateConfig::new(Residence::InPlace, 4, 2, 1);
+const BASELINE: InterpolateBlueprint = InterpolateBlueprint::new(Residence::InPlace, 4, 2, 1);
 
 fn kernel_output(options: InterpolateOptions) {
     kernel_output_with(options, BASELINE);
 }
 
-fn kernel_output_with(options: InterpolateOptions, config: InterpolateConfig) {
-    kernel_output_shaped(options, config, 4);
+fn kernel_output_with(options: InterpolateOptions, blueprint: InterpolateBlueprint) {
+    kernel_output_shaped(options, blueprint, 4);
 }
 
-fn kernel_output_shaped(options: InterpolateOptions, config: InterpolateConfig, channels: usize) {
-    kernel_output_on(options, config, [2, 8, 9, channels], [13, 15]);
+fn kernel_output_shaped(
+    options: InterpolateOptions,
+    blueprint: InterpolateBlueprint,
+    channels: usize,
+) {
+    kernel_output_on(options, blueprint, [2, 8, 9, channels], [13, 15]);
 }
 
 fn kernel_output_on(
     options: InterpolateOptions,
-    config: InterpolateConfig,
+    blueprint: InterpolateBlueprint,
     input_shape: [usize; 4],
     output_size: [usize; 2],
 ) {
+    kernel_output_using(
+        options,
+        InterpolateStrategy::Forced(blueprint),
+        input_shape,
+        output_size,
+    );
+}
+
+fn kernel_output_using(
+    options: InterpolateOptions,
+    strategy: InterpolateStrategy,
+    input_shape: [usize; 4],
+    output_size: [usize; 2],
+) {
+    let (result, actual, expected) = kernel_run(options, strategy, input_shape, output_size);
+    validate_test(result, actual, expected, TOLERANCE);
+}
+
+fn kernel_run(
+    options: InterpolateOptions,
+    strategy: InterpolateStrategy,
+    input_shape: [usize; 4],
+    output_size: [usize; 2],
+) -> (Result<(), InterpolateError>, HostData, HostData) {
     let client = TestRuntime::client(&Default::default());
     let problem = make_problem(input_shape, output_size, options);
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
@@ -49,37 +77,89 @@ fn kernel_output_on(
         input.binding(),
         output.clone().binding(),
         options,
-        config,
+        strategy,
         output.dtype,
     );
     let actual = output_host_f32(&client, output);
-    validate_test(result, actual, expected, TOLERANCE);
+    (result, actual, expected)
+}
+
+/// The intents the selector resolves against this device. Whatever geometry it picks here has to
+/// land on the reference, or a build that states nothing runs a kernel nothing validates.
+#[test]
+fn test_interpolate_kernel_inferred_strategies() {
+    let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
+    for strategy in [
+        InterpolateStrategy::MaximizeThroughput,
+        InterpolateStrategy::MinimizeLatency,
+    ] {
+        kernel_output_using(options, strategy, [2, 8, 9, 4], [13, 15]);
+    }
+}
+
+/// A staged window no device holds, which a steep downsample reaches: the intent reads in place
+/// instead and still lands on the reference, while the same geometry stated outright is refused.
+///
+/// The refusal is half the test. An autotune key buckets the extents this window is sized from, so
+/// an intent that refused here would abort on a problem the tuner cached under a shape that fit.
+#[test]
+fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
+    let options = InterpolateOptions::new(InterpolateMode::Lanczos3).with_align_corners(false);
+    let input_shape = [1, 64, 64, 64];
+    let output_size = [2, 2];
+
+    let client = TestRuntime::client(&Default::default());
+    let problem = make_problem(input_shape, output_size, options);
+    let blueprint =
+        InterpolateStrategy::MinimizeLatency.blueprint(&client.properties().hardware, &problem);
+    assert_eq!(blueprint.input_residence, Residence::Smem);
+
+    let (refused, ..) = kernel_run(
+        options,
+        InterpolateStrategy::Forced(blueprint),
+        input_shape,
+        output_size,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(InterpolateError::SharedMemoryLimitExceeded { .. })
+        ),
+        "the stage fits after all, so this shape no longer exercises the fallback: {refused:?}"
+    );
+
+    kernel_output_using(
+        options,
+        InterpolateStrategy::MinimizeLatency,
+        input_shape,
+        output_size,
+    );
 }
 
 #[test]
 fn test_interpolate_kernel_staging_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for config in [
-        InterpolateConfig::new(Residence::Smem, 4, 2, 1),
-        InterpolateConfig::new(Residence::InPlace, 4, 2, 1),
+    for blueprint in [
+        InterpolateBlueprint::new(Residence::Smem, 4, 2, 1),
+        InterpolateBlueprint::new(Residence::InPlace, 4, 2, 1),
     ] {
-        kernel_output_with(options, config);
+        kernel_output_with(options, blueprint);
     }
 }
 
 #[test]
 fn test_interpolate_kernel_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for config in [
-        InterpolateConfig::new(Residence::InPlace, 1, 1, 1),
-        InterpolateConfig::new(Residence::Smem, 1, 1, 1),
-        InterpolateConfig::new(Residence::InPlace, 1, 2, 1),
-        InterpolateConfig::new(Residence::InPlace, 4, 2, 2),
-        InterpolateConfig::new(Residence::InPlace, 4, 4, 1),
-        InterpolateConfig::new(Residence::InPlace, 2, 2, 1),
-        InterpolateConfig::new(Residence::InPlace, 2, 4, 2),
+    for blueprint in [
+        InterpolateBlueprint::new(Residence::InPlace, 1, 1, 1),
+        InterpolateBlueprint::new(Residence::Smem, 1, 1, 1),
+        InterpolateBlueprint::new(Residence::InPlace, 1, 2, 1),
+        InterpolateBlueprint::new(Residence::InPlace, 4, 2, 2),
+        InterpolateBlueprint::new(Residence::InPlace, 4, 4, 1),
+        InterpolateBlueprint::new(Residence::InPlace, 2, 2, 1),
+        InterpolateBlueprint::new(Residence::InPlace, 2, 4, 2),
     ] {
-        kernel_output_with(options, config);
+        kernel_output_with(options, blueprint);
     }
 }
 
@@ -93,7 +173,7 @@ fn test_interpolate_kernel_channel_block_configurations() {
         for block in [1, 2, 4] {
             kernel_output_with(
                 options,
-                InterpolateConfig::new(residence, 4, 2, 1).with_channel_block(block),
+                InterpolateBlueprint::new(residence, 4, 2, 1).with_channel_block(block),
             );
         }
     }
@@ -112,7 +192,7 @@ fn test_interpolate_kernel_padded_channel_stage() {
         for block in [channels, 4] {
             kernel_output_shaped(
                 options,
-                InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(block),
+                InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(block),
                 channels,
             );
         }
@@ -131,7 +211,7 @@ fn test_interpolate_kernel_padded_channel_stage_every_mode() {
     ] {
         kernel_output_shaped(
             InterpolateOptions::new(mode).with_align_corners(false),
-            InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+            InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
             3,
         );
     }
@@ -144,7 +224,7 @@ fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     kernel_output_shaped(
         options,
-        InterpolateConfig::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+        InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
         6,
     );
 }
