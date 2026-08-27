@@ -439,24 +439,57 @@ fn tap_weight<EL: Numeric>(
     #[comptime] offsets: Vec<usize>,
     #[comptime] reuse: Vec<FactorReuse>,
 ) -> EL {
-    let first = factor_tap(reduce_coords, 0usize, comptime!(offsets[0]));
-    let mut weight = match comptime!(reuse[0]) {
-        FactorReuse::Block => block[first],
-        FactorReuse::Row => row[first],
-        FactorReuse::Column => column[column_index * comptime!(taps) + first],
-        FactorReuse::Cell => cell[first],
-    };
+    let mut weight = factor_weight(
+        block,
+        row,
+        column,
+        cell,
+        reduce_coords,
+        column_index,
+        0usize,
+        taps,
+        comptime!(offsets[0]),
+        comptime!(reuse[0]),
+    );
     #[unroll]
     for f in 1..factors {
-        let tap = factor_tap(reduce_coords, f, comptime!(offsets[f]));
-        weight *= match comptime!(reuse[f]) {
-            FactorReuse::Block => block[tap],
-            FactorReuse::Row => row[tap],
-            FactorReuse::Column => column[column_index * comptime!(taps) + tap],
-            FactorReuse::Cell => cell[tap],
-        };
+        weight *= factor_weight(
+            block,
+            row,
+            column,
+            cell,
+            reduce_coords,
+            column_index,
+            f,
+            taps,
+            comptime!(offsets[f]),
+            comptime!(reuse[f]),
+        );
     }
     weight
+}
+
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn factor_weight<EL: Numeric>(
+    block: &Array<EL>,
+    row: &Array<EL>,
+    column: &Array<EL>,
+    cell: &Array<EL>,
+    reduce_coords: &Coords<u32>,
+    column_index: usize,
+    #[comptime] factor: usize,
+    #[comptime] taps: usize,
+    #[comptime] offset: usize,
+    #[comptime] reuse: FactorReuse,
+) -> EL {
+    let tap = factor_tap(reduce_coords, factor, offset);
+    match comptime!(reuse) {
+        FactorReuse::Block => block[tap],
+        FactorReuse::Row => row[tap],
+        FactorReuse::Column => column[column_index * comptime!(taps) + tap],
+        FactorReuse::Cell => cell[tap],
+    }
 }
 
 /// The column-free nesting only needs block- and row-cached factors.
