@@ -102,44 +102,23 @@ pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> Sc
     }
 }
 
-/// The block a scales operand resolves `axis` at: the divisor of the physical axis addressing it,
-/// so `PhysicalAxisMap::of(K).over(8)` answers `8` and a plain axis answers `1`. An axis the
-/// operand does not span answers [`usize::MAX`]: one scale covers every value of it, so no line
-/// along it can straddle anything.
-pub(crate) fn scale_block(projection: &Projection, axis: Axis) -> usize {
-    (0..projection.physical_rank())
-        .find(|&pa| projection.scale(pa, axis) == 1)
-        .map(|pa| projection.divisor(pa).bound())
-        .unwrap_or(usize::MAX)
-}
-
-/// Refuse a served line that straddles two scales: one line is one read and takes one scale, so
-/// the block along whichever axis the line runs must cover whole lines. The line runs along the
-/// *innermost* contracted axis, which is the one a partitioned contraction leaves at the leaf.
+/// Refuse a scales operand that spells its granularity by dividing.
 ///
-/// Which axis that is depends on the step: past one served value both operands line along the
-/// contracted axis, and at one the rhs lines along the accumulator's columns instead. The lhs at
-/// one served value takes a scalar `k` per step and lines along nothing.
-pub(crate) fn check_lines_hold_one_scale(
-    scales: &Projection,
-    k: Axis,
-    cols: Axis,
-    served: usize,
-    aw: usize,
-    side: ScaleSide,
-) {
-    let (axis, width) = match (served > 1, side) {
-        (true, _) => (k, served),
-        (false, ScaleSide::Rhs) => (cols, aw),
-        (false, ScaleSide::Lhs) => return,
-    };
-    let block = scale_block(scales, axis);
-    assert!(
-        block == usize::MAX || block.is_multiple_of(width),
-        "mm_scaled: a step reads {width} values of {axis:?} as one line, so its {block}-value \
-         scale blocks must cover whole lines; state a block the line divides, or a cut that \
-         serves narrower lines"
-    );
+/// A scale covers a block because the operand has no axis to vary over inside one: the block is an
+/// axis and the scales omit it. A rational axis (`PhysicalAxisMap::of(N).over(bn)`) states the same
+/// granularity arithmetically, and then whether a served line straddles a block stops being a fact
+/// about the axes and becomes one about the line width, which no operand states. Split the axis
+/// instead, and the invariance is structural.
+pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
+    for pa in 0..scales.physical_rank() {
+        let divisor = scales.divisor(pa).bound();
+        assert!(
+            divisor == 1,
+            "mm_scaled: this scales operand divides a logical axis by {divisor} to reach its \
+             block. Spell the block as an axis of its own and omit the position inside it, so one \
+             scale per block is what the operand's axes say rather than what its arithmetic does"
+        );
+    }
 }
 
 /// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
@@ -191,16 +170,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     ));
     let side = comptime!(scale_side(&scales.space, &space, shape.acc_axes));
     let scales_projection = scales.projection();
-    comptime!(check_lines_hold_one_scale(
-        &scales_projection,
-        *Space::contracted(&[&lhs.space, &rhs.space], &space)
-            .last()
-            .unwrap(),
-        space.axis_at(space.rank() - 1),
-        served,
-        aw,
-        side,
-    ));
+    comptime!(check_scales_omit_rather_than_divide(&scales_projection));
     direct::contract_scaled::<E, EL, ER, ES>(
         acc, lhs, rhs, scales, space, served, side, config, semiring,
     );

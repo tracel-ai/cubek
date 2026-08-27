@@ -24,6 +24,9 @@ const N: Axis = Axis(1);
 /// The contraction as the two axes a scale block makes of it: which block, and where inside it.
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
+/// The columns, likewise, where a scale covers a block of them.
+const NB: Axis = Axis(4);
+const NI: Axis = Axis(5);
 
 /// A packed operand copied into a plain one: the words unpack at the read, and nothing in the
 /// kernel, the spec or the launch mentions a scale.
@@ -640,10 +643,17 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .generate_without_host_data();
 
     let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .extents(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
+                .axis(NB, Cut::sequential(blocks_n))
+                .axis(NI, Cut::sequential(bn))
                 .axis(KB, Cut::sequential(1))
                 .axis(KI, Cut::sequential(block_k))
         })
@@ -668,27 +678,32 @@ fn a_packed_rhs_contracts_against_its_scales() {
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
+                &[KB, KI, NB, NI],
                 &[
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             ))
             .packed(field),
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // The contraction splits, because that is what the scales need an axis for. The
-            // columns keep the rational spelling: splitting an axis the *accumulator* spans needs
-            // the output's edges stated, which nothing does yet.
+            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
+            // N)`, because the operand has no axis to vary over inside either.
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
+                &[KB, KI, NB, NI],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            )),
         ),
         space,
         dtype,
@@ -769,10 +784,17 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .generate_without_host_data();
 
     let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .extents(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
+                .axis(NB, Cut::sequential(blocks_n))
+                .axis(NI, Cut::sequential(bn))
                 .axis(KB, Cut::sequential(1))
                 .axis(KI, Cut::sequential(block_k))
         })
@@ -797,24 +819,32 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
+                &[KB, KI, NB, NI],
                 &[
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             ))
             .packed(field),
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
+            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
+            // N)`, because the operand has no axis to vary over inside either.
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
+                &[KB, KI, NB, NI],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            )),
         ),
         space,
         dtype,
@@ -900,10 +930,17 @@ fn several_lines_may_share_one_scale() {
         .generate_without_host_data();
 
     let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .extents(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
+                .axis(NB, Cut::sequential(blocks_n))
+                .axis(NI, Cut::sequential(bn))
                 .axis(KB, Cut::sequential(1))
                 .axis(KI, Cut::sequential(block_k))
         })
@@ -928,24 +965,32 @@ fn several_lines_may_share_one_scale() {
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
+                &[KB, KI, NB, NI],
                 &[
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             ))
             .packed(field),
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
+            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
+            // N)`, because the operand has no axis to vary over inside either.
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
+                &[KB, KI, NB, NI],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            )),
         ),
         space,
         dtype,
@@ -1135,10 +1180,17 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .generate_without_host_data();
 
     let space = Tiling::new()
-        .extents(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .extents(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1))
-                .axis(N, Cut::cube(CubeAxis::X, bn))
+                .axis(NB, Cut::cube(CubeAxis::X, 1))
+                .axis(NI, Cut::sequential(bn))
                 .axis(KB, Cut::sequential(1))
                 .axis(KI, Cut::sequential(block_k))
         })
@@ -1167,24 +1219,33 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
+                &[KB, KI, NB, NI],
                 &[
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             ))
             .packed(field),
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
+            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
+            // N)`, because the operand has no axis to vary over inside either.
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
+                &[KB, KI, NB, NI],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            ))
+            .residence(&residence),
         ),
         space,
         dtype,
@@ -1261,10 +1322,17 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .generate_without_host_data();
 
     let space = Tiling::new()
-        .extents(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .extents(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(M, Cut::sequential(1))
-                .axis(N, Cut::cube(CubeAxis::X, bn))
+                .axis(NB, Cut::cube(CubeAxis::X, 1))
+                .axis(NI, Cut::sequential(bn))
                 .axis(KB, Cut::sequential(1))
                 .axis(KI, Cut::sequential(block_k))
         })
@@ -1292,24 +1360,33 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
+                &[KB, KI, NB, NI],
                 &[
                     PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
             ))
             .packed(field),
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
+            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
+            // N)`, because the operand has no axis to vary over inside either.
             TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N).over(bn)],
+                &[KB, KI, NB, NI],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            ))
+            .residence(&residence),
         ),
         space,
         dtype,
