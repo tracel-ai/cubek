@@ -20,6 +20,7 @@ const V: Axis = Axis(4); // value dim
 // Local labels for the kernel-allocated smem tiles.
 const R: Axis = Axis(5); // score rows = G × QP, group-major
 const C: Axis = Axis(6); // score cols = one S block
+const T: Axis = Axis(7); // split team, one window per team
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -318,6 +319,10 @@ fn attention_fold_split_kernel<W: Size>(
 
     // Split-wide working set: a leading `splits` slice on every tile, one
     // window per team.
+    //
+    // Only the row lanes name the split as an axis, because only they are
+    // merged: the score and the accumulator stack it into their row axis,
+    // which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
     let score_space = comptime!(
         Tiling::new()
@@ -330,9 +335,9 @@ fn attention_fold_split_kernel<W: Size>(
     );
     let row_space = comptime!(
         Tiling::new()
-            .extents(&[(R, split_rows)])
+            .extents(&[(T, splits), (R, rows)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(R, Cut::sequential(rows))
+                l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows))
             })
             .build()
     );
@@ -427,7 +432,7 @@ fn attention_fold_split_kernel<W: Size>(
     m_win.store_rows(&state.m, rpu);
     l_win.store_rows(&state.l, rpu);
     sync_cube();
-    factors_all.merge_splits(&mut recip, &m_all, &l_all, splits);
+    factors_all.merge_splits(&mut recip, &m_all, &l_all, T);
     sync_cube();
 
     let size!(W1) = 1usize;
