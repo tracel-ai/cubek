@@ -317,23 +317,34 @@ fn nest_scaled<
 
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
-    // The scales carry the values' own axes, `KI` among them, and address only the ones they
-    // span; their matrix is the same face read through their own projection.
-    let scales_axes = comptime!(match side {
-        ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
-        ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
+    // The scales share the values' row edge and count their columns in blocks: their own
+    // innermost extent says how many, and `per_scale` how many values each covers.
+    let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
+    let (scales_axes, per_scale) = comptime!(match side {
+        ScaleSide::Lhs => (
+            MatrixAxes::of(&scales.space, mr, scale_cols),
+            kc / scale_cols
+        ),
+        ScaleSide::Rhs => (
+            MatrixAxes::of(&scales.space, kc, scale_cols),
+            cols / scale_cols
+        ),
     });
 
     for mat in 0..matrices {
         // The scale folds in under the view, so what the block below contracts is two ordinary
         // matrices and the plain body runs them.
         let lhs_mat = match comptime!(side) {
-            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, mat),
+            ScaleSide::Lhs => {
+                lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, per_scale, mat)
+            }
             ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, mat),
         };
         let rhs_mat = match comptime!(side) {
             ScaleSide::Lhs => rhs.matrix_packed::<V>(rhs_axes, mat),
-            ScaleSide::Rhs => rhs.matrix_scaled::<V, ES, S>(rhs_axes, scales, scales_axes, mat),
+            ScaleSide::Rhs => {
+                rhs.matrix_scaled::<V, ES, S>(rhs_axes, scales, scales_axes, per_scale, mat)
+            }
         };
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,

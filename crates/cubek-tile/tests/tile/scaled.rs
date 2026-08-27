@@ -131,7 +131,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             s_t.binding().into_tensor_arg(),
             // `KI` carried and addressing nothing: the scale cannot vary inside a block.
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -226,7 +226,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -322,7 +322,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -421,7 +421,7 @@ fn f16_scales_are_read_as_f16() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -810,7 +810,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),

@@ -268,10 +268,10 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
-            // Every axis of the problem, and `KI` addressing nothing: that omission is the whole
-            // statement that one scale covers the block.
+            // The block index alone. The position inside a block is not an axis of this operand,
+            // which is the whole statement that one scale covers the block.
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -447,9 +447,9 @@ fn scales_omit_the_axis_inside_the_column_block() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
-            // `K` and `NI` carried and addressing nothing: the scale varies over neither the
-            // contraction nor the position inside a column block.
-            TileSpec::new(Projection::new(&[K, NB, NI], &[PhysicalAxisMap::of(NB)])),
+            // `K` carried and addressed by nothing, and the position inside a column block is
+            // not an axis here at all: the scale varies over the block index alone.
+            TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),

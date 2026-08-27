@@ -437,7 +437,7 @@ fn a_packed_operand_contracts_against_its_scales() {
             s_tensor.binding().into_tensor_arg(),
             // One scale per `(row, block)`: `KI` is carried and addresses nothing.
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -556,7 +556,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -688,10 +688,11 @@ fn a_packed_rhs_contracts_against_its_scales() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
-            // N)`, because the operand has no axis to vary over inside either.
+            // One scale per `(block of K, block of N)`: `KI` is carried and addressed by
+            // nothing, and the position inside a column block is not an axis of this operand at
+            // all, which leaves its innermost axis one it actually varies over.
             TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
+                &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
@@ -829,10 +830,11 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
-            // N)`, because the operand has no axis to vary over inside either.
+            // One scale per `(block of K, block of N)`: `KI` is carried and addressed by
+            // nothing, and the position inside a column block is not an axis of this operand at
+            // all, which leaves its innermost axis one it actually varies over.
             TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
+                &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
@@ -975,10 +977,11 @@ fn several_lines_may_share_one_scale() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
-            // N)`, because the operand has no axis to vary over inside either.
+            // One scale per `(block of K, block of N)`: `KI` is carried and addressed by
+            // nothing, and the position inside a column block is not an axis of this operand at
+            // all, which leaves its innermost axis one it actually varies over.
             TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
+                &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
@@ -1091,7 +1094,7 @@ fn an_i8_operand_contracts_against_its_scales() {
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -1229,10 +1232,11 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
-            // N)`, because the operand has no axis to vary over inside either.
+            // One scale per `(block of K, block of N)`: `KI` is carried and addressed by
+            // nothing, and the position inside a column block is not an axis of this operand at
+            // all, which leaves its innermost axis one it actually varies over.
             TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
+                &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),
@@ -1370,10 +1374,11 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            // `KI` and `NI` carried and addressing nothing: one scale per `(block of K, block of
-            // N)`, because the operand has no axis to vary over inside either.
+            // One scale per `(block of K, block of N)`: `KI` is carried and addressed by
+            // nothing, and the position inside a column block is not an axis of this operand at
+            // all, which leaves its innermost axis one it actually varies over.
             TileSpec::new(Projection::new(
-                &[KB, KI, NB, NI],
+                &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             )),
         ),

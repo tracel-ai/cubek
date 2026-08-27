@@ -17,13 +17,17 @@ use cubecl::{
     std::tensor::{View, ViewExpand, ViewOperations, ViewOperationsExpand, layout::Coords2d},
 };
 
-/// The scales' coordinate for a values' one. The values' column counts *lines*, the scales' counts
-/// values, so the column widens by the line's width; the scales' own projection takes it from
-/// there, which is where a block turns several columns into one scale.
+/// The scales' coordinate for a values' one.
+///
+/// The two count different things along their shared edge: the values' column counts lines of
+/// `width` values, the scales' counts *blocks*. So the values' column widens to values and then
+/// narrows to blocks, both by comptime factors. A line never straddles a block — the block is an
+/// axis and the values partition it — so the division is exact.
 #[cube]
-fn scale_pos(pos: Coords2d, #[comptime] width: usize) -> Coords2d {
+fn scale_pos(pos: Coords2d, #[comptime] width: usize, #[comptime] per_scale: usize) -> Coords2d {
     let (row, col) = pos;
-    (row, col * comptime!(width as u32))
+    let lines_per_scale = comptime!(per_scale / width);
+    (row, col / comptime!(lines_per_scale as u32))
 }
 
 /// One value line against its scale: the scale is one value however wide the line is, so it
@@ -50,6 +54,9 @@ pub struct ScaledView<'a, E: Numeric, V: Size, S: Numeric, SW: Size> {
     /// The values' line width, which is what separates the two column counts.
     #[cube(comptime)]
     width: usize,
+    /// Values one scale covers along the shared edge.
+    #[cube(comptime)]
+    per_scale: usize,
 }
 
 #[cube]
@@ -58,11 +65,18 @@ impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ScaledView<'a, E, V, S, SW> 
         values: View<'a, Vector<E, V>, Coords2d>,
         scales: View<'a, Vector<S, SW>, Coords2d>,
         #[comptime] width: usize,
+        #[comptime] per_scale: usize,
     ) -> Self {
+        comptime!(assert!(
+            per_scale.is_multiple_of(width),
+            "ScaledView: one scale covers {per_scale} values of an operand served {width} at a \
+             time, so a line of it straddles two scales"
+        ));
         ScaledView::<'a, E, V, S, SW> {
             values,
             scales,
             width,
+            per_scale,
         }
     }
 }
@@ -87,7 +101,7 @@ impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ScaledViewExpand<'a, E, V, S
         scope: &Scope,
         pos: <Coords2d as CubeType>::ExpandType,
     ) -> <Coords2d as CubeType>::ExpandType {
-        scale_pos::expand(scope, pos, self.width)
+        scale_pos::expand(scope, pos, self.width, self.per_scale)
     }
 
     fn scale(

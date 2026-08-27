@@ -439,15 +439,19 @@ impl<T: Numeric> Tile<T> {
 
     /// [`matrix_packed`](Tile::matrix_packed) with a scales operand folded into every read.
     ///
-    /// The scales are read at the same matrix coordinate, through their own axes, so the caller
-    /// states each matrix once and the multiply happens under the view. Whatever consumes this
-    /// consumes an ordinary [`MatrixView`]: a contraction over a scaled operand *is* the plain
-    /// contraction.
+    /// The two matrices share a row edge and count their columns differently: the values count
+    /// lines, the scales count blocks, `per_scale` values apart. Stating that is what frees the
+    /// scales from carrying the position inside a block as an axis, and so frees their innermost
+    /// axis to be one they actually vary over — which is the axis their own lines would run along.
+    ///
+    /// Whatever consumes this consumes an ordinary [`MatrixView`]: a contraction over a scaled
+    /// operand *is* the plain contraction.
     pub fn matrix_scaled<'a, W: Size, S: Numeric, SW: Size>(
         &'a self,
         #[comptime] axes: MatrixAxes,
         scales: &'a Tile<S>,
         #[comptime] scale_axes: MatrixAxes,
+        #[comptime] per_scale: usize,
         i: usize,
     ) -> MatrixView<'a, Vector<T, W>> {
         let width = self.vector_size();
@@ -456,8 +460,12 @@ impl<T: Numeric> Tile<T> {
         // A scale read past the values' bound is never used: the values mask first, and a masked
         // value is zero whatever it is multiplied by.
         let check = comptime!(values.check);
-        let scaled =
-            ScaledView::<T, W, S, SW>::new(values.into_view(), scale_lines.into_view(), width);
+        let scaled = ScaledView::<T, W, S, SW>::new(
+            values.into_view(),
+            scale_lines.into_view(),
+            width,
+            per_scale,
+        );
         MaskedView::new(scaled.view(), check)
     }
 

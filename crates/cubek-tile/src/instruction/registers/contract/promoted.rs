@@ -135,21 +135,32 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
-        // The scales carry the values' own axes and address only the ones they span, so their
-        // matrix is the same face read through their own projection.
-        let scales_axes = comptime!(match side {
-            ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
-            ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
+        // The scales share the values' row edge and count their columns in blocks: their own
+        // innermost extent says how many, and `per_scale` how many values each covers.
+        let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
+        let (scales_axes, per_scale) = comptime!(match side {
+            ScaleSide::Lhs => (
+                MatrixAxes::of(&scales.space, mr, scale_cols),
+                kc / scale_cols
+            ),
+            ScaleSide::Rhs => (
+                MatrixAxes::of(&scales.space, kc, scale_cols),
+                cols / scale_cols
+            ),
         });
         // The scale folds in under the operand's view, so the block below runs the plain
         // contraction.
         let lhs_mat = match comptime!(side) {
-            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, 0),
+            ScaleSide::Lhs => {
+                lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, per_scale, 0)
+            }
             ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, 0usize),
         };
         let rhs_mat = match comptime!(side) {
             ScaleSide::Lhs => rhs.matrix_packed::<RA>(rhs_axes, 0usize),
-            ScaleSide::Rhs => rhs.matrix_scaled::<RA, ES, S>(rhs_axes, scales, scales_axes, 0),
+            ScaleSide::Rhs => {
+                rhs.matrix_scaled::<RA, ES, S>(rhs_axes, scales, scales_axes, per_scale, 0)
+            }
         };
 
         let config = comptime!(self.config);
