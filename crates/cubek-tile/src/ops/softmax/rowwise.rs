@@ -99,29 +99,21 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Merge a split fold's per-team running states into cross-split weights:
-    /// per row, `self[r, t] = exp(m[r, t] − m*) / Σ_t l[r, t] · exp(m[r, t] − m*)`
+    /// per row, `self[r, t] = exp(m[r, t] - m*) / Σ_t l[r, t] · exp(m[r, t] - m*)`
     /// where `m* = max_t m[r, t]`.
     ///
-    /// **The normalizer is folded in**, so the weights are the whole merge:
-    /// `Σ_t self[r, t] · acc[r, t, ·]` is the answer, with nothing left to
-    /// scale it by afterwards. Every caller multiplied by the same `1/l*` on
-    /// its way out, and a caller that cannot — a drain expressed as a
-    /// contraction, where the weights are an operand rather than a value in
-    /// hand — could not have applied it at all.
+    /// The normalizer is folded into the weights, so `Σ_t self[r, t] · acc[r, t, ·]`
+    /// is the whole merge: a drain that contracts the weights as an operand has
+    /// no value in hand left to scale.
     ///
-    /// `self`, `m` and `l` span the score rows and `split`. **Where `split`
-    /// sits among the axes is
-    /// the space's statement, not this op's.** A shared-memory fold stacks it
-    /// outermost, so a team's window is one contiguous run of rows; a
-    /// cross-cube merge lays it innermost, so the drain can contract it as a
-    /// matmul's `k`. Both reach the same code, because a cell is addressed
-    /// through the space that declares it rather than through a hand-rolled
-    /// `t · rows + r` every caller then has to lay its buffers out for.
+    /// `self`, `m` and `l` span the score rows and `split`, laid out alike. The
+    /// space says where `split` sits: outermost gives a team one contiguous run
+    /// of rows, innermost lets the drain contract it as a matmul's `k`.
     ///
-    /// A fully-masked row gets weights of exactly zero, and a split that
-    /// folded nothing published `(min, 0)` so it weighs zero on its own. One
-    /// unit per row, cyclic over the cube; the caller syncs on both sides. A
-    /// single split degenerates to the plain epilogue.
+    /// A fully-masked row gets weights of exactly zero, and a split that folded
+    /// nothing published `(min, 0)` so it weighs zero on its own. One unit per
+    /// row, cyclic over the cube; the caller syncs on both sides. A single split
+    /// degenerates to the plain epilogue.
     pub fn merge_splits(&mut self, m: &Tile<EA>, l: &Tile<EA>, #[comptime] split: Axis) {
         let space = comptime!(self.space.clone());
         comptime!(assert!(
@@ -130,41 +122,23 @@ impl<EA: Float> Tile<EA> {
         ));
         let splits = comptime!(space.extent(split));
         let rows = comptime!(space.tile_size() / splits);
-        comptime!(assert!(
-            space.tile_size().is_multiple_of(splits),
-            "merge_splits: {} weight cells is not a whole number of {splits}-split rows",
-            space.tile_size()
-        ));
-        // Same cells in the same order — not the same `Space`: the states can
-        // arrive partitioned differently (a global buffer read through the
-        // launch space beside a shared-memory tile), and only their layout
-        // has to agree.
+        // The states can arrive partitioned differently from the weights (a
+        // global buffer beside a shared-memory tile); only the layout has to agree.
         let m_space = comptime!(m.space.clone());
         let l_space = comptime!(l.space.clone());
-        comptime!({
-            let laid_out_like = |other: &Space| {
-                other.rank() == space.rank()
-                    && (0..space.rank()).all(|p| {
-                        other.axis_at(p) == space.axis_at(p)
-                            && other.extent_at(p) == space.extent_at(p)
-                    })
-            };
-            assert!(
-                laid_out_like(&m_space) && laid_out_like(&l_space),
-                "merge_splits: the states must be laid out like the weights they merge into"
-            );
-        });
+        comptime!(assert!(
+            m_space.laid_out_like(&space) && l_space.laid_out_like(&space),
+            "merge_splits: the states must be laid out like the weights they merge into"
+        ));
 
-        // The one thing the layout decides: a step of `t` crosses whatever
-        // sits inside the split axis, and a step of the rows outside it
-        // crosses a whole slice of splits. Split-outermost folds to
-        // `t · rows + r`, split-innermost to `r · splits + t`; both are this.
-        let inner = comptime!(
+        // A step of `t` crosses whatever sits inside the split axis; a step of
+        // the rows outside it crosses a whole slice of splits.
+        let stride = comptime!(
             ((space.position(split) + 1)..space.rank())
                 .map(|p| space.extent_at(p))
                 .product::<usize>()
         );
-        let slice = comptime!(splits * inner);
+        let slice = comptime!(splits * stride);
 
         let size!(W) = self.vector_size();
         let size!(WM) = m.vector_size();
@@ -176,25 +150,24 @@ impl<EA: Float> Tile<EA> {
         let workers = CUBE_DIM as usize;
         let mut r = UNIT_POS as usize;
         while r < rows {
-            // Row `r`'s cells start here and step `inner` per split.
-            let base = (r / inner) * slice + r % inner;
+            // Row `r`'s first cell; its splits step by `stride` from there.
+            let base = (r / stride) * slice + r % stride;
             let mut mstar = EA::min_value();
             for t in 0..splits {
-                mstar = max(mstar, mf.read(base + t * inner).extract(0usize));
+                mstar = max(mstar, mf.read(base + t * stride).extract(0usize));
             }
-            // Two passes over the splits, because the normalizer is not known
-            // until all of them have weighed in: park the unnormalized weights,
-            // then scale them where they sit.
+            // The normalizer needs every split, so park the unnormalized
+            // weights and scale them where they sit.
             let mut lstar = EA::from_int(0);
             for t in 0..splits {
-                let w = (mf.read(base + t * inner).extract(0usize) - mstar).exp();
-                lstar += lf.read(base + t * inner).extract(0usize) * w;
-                wf.write(base + t * inner, Vector::cast_from(w));
+                let w = (mf.read(base + t * stride).extract(0usize) - mstar).exp();
+                lstar += lf.read(base + t * stride).extract(0usize) * w;
+                wf.write(base + t * stride, Vector::cast_from(w));
             }
             let recip = masked_recip::<EA>(lstar);
             for t in 0..splits {
-                let w = wf.read(base + t * inner).extract(0usize) * recip;
-                wf.write(base + t * inner, Vector::cast_from(w));
+                let w = wf.read(base + t * stride).extract(0usize) * recip;
+                wf.write(base + t * stride, Vector::cast_from(w));
             }
             r += workers;
         }
@@ -203,9 +176,8 @@ impl<EA: Float> Tile<EA> {
     /// Publish per-owned-row `values` into this factors tile, one cell per
     /// score row. The caller syncs before any cross-unit read.
     ///
-    /// A row lane, whatever rank the space gives it: the split-wide tiles a
-    /// fold windows hand a team a `{1, rows}` slice, which is the same cells
-    /// as a plain `{rows}` and addressed the same way.
+    /// A row lane at any rank: a fold's window on a split-wide tile is
+    /// `{1, rows}`, the same cells as a plain `{rows}`.
     pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.tile_size());
         comptime!(assert!(
@@ -213,7 +185,7 @@ impl<EA: Float> Tile<EA> {
                 .filter(|&p| self.space.extent_at(p) > 1)
                 .count()
                 <= 1,
-            "store_rows: a row lane, one cell per score row — this tile spans {:?}",
+            "store_rows: a row lane, one cell per score row; this tile spans {:?}",
             self.space
         ));
         let size!(W) = self.vector_size();

@@ -320,9 +320,9 @@ fn attention_fold_split_kernel<W: Size>(
     // Split-wide working set: a leading `splits` slice on every tile, one
     // window per team.
     //
-    // Only the row lanes name the split as an axis, because only they are
-    // merged: the score and the accumulator stack it into their row axis,
-    // which is what the rank-2 rowwise leaves read.
+    // Only the row lanes name the split as an axis: they are what
+    // `merge_splits` reads. The score and the accumulator stack it into their
+    // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
     let score_space = comptime!(
         Tiling::new()
