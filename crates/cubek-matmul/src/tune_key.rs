@@ -311,45 +311,19 @@ mod tests {
     }
 
     #[test]
-    fn async_copy_legality_must_distinguish_padded_row_stride() {
+    fn pitched_operand_strides_change_autotune_key() {
         let lhs_shape = Shape::new([65_536, 128]);
         let rhs_shape = Shape::new([128, 2]);
-        let rhs_strides = Strides::new(&[1, 128]);
-        let aligned_strides = Strides::new(&[128, 1]);
-        let padded_strides = Strides::new(&[130, 1]);
+        let aligned_lhs = Strides::new(&[128, 1]);
+        let padded_lhs = Strides::new(&[130, 1]);
+        let aligned_rhs = Strides::new(&[1, 128]);
+        let padded_rhs = Strides::new(&[1, 130]);
 
-        let key = |lhs_strides: &Strides| {
+        let key = |lhs_strides: &Strides, rhs_strides: &Strides| {
             MatmulAutotuneKey::from_parts(
                 &lhs_shape,
                 &rhs_shape,
                 lhs_strides,
-                &rhs_strides,
-                F32,
-                F32,
-                F32,
-                None,
-                None,
-            )
-        };
-
-        assert!(stride_align_bits(&aligned_strides, &MatrixLayout::RowMajor, &F32) >= 4);
-        assert!(stride_align_bits(&padded_strides, &MatrixLayout::RowMajor, &F32) < 4);
-        assert_ne!(key(&aligned_strides), key(&padded_strides));
-    }
-
-    #[test]
-    fn rhs_async_copy_legality_distinguishes_padded_row_stride() {
-        let lhs_shape = Shape::new([2, 128]);
-        let rhs_shape = Shape::new([128, 128]);
-        let lhs_strides = Strides::new(&[128, 1]);
-        let aligned_strides = Strides::new(&[128, 1]);
-        let padded_strides = Strides::new(&[130, 1]);
-
-        let key = |rhs_strides: &Strides| {
-            MatmulAutotuneKey::from_parts(
-                &lhs_shape,
-                &rhs_shape,
-                &lhs_strides,
                 rhs_strides,
                 F32,
                 F32,
@@ -359,40 +333,18 @@ mod tests {
             )
         };
 
-        assert!(stride_align_bits(&aligned_strides, &MatrixLayout::RowMajor, &F32) >= 4);
-        assert!(stride_align_bits(&padded_strides, &MatrixLayout::RowMajor, &F32) < 4);
-        assert_ne!(key(&aligned_strides), key(&padded_strides));
+        assert!(stride_align_bits(&aligned_lhs, &MatrixLayout::RowMajor, &F32) >= 4);
+        assert!(stride_align_bits(&padded_lhs, &MatrixLayout::RowMajor, &F32) < 4);
+        assert!(stride_align_bits(&aligned_rhs, &MatrixLayout::ColMajor, &F32) >= 4);
+        assert!(stride_align_bits(&padded_rhs, &MatrixLayout::ColMajor, &F32) < 4);
+
+        let aligned = key(&aligned_lhs, &aligned_rhs);
+        assert_ne!(aligned, key(&padded_lhs, &aligned_rhs));
+        assert_ne!(aligned, key(&aligned_lhs, &padded_rhs));
     }
 
     #[test]
-    fn transposed_rhs_async_copy_legality_distinguishes_padded_column_stride() {
-        let lhs_shape = Shape::new([2, 128]);
-        let rhs_shape = Shape::new([128, 128]);
-        let lhs_strides = Strides::new(&[128, 1]);
-        let aligned_strides = Strides::new(&[1, 128]);
-        let padded_strides = Strides::new(&[1, 130]);
-
-        let key = |rhs_strides: &Strides| {
-            MatmulAutotuneKey::from_parts(
-                &lhs_shape,
-                &rhs_shape,
-                &lhs_strides,
-                rhs_strides,
-                F32,
-                F32,
-                F32,
-                None,
-                None,
-            )
-        };
-
-        assert!(stride_align_bits(&aligned_strides, &MatrixLayout::ColMajor, &F32) >= 4);
-        assert!(stride_align_bits(&padded_strides, &MatrixLayout::ColMajor, &F32) < 4);
-        assert_ne!(key(&aligned_strides), key(&padded_strides));
-    }
-
-    #[test]
-    fn batch_stride_contributes_to_async_copy_legality() {
+    fn batch_stride_alignment_changes_autotune_key() {
         let lhs_shape = Shape::new([2, 128, 128]);
         let rhs_shape = Shape::new([2, 128, 2]);
         let rhs_strides = Strides::new(&[256, 2, 1]);
