@@ -22,7 +22,16 @@ pub struct Unset;
 
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, R: Runtime> {
-    binding: TensorBinding<R>,
+    /// The tensor this operand is served from, when there is one. `None` for a
+    /// destination that has no address — a fused store writes through a call, so
+    /// the launch has nothing to bind, and only the comptime half is derived
+    /// ([`build_spec`](StridedTileSource::build_spec)).
+    binding: Option<TensorBinding<R>>,
+    /// The operand's physical extents and strides. The source of truth for the
+    /// whole derivation: a bound operand copies them off its binding, an
+    /// unbound one states them, and both reach [`labeled`] the same way.
+    shape: Vec<usize>,
+    strides: Vec<usize>,
     space: Option<&'a Space>,
     /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
     /// lets [`build`](StridedTileSource::build) derive the bounds-check from overhang.
@@ -62,9 +71,22 @@ pub struct StridedTileSource<'a, Sp, Sub, Q, R: Runtime> {
 
 impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
     pub(crate) fn new(binding: TensorBinding<R>) -> Self {
+        let (shape, strides) = (binding.shape.to_vec(), binding.strides.to_vec());
+        Self::over(Some(binding), shape, strides)
+    }
+
+    /// The same builder over geometry alone, for an operand with no tensor to
+    /// bind. See [`TileSourceData::binding`].
+    pub(crate) fn of_geometry(shape: &[usize], strides: &[usize]) -> Self {
+        Self::over(None, shape.to_vec(), strides.to_vec())
+    }
+
+    fn over(binding: Option<TensorBinding<R>>, shape: Vec<usize>, strides: Vec<usize>) -> Self {
         StridedTileSource {
             data: TileSourceData {
                 binding,
+                shape,
+                strides,
                 space: None,
                 concrete: None,
                 subspace: &[],
@@ -421,7 +443,8 @@ impl<R: Runtime> StridedOperand<R> {
 
 /// [`realize`](StridedTileSource::realize)'s product, consumed by the two typed builds.
 struct Realized<R: Runtime> {
-    tensor: TensorArg<R>,
+    /// `None` exactly when the source was built over geometry alone.
+    tensor: Option<TensorArg<R>>,
     vector_size: usize,
     spec: TileSpec,
     quant: Option<Quantization<R>>,
@@ -433,7 +456,9 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
     /// as given), derive the bounds-check, and mint the comptime [`TileSpec`].
     fn realize(self) -> Realized<R> {
         let TileSourceData {
-            mut binding,
+            binding,
+            mut shape,
+            mut strides,
             space,
             concrete,
             batch_axes,
@@ -454,11 +479,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // `addressed` contains all logical axes used for bounds checking.
         let (projection, addressed) = match projection {
             Some(projection) => {
-                check_stated(&binding, space, &projection, subspace, batch_axes, &tiling);
+                check_stated(&shape, space, &projection, subspace, batch_axes, &tiling);
                 let addressed = projection.logical_axes().to_vec();
                 (projection, addressed)
             }
-            None => labeled(&mut binding, subspace, batch_axes, tiling),
+            None => labeled(&mut shape, &mut strides, subspace, batch_axes, tiling),
         };
 
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
@@ -550,7 +575,13 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
         Realized {
-            tensor: binding.into_tensor_arg(),
+            tensor: binding.map(|mut binding| {
+                // The derivation may have dropped broadcast batch dims; the arg
+                // ships the geometry it settled on, not the one it arrived with.
+                binding.shape = shape[..].into();
+                binding.strides = strides[..].into();
+                binding.into_tensor_arg()
+            }),
             vector_size: v,
             spec,
             quant,
@@ -564,13 +595,14 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 /// The inner subspace axes are laid out according to `tiling`.
 ///
 /// Returns the projection along with all physical axes prior to broadcast omission (for bounds checking).
-fn labeled<R: Runtime>(
-    binding: &mut TensorBinding<R>,
+fn labeled(
+    in_shape: &mut Vec<usize>,
+    in_strides: &mut Vec<usize>,
     subspace: &[Axis],
     batch_axes: &[Axis],
     tiling: Option<StorageTiling>,
 ) -> (Projection, Vec<Axis>) {
-    let rank = binding.shape.len();
+    let rank = in_shape.len();
     let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(subspace.len(), 0));
     assert_eq!(
         tiling.rank(),
@@ -583,7 +615,7 @@ fn labeled<R: Runtime>(
     let block_dims = block.len();
     assert!(
         rank >= block_dims,
-        "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
+        "StridedTileSource: operand rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
         subspace.len()
     );
     let batch_dims = rank - block_dims;
@@ -601,18 +633,18 @@ fn labeled<R: Runtime>(
     let mut strides = Vec::new();
 
     for (i, &axis) in physical_axes.iter().enumerate() {
-        let extent = binding.shape[i];
+        let extent = in_shape[i];
         // A subspace axis never drops out, however small, since the tile is shaped over it.
         if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
             continue;
         }
         phys.push(PhysicalAxis::new(axis, extent));
         shape.push(extent);
-        strides.push(binding.strides[i]);
+        strides.push(in_strides[i]);
     }
 
-    binding.shape = shape[..].into();
-    binding.strides = strides[..].into();
+    *in_shape = shape;
+    *in_strides = strides;
     (
         Projection::of_layout(&ConcreteLayout::new(&phys)),
         physical_axes,
@@ -621,8 +653,8 @@ fn labeled<R: Runtime>(
 
 /// Validates an explicit gathered [`Projection`] against the tensor binding and iteration space.
 /// Ensures mutually exclusive labeling options (`subspace`, `batch_axes`, `tiling`) were not provided.
-fn check_stated<R: Runtime>(
-    binding: &TensorBinding<R>,
+fn check_stated(
+    shape: &[usize],
     space: &Space,
     projection: &Projection,
     subspace: &[Axis],
@@ -636,10 +668,10 @@ fn check_stated<R: Runtime>(
     );
     assert_eq!(
         projection.physical_rank(),
-        binding.shape.len(),
-        "StridedTileSource::gathered: the mapping addresses {} dims but the binding has {}",
+        shape.len(),
+        "StridedTileSource::gathered: the mapping addresses {} dims but the operand has {}",
         projection.physical_rank(),
-        binding.shape.len()
+        shape.len()
     );
     for &axis in projection.logical_axes() {
         assert!(
@@ -661,10 +693,30 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
             ..
         } = self.realize();
         StridedOperand {
-            tensor,
+            tensor: tensor.expect(
+                "StridedTileSource::build: this source was built over geometry alone and has no \
+                 tensor to bind; use `build_spec`",
+            ),
             vector_size,
             spec,
         }
+    }
+
+    /// The comptime half alone: the [`TileSpec`] and served width
+    /// [`build`](Self::build) would have derived, with no tensor argument.
+    ///
+    /// For a destination that has no address. A fused store writes through a
+    /// call, so the launch has no handle to bind — but the tile that walks it is
+    /// projected, bounds-checked and staged exactly as a bound one is, and this
+    /// is that same derivation rather than a restatement of it. Restating it is
+    /// what drifts: the labeled mapping drops broadcast batch dims, folds the
+    /// rest into a `ConcreteLayout` and rewrites the geometry around it, none of
+    /// which a caller should be reproducing.
+    pub fn build_spec(self) -> (TileSpec, usize) {
+        let Realized {
+            vector_size, spec, ..
+        } = self.realize();
+        (spec, vector_size)
     }
 }
 
@@ -678,7 +730,10 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             quant,
         } = self.realize();
         QuantOperand {
-            tensor,
+            tensor: tensor.expect(
+                "StridedTileSource::build_quant: a quantized operand is always bound; only a \
+                 fused store is built over geometry alone",
+            ),
             vector_size,
             spec,
             quant: quant.unwrap(),

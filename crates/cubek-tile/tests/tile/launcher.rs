@@ -309,10 +309,10 @@ fn arg_gathered_alongside_a_subspace_panics() {
         .build();
 }
 
-/// One map per buffer dim: a mapping that addresses fewer dims than the binding has would read
+/// One map per buffer dim: a mapping that addresses fewer dims than the operand has would read
 /// every coarser stride as if it were the operand's own.
 #[test]
-#[should_panic(expected = "addresses 2 dims but the binding has 3")]
+#[should_panic(expected = "addresses 2 dims but the operand has 3")]
 fn arg_gathered_rank_mismatch_panics() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
