@@ -387,10 +387,10 @@ pub trait BenchmarkCategory: Sync {
         TimingMethod::System
     }
 
-    /// Measures and memoizes every distinct peak this category declares, so
-    /// the first timed row never pays for a probe. Returns how many
-    /// distinct keys it warmed.
-    fn warm_peaks(&self) -> usize;
+    /// Measures and memoizes every distinct peak the named problems declare, so
+    /// the first timed row never pays for a probe. Returns how many distinct
+    /// keys it warmed.
+    fn warm_peaks(&self, problem_ids: &[String]) -> usize;
 
     fn run(
         &self,
@@ -451,9 +451,12 @@ impl<C: Category> BenchmarkCategory for C {
         Category::timing_method(self)
     }
 
-    fn warm_peaks(&self) -> usize {
+    fn warm_peaks(&self, problem_ids: &[String]) -> usize {
         let mut seen = HashSet::new();
         for problem in Category::problems(self) {
+            if !problem_ids.contains(&problem.id) {
+                continue;
+            }
             let Some(work) = Category::work(self, &problem.value) else {
                 continue;
             };

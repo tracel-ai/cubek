@@ -51,6 +51,22 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
     ]
 }
 
+/// A comma-separated list of substrings from an environment variable, empty
+/// when unset, which selects everything.
+fn id_filter(var: &str) -> Vec<String> {
+    std::env::var(var)
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn selects(filter: &[String], id: &str) -> bool {
+    filter.is_empty() || filter.iter().any(|want| id.contains(want.as_str()))
+}
+
 /// Loop over every (strategy, problem) for `category`, run each at 10 samples,
 /// and print the resulting durations using the category's preferred
 /// [`cubecl::benchmark::TimingMethod`]. Used by `benches/*.rs` via [`run_bench!`].
@@ -60,6 +76,10 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
 /// say): a handful of short samples then gets measured while the clocks are
 /// still ramping, and identical kernels can differ by the ratio of those two
 /// clocks. Raising the count is the difference between a usable number and noise.
+///
+/// `CUBEK_BENCH_PROBLEMS` and `CUBEK_BENCH_STRATEGIES` take a comma-separated
+/// list of substrings and run only the ids that contain one. `gemm` alone is
+/// 184 problems against 27 strategies.
 pub fn run_category(category: &dyn BenchmarkCategory) {
     use cubecl::benchmark::BenchmarkDurations;
 
@@ -68,7 +88,39 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
 
-    let warmed = category.warm_peaks();
+    let problem_filter = id_filter("CUBEK_BENCH_PROBLEMS");
+    let strategy_filter = id_filter("CUBEK_BENCH_STRATEGIES");
+
+    let problems: Vec<_> = category
+        .problems()
+        .into_iter()
+        .filter(|p| selects(&problem_filter, &p.id))
+        .collect();
+    let strategies: Vec<_> = category
+        .strategies()
+        .into_iter()
+        .filter(|s| selects(&strategy_filter, &s.id))
+        .collect();
+
+    if problems.is_empty() || strategies.is_empty() {
+        println!(
+            "no rows selected: {} problem(s) and {} strategy(ies) survived the filters",
+            problems.len(),
+            strategies.len()
+        );
+        return;
+    }
+    if !problem_filter.is_empty() || !strategy_filter.is_empty() {
+        println!(
+            "running {} of {} problem(s) against {} of {} strategy(ies)",
+            problems.len(),
+            category.problems().len(),
+            strategies.len(),
+            category.strategies().len()
+        );
+    }
+
+    let warmed = category.warm_peaks(&problems.iter().map(|p| p.id.clone()).collect::<Vec<_>>());
     if warmed > 0 {
         println!("warmed {warmed} device peak(s) before timing");
     }
@@ -76,8 +128,8 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
     let mut any_over_peak = false;
     let mut any_launch_bound = false;
 
-    for problem in category.problems() {
-        for strategy in category.strategies() {
+    for problem in &problems {
+        for strategy in &strategies {
             println!("---- {} / {} ----", strategy.label, problem.label);
             match category.run(&strategy.id, &problem.id, samples) {
                 Ok(samples) => {
