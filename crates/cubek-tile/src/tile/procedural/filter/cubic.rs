@@ -39,13 +39,23 @@ pub struct Cubic<C: CubeType> {
 #[cube]
 impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
-        let a = T::new(comptime!(self.a.as_f32()));
+        let a = comptime!(self.a.as_f32());
         let x = self.coordinate.evaluate(coordinates).abs();
         let x2 = x * x;
-        let x3 = x2 * x;
-        let first = (a + T::new(2.0_f32)) * x3 - (a + T::new(3.0_f32)) * x2 + T::new(1.0_f32);
-        let second =
-            a * x3 - T::new(5.0_f32) * a * x2 + T::new(8.0_f32) * a * x - T::new(4.0_f32) * a;
+        let first = fma(
+            fma(T::new(comptime!(a + 2.0)), x, T::new(comptime!(-(a + 3.0)))),
+            x2,
+            T::new(1.0_f32),
+        );
+        let second = fma(
+            fma(
+                fma(T::new(comptime!(a)), x, T::new(comptime!(-5.0 * a))),
+                x,
+                T::new(comptime!(8.0 * a)),
+            ),
+            x,
+            T::new(comptime!(-4.0 * a)),
+        );
         select(
             x <= T::new(1.0_f32),
             first,
