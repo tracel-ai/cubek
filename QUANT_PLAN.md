@@ -129,15 +129,34 @@ Two things fell out: split-K and the two-contracted-axis matmul now take the *di
 their contracted axes do form one `k` edge; and the block-vs-cut alignment rule is now enforced by
 construction rather than by an assert.
 
+**Landed (phase 2).** `tests/tile/scaled.rs` and `tests/tile/packed.rs` are spelled by omission:
+eleven specs that carried a divisor carry none. Four places learned that a spanned but *unmapped*
+axis is a broadcast rather than a malformed projection — `validate` refuses an axis addressing
+several physical axes and no longer one addressing none, `tiling` reads it as untiled,
+`bound_states` reports no dim to read a bound off, and `Projection::addresses` names the state.
+`validate` also accepts a partitioned innermost axis under a vector line, and `strided_2d` asks
+for a `k` edge instead of counting axes.
+
+The scaled nest was never given `ContractShape`, so it had been deriving `kc` from the first
+contracted axis rather than the product and routing on an axis count. Both are the plain path's
+answers now. That drift is what a duplicated program costs.
+
+**What still blocks the deletions.** `ContractShape` derives the *accumulator's* rows and columns
+from its last two axes, so splitting an axis the output spans (`N`, for a `[bm, bn]` scheme) sizes
+the block wrong. Nothing states the output's edges the way `MatrixAxes` states the operands'. Until
+that exists, a scheme that blocks the columns keeps the rational spelling there, and
+`check_lines_hold_one_scale` plus `ScaleSide` keep earning their place.
+
 ## Next, in order
 
 | # | item | notes |
 |---|---|---|
-| 2 | **`Tile::scaled`, and the scaled verb deleted** | a tile whose read multiplies, each side through its own projection: `mm(&x, &w.scaled(&s))`. Under the split `s` does not span `KI`, so its address does not move in the inner loop *structurally* — which was `mm_scaled`'s only advantage. Port `scaled.rs` and `packed.rs` onto it, then delete `mm_scaled`, `mma_scaled`, `ScaleSide` and every `_scaled` leaf twin |
-| 3 | **two levels, and a second blocked axis** | `digits(KBO, KBI, KI)` for mxfp4's shape; `[bm, bn]` blocks splitting `M` and `N` |
-| 4 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
-| 5 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
-| 6 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
+| 2 | **the accumulator's edges** | `ContractShape` takes the output's rows and columns from its last two axes, which a split `N` breaks. The operands' half of this is `MatrixAxes`; the output has no equivalent, and `matrix_accumulate` assumes the pair too. With it, a `[bm, bn]` scheme splits both axes and the last divisors go, and with them `check_lines_hold_one_scale` and `ScaleSide` |
+| 3 | **the scales on the ring** | a split scales operand stages one value per block, no expansion, so it can ride the staging ring like any operand and `MmaScaledWalk` merges back into `MmaWalk`. Needs a ternary `Ring`/`Staging`; the verb itself stays, since a store cannot hold a store (`Box<MemData<T>>` is not a `CubeType`) and the alternative forks `MemData::at` |
+| 4 | **two levels** | `disjoint(&[(KBO, ..), (KBI, ..), (KI, 1)])` for mxfp4's shape: one more label in the same list, since mixed radix does not care how many digits |
+| 5 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
+| 6 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
+| 7 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
 
 ### Item 4, surveyed
 
@@ -185,6 +204,12 @@ arithmetic are exactly what the second and third rows still use.
   drain on the accumulator, not on a view.
 
 ## Known gaps
+
+- **Three tests fail on the CPU backend and pass on wgpu-msl**, none caused by any of this:
+  `register_matmul_lane_group_fold` and its promoted twin came with #559 and want a plane wider
+  than one lane; `an_i8_operand_contracts_against_its_scales` reads `-70` back as `186`, an `i8`
+  read as unsigned, and reproduces identically with the *unsplit* spelling. Verify a CPU run
+  against these three rather than against zero.
 
 - The straddle check is a comptime assert *inside* the kernel, so it lands on a worker thread and
   the launch returns zeros beside it. Every other contract assert is the same, but a launch-side
