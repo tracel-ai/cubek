@@ -120,6 +120,18 @@ impl ContractShape {
         }
     }
 
+    /// The accumulator's own matrix: the column group [`col_split`] reached, the row edge just
+    /// above it, and anything above that pinned as batch.
+    ///
+    /// Asked of the shape rather than assumed at the view, which is what lets a split `N` be read
+    /// as one column group instead of a row and a column.
+    pub fn acc_axes(&self) -> MatrixAxes {
+        MatrixAxes {
+            row_split: self.col_split - 1,
+            col_split: self.col_split,
+        }
+    }
+
     /// The accumulator's batch axes: everything above the row edge.
     pub fn batch_extents(&self) -> Vec<usize> {
         (0..self.col_split - 1)

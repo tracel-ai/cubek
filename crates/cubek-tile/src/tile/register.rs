@@ -120,7 +120,8 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] space: Space,
     ) {
         // Addressed in lines at the width the block was promoted at, bounded by the window extent.
-        let mut sink = mem.matrix_mut::<RA>(0usize, space);
+        let mut sink =
+            mem.matrix_mut::<RA>(0usize, comptime!(MatrixAxes::trailing_pair(&space)), space);
 
         // Split comptime rather than branching per line: a value-producing `match` plus a
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been

@@ -1771,6 +1771,7 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn matrix_mut<W: Size>(
         &mut self,
         i: usize,
+        #[comptime] axes: MatrixAxes,
         #[comptime] space: Space,
     ) -> MatrixViewMut<'_, Vector<T, W>> {
         // The 2-D view reads its shape off the logical space, which is the physical shape only
@@ -1786,7 +1787,7 @@ impl<T: Numeric> MemData<T> {
             comptime!(&space),
             false,
             comptime!(self.store.vector_size),
-            comptime!(MatrixAxes::trailing_pair(&space)),
+            axes,
             i,
         );
         self.masked_mut::<W, Coords2d, TileMatrix>(layout)
@@ -1798,13 +1799,14 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn matrix_accumulate<W: Size>(
         &mut self,
         i: usize,
+        #[comptime] axes: MatrixAxes,
         #[comptime] space: Space,
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
-            self.matrix_mut::<W>(i, space),
+            self.matrix_mut::<W>(i, axes, space),
             lane_share,
             monoid,
             init_from,

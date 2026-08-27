@@ -92,6 +92,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         // The contraction's own algebra: its products accumulate under the semiring's add.
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,
+            comptime!(shape.acc_axes()),
             comptime!(shape.space.clone()),
             comptime!(semiring.add()),
         );
@@ -334,8 +335,12 @@ fn nest_scaled<
             ScaleSide::Lhs => rhs.matrix_packed::<V>(rhs_axes, mat),
             ScaleSide::Rhs => rhs.matrix_scaled::<V, ES, S>(rhs_axes, scales, scales_axes, mat),
         };
-        let mut acc_view =
-            acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
+        let mut acc_view = acc.matrix_accumulate::<A>(
+            mat,
+            comptime!(shape.acc_axes()),
+            comptime!(space.clone()),
+            comptime!(semiring.add()),
+        );
 
         let lhs_check = comptime!(lhs_mat.check);
         let rhs_check = comptime!(rhs_mat.check);

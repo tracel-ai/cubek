@@ -73,6 +73,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
+            comptime!(problem.block.acc_axes()),
             comptime!(problem.block.space.clone()),
             comptime!(semiring.add()),
         );
