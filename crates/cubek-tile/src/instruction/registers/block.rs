@@ -9,6 +9,7 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
+use crate::instruction::registers::lines::{Lines, LinesExpand};
 use crate::*;
 
 /// `c += lhs · rhs` over the block: `kc / served` steps into the `mr × nr` lines of `c`.
@@ -19,9 +20,17 @@ use crate::*;
 /// (line, lane) with fixed comptime extracts when `lane_fanout` (GPU), else as a flat scalar loop.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
-    lhs: &MatrixView<'_, Vector<EL, L>>,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
+pub(crate) fn contract<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
     #[comptime] served: usize,
@@ -36,7 +45,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 
     if comptime!(served > 1) {
         for line in 0..comptime!(kc / served) {
-            rank1_update::<E, EL, L, ER, V>(
+            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
                 c,
@@ -59,7 +68,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         for line in 0..k_lines {
             #[unroll]
             for lane in 0..lw {
-                rank1_update::<E, EL, L, ER, V>(
+                rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                     lhs,
                     rhs,
                     c,
@@ -81,7 +90,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
         // too, so the tail is straight-line code rather than a second, dynamic walk.
         #[unroll]
         for lane in 0..k_tail {
-            rank1_update::<E, EL, L, ER, V>(
+            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
                 c,
@@ -100,7 +109,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     } else {
         // Flat scalar walk (CPU or scalar lines)
         for p in 0..kc {
-            rank1_update::<E, EL, L, ER, V>(
+            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
                 c,
@@ -131,9 +140,17 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 /// each lane body sees one loop-invariant line index.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
-    lhs: &MatrixView<'_, Vector<EL, L>>,
-    rhs: &MatrixView<'_, Vector<ER, V>>,
+fn rank1_update<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     k: usize,
@@ -149,14 +166,14 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     #[unroll(unroll)]
     for n in 0..nr {
         if comptime!(served > 1) {
-            b[n] = Vector::<E, V>::cast_from(rhs.read((n as u32, k_line)));
+            b[n] = Vector::<E, V>::cast_from(rhs.line((n as u32, k_line), 0usize));
         } else {
-            b[n] = Vector::<E, V>::cast_from(rhs.read((k as u32, n as u32)));
+            b[n] = Vector::<E, V>::cast_from(rhs.line((k as u32, n as u32), 0usize));
         }
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let lhs_line = lhs.read((i as u32, k_line));
+        let lhs_line = lhs.line((i as u32, k_line), 0usize);
         let a = if comptime!(served > 1) {
             Vector::<E, V>::cast_from(lhs_line)
         } else if comptime!(lane.is_some()) {

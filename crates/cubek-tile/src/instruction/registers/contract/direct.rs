@@ -204,7 +204,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] semiring: Semiring,
 ) {
     let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
-    block::contract::<E, EL, L, ER, V>(
+    block::contract::<E, EL, L, ER, V, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
         lhs,
         rhs,
         &mut c,

@@ -71,7 +71,7 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        block::contract::<T, EL, L, ER, RA>(
+        block::contract::<T, EL, L, ER, RA, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, RA>>>(
             &lhs_mat,
             &rhs_mat,
             &mut self.data,
@@ -152,7 +152,7 @@ impl<T: Numeric> RegisterData<T> {
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        block::contract::<T, EL, L, ER, RA>(
+        block::contract::<T, EL, L, ER, RA, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, RA>>>(
             &lhs_mat,
             &rhs_mat,
             &mut self.data,
