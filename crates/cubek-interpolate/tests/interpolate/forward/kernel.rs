@@ -112,6 +112,20 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
     let problem = make_problem(input_shape, output_size, options);
     let blueprint =
         InterpolateStrategy::MinimizeLatency.blueprint(&client.properties().hardware, &problem);
+
+    // A CPU has no shared-memory residence, so the inferred intents deliberately collapse to the
+    // always-launchable in-place blueprint. The overflow fallback is a GPU-only path.
+    if client.properties().hardware.num_cpu_cores.is_some() {
+        assert_eq!(blueprint.input_residence, Residence::InPlace);
+        kernel_output_using(
+            options,
+            InterpolateStrategy::MinimizeLatency,
+            input_shape,
+            output_size,
+        );
+        return;
+    }
+
     assert_eq!(blueprint.input_residence, Residence::Smem);
 
     let (refused, ..) = kernel_run(
