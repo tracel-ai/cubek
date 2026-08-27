@@ -153,12 +153,60 @@ that exists, a scheme that blocks the columns keeps the rational spelling there,
 |---|---|---|
 | 1 | **the scale rides the operand** | `c.mm(&a.scaled(&s), &b, semiring)`. `mm` goes generic over an `Operand` trait instead of taking `&Tile` outright, and `Scaled<T, S>` is a pair of tiles implementing it. That deletes twelve `*_scaled` functions (`mm`/`mma`/`mma_leaf`/`PlaneTile::mma`/`mma_buffered`/`AccumulatorScope::{mm,mma}`/`memory`/`contract`/`nest`/`RegisterData::mma`/`matrix`) whose only job is carrying a third argument down eleven frames to one call site. It also deletes `ScaleSide` and `scale_side`: the caller states the side by writing `.scaled()` on the operand that has the scales, instead of the engine inferring it from axes. **Proven** (`tests/spike_operand.rs`, delete when the spine lands): a `#[cube]` trait carries both a `comptime_type!` return and a `-> Self` return, and the unscaled path through the trait compiles to byte-identical kernel source, SSA numbering and unrolled loop included. Two footguns: `Scaled` must own its tiles, not borrow them, because `Tile::at` returns fresh tiles; and `Scaled::<T, T>` does not parse (`#[cube]` reads a repeated turbofish param as a redeclaration), so the two element types must differ, which is the real case anyway |
 | 1b | **scales are vectorized, and the lane is the leaf's** | A scales line of `SW` lanes covers `SW` blocks: `SW · B` values, `SW · B / V` value lines, with value line `j` taking lane `j · V / B`. That division is exact because a line already may not straddle a block. **Decided: the leaf holds the lane, not the view.** `ScaledView` would have to derive the lane from a read position, which is only free if the position folds to a constant; `block::contract`'s `lane_fanout` walk already loads a line once and walks its lanes under a comptime index, which is exactly the shape wanted. So `ScaledView` keeps the `SW == 1` broadcast and the wide case belongs to `block::contract`. Consequence for item 1: `Operand`'s method is *run*-shaped (hand the leaf a run of lines), not view-shaped, so the spike's `matrix_of` is the wrong granularity. Today scalar scales are nailed shut in two places, and the assert in `direct.rs` guards that rather than stating anything: `direct.rs` binds the scales' width to `1`, and `scale_line` does `extract(0)`, using lane 0 and discarding the rest |
-| 2 | **the accumulator's edges, by membership** | `ContractShape` takes the output's rows and columns from its last two axes, which a split `N` breaks, and `matrix_accumulate` assumes the pair too. The fix is not another stated pair: a matmul's shape *is* its axis memberships — rows are the accumulator's axes the lhs also spans, columns the ones the rhs does, batch the ones both do, and the `k` edge the ones the accumulator does not. That derives every grouping from the three spaces, needs nothing stated, and would replace `MatrixAxes::of`'s numeric edges for the operands too. With it a `[bm, bn]` scheme splits both axes, the last divisors go, and `check_lines_hold_one_scale` goes with them (`ScaleSide` dies earlier, at item 1) |
+| 2 | **the accumulator's edges, by membership** | the head of the queue, and what vectorized scales wait on. See below |
 | 3 | **the scales on the ring** | a split scales operand stages one value per block, no expansion, so it can ride the staging ring like any operand and `MmaScaledWalk` merges back into `MmaWalk`. Needs a ternary `Ring`/`Staging`; the verb itself stays, since a store cannot hold a store (`Box<MemData<T>>` is not a `CubeType`) and the alternative forks `MemData::at` |
 | 4 | **two levels** | `disjoint(&[(KBO, ..), (KBI, ..), (KI, 1)])` for mxfp4's shape: one more label in the same list, since mixed radix does not care how many digits |
 | 5 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
 | 6 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
 | 7 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
+
+### Item 2, planned
+
+A contraction's shape is read off the accumulator's *last two axes* and off matching extent
+products. Both are guesses that happen to be right while every problem is `[batch…, M, N]`. A
+matmul's shape is not a numeric coincidence, it is which space names which axis:
+
+| group | rule |
+|---|---|
+| `reduce` | in `lhs ∪ rhs`, absent from the accumulator (already [`Space::contracted`]) |
+| `rows` | the accumulator's axes the lhs spans |
+| `cols` | the accumulator's axes the rhs spans |
+| `batch` | the accumulator's axes both span |
+
+Four groups, one rule, nothing stated and nothing searched for. An accumulator axis neither
+operand spans is already refused in `Tile::op_space`.
+
+**What it unblocks.** A `[bm, bn]` scheme splits `N` into `(NB, NI)`, which today breaks
+`ContractShape` (`NB` and `NI` become the row and the column). With the split, `PhysicalAxisMap::of(N).over(bn)`
+goes, `check_lines_hold_one_scale` goes with it (a served line inside one block stops being an
+arithmetic check and becomes the shape of the axes), and a scales operand's innermost axis is a
+*block* axis — which is the only way a scales line can be wider than one value, because a line's
+width applies to the innermost axis of the operand's space and today that is the axis the scales
+omit.
+
+**Phases.**
+
+1. **Name the partition.** `ContractAxes { batch, rows, cols, reduce }` from the three spaces, and
+   a `MatrixAxes` built from membership in an operand's own axis order rather than from a product.
+   Groups must be contiguous and in order; anything else is refused where it is built. Behaviour
+   unchanged, and the new partition is asserted to agree with the old numbers.
+2. **`ContractShape` derives from it.** `mr`, `cols`, `kc` and `batch_extents` become products over
+   the groups; `lhs_axes` / `rhs_axes` / `matrix_axes` become lookups. `MatrixAxes::of` and `find`
+   lose their contraction callers.
+3. **The accumulator's own view.** `MemData::matrix_mut` takes its `MatrixAxes` from the caller
+   instead of assuming `trailing_pair`. This is the line that actually refuses a split `N`.
+4. **Split `N` in a test**, scales addressing `NB` alone, end to end.
+5. **The divisors go**: `over(bn)` out of the specs, `check_lines_hold_one_scale` deleted.
+6. **Vectorized scales.** The `Lines` impl that folds them, `run` non-zero, and the two lines that
+   nail the width shut (`direct.rs`'s `size!(S) = 1`, `scale_line`'s `extract(0)`) deleted.
+
+**Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16`
+is a hardware number, so grouping it by extent is right there and stays.
+
+**Risks.** Interleaved accumulator axes give non-contiguous groups, which the two-split
+`MatrixAxes` cannot express: refused rather than supported. An operand spanning an accumulator axis
+it does not own classifies wrong, but the numeric search misreads it today too. `spread`, `nr` and
+`served` all read `cols`, and take the group's product instead.
 
 ### Item 4, surveyed
 
