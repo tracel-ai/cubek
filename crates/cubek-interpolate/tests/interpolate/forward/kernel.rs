@@ -293,3 +293,28 @@ fn test_interpolate_kernel_lanczos3_identity() {
         [8, 9],
     );
 }
+
+/// An input extent of `1`. Under `align_corners` the transform spans `input - 1` cells, so the
+/// source coordinate along that axis holds still and the input is read broadcast over the output
+/// rows drawn from it. Every filter is run because the taps the degenerate axis reaches past the
+/// single row are the boundary's to serve, and how far they reach is the filter's radius.
+#[test]
+fn test_interpolate_kernel_degenerate_input_extent() {
+    for mode in [
+        InterpolateMode::Nearest(NearestMode::Floor),
+        InterpolateMode::Nearest(NearestMode::Exact),
+        InterpolateMode::Bilinear,
+        InterpolateMode::Bicubic,
+        InterpolateMode::Lanczos3,
+    ] {
+        for align_corners in [true, false] {
+            let options = InterpolateOptions::new(mode).with_align_corners(align_corners);
+            // One row, then one column, so neither axis is exercised only by the other's turn.
+            kernel_output_on(options, BASELINE, [2, 1, 9, 4], [1, 15]);
+            kernel_output_on(options, BASELINE, [2, 8, 1, 4], [13, 1]);
+            // The extent held at 1 while the other axis resamples, which is the shape a burn
+            // 1-D interpolation takes: [N, C, 1, W] upsampled along W alone.
+            kernel_output_on(options, BASELINE, [2, 1, 6, 4], [1, 9]);
+        }
+    }
+}
