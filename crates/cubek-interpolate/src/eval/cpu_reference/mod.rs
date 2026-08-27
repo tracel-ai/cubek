@@ -2,8 +2,8 @@ mod backward;
 mod forward;
 
 use crate::{
+    InterpolateStrategy,
     definition::{InterpolateOptions, InterpolateProblem},
-    launch::InterpolateStrategy,
 };
 use cubecl::std::tensor::TensorHandle;
 use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
@@ -34,15 +34,15 @@ pub(crate) fn make_zero_handle(
         .generate_without_host_data()
 }
 
-pub fn strategy_result(
+pub fn kernel_result(
     client: ComputeClient<TestRuntime>,
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
     seed: u64,
 ) -> Result<HostData, String> {
     match problem {
-        InterpolateProblem::Forward(prob) => forward::strategy_result(client, prob, strategy, seed),
-        InterpolateProblem::Backward(prob) => backward::strategy_result(client, prob, seed),
+        InterpolateProblem::Forward(prob) => forward::kernel_result(client, prob, strategy, seed),
+        InterpolateProblem::Backward(prob) => backward::kernel_result(client, prob, seed),
     }
 }
 

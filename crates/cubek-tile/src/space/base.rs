@@ -576,7 +576,7 @@ impl Space {
     /// depth, not a list of axes.
     ///
     /// Reads the extents off this space as it stands, like every other consumer of a tile's edges
-    /// ([`matrix_split`](crate::matrix_split)); call it on the [`final_space`](Space::final_space)
+    /// ([`MatrixAxes::whole`](crate::MatrixAxes::whole)); call it on the [`final_space`](Space::final_space)
     /// when the caller holds a level above the leaf.
     pub fn contracted_extent(&self, output: &Space) -> usize {
         self.contracting(output)
@@ -587,7 +587,7 @@ impl Space {
 
     /// Whether `lhs` and `rhs` enumerate their contracted axes in the same order.
     ///
-    /// A fragment groups its `k` edge by extent alone ([`matrix_split`](crate::matrix_split)), so
+    /// A fragment groups its `k` edge by extent alone ([`MatrixAxes::whole`](crate::MatrixAxes::whole)), so
     /// two operands listing the same axes in different orders contract mismatched positions with
     /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
     /// axis list, which is stated per operand, so nothing upstream forces them to agree.

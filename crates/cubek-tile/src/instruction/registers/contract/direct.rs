@@ -4,6 +4,7 @@ use cubecl::prelude::*;
 
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
+use crate::instruction::registers::contract::ScaleSide;
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -40,8 +41,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         &lhs.space, &rhs.space, space, served, lw, rw, aw,
     ));
     comptime!(assert!(
-        shape.reduce.len() == 1,
-        "contract: the 2-D nest contracts exactly one axis"
+        shape.matrix_axes(&lhs.space, &rhs.space).is_some(),
+        "contract: the 2-D nest reads each operand as one matrix, and no grouping of these axes \
+         gives one; the N-D nest reads them a cell at a time"
     ));
 
     // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
@@ -77,13 +79,16 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let aw = comptime!(shape.aw);
     let matrices = comptime!(shape.matrices());
 
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
+
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
-        let lhs_mat = lhs.matrix_packed::<L>(mat);
-        let rhs_mat = rhs.matrix_packed::<V>(mat);
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
         // The contraction's own algebra: its products accumulate under the semiring's add.
         let mut acc_view = acc.matrix_accumulate::<A>(
             mat,
@@ -199,7 +204,7 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     #[comptime] semiring: Semiring,
 ) {
     let mut c = block::seed::<E, V, A>(acc, served, 1usize, aw, mr, nr, cols, unroll);
-    block::contract::<E, EL, L, ER, V>(
+    block::contract::<E, EL, L, ER, V, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
         lhs,
         rhs,
         &mut c,
@@ -213,4 +218,144 @@ fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         semiring,
     );
     block::commit::<E, V, A>(acc, c, served, 1usize, aw, mr, nr, cols, unroll);
+}
+
+/// [`contract`] with one operand scaled: `c += (lhs ⊗ scale) · rhs` or `c += lhs · (rhs ⊗ scale)`,
+/// the scale a real operand read through its own view and [`ScaleSide`] saying which factor it
+/// meets. Same nest, same block: the scale folds in under the operand's view, so the block
+/// below runs the plain contraction.
+///
+/// The scales are read where the values are, never staged: one value per block is already
+/// cache-served, and staging one would materialize the expansion reading it in place avoids.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] space: Space,
+    #[comptime] served: usize,
+    #[comptime] side: ScaleSide,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    comptime!(assert!(
+        !lhs_gathered && !rhs_gathered,
+        "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
+    ));
+
+    let lw = lhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let rw = rhs.vector_size();
+    let sw = scales.vector_size();
+    comptime!(assert!(
+        sw == 1,
+        "mm_scaled: the scales are read one value at a time, so their operand is scalar (it is \
+         {sw} wide)"
+    ));
+    comptime!(assert!(
+        rw == aw || served > 1,
+        "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
+    ));
+
+    let shape = comptime!(ContractShape::new(
+        &lhs.space, &rhs.space, space, served, lw, rw, aw,
+    ));
+
+    let size!(S) = 1usize;
+    if comptime!(served > 1) {
+        let size!(W) = served;
+        let size!(A) = 1usize;
+        nest_scaled::<E, EL, W, ER, W, A, ES, S>(
+            acc, lhs, rhs, scales, shape, side, config, semiring,
+        );
+    } else {
+        let size!(W) = lw;
+        let size!(A) = aw;
+        nest_scaled::<E, EL, W, ER, A, A, ES, S>(
+            acc, lhs, rhs, scales, shape, side, config, semiring,
+        );
+    }
+}
+
+/// [`nest`] with the scales view built beside the operands'.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn nest_scaled<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    A: Size,
+    ES: Numeric,
+    S: Size,
+>(
+    acc: &mut MemData<E>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    scales: &Tile<ES>,
+    #[comptime] shape: ContractShape,
+    #[comptime] side: ScaleSide,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let mr = comptime!(shape.mr);
+    let nr = comptime!(shape.nr);
+    let cols = comptime!(shape.cols);
+    let kc = comptime!(shape.kc);
+    let served = comptime!(shape.served);
+    let lw = comptime!(shape.lw);
+    let aw = comptime!(shape.aw);
+    let matrices = comptime!(shape.matrices());
+    let space = comptime!(shape.space.clone());
+    let lane_fanout = comptime!(config.lane_fanout);
+
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
+    // The scales carry the values' own axes, `KI` among them, and address only the ones they
+    // span; their matrix is the same face read through their own projection.
+    let scales_axes = comptime!(match side {
+        ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
+        ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
+    });
+
+    for mat in 0..matrices {
+        // The scale folds in under the view, so what the block below contracts is two ordinary
+        // matrices and the plain body runs them.
+        let lhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, mat),
+            ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, mat),
+        };
+        let rhs_mat = match comptime!(side) {
+            ScaleSide::Lhs => rhs.matrix_packed::<V>(rhs_axes, mat),
+            ScaleSide::Rhs => rhs.matrix_scaled::<V, ES, S>(rhs_axes, scales, scales_axes, mat),
+        };
+        let mut acc_view =
+            acc.matrix_accumulate::<A>(mat, comptime!(space.clone()), comptime!(semiring.add()));
+
+        let lhs_check = comptime!(lhs_mat.check);
+        let rhs_check = comptime!(rhs_mat.check);
+        let acc_check = acc_view.check();
+        let eligible = comptime!(mr * nr * served * aw <= config.budget);
+        let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
+        body::<E, EL, L, ER, V, A>(
+            &mut acc_view,
+            &lhs_mat,
+            &rhs_mat,
+            lw,
+            served,
+            aw,
+            mr,
+            nr,
+            cols,
+            kc,
+            unroll,
+            lane_fanout,
+            semiring,
+        );
+    }
 }

@@ -1070,6 +1070,7 @@ dependencies = [
  "cubecl-common",
  "cubek-interpolate",
  "cubek-test-utils",
+ "cubek-tile",
  "half",
  "serde",
  "thiserror",

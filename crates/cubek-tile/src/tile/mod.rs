@@ -263,6 +263,18 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
 
+/// The [`Packing`] a quantization scheme implies: how many of its values a stored element holds
+/// and what field each occupies. The one place a scheme is read for a fact about *storage*, so a
+/// quantized operand and one that merely states [`TileSpec::packed`] answer every reader alike.
+pub(crate) fn scheme_packing(scheme: QuantScheme) -> Packing {
+    match scheme.num_quants() {
+        1 => Packing::Native,
+        _ => Packing::Packed {
+            field: scheme.value,
+        },
+    }
+}
+
 /// Whether one scale covers a window of `extent` under `block` edges: every axis fits inside a
 /// block, so there is nothing left for [`ScaleLayout`] to address and the scale can be read once
 /// ([`QuantInfo::uniform_scale`]) instead of per value.
@@ -408,6 +420,11 @@ pub struct Tile<T: Numeric> {
 /// extent: a gather, where the dim holds the receptive field several axes reach over, and storage
 /// tiling, where the extent is the product over the dims the axis is split across.
 fn bound_states(projection: &Projection, axis: Axis) -> Option<usize> {
+    // A broadcast axis has no dim to read a bound off: the operand is constant along it, so its
+    // buffer holds nothing that sizes it.
+    if !projection.addresses(axis) {
+        return None;
+    }
     match projection.carriers(axis)[..] {
         [pa] if projection.physical_axis(pa).is_identity(axis) => Some(pa),
         _ => None,
@@ -657,14 +674,17 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile's buffer is addressed through a non-identity [`Projection`]: a logical
-    /// coordinate is not a physical one, so the only read surface that describes the tile is the
-    /// N-D one ([`nd`](Tile::nd)) and no window of it is dense. False for a
-    /// [`direct`](Projection::direct) operand, and for a fragment or a tensor map, which have no
-    /// buffer to gather from.
+    /// Whether this tile's buffer is addressed through a mapping whose windows may *overlap*: a
+    /// physical cell does not determine the logical position, so the only read surface that
+    /// describes the tile is the N-D one ([`nd`](Tile::nd)) and no window of it is dense.
+    ///
+    /// False for a [`direct`](Projection::direct) operand, and equally for one whose axes
+    /// [partition](Composition::Disjoint) a physical axis: a partition is a bijection, so its
+    /// windows tile rather than overlap and every dense path still describes it. A fragment or a
+    /// tensor map has no buffer to gather from.
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
-        comptime!(!projection.is_direct())
+        comptime!(projection.composition() == Composition::Overlapping)
     }
 
     /// Whether this tile evaluates values from coordinates instead of a backing buffer.
@@ -1068,7 +1088,7 @@ impl<T: Numeric> Tile<T> {
         match &self.tile_kind {
             TileKind::Gmem(data) => {
                 let projection = comptime!(data.projection.clone());
-                if comptime!(projection.logical_axes().contains(&axis)) {
+                if comptime!(projection.addresses(axis)) {
                     let carriers = comptime!(projection.carriers(axis));
                     let mut valid = true;
                     #[unroll]

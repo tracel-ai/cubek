@@ -3,7 +3,7 @@
 //! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
 //!
 //! Under the direct mapping the two coincide and this layout is never built; the matmul leaves keep
-//! reading through [`BatchMatrix`](super::BatchMatrix). Under a gathering mapping they differ in
+//! reading through [`TileMatrix`](super::TileMatrix). Under a gathering mapping they differ in
 //! rank: a 2-D convolution input carries five logical axes over three physical ones, and two
 //! logical coordinates (an output step and a tap) address the same physical axis.
 //!
@@ -24,7 +24,7 @@ use crate::*;
 /// The layouts a windowed tile re-views through: any [`Layout`] from a coordinate `C` onto the
 /// window's `CoordsDyn`, cloneable in both worlds so the transparent read can address the values
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
-/// a new concept; [`BatchMatrix`](super::BatchMatrix) and [`AxisProjection`] are the two the leaves
+/// a new concept; [`TileMatrix`](super::TileMatrix) and [`AxisProjection`] are the two the leaves
 /// read through, and [`StepUp`] rides the same bounds under a fill.
 pub trait LogicalLayout:
     Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
@@ -402,7 +402,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.nd::<i8, WP, W>(guard)
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.nd::<u32, WP, W>(guard)
             }
@@ -507,7 +507,7 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.nd_split::<i8, WP, W>()
             }
-            Packing::Packed { factor: _ } => {
+            Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.nd_split::<u32, WP, W>()
             }
