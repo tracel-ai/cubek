@@ -11,6 +11,9 @@ use crate::*;
 pub(super) struct ContractShape {
     /// The accumulator's space: the batch axes, then the row, then the column.
     pub space: Space,
+    /// Where the accumulator's column group starts ([`col_split`]): its axes from here in are the
+    /// column edge, the one before it is the row edge, and anything above that is batch.
+    pub col_split: usize,
     /// The axes the operands contract against the accumulator.
     pub reduce: Vec<Axis>,
     /// Their extents, taken off the operands' merged space rather than the accumulator's: a
@@ -50,12 +53,13 @@ impl ContractShape {
     ) -> Self {
         let rank = space.rank();
         let merged = Space::merge(&[lhs, rhs]);
+        let col_split = col_split(&space, lhs);
         let reduce = Space::contracted(&[lhs, rhs], &space).to_vec();
         let reduce_extents = reduce
             .iter()
             .map(|&axis| merged.extent(axis))
             .collect::<Vec<_>>();
-        let cols = space.extent_at(rank - 1);
+        let cols: usize = (col_split..rank).map(|p| space.extent_at(p)).product();
         let spread = if served > 1 { 1 } else { vw / aw };
         // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
         // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
@@ -65,12 +69,15 @@ impl ContractShape {
             cols / (if served > 1 { 1 } else { vw })
         };
 
+        let mr = space.extent_at(col_split - 1);
+
         Self {
             kc: reduce_extents.iter().product(),
-            mr: space.extent_at(rank - 2),
+            mr,
             nr,
             cols,
             space,
+            col_split,
             reduce,
             reduce_extents,
             served,
@@ -113,9 +120,9 @@ impl ContractShape {
         }
     }
 
-    /// The accumulator's batch axes: everything above the row and the column.
+    /// The accumulator's batch axes: everything above the row edge.
     pub fn batch_extents(&self) -> Vec<usize> {
-        (0..self.space.rank() - 2)
+        (0..self.col_split - 1)
             .map(|p| self.space.extent_at(p))
             .collect()
     }
@@ -138,4 +145,22 @@ impl ContractShape {
         self.reduce.len() == 1
             || self.reduce_extents[self.reduce_extents.len() - 1].is_multiple_of(self.lw)
     }
+}
+
+/// Where the accumulator's column group starts.
+///
+/// The innermost axis is a column edge by construction: it is the axis the sink lines along. What
+/// is not construction is how far the group reaches, which was one axis and is now read off the
+/// operands. An axis the lhs spans stops it, because an axis the lhs varies over is one the
+/// contraction has to walk against the lhs rather than fold into a column.
+///
+/// That is what lets a `[bm, bn]` scheme split `N` into a block index and a position inside it:
+/// both are the rhs's alone, so both are columns, where taking the last axis alone would have made
+/// the block index a row.
+fn col_split(acc: &Space, lhs: &Space) -> usize {
+    let mut split = acc.rank() - 1;
+    while split > 1 && !lhs.contains(acc.axis_at(split - 1)) {
+        split -= 1;
+    }
+    split
 }
