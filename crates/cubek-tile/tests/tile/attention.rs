@@ -361,11 +361,6 @@ fn attention_fold_split_kernel<W: Size>(
     let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
-    let mut recip = MemData::<f32>::smem(
-        comptime!(Space::new(&[(R, rows)])),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
     acc_all.zero();
 
     // This team's windows.
@@ -432,13 +427,12 @@ fn attention_fold_split_kernel<W: Size>(
     m_win.store_rows(&state.m, rpu);
     l_win.store_rows(&state.l, rpu);
     sync_cube();
-    factors_all.merge_splits(&mut recip, &m_all, &l_all, T);
+    factors_all.merge_splits(&m_all, &l_all, T);
     sync_cube();
 
     let size!(W1) = 1usize;
     let acc_flat = acc_all.flat::<W1>();
     let w_flat = factors_all.flat::<W1>();
-    let r_flat = recip.flat::<W1>();
     let total = comptime!(rows * val_dim);
     let workers = CUBE_DIM as usize;
     let mut i = UNIT_POS as usize;
@@ -451,7 +445,7 @@ fn attention_fold_split_kernel<W: Size>(
             sum +=
                 acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(sr).extract(0usize);
         }
-        out[i] = sum * r_flat.read(r).extract(0usize);
+        out[i] = sum;
         i += workers;
     }
 }

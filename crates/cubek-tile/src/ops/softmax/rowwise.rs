@@ -99,11 +99,18 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Merge a split fold's per-team running states into cross-split weights:
-    /// per row, `self[r, t] = exp(m[r, t] − max_t m[r, t])` and
-    /// `recip[r] = 1 / Σ_t l[r, t] · self[r, t]`.
+    /// per row, `self[r, t] = exp(m[r, t] − m*) / Σ_t l[r, t] · exp(m[r, t] − m*)`
+    /// where `m* = max_t m[r, t]`.
     ///
-    /// `self`, `m` and `l` span the score rows and `split`; `recip` spans the
-    /// rows alone, in the same order. **Where `split` sits among the axes is
+    /// **The normalizer is folded in**, so the weights are the whole merge:
+    /// `Σ_t self[r, t] · acc[r, t, ·]` is the answer, with nothing left to
+    /// scale it by afterwards. Every caller multiplied by the same `1/l*` on
+    /// its way out, and a caller that cannot — a drain expressed as a
+    /// contraction, where the weights are an operand rather than a value in
+    /// hand — could not have applied it at all.
+    ///
+    /// `self`, `m` and `l` span the score rows and `split`. **Where `split`
+    /// sits among the axes is
     /// the space's statement, not this op's.** A shared-memory fold stacks it
     /// outermost, so a team's window is one contiguous run of rows; a
     /// cross-cube merge lays it innermost, so the drain can contract it as a
@@ -111,28 +118,21 @@ impl<EA: Float> Tile<EA> {
     /// through the space that declares it rather than through a hand-rolled
     /// `t · rows + r` every caller then has to lay its buffers out for.
     ///
-    /// A fully-masked row gets `recip` exactly zero, and a split that folded
-    /// nothing published `(min, 0)` so it weighs zero on its own. One unit
-    /// per row, cyclic over the cube; the caller syncs on both sides. A
+    /// A fully-masked row gets weights of exactly zero, and a split that
+    /// folded nothing published `(min, 0)` so it weighs zero on its own. One
+    /// unit per row, cyclic over the cube; the caller syncs on both sides. A
     /// single split degenerates to the plain epilogue.
-    pub fn merge_splits(
-        &mut self,
-        recip: &mut Tile<EA>,
-        m: &Tile<EA>,
-        l: &Tile<EA>,
-        #[comptime] split: Axis,
-    ) {
+    pub fn merge_splits(&mut self, m: &Tile<EA>, l: &Tile<EA>, #[comptime] split: Axis) {
         let space = comptime!(self.space.clone());
         comptime!(assert!(
             space.contains(split),
             "merge_splits: {split:?} is not an axis of the weights"
         ));
-        let rows = comptime!(recip.space.tile_size());
         let splits = comptime!(space.extent(split));
+        let rows = comptime!(space.tile_size() / splits);
         comptime!(assert!(
-            space.tile_size() == rows * splits,
-            "merge_splits: {rows} rows over {splits} splits is {} cells, the weights hold {}",
-            rows * splits,
+            space.tile_size().is_multiple_of(splits),
+            "merge_splits: {} weight cells is not a whole number of {splits}-split rows",
             space.tile_size()
         ));
         // Same cells in the same order — not the same `Space`: the states can
@@ -167,31 +167,35 @@ impl<EA: Float> Tile<EA> {
         let slice = comptime!(splits * inner);
 
         let size!(W) = self.vector_size();
-        let size!(WR) = recip.vector_size();
         let size!(WM) = m.vector_size();
         let size!(WL) = l.vector_size();
         let mf = m.flat::<WM>();
         let lf = l.flat::<WL>();
-        let mut rf = recip.flat_mut::<WR>();
         let mut wf = self.flat_mut::<W>();
 
         let workers = CUBE_DIM as usize;
         let mut r = UNIT_POS as usize;
         while r < rows {
-            // `recip` spans the row axes alone, so `r` indexes it directly;
-            // the split-wide tiles reach the same row at `base`.
+            // Row `r`'s cells start here and step `inner` per split.
             let base = (r / inner) * slice + r % inner;
             let mut mstar = EA::min_value();
             for t in 0..splits {
                 mstar = max(mstar, mf.read(base + t * inner).extract(0usize));
             }
+            // Two passes over the splits, because the normalizer is not known
+            // until all of them have weighed in: park the unnormalized weights,
+            // then scale them where they sit.
             let mut lstar = EA::from_int(0);
             for t in 0..splits {
                 let w = (mf.read(base + t * inner).extract(0usize) - mstar).exp();
                 lstar += lf.read(base + t * inner).extract(0usize) * w;
                 wf.write(base + t * inner, Vector::cast_from(w));
             }
-            rf.write(r, Vector::cast_from(masked_recip::<EA>(lstar)));
+            let recip = masked_recip::<EA>(lstar);
+            for t in 0..splits {
+                let w = wf.read(base + t * inner).extract(0usize) * recip;
+                wf.write(base + t * inner, Vector::cast_from(w));
+            }
             r += workers;
         }
     }
