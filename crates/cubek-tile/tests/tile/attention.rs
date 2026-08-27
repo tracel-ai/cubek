@@ -284,6 +284,12 @@ fn fold_scalar_odd_bound() {
 /// ([`merge_splits`](cubek_tile::Tile)) and the drain folds the split
 /// weights and the normalizer in. `splits == 1` degenerates to the plain
 /// fold: one code path for both.
+///
+/// `split_inner` flips where the split axis sits on the row lanes, which is
+/// the one thing `merge_splits` reads off the space. Both orders run the same
+/// cuts and the same op and must give the same answer — a cross-cube merge
+/// lays the split innermost so its drain can contract it, and nothing but a
+/// test here says that layout works.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_split_kernel<W: Size>(
@@ -300,6 +306,7 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] row_chunk: usize,
+    #[comptime] split_inner: bool,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -333,9 +340,17 @@ fn attention_fold_split_kernel<W: Size>(
             })
             .build()
     );
+    // The split outermost gives a team one contiguous run of rows; innermost
+    // gives it a strided column. Only the declared order differs — the cuts
+    // below are the same either way, and so is every op that reads them.
+    let row_extents = comptime!(if split_inner {
+        [(R, rows), (T, splits)]
+    } else {
+        [(T, splits), (R, rows)]
+    });
     let row_space = comptime!(
         Tiling::new()
-            .extents(&[(T, splits), (R, rows)])
+            .extents(&row_extents)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows))
             })
@@ -441,18 +456,39 @@ fn attention_fold_split_kernel<W: Size>(
         let vi = i % val_dim;
         let mut sum = 0.0f32;
         for ti in 0..splits {
+            // The accumulator always stacks the split into its row axis; only
+            // the weights follow `split_inner`.
             let sr = ti * rows + r;
+            let w = if comptime!(split_inner) {
+                r * splits + ti
+            } else {
+                sr
+            };
             sum +=
-                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(sr).extract(0usize);
+                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(w).extract(0usize);
         }
         out[i] = sum;
         i += workers;
     }
 }
 
-/// Launch the split fold and check against direct host math.
+/// Launch the split fold and check against direct host math, once per row-lane
+/// layout: the answer cannot depend on where the space puts the split axis.
 #[allow(clippy::too_many_arguments)]
 fn run_split(
+    shape: (usize, usize, usize, usize, usize, usize, usize, usize),
+    bound_s: usize,
+    causal: bool,
+    vec: usize,
+) {
+    for split_inner in [false, true] {
+        run_split_at(shape, bound_s, causal, vec, split_inner);
+    }
+}
+
+/// One launch, at the stated layout.
+#[allow(clippy::too_many_arguments)]
+fn run_split_at(
     (team, splits, g, qp, s_total, block, d, val_dim): (
         usize,
         usize,
@@ -466,6 +502,7 @@ fn run_split(
     bound_s: usize,
     causal: bool,
     vec: usize,
+    split_inner: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
     let cap = client.properties().hardware.max_units_per_cube as usize;
@@ -553,6 +590,7 @@ fn run_split(
         causal,
         block,
         row_chunk,
+        split_inner,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
