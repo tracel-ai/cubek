@@ -99,27 +99,73 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Merge a split fold's per-team running states into cross-split weights:
-    /// per row, `self[t] = exp(m_t - max_t m_t)` and
-    /// `recip[r] = 1 / Σ_t l_t · self[t]`.
+    /// per row, `self[r, t] = exp(m[r, t] − max_t m[r, t])` and
+    /// `recip[r] = 1 / Σ_t l[r, t] · self[r, t]`.
     ///
-    /// `self`, `m`, and `l` are `{splits · rows}` tiles; `recip` is `{rows}`.
+    /// `self`, `m` and `l` span the score rows and `split`; `recip` spans the
+    /// rows alone, in the same order. **Where `split` sits among the axes is
+    /// the space's statement, not this op's.** A shared-memory fold stacks it
+    /// outermost, so a team's window is one contiguous run of rows; a
+    /// cross-cube merge lays it innermost, so the drain can contract it as a
+    /// matmul's `k`. Both reach the same code, because a cell is addressed
+    /// through the space that declares it rather than through a hand-rolled
+    /// `t · rows + r` every caller then has to lay its buffers out for.
+    ///
     /// A fully-masked row gets `recip` exactly zero, and a split that folded
     /// nothing published `(min, 0)` so it weighs zero on its own. One unit
-    /// per row, cyclic over the cube; the caller syncs on both sides.
-    /// `splits == 1` degenerates to the plain epilogue.
+    /// per row, cyclic over the cube; the caller syncs on both sides. A
+    /// single split degenerates to the plain epilogue.
     pub fn merge_splits(
         &mut self,
         recip: &mut Tile<EA>,
         m: &Tile<EA>,
         l: &Tile<EA>,
-        #[comptime] splits: usize,
+        #[comptime] split: Axis,
     ) {
-        let total = comptime!(self.space.extent_at(0));
-        let rows = comptime!(total / splits);
+        let space = comptime!(self.space.clone());
         comptime!(assert!(
-            self.space.rank() == 1 && total.is_multiple_of(splits),
-            "merge_splits: a rank-1 {{splits · rows}} weight tile"
+            space.contains(split),
+            "merge_splits: {split:?} is not an axis of the weights"
         ));
+        let rows = comptime!(recip.space.tile_size());
+        let splits = comptime!(space.extent(split));
+        comptime!(assert!(
+            space.tile_size() == rows * splits,
+            "merge_splits: {rows} rows over {splits} splits is {} cells, the weights hold {}",
+            rows * splits,
+            space.tile_size()
+        ));
+        // Same cells in the same order — not the same `Space`: the states can
+        // arrive partitioned differently (a global buffer read through the
+        // launch space beside a shared-memory tile), and only their layout
+        // has to agree.
+        let m_space = comptime!(m.space.clone());
+        let l_space = comptime!(l.space.clone());
+        comptime!({
+            let laid_out_like = |other: &Space| {
+                other.rank() == space.rank()
+                    && (0..space.rank()).all(|p| {
+                        other.axis_at(p) == space.axis_at(p)
+                            && other.extent_at(p) == space.extent_at(p)
+                    })
+            };
+            assert!(
+                laid_out_like(&m_space) && laid_out_like(&l_space),
+                "merge_splits: the states must be laid out like the weights they merge into"
+            );
+        });
+
+        // The one thing the layout decides: a step of `t` crosses whatever
+        // sits inside the split axis, and a step of the rows outside it
+        // crosses a whole slice of splits. Split-outermost folds to
+        // `t · rows + r`, split-innermost to `r · splits + t`; both are this.
+        let inner = comptime!(
+            ((space.position(split) + 1)..space.rank())
+                .map(|p| space.extent_at(p))
+                .product::<usize>()
+        );
+        let slice = comptime!(splits * inner);
+
         let size!(W) = self.vector_size();
         let size!(WR) = recip.vector_size();
         let size!(WM) = m.vector_size();
@@ -132,28 +178,39 @@ impl<EA: Float> Tile<EA> {
         let workers = CUBE_DIM as usize;
         let mut r = UNIT_POS as usize;
         while r < rows {
+            // `recip` spans the row axes alone, so `r` indexes it directly;
+            // the split-wide tiles reach the same row at `base`.
+            let base = (r / inner) * slice + r % inner;
             let mut mstar = EA::min_value();
             for t in 0..splits {
-                mstar = max(mstar, mf.read(t * rows + r).extract(0usize));
+                mstar = max(mstar, mf.read(base + t * inner).extract(0usize));
             }
             let mut lstar = EA::from_int(0);
             for t in 0..splits {
-                let w = (mf.read(t * rows + r).extract(0usize) - mstar).exp();
-                lstar += lf.read(t * rows + r).extract(0usize) * w;
-                wf.write(t * rows + r, Vector::cast_from(w));
+                let w = (mf.read(base + t * inner).extract(0usize) - mstar).exp();
+                lstar += lf.read(base + t * inner).extract(0usize) * w;
+                wf.write(base + t * inner, Vector::cast_from(w));
             }
             rf.write(r, Vector::cast_from(masked_recip::<EA>(lstar)));
             r += workers;
         }
     }
 
-    /// Publish per-owned-row `values` into this rank-1 factors tile, one
-    /// cell per score row. The caller syncs before any cross-unit read.
+    /// Publish per-owned-row `values` into this factors tile, one cell per
+    /// score row. The caller syncs before any cross-unit read.
+    ///
+    /// A row lane, whatever rank the space gives it: the split-wide tiles a
+    /// fold windows hand a team a `{1, rows}` slice, which is the same cells
+    /// as a plain `{rows}` and addressed the same way.
     pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
-        let rows = comptime!(self.space.extent_at(0));
+        let rows = comptime!(self.space.tile_size());
         comptime!(assert!(
-            self.space.rank() == 1,
-            "store_rows: a rank-1 factors tile, one cell per score row"
+            (0..self.space.rank())
+                .filter(|&p| self.space.extent_at(p) > 1)
+                .count()
+                <= 1,
+            "store_rows: a row lane, one cell per score row — this tile spans {:?}",
+            self.space
         ));
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
