@@ -200,6 +200,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
+        #[comptime] axes: MatrixAxes,
         #[comptime] form: Instruction,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
@@ -208,8 +209,10 @@ impl<T: Numeric> PlanePartition<T> {
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
-        let m = comptime!(fin.extent_at(fin.rank() - 2));
-        let n = comptime!(fin.extent_at(fin.rank() - 1));
+        // The edges the accumulator's own axes give, not its last two: a split column group is
+        // one edge, and sizing the block off the innermost axis alone would cut it in half.
+        let m = comptime!(axes.rows(&fin));
+        let n = comptime!(axes.cols(&fin));
 
         let mut frags = Sequence::<PlaneTile<T>>::new();
         #[unroll]

@@ -51,16 +51,14 @@ impl ContractShape {
         vw: usize,
         aw: usize,
     ) -> Self {
-        let rank = space.rank();
         let merged = Space::merge(&[lhs, rhs]);
         let acc_axes = MatrixAxes::accumulator(&space, lhs);
-        let col_split = acc_axes.col_split;
         let reduce = Space::contracted(&[lhs, rhs], &space).to_vec();
         let reduce_extents = reduce
             .iter()
             .map(|&axis| merged.extent(axis))
             .collect::<Vec<_>>();
-        let cols: usize = (col_split..rank).map(|p| space.extent_at(p)).product();
+        let cols = acc_axes.cols(&space);
         let spread = if served > 1 { 1 } else { vw / aw };
         // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
         // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
@@ -70,7 +68,7 @@ impl ContractShape {
             cols / (if served > 1 { 1 } else { vw })
         };
 
-        let mr = space.extent_at(col_split - 1);
+        let mr = acc_axes.rows(&space);
 
         Self {
             kc: reduce_extents.iter().product(),

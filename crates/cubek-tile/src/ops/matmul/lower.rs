@@ -342,10 +342,10 @@ fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compti
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
-        let rank = out.rank();
         let kc = Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out);
-        MatrixAxes::find(&lhs.space, out.extent_at(rank - 2), kc).is_some()
-            && MatrixAxes::find(&rhs.space, kc, out.extent_at(rank - 1)).is_some()
+        let axes = MatrixAxes::accumulator(&out, &lhs.space);
+        MatrixAxes::find(&lhs.space, axes.rows(&out), kc).is_some()
+            && MatrixAxes::find(&rhs.space, kc, axes.cols(&out)).is_some()
     });
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered && flat,

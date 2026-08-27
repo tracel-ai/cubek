@@ -136,6 +136,21 @@ impl MatrixAxes {
         }
     }
 
+    /// The row edge these axes give in `space`: the group between the batch prefix and the
+    /// columns, multiplied out.
+    pub fn rows(&self, space: &Space) -> usize {
+        (self.row_split..self.col_split)
+            .map(|p| space.extent_at(p))
+            .product()
+    }
+
+    /// The column edge, in scalars.
+    pub fn cols(&self, space: &Space) -> usize {
+        (self.col_split..space.rank())
+            .map(|p| space.extent_at(p))
+            .product()
+    }
+
     /// The axes giving a `rows x cols` matrix, both scalar, found from the innermost axis
     /// outwards. An empty row group is legal exactly when `rows` is `1`: the row coordinate is
     /// then always `0` and the axes above sit in the batch prefix, which pins them the same way.
@@ -435,38 +450,6 @@ impl<T: Numeric> Tile<T> {
                 self.matrix_transparent::<u32, WP, W>(axes, i)
             }
         }
-    }
-
-    /// [`matrix_packed`](Tile::matrix_packed) with a scales operand folded into every read.
-    ///
-    /// The two matrices share a row edge and count their columns differently: the values count
-    /// lines, the scales count blocks, `per_scale` values apart. Stating that is what frees the
-    /// scales from carrying the position inside a block as an axis, and so frees their innermost
-    /// axis to be one they actually vary over — which is the axis their own lines would run along.
-    ///
-    /// Whatever consumes this consumes an ordinary [`MatrixView`]: a contraction over a scaled
-    /// operand *is* the plain contraction.
-    pub fn matrix_scaled<'a, W: Size, S: Numeric, SW: Size>(
-        &'a self,
-        #[comptime] axes: MatrixAxes,
-        scales: &'a Tile<S>,
-        #[comptime] scale_axes: MatrixAxes,
-        #[comptime] per_scale: usize,
-        i: usize,
-    ) -> MatrixView<'a, Vector<T, W>> {
-        let width = self.vector_size();
-        let values = self.matrix_packed::<W>(axes, i);
-        let scale_lines = scales.matrix_packed::<SW>(scale_axes, i);
-        // A scale read past the values' bound is never used: the values mask first, and a masked
-        // value is zero whatever it is multiplied by.
-        let check = comptime!(values.check);
-        let scaled = ScaledView::<T, W, S, SW>::new(
-            values.into_view(),
-            scale_lines.into_view(),
-            width,
-            per_scale,
-        );
-        MaskedView::new(scaled.view(), check)
     }
 
     /// [`matrix_packed`](Tile::matrix_packed) at a stated storage element `I` and physical line

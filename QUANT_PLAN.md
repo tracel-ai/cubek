@@ -216,6 +216,15 @@ not answer where the rows stop and the batch begins, and nothing needs it to.
 shows what it is for: one `vec4<f32>` load at one address, four constant lane extracts, where there
 were eight scalar loads.
 
+**Still on the trailing pair: the plane pipeline.** A register-resident accumulator sizes and
+grids itself from its own edges, and four sites read those off the last two axes rather than off
+[`MatrixAxes::accumulator`]. Three are fixed (`strided_2d`'s routing check, `RegisterData::mma`'s
+and `mma_scaled`'s column edge, `PlaneTile::mirror`'s block shape); `partition_grid` still is, and
+its batch assert misfires with it. Until the rest follow, a promoted accumulator over a split
+column group contracts wrong, so the scales it takes stay scalar there: the memory-backed leaf is
+the one that serves them as lines. The decode gemv wants the promoted one, so this is what stands
+between the vector load and the driver.
+
 **Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
 a hardware number, so grouping it by extent is right there and stays.
 
