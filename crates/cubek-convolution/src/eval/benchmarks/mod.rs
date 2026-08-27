@@ -16,7 +16,11 @@ pub use problem::{Conv2dProblem, problems};
 pub use strategy::strategies;
 
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
+
+use cubek_matmul::definition::MatmulGlobalElems;
+
+use crate::definition::Conv2dCost;
 
 use crate::Strategy;
 
@@ -61,7 +65,6 @@ impl cubek_test_utils::Category for Category {
     /// input channel). Runs in `half::f16`, the precision `bench` fixes.
     fn work(&self, problem: &Conv2dProblem) -> Option<CategoryWork> {
         let dtype = half::f16::elem_type_native();
-        let elem_size = dtype.size();
 
         let [n, c_in, h_in, w_in] = problem.input_shape;
         let [c_out, _, k_h, k_w] = problem.weight_shape;
@@ -69,20 +72,33 @@ impl cubek_test_utils::Category for Category {
         let [p_h, p_w] = problem.args.padding;
         let [d_h, d_w] = problem.args.dilation;
 
-        let h_out = (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1;
-        let w_out = (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1;
+        let cost = Conv2dCost {
+            batch: n,
+            channels_in: c_in,
+            spatial_in: [h_in, w_in],
+            channels_out: c_out,
+            kernel: [k_h, k_w],
+            spatial_out: [
+                (h_in + 2 * p_h - d_h * (k_h - 1) - 1) / s_h + 1,
+                (w_in + 2 * p_w - d_w * (k_w - 1) - 1) / s_w + 1,
+            ],
+            bias_elems: problem.bias_shape,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
 
-        let input_elems = n * c_in * h_in * w_in;
-        let weight_elems = c_out * c_in * k_h * k_w;
-        let output_elems = n * c_out * h_out * w_out;
+        let (bytes_read, bytes_written) = cost.traffic();
 
         Some(CategoryWork {
-            compute: Some(ComputeWork::direct(
-                2 * output_elems * c_in * k_h * k_w,
-                dtype,
-            )),
-            bytes_read: (input_elems + weight_elems + problem.bias_shape) * elem_size,
-            bytes_written: output_elems * elem_size,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
+            bytes_read,
+            bytes_written,
         })
     }
 }

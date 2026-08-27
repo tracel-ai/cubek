@@ -14,6 +14,8 @@ pub use problem::{DepthwiseProblem, blocks_running, problems, strategies};
 use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
+use crate::definition::DepthwiseCost;
+
 use crate::DepthwiseStrategy;
 
 pub struct Category;
@@ -47,20 +49,25 @@ impl cubek_test_utils::Category for Category {
         bench(strategy, problem, num_samples)
     }
 
-    /// One multiply-add per output pixel per kernel tap, and both maps plus the
-    /// filter moved once.
     fn work(&self, problem: &DepthwiseProblem) -> Option<CategoryWork> {
-        let dtype = f32::elem_type_native();
-        let elem_size = dtype.size();
+        let cost = DepthwiseCost {
+            batch: problem.batch,
+            channels: problem.channels,
+            size: problem.size,
+            out_size: problem.out_size(),
+            kernel: problem.kernel,
+            dtype: f32::elem_type_native(),
+        };
 
-        let out = problem.out_size();
-        let maps = problem.batch * problem.channels;
-        let filter_elems = problem.channels * problem.kernel * problem.kernel;
+        let (bytes_read, bytes_written) = cost.traffic();
 
         Some(CategoryWork {
-            compute: Some(ComputeWork::direct(problem.flops() as usize, dtype)),
-            bytes_read: (maps * problem.size * problem.size + filter_elems) * elem_size,
-            bytes_written: maps * out * out * elem_size,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(),
+            }),
+            bytes_read,
+            bytes_written,
         })
     }
 }
