@@ -6,7 +6,7 @@ use cubecl::{
     tune::anchor,
     zspace::{Shape, Strides},
 };
-use cubek_std::MatmulProblemSize;
+use cubek_std::{MatmulProblemSize, MatrixLayout, launch::tma::stride_align_bits};
 use serde::{Deserialize, Serialize};
 
 use cubecl::std::tensor::{MatrixBatchLayout, matrix_batch_layout};
@@ -201,24 +201,16 @@ impl MatmulAutotuneKey {
 
 /// Minimum non-contiguous stride alignment in powers of two of bytes.
 fn stride_factor(strides: &Strides, layout: &MatrixBatchLayout, elem: ElemType) -> u8 {
-    let exclude_dim = match layout {
-        MatrixBatchLayout::Contiguous => strides.len() - 1,
+    let matrix_layout = match layout {
+        MatrixBatchLayout::Contiguous => MatrixLayout::RowMajor,
         MatrixBatchLayout::MildlyPermuted {
             transposed: true,
             batch_swap: false,
-        } => strides.len() - 2,
+        } => MatrixLayout::ColMajor,
         _ => return 0,
     };
 
-    strides
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i != exclude_dim)
-        .map(|(_, stride)| (stride * elem.size_bits()) / 8)
-        .map(|bytes| bytes.trailing_zeros())
-        .min()
-        .unwrap_or(MAX_STRIDE_FACTOR)
-        .min(MAX_STRIDE_FACTOR) as u8
+    stride_align_bits(strides, &matrix_layout, &elem).min(MAX_STRIDE_FACTOR) as u8
 }
 
 /// Defines the potential vectorization.
@@ -230,7 +222,6 @@ fn pow2_factor(axis: usize) -> u8 {
 mod tests {
     use super::*;
     use cubecl::ir::{ElemType, FloatKind};
-    use cubek_std::{MatrixLayout, launch::tma::stride_align_bits};
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 
