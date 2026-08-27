@@ -45,6 +45,28 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
     supported
 }
 
+/// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the
+/// feature: a backend can advertise manual mma and offer only `16x16x16`
+/// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
+/// not have — it reads back zeros, which looks like a leaf bug and is a missing
+/// guard.
+fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+    let f32_ty = f32::elem_type_native();
+    let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
+        cfg.a_type == f32_ty
+            && cfg.b_type == f32_ty
+            && cfg.cd_type == f32_ty
+            && (cfg.m, cfg.n, cfg.k) == (8, 8, 8)
+    });
+    if !supported {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend offers no 8x8x8 f32 manual mma".to_string(),
+        ))
+        .enforce();
+    }
+    supported
+}
+
 // Matmul's axes: the labels this client gives the engine's opaque `Axis`. `B`
 // is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
@@ -2943,22 +2965,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
 #[test]
 fn mma_matmul_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // The *shape*, not just the feature. A backend can advertise manual mma and
-    // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
-    // instruction the hardware does not have: it reads back zeros, which looks
-    // like a leaf bug and is a missing guard.
-    let f32_ty = f32::elem_type_native();
-    let offered = client.properties().features.matmul.mma.iter().any(|c| {
-        c.a_type == f32_ty
-            && c.b_type == f32_ty
-            && c.cd_type == f32_ty
-            && (c.m, c.n, c.k) == (8, 8, 8)
-    });
-    if !offered {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend offers no 8x8x8 f32 manual mma".to_string(),
-        ))
-        .enforce();
+    if !require_mma_8x8x8_f32(&client) {
         return;
     }
 
@@ -3520,21 +3527,12 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // The shape, not just the feature — see `mma_matmul_8x8x8`. Matched on
-    // extents alone because the served triple here is the dequantized one and
-    // the registry lists the storage types.
-    let offers_shape = client
-        .properties()
-        .features
-        .matmul
-        .mma
-        .iter()
-        .any(|c| (c.m, c.n, c.k) == (8, 8, 16));
-    if !offers_shape {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend offers no 8x8x16 manual mma".to_string(),
-        ))
-        .enforce();
+    // The shape, not just the feature — see `require_mma_8x8x8_f32`. The `f32`
+    // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
+    // the *walk*, cut `Cut::sequential(8)` deep, and `A` decodes at the read, so
+    // the instruction this leaf reaches for is the same f32 `8x8x8` the plain
+    // manual-mma test runs.
+    if !require_mma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
