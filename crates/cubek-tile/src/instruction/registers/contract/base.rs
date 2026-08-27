@@ -36,11 +36,16 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
     // several contracted axes still form one `k` edge when the operand carries them as one run,
     // which is what a partitioned axis is.
-    let flat = comptime!(
-        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
-            .matrix_axes(&lhs.space, &rhs.space)
-            .is_some()
-    );
+    let shape = comptime!(ContractShape::new(
+        &lhs.space,
+        &rhs.space,
+        space.clone(),
+        served,
+        lw,
+        rw,
+        aw
+    ));
+    let flat = comptime!(shape.matrix_axes(&lhs.space, &rhs.space).is_some());
     let nd = comptime!(
         !flat
             || lhs_gathered
@@ -77,18 +82,23 @@ pub enum ScaleSide {
 ///
 /// A scale over neither matrix axis (per-tensor, or one value per block of `k`) is the same
 /// number wherever it folds, so it takes the lhs side.
-pub(crate) fn scale_side(scales: &Space, output: &Space) -> ScaleSide {
-    let rank = output.rank();
-    let (rows, cols) = (output.axis_at(rank - 2), output.axis_at(rank - 1));
-    let spans = |axis| scales.axes().any(|a| a == axis);
+pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> ScaleSide {
+    let group = |range: core::ops::Range<usize>| {
+        range
+            .filter(|&p| scales.contains(output.axis_at(p)))
+            .map(|p| output.axis_at(p))
+            .collect::<Vec<_>>()
+    };
+    let rows = group(axes.row_split..axes.col_split);
+    let cols = group(axes.col_split..output.rank());
     assert!(
-        !(spans(rows) && spans(cols)),
-        "mm_scaled: a scales operand over both {rows:?} and {cols:?} is a scale of the output, \
-         not a factor of either operand's term"
+        rows.is_empty() || cols.is_empty(),
+        "mm_scaled: a scales operand over the accumulator's rows {rows:?} and its columns \
+         {cols:?} is a scale of the output, not a factor of either operand's term"
     );
-    match spans(cols) {
-        true => ScaleSide::Rhs,
-        false => ScaleSide::Lhs,
+    match cols.is_empty() {
+        false => ScaleSide::Rhs,
+        true => ScaleSide::Lhs,
     }
 }
 
@@ -160,11 +170,16 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
     // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
     // how many axes they contract over.
-    let flat = comptime!(
-        ContractShape::new(&lhs.space, &rhs.space, space.clone(), served, lw, rw, aw)
-            .matrix_axes(&lhs.space, &rhs.space)
-            .is_some()
-    );
+    let shape = comptime!(ContractShape::new(
+        &lhs.space,
+        &rhs.space,
+        space.clone(),
+        served,
+        lw,
+        rw,
+        aw
+    ));
+    let flat = comptime!(shape.matrix_axes(&lhs.space, &rhs.space).is_some());
     comptime!(assert!(
         flat && !lhs_gathered
             && !rhs_gathered
@@ -174,7 +189,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
         "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
          N-D nest, which addresses every operand at the cell instead"
     ));
-    let side = comptime!(scale_side(&scales.space, &space));
+    let side = comptime!(scale_side(&scales.space, &space, shape.acc_axes));
     let scales_projection = scales.projection();
     comptime!(check_lines_hold_one_scale(
         &scales_projection,

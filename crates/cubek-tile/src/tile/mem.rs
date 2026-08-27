@@ -1774,23 +1774,25 @@ impl<T: Numeric> MemData<T> {
         #[comptime] axes: MatrixAxes,
         #[comptime] space: Space,
     ) -> MatrixViewMut<'_, Vector<T, W>> {
-        // The 2-D view reads its shape off the logical space, which is the physical shape only
-        // under the direct mapping; a gathered operand is read through `Tile::nd`.
+        // A write aliases only where two logical positions share a cell, which is what an
+        // overlapping map is; a partition is a bijection, so its windows tile and each cell is
+        // written once. A gathered operand is read through `Tile::nd` and never written here.
         comptime!(assert!(
-            self.projection.is_direct(),
-            "MemData::matrix_mut: a gathered operand has no plain 2-D matrix view"
+            self.projection.composition() != Composition::Overlapping,
+            "MemData::matrix_mut: an overlapping operand aliases under a write"
         ));
         // Leading (batch) extents are width-invariant; the window extent is the view's shape.
         let bound = self.extent();
-        let layout = batch_matrix(
+        let layout = projected_batch_matrix(
             &bound,
-            comptime!(&space),
-            false,
+            comptime!(space.clone()),
+            comptime!(self.projection.clone()),
+            self.map.clone(),
             comptime!(self.store.vector_size),
             axes,
             i,
         );
-        self.masked_mut::<W, Coords2d, TileMatrix>(layout)
+        self.masked_mut::<W, Coords2d, ProjectedMatrix>(layout)
     }
 
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the

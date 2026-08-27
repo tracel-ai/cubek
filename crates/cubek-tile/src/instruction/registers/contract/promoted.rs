@@ -128,7 +128,11 @@ impl<T: Numeric> RegisterData<T> {
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
-        let side = comptime!(scale_side(&scales.space, &out));
+        let side = comptime!(scale_side(
+            &scales.space,
+            &out,
+            MatrixAxes::accumulator(&out, &lhs.space)
+        ));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
         // The scales carry the values' own axes and address only the ones they span, so their
