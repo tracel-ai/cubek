@@ -28,7 +28,6 @@ default = [
     "cubek-interpolate?/default",
     "cubek-pool?/default",
     "cubek-fft?/default",
-    "cubek-resample?/default",
 ]
 
 std = [
@@ -43,7 +42,6 @@ std = [
     "cubek-interpolate?/std",
     "cubek-pool?/std",
     "cubek-fft?/std",
-    "cubek-resample?/std",
 ]
 
 attention = ["cubek-attention"]
@@ -61,7 +59,6 @@ reduce = ["cubek-reduce"]
 stdlib = ["cubek-std"]
 tile = ["cubek-tile"]
 fft = ["cubek-fft"]
-resample = ["cubek-resample"]
 
 
 [dependencies]
@@ -77,4 +74,3 @@ cubek-reduce = { path = "../cubek-reduce", version = "=0.3.0-pre.3", default-fea
 cubek-fft = { path = "../cubek-fft", version = "=0.3.0-pre.3", default-features = false, optional = true }
 cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.3", default-features = false, optional = true }
 cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-resample = { path = "../cubek-resample", version = "=0.3.0-pre.3", default-features = false, optional = true }

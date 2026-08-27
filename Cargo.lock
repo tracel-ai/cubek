@@ -1009,7 +1009,6 @@ dependencies = [
  "cubek-quant",
  "cubek-random",
  "cubek-reduce",
- "cubek-resample",
  "cubek-std",
  "cubek-tile",
 ]
@@ -1147,15 +1146,6 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "thiserror",
-]
-
-[[package]]
-name = "cubek-resample"
-version = "0.3.0-pre.3"
-dependencies = [
- "cubecl",
- "cubecl-common",
- "cubek-test-utils",
 ]
 
 [[package]]
