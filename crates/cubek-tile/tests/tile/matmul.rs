@@ -5091,3 +5091,111 @@ fn assert_matmul_arange(
         .as_test_outcome()
         .enforce()
 }
+
+/// The promoted twin of [`launch_matmul_folded_quant`]'s shape, with the rhs lined along the
+/// accumulator rather than along the contraction: a packed lhs contracting into a register block.
+#[cube(launch)]
+fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
+    a: &QuantTileArg<'_, I, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(I)] _a_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile::<E>(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// A packed lhs against a **promoted** accumulator.
+///
+/// The memory-backed leaf has always served a quantized operand — it dequantizes per read, which
+/// is what `Tile::matrix_packed` does whatever leaf asks. The promoted leaf refused one outright,
+/// and this is what settles whether that refusal was a missing decode or only a missing test: the
+/// same product, contracted in a register block, against a reference built on the host from the
+/// quantized values and their scales.
+#[test]
+fn register_matmul_promoted_accumulator_quant() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge, bm) = (4usize, 4usize, 8usize, 4usize, 4usize);
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_promoted_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        QuantTileArgLaunch::new(
+            a.tile.tensor_arg(1),
+            a.scales_binding().into_tensor_arg(),
+            None.into(),
+            None.into(),
+            TileSpec::direct(&[M, K]),
+            scheme,
+            DequantAt::Read,
+        ),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(64)),
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange rhs: b(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a.q[i * k + p] as f32) * a.scale_values[i / bm] * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}

@@ -21,6 +21,12 @@ impl<T: Numeric> RegisterData<T> {
     /// block is seeded from the sink and committed back on every visit, so a `K` walk that
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
+    ///
+    /// A **quantized operand is served here too**. It used to be refused outright — "not wired
+    /// yet" — but the decode is [`Tile::matrix_packed`]'s and it happens per read for whichever
+    /// leaf asks, so there was nothing to wire: the refusal had outlived its reason.
+    /// `register_matmul_promoted_accumulator_quant` checks a packed lhs against a host reference
+    /// built from the quantized values and their scales.
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -34,15 +40,8 @@ impl<T: Numeric> RegisterData<T> {
              way, so it cannot contract under {semiring:?}",
             self.monoid
         ));
-        let lhs_packing = lhs.packing();
-        let rhs_packing = rhs.packing();
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
-        comptime!(assert!(
-            lhs_packing == Packing::Plain && rhs_packing == Packing::Plain,
-            "RegisterData::mma: a quantized operand against a promoted accumulator is not wired \
-             yet; the memory-backed leaf serves those (it dequantizes per read)"
-        ));
         comptime!(assert!(
             vw == self.vector_size,
             "RegisterData::mma: the block's lines must match the rhs's"
