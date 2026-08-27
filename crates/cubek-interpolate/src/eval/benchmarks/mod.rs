@@ -136,8 +136,7 @@ impl cubek_test_utils::Category for CpuCategory {
         };
 
         Some(CategoryWork {
-            compute_ops: 0,
-            dtype,
+            compute: None,
             bytes_read: read_elems * elem_size,
             bytes_written: written_elems * elem_size,
         })

@@ -15,8 +15,8 @@ pub use correctness::{
 };
 pub use progress::Progress;
 pub use registry::{
-    BenchmarkCategory, Binding, CatalogEntry, Category, CategoryWork, Correctness, ItemDescriptor,
-    ResourceKind, RunSamples,
+    BenchmarkCategory, Binding, CatalogEntry, Category, CategoryWork, ComputeWork, Correctness,
+    ItemDescriptor, ResourceKind, RunSamples, client,
 };
 pub use test_mode::*;
 pub use test_tensor::*;

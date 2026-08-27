@@ -13,10 +13,10 @@ pub use correctness::AttentionCorrectness;
 pub use strategy::strategies;
 
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
 use crate::eval::problem::{self, AttentionSpec};
-use crate::forward::definition::AttentionIdent;
+use crate::forward::definition::{AttentionCost, AttentionGlobalTypes};
 use crate::forward::launch::Strategy;
 
 pub struct Category;
@@ -57,35 +57,36 @@ impl cubek_test_utils::Category for Category {
         Some(&AttentionCorrectness)
     }
 
-    /// Flash-attention flop count: one multiply-add per (batch, head, query
-    /// position, key position) for each of `QK^T` and the `softmax(QK^T) V`
-    /// matmul, so `head_dim + val_dim` rather than `2 * head_dim`. `bench` always
-    /// runs in `half::f16`; the mask, when present, is approximated at that size
-    /// too since its actual dtype needs a client `work` doesn't have.
+    /// The kernel's own cost model, which burn already scores autotune bounds
+    /// against, rather than a second count of the same attention.
+    ///
+    /// `bench` always runs in `half::f16`, mask included, which is why every
+    /// operand takes that type here.
     fn work(&self, problem: &AttentionSpec) -> Option<CategoryWork> {
         let dtype = half::f16::elem_type_native();
-        let elem_size = dtype.size();
-        let dims = &problem.dims;
 
-        let numel = |ident| dims.shape(ident).iter().product::<usize>();
-        let mut bytes_read = (numel(AttentionIdent::Query)
-            + numel(AttentionIdent::Key)
-            + numel(AttentionIdent::Value))
-            * elem_size;
-        if problem.masked {
-            bytes_read += numel(AttentionIdent::Mask) * elem_size;
-        }
+        let cost = AttentionCost {
+            dims: problem.dims.clone(),
+            masked: problem.masked,
+            causal: problem.options.causal,
+            types: AttentionGlobalTypes {
+                query: dtype,
+                key: dtype,
+                value: dtype,
+                mask: dtype,
+                out: dtype,
+            },
+        };
+
+        let (bytes_read, bytes_written) = cost.traffic();
 
         Some(CategoryWork {
-            compute_ops: 2
-                * dims.batch
-                * dims.num_heads
-                * dims.seq_q
-                * dims.seq_kv
-                * (dims.head_dim + dims.val_dim),
-            dtype,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
             bytes_read,
-            bytes_written: numel(AttentionIdent::Out) * elem_size,
+            bytes_written,
         })
     }
 }

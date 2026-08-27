@@ -52,8 +52,7 @@ impl cubek_test_utils::Category for Category {
         let elem_size = dtype.size();
 
         Some(CategoryWork {
-            compute_ops: 0,
-            dtype,
+            compute: None,
             bytes_read: problem.data_count * elem_size,
             bytes_written: problem.window_size * elem_size,
         })

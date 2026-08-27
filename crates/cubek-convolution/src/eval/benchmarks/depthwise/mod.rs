@@ -12,7 +12,7 @@ pub use benchmark::bench;
 pub use problem::{DepthwiseProblem, blocks_running, problems, strategies};
 
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use crate::DepthwiseStrategy;
 
@@ -60,8 +60,7 @@ impl cubek_test_utils::Category for Category {
         let filter_elems = problem.channels * problem.kernel * problem.kernel;
 
         Some(CategoryWork {
-            compute_ops: problem.flops() as usize,
-            dtype,
+            compute: Some(ComputeWork::direct(problem.flops() as usize, dtype)),
             bytes_read: (maps * problem.size * problem.size + filter_elems) * elem_size,
             bytes_written: maps * out * out * elem_size,
         })

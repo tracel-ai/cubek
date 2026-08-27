@@ -51,8 +51,7 @@ impl cubek_test_utils::Category for Category {
         let elems = problem.shape.iter().product::<usize>() * dtype.size();
 
         Some(CategoryWork {
-            compute_ops: 0,
-            dtype,
+            compute: None,
             bytes_read: elems,
             bytes_written: elems,
         })

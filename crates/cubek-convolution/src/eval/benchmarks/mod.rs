@@ -16,7 +16,7 @@ pub use problem::{Conv2dProblem, problems};
 pub use strategy::strategies;
 
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use crate::Strategy;
 
@@ -77,8 +77,10 @@ impl cubek_test_utils::Category for Category {
         let output_elems = n * c_out * h_out * w_out;
 
         Some(CategoryWork {
-            compute_ops: 2 * output_elems * c_in * k_h * k_w,
-            dtype,
+            compute: Some(ComputeWork::direct(
+                2 * output_elems * c_in * k_h * k_w,
+                dtype,
+            )),
             bytes_read: (input_elems + weight_elems + problem.bias_shape) * elem_size,
             bytes_written: output_elems * elem_size,
         })

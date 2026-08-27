@@ -8,8 +8,9 @@ pub use correctness::GemvCorrectness;
 pub use problem::{GemvProblem, ProblemKind, problems};
 pub use strategy::strategies;
 
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
 use crate::strategy::Strategy;
 
@@ -55,14 +56,30 @@ impl cubek_test_utils::Category for Category {
     /// written are the same either way.
     fn work(&self, problem: &GemvProblem) -> Option<CategoryWork> {
         let dtype = f32::elem_type_native();
-        let elem_size = dtype.size();
-        let (b, out_dim, k) = (problem.batches, problem.out_dim, problem.k_dim);
+
+        // A gemv is a matmul whose m is one, so the kernel's own cost model
+        // covers it and picks the compute probe with it.
+        let cost = MatmulCost {
+            batches: problem.batches,
+            m: 1,
+            n: problem.out_dim,
+            k: problem.k_dim,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+
+        let (bytes_read, bytes_written) = cost.traffic();
 
         Some(CategoryWork {
-            compute_ops: 2 * b * out_dim * k,
-            dtype,
-            bytes_read: (b * k + b * k * out_dim) * elem_size,
-            bytes_written: b * out_dim * elem_size,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
+            bytes_read,
+            bytes_written,
         })
     }
 }

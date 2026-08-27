@@ -66,8 +66,7 @@ impl cubek_test_utils::Category for Category {
                 let indices_elems = if prob.with_indices { output_elems } else { 0 };
 
                 Some(CategoryWork {
-                    compute_ops: 0,
-                    dtype,
+                    compute: None,
                     bytes_read: input_elems * elem_size,
                     bytes_written: (output_elems + indices_elems) * elem_size,
                 })
@@ -80,8 +79,7 @@ impl cubek_test_utils::Category for Category {
                 let indices_elems = if prob.with_indices { out_grad_elems } else { 0 };
 
                 Some(CategoryWork {
-                    compute_ops: 0,
-                    dtype,
+                    compute: None,
                     bytes_read: (out_grad_elems + indices_elems) * elem_size,
                     bytes_written: input_grad_elems * elem_size,
                 })

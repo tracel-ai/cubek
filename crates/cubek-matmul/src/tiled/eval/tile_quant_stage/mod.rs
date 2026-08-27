@@ -14,8 +14,9 @@ pub use benchmark::bench;
 pub use problem::{TileQuantStageProblem, problems};
 pub use strategy::{StageDepth, strategies};
 
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::prelude::*;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
 pub struct Category;
 
@@ -63,9 +64,23 @@ impl cubek_test_utils::Category for Category {
         let b_scale_bytes = problem.k * (problem.n / problem.bn) * f32_size;
         let c_bytes = problem.m * problem.n * f32_size;
 
+        let cost = MatmulCost {
+            batches: 1,
+            m: problem.m,
+            n: problem.n,
+            k: problem.k,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+
         Some(CategoryWork {
-            compute_ops: 2 * problem.m * problem.n * problem.k,
-            dtype,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
             bytes_read: a_bytes + b_data_bytes + b_scale_bytes,
             bytes_written: c_bytes,
         })

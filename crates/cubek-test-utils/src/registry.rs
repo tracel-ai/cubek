@@ -23,7 +23,7 @@ use crate::{HostData, Progress};
 /// The client every category scores against: `measure_peak_throughput` is
 /// always run on `<TestRuntime as Runtime>::Device::default()`, so the
 /// process-wide peak memo below can key on [`ThroughputKey`] alone.
-fn client() -> ComputeClient<TestRuntime> {
+pub fn client() -> ComputeClient<TestRuntime> {
     let device = <TestRuntime as Runtime>::Device::default();
     <TestRuntime as Runtime>::client(&device)
 }
@@ -157,17 +157,42 @@ impl RunSamples {
 /// (shapes and dtypes), never from a measurement of its own run.
 #[derive(Debug, Clone, Copy)]
 pub struct CategoryWork {
-    /// Compute operations the run performs, counted the way
-    /// [`ThroughputMode::ComputeDirect`] counts them (a multiply-add is 2).
-    /// `0` when the category has no honest count (an elementwise
-    /// transcendental, an FFT). The adapter then skips the compute bound.
-    pub compute_ops: usize,
-    /// The dtype the compute runs in. Ignored when `compute_ops` is `0`.
-    pub dtype: ElemType,
+    /// The compute the run performs, with the probe its ceiling comes from.
+    /// `None` when the category has no honest count (an elementwise
+    /// transcendental, an FFT); the adapter then declares no compute bound.
+    pub compute: Option<ComputeWork>,
     /// Bytes read from global memory.
     pub bytes_read: usize,
     /// Bytes written to global memory.
     pub bytes_written: usize,
+}
+
+/// Operations a run performs, and the probe whose peak they are judged against.
+///
+/// The probe is part of the declaration because the two compute ceilings are
+/// different hardware. A kernel issuing MMA judged against the scalar peak
+/// reports several times its own ceiling: on a 4070 Ti SUPER the tensor-core
+/// matmuls read 145 to 236% of a peak they were never running against.
+#[derive(Debug, Clone, Copy)]
+pub struct ComputeWork {
+    /// Counted the way `key`'s probe counts them, so a multiply-add is 2 for
+    /// [`ThroughputMode::ComputeDirect`].
+    pub ops: usize,
+    /// [`ThroughputMode::ComputeDirect`] for scalar arithmetic,
+    /// [`ThroughputMode::ComputeCmma`] for a kernel on the tensor cores.
+    pub key: ThroughputKey,
+}
+
+impl ComputeWork {
+    /// Scalar arithmetic, the ceiling for a kernel that issues no MMA.
+    pub fn direct(ops: usize, dtype: ElemType) -> Self {
+        Self {
+            ops,
+            key: ThroughputKey {
+                mode: ThroughputMode::ComputeDirect { dtype },
+            },
+        }
+    }
 }
 
 impl CategoryWork {
@@ -184,11 +209,8 @@ impl CategoryWork {
     ) -> Vec<(ResourceKind, usize, ThroughputKey)> {
         let mut out = Vec::with_capacity(4);
 
-        if self.compute_ops > 0 {
-            let key = ThroughputKey {
-                mode: ThroughputMode::ComputeDirect { dtype: self.dtype },
-            };
-            out.push((ResourceKind::Compute, self.compute_ops, key));
+        if let Some(compute) = self.compute.filter(|c| c.ops > 0) {
+            out.push((ResourceKind::Compute, compute.ops, compute.key));
         }
         if self.bytes_read > 0 {
             let key = ThroughputKey {
@@ -528,8 +550,8 @@ mod tests {
 
     fn work(compute_ops: usize, bytes_read: usize, bytes_written: usize) -> CategoryWork {
         CategoryWork {
-            compute_ops,
-            dtype: f32::elem_type_native(),
+            compute: (compute_ops > 0)
+                .then(|| ComputeWork::direct(compute_ops, f32::elem_type_native())),
             bytes_read,
             bytes_written,
         }

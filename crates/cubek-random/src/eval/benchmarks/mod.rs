@@ -45,8 +45,7 @@ impl cubek_test_utils::Category for Category {
         let dtype = f32::elem_type_native();
         let bytes_written = problem.shape.iter().product::<usize>() * dtype.size();
         Some(CategoryWork {
-            compute_ops: 0,
-            dtype,
+            compute: None,
             bytes_read: 0,
             bytes_written,
         })

@@ -6,9 +6,10 @@ pub use benchmark::bench;
 pub use problem::{Layout, Mode, QuantSide, QuantizedMatmulProblem, problems};
 pub use strategy::strategies;
 
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::prelude::*;
 use cubek_quant::scheme::QuantScheme;
-use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
 use crate::strategy::Strategy;
 
@@ -60,9 +61,23 @@ impl cubek_test_utils::Category for Category {
             },
         };
 
+        let cost = MatmulCost {
+            batches: problem.b,
+            m: problem.m,
+            n: problem.n,
+            k: problem.k,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+
         Some(CategoryWork {
-            compute_ops: 2 * problem.b * problem.m * problem.n * problem.k,
-            dtype,
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
             bytes_read: operand_bytes(&lhs_shape, lhs_scheme)
                 + operand_bytes(&rhs_shape, rhs_scheme),
             bytes_written: problem.b * problem.m * problem.n * dtype.size(),
