@@ -200,6 +200,79 @@ fn arg_right_aligns_batches_and_drops_size_one() {
     assert!(!broadcast.spec.axes().contains(&B1));
 }
 
+// ---- Launcher::spec --------------------------------------------------------
+
+/// An `f32` operand over `axes`, staged once per level of [`batched_space`]: `Smem` at the cube
+/// level, in place at the leaf. What a destination a fused store writes through would declare.
+fn staged_operand(axes: &[Axis]) -> Operand {
+    let mut operand = Operand::new(axes, f32::elem_type_native());
+    operand.stage(Residence::Smem);
+    operand.stage(Residence::InPlace);
+    operand
+}
+
+/// The pair the API exists for: a destination with no tensor to bind derives *the same* spec a
+/// bound one does. If these ever diverge, a fused store walks a different tile than the unfused
+/// kernel it replaces, which is the whole thing `build_spec` is a shared derivation to prevent.
+#[test]
+fn spec_derives_what_a_bound_operand_derives() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4), so the derivation has a check to arm and something to say.
+    let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
+    let operand = staged_operand(&[M, K]);
+    let (shape, strides) = (&[64usize, 18][..], &[18usize, 1][..]);
+
+    let bound = launch
+        .bind(&operand, binding(&client, shape))
+        .vectorize(1)
+        .build();
+    let derived = launch.spec(&operand, shape, strides, 1);
+
+    assert_eq!(derived.spec, bound.spec);
+    assert_eq!(derived.vector_size, bound.vector_size);
+}
+
+/// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
+/// re-deriving it at the call site is the drift `build_spec` removes. Nothing here drops a dim —
+/// `spec` labels no batch axes, so it cannot (see
+/// [`spec_refuses_a_dim_it_cannot_label`]) — but the caller reads the settled pair either way
+/// rather than assuming the stated one survived.
+#[test]
+fn spec_returns_the_geometry_it_settled_on() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+
+    let derived = launch.spec(&staged_operand(&[M, K]), &[64, 16], &[16, 1], 1);
+
+    assert_eq!(derived.shape, vec![64, 16]);
+    assert_eq!(derived.strides, vec![16, 1]);
+    assert_eq!(derived.spec.projection.physical_rank(), derived.shape.len());
+}
+
+/// A leading broadcast dim is refused, not silently folded away. `spec` labels the operand's own
+/// axes and no batches, so a dim past them has no axis to belong to: the derivation that *would*
+/// drop it is the one that never runs here, and a caller who states a rank the projection cannot
+/// address learns it at the launch rather than through a store landing at the wrong offsets.
+#[test]
+#[should_panic(expected = "batch dims but only 0 batch axes given")]
+fn spec_refuses_a_dim_it_cannot_label() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+
+    let _ = launch.spec(&staged_operand(&[M, K]), &[1, 64, 16], &[1024, 16, 1], 1);
+}
+
+/// Two slices over the same dims. A bound operand copies both off one binding and cannot
+/// disagree; a stated one can, and unchecked it would index off the end of the strides.
+#[test]
+#[should_panic(expected = "2 extents but 1 strides")]
+fn spec_refuses_geometry_whose_halves_disagree() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+
+    let _ = launch.spec(&staged_operand(&[M, K]), &[64, 16], &[1], 1);
+}
+
 // ---- StridedTileSource::gathered -------------------------------------------
 
 /// A convolution-shaped input over `batched_space`: output positions `M` at `stride` and taps `K`

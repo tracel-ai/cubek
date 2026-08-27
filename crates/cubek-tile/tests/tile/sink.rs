@@ -157,6 +157,91 @@ fn a_sink_stores_where_a_buffer_stores() {
 }
 
 // ===========================================================================
+// The host half: `Launcher::spec`
+// ===========================================================================
+
+/// The same sink store, with the destination's [`TileSpec`] and geometry derived on the host by
+/// [`Launcher::spec`] instead of stated at the call site.
+///
+/// This is the pair a fused store actually reaches for. The kernels above take their spec off a
+/// `TileArg` — but a destination written through a call has no `TileArg` to take it off, which is
+/// the whole reason `spec` exists: it runs the derivation a bound operand runs and hands back
+/// both halves, the spec *and* the geometry it settled on, so neither is restated here.
+#[cube(launch)]
+fn derived_sink_kernel<E: Float>(
+    out: &Tensor<Vector<E, Const<1>>>,
+    rows: u32,
+    cols: u32,
+    row_stride: u32,
+    col_stride: u32,
+    #[comptime] space: Space,
+    #[comptime] spec: TileSpec,
+    #[define(E)] _dtype: ElemType,
+) {
+    // The settled geometry, arriving as scalars because the host is where it was settled.
+    let mut shape = Coords::<u32>::new();
+    shape.push(rows);
+    shape.push(cols);
+    let mut strides = Coords::<u32>::new();
+    strides.push(row_stride);
+    strides.push(col_stride);
+
+    let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
+    let mut dst = Tile::<E>::of_sink(sink, shape, strides, 1usize, comptime!(space.clone()), spec);
+    let src = Tile::<E>::procedural::<Position>(space, Position {});
+    dst.copy_from(&src);
+}
+
+/// A sink whose spec and geometry both come from [`Launcher::spec`] stores what the buffer kernel
+/// stores: the host-derived pair addresses the destination the same way the binding-derived one
+/// does, which is the only thing that makes a fused store a drop-in for the kernel it replaces.
+#[test]
+fn a_launcher_derived_spec_addresses_the_sink() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let launcher = space().launcher_over(&client, &[]);
+    let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // What the destination would have been, had it been a tensor to bind.
+    let derived = launcher.spec(
+        &Operand::new(&[ROW, COL], dtype),
+        &[ROWS, COLS],
+        &[COLS, 1],
+        1,
+    );
+    assert_eq!(derived.shape, vec![ROWS, COLS]);
+    assert_eq!(derived.strides, vec![COLS, 1]);
+
+    derived_sink_kernel::launch::<TestRuntime>(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        output.clone().binding().into_tensor_arg(),
+        derived.shape[0] as u32,
+        derived.shape[1] as u32,
+        derived.strides[0] as u32,
+        derived.strides[1] as u32,
+        launcher.space().clone(),
+        derived.spec,
+        dtype,
+    );
+
+    let stored = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            assert_eq!(
+                stored.get_f32(&[row, col]),
+                (row * COLS + col) as f32,
+                "the launcher-derived sink stored the wrong value at [{row}, {col}]"
+            );
+        }
+    }
+}
+
+// ===========================================================================
 // A contraction into a sink
 // ===========================================================================
 

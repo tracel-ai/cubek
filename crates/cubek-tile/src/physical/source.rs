@@ -78,6 +78,17 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
     /// The same builder over geometry alone, for an operand with no tensor to
     /// bind. See [`TileSourceData::binding`].
     pub(crate) fn of_geometry(shape: &[usize], strides: &[usize]) -> Self {
+        // Two slices over the same dims. A bound operand copies both off one
+        // binding and cannot disagree; a stated one can, and `labeled` would
+        // then take its rank from the shape and index off the end of the
+        // strides, panicking with nothing that names the operand.
+        assert_eq!(
+            shape.len(),
+            strides.len(),
+            "StridedTileSource::of_geometry: {} extents but {} strides",
+            shape.len(),
+            strides.len()
+        );
         Self::over(None, shape.to_vec(), strides.to_vec())
     }
 
@@ -392,6 +403,25 @@ impl<R: Runtime> StridedOperand<R> {
     }
 }
 
+/// What [`build_spec`](StridedTileSource::build_spec) settles for an operand with
+/// no tensor to bind: the comptime [`TileSpec`], the served width, and the
+/// geometry the derivation arrived at.
+///
+/// `shape` and `strides` are what a bound operand's `TensorArg` would have
+/// shipped, which is not always what the caller stated: [`labeled`] drops
+/// broadcast batch dims and folds the rank down to the projection's physical
+/// one. The kernel's [`Tile::of_sink`](crate::Tile::of_sink) addresses through
+/// exactly this pair, so it is the pair that comes back — re-deriving it at the
+/// call site is the drift `build_spec` exists to remove, and reaching for the
+/// stated one instead is the same mistake one step later.
+pub struct DerivedSpec {
+    pub spec: TileSpec,
+    /// Served width (values per line).
+    pub vector_size: usize,
+    pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
+}
+
 /// A built quantized operand: the storage-typed tensor and its spec, plus the scales and
 /// the comptime scheme as first-class fields; nothing to probe or drain at the call site.
 pub struct QuantOperand<R: Runtime> {
@@ -448,6 +478,10 @@ struct Realized<R: Runtime> {
     vector_size: usize,
     spec: TileSpec,
     quant: Option<Quantization<R>>,
+    /// The geometry the derivation settled on, which is what `tensor` ships when
+    /// there is one. See [`DerivedSpec`].
+    shape: Vec<usize>,
+    strides: Vec<usize>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -585,6 +619,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             vector_size: v,
             spec,
             quant,
+            shape,
+            strides,
         }
     }
 }
@@ -702,8 +738,8 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
         }
     }
 
-    /// The comptime half alone: the [`TileSpec`] and served width
-    /// [`build`](Self::build) would have derived, with no tensor argument.
+    /// The untensored half: everything [`build`](Self::build) would have derived
+    /// but the tensor argument itself.
     ///
     /// For a destination that has no address. A fused store writes through a
     /// call, so the launch has no handle to bind — but the tile that walks it is
@@ -711,12 +747,22 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
     /// is that same derivation rather than a restatement of it. Restating it is
     /// what drifts: the labeled mapping drops broadcast batch dims, folds the
     /// rest into a `ConcreteLayout` and rewrites the geometry around it, none of
-    /// which a caller should be reproducing.
-    pub fn build_spec(self) -> (TileSpec, usize) {
+    /// which a caller should be reproducing — so the rewritten geometry comes
+    /// back too, rather than only the spec derived from it. See [`DerivedSpec`].
+    pub fn build_spec(self) -> DerivedSpec {
         let Realized {
-            vector_size, spec, ..
+            vector_size,
+            spec,
+            shape,
+            strides,
+            ..
         } = self.realize();
-        (spec, vector_size)
+        DerivedSpec {
+            spec,
+            vector_size,
+            shape,
+            strides,
+        }
     }
 }
 
@@ -728,6 +774,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             vector_size,
             spec,
             quant,
+            ..
         } = self.realize();
         QuantOperand {
             tensor: tensor.expect(

@@ -153,15 +153,6 @@ impl<T: Numeric> Store<T> {
             ),
         }
     }
-
-    /// Whether this destination is a [`Sink`](Destination::Sink) — comptime, so a
-    /// guard on it costs nothing and the arm it refuses never reaches codegen.
-    pub(crate) fn is_sink(&self) -> comptime_type!(bool) {
-        match &self.destination {
-            Destination::Buffer(_) => comptime!(false),
-            Destination::Sink(_) => comptime!(true),
-        }
-    }
 }
 
 /// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
@@ -482,6 +473,17 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
+        // Free for a bound operand, which builds both off the projection's own rank; the check is
+        // for a *stated* geometry ([`of_sink`](Tile::of_sink)), where a short pair panics on an
+        // opaque `Sequence` index below and a long one silently ignores its tail.
+        let shape_given = shape.len();
+        let strides_given = strides.len();
+        let physical_rank = comptime!(projection.physical_rank());
+        comptime!(assert!(
+            shape_given == physical_rank && strides_given == physical_rank,
+            "Tile::of: the projection addresses {physical_rank} physical dims but {shape_given} \
+             extents and {strides_given} strides were given"
+        ));
         let stage = comptime!(spec.stage_plan(space.instruction()));
         // How the buffer holds its values: what a quantized operand's scheme says, else what the
         // spec states. One statement, whichever door minted it, so nothing below asks twice.
@@ -520,9 +522,10 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
              {vector_size})"
         ));
-        // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
-        // than its logical space has axes, and a storage-tiled one has more.
-        let rank = comptime!(projection.physical_rank());
+        // `physical_rank` above, off the projection rather than the space: a gathered operand's
+        // buffer has fewer physical axes than its logical space has axes, and a storage-tiled one
+        // has more.
+        let rank = physical_rank;
         let last = comptime!(rank - 1);
         let w = comptime!(vector_size as u32);
         let mut physical_shape = Coords::<u32>::new();

@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Operand, Set, Space, StridedOperand, StridedTileSource, TileSpec, Unset};
+use crate::{Axis, DerivedSpec, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -101,22 +101,29 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         self.arg(binding).subspace(operand.axes()).operand(operand)
     }
 
-    /// The [`TileSpec`] [`bind`](Self::bind) would derive for `operand`, from the
-    /// geometry alone: for a destination with no tensor to bind, which is what a
-    /// fused store writes through.
+    /// What [`bind`](Self::bind) would derive for `operand`, from the geometry
+    /// alone: for a destination with no tensor to bind, which is what a fused
+    /// store writes through.
     ///
     /// `shape` and `strides` are the physical extents and strides the operand
     /// *would* have had. Everything else — the projection, the bounds-check
     /// derived from this launcher's concrete overhang, the residence column, the
     /// cube size — is settled exactly as it is for a bound operand, because it is
     /// the same derivation.
+    ///
+    /// The geometry comes back in the [`DerivedSpec`], and that is the pair
+    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. They
+    /// agree today, since `spec` labels the operand's own axes and no batches, so
+    /// the derivation has no broadcast dim to drop and refuses a rank it cannot
+    /// address. Reading the settled pair is what keeps that an implementation
+    /// detail of the derivation rather than a fact the call site depends on.
     pub fn spec<'a>(
         &'a self,
         operand: &'a Operand,
         shape: &[usize],
         strides: &[usize],
         vector_size: usize,
-    ) -> TileSpec {
+    ) -> DerivedSpec {
         StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(shape, strides)
             .space(&self.kernel)
             .concrete(&self.concrete)
@@ -125,7 +132,6 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .operand(operand)
             .vectorize(vector_size)
             .build_spec()
-            .0
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
