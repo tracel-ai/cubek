@@ -42,28 +42,11 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    let cost = InterpolateCost::new(problem.clone(), dtype);
-    let work = cost.work();
+    let work = InterpolateCost::new(problem.clone(), dtype).work();
 
     Ok(RunSamples::new(durations)
-        .with_flops(
-            work.compute_ops as f64,
-            compute_peak_ops_per_s(&client, &cost),
-        )
+        .with_flops(work.compute_ops as f64, None)
         .with_bytes(work.bytes, memory_peak_bytes_per_s(&client)))
-}
-
-/// The device's measured arithmetic peak, in ops/s, for the resampling to be judged against.
-///
-/// [`ThroughputMode::ComputeDirect`] is the direct ALU arithmetic the reference filter emits.
-/// `measure_peak_throughput` caches per device, so this does not need to as well.
-fn compute_peak_ops_per_s(
-    client: &ComputeClient<TestRuntime>,
-    cost: &InterpolateCost,
-) -> Option<f64> {
-    let peak = measure_peak_throughput(client, cost.compute_key()).ops_per_s();
-
-    (peak > 0.0).then_some(peak)
 }
 
 /// The device's measured copy peak, in bytes/s, for the resampling to be judged against.
