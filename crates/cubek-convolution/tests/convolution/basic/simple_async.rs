@@ -5,11 +5,23 @@ use cubek_convolution::ConvAlgorithm;
 use super::common::{
     default_partition_buffering, default_swizzle, default_tiling_scheme, f16_dtypes, small_size,
 };
-use crate::convolution::launcher_strategy::test_algo;
+use crate::convolution::launcher_strategy::{test_algo, test_algo_asymmetric};
 
 #[test]
 fn simple_async_cyclic_cmma_small_f16() {
     test_algo(
+        ConvAlgorithm::SimpleAsyncCyclic,
+        f16_dtypes(),
+        default_tiling_scheme(),
+        default_swizzle(),
+        default_partition_buffering(),
+        small_size(),
+    );
+}
+
+#[test]
+fn simple_async_cyclic_cmma_end_padding_f16() {
+    test_algo_asymmetric(
         ConvAlgorithm::SimpleAsyncCyclic,
         f16_dtypes(),
         default_tiling_scheme(),

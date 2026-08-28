@@ -28,6 +28,7 @@ pub struct ConvolutionProblem {
 
     pub kernel_size: Vec<u32>,
     pub stride: Vec<u32>,
+    /// Padding at the beginning of each spatial dimension.
     pub padding: Vec<i32>,
     pub dilation: Vec<u32>,
 
@@ -102,7 +103,119 @@ impl ConvolutionProblem {
     }
 
     pub fn should_check_spatial_bounds(&self) -> bool {
-        self.padding.iter().any(|&pad| pad != 0)
+        spatial_bounds_required(
+            self.operation,
+            &self.kernel_size,
+            &self.stride,
+            &self.padding,
+            &self.dilation,
+            &self.in_shape,
+            &self.out_shape,
+        )
+    }
+}
+
+fn spatial_bounds_required(
+    operation: ConvolutionOperation,
+    kernel_size: &[u32],
+    stride: &[u32],
+    padding: &[i32],
+    dilation: &[u32],
+    in_shape: &[usize],
+    out_shape: &[usize],
+) -> bool {
+    (0..kernel_size.len()).any(|dim| {
+        let kernel_extent = (kernel_size[dim] as i64 - 1) * dilation[dim] as i64;
+        let padding = padding[dim] as i64;
+
+        match operation {
+            ConvolutionOperation::Forward | ConvolutionOperation::BackwardWeight => {
+                let first = -padding;
+                let last =
+                    (out_shape[dim] as i64 - 1) * stride[dim] as i64 + kernel_extent - padding;
+                first < 0 || last >= in_shape[dim] as i64
+            }
+            ConvolutionOperation::ForwardTransposed | ConvolutionOperation::BackwardData => {
+                let first_numerator = padding - kernel_extent;
+                let last_numerator = in_shape[dim] as i64 - 1 + padding;
+                // A transposed convolution only has a source coordinate when the numerator is
+                // divisible by the stride. Non-unit strides therefore require the checked path
+                // even when every quotient falls within the source tensor.
+                stride[dim] != 1
+                    || first_numerator < 0
+                    || last_numerator >= out_shape[dim] as i64 * stride[dim] as i64
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConvolutionOperation, spatial_bounds_required};
+
+    #[test]
+    fn forward_checks_bounds_for_end_only_padding() {
+        assert!(spatial_bounds_required(
+            ConvolutionOperation::Forward,
+            &[3],
+            &[1],
+            &[0],
+            &[1],
+            &[5],
+            &[5],
+        ));
+    }
+
+    #[test]
+    fn forward_skips_bounds_for_exact_unpadded_geometry() {
+        assert!(!spatial_bounds_required(
+            ConvolutionOperation::Forward,
+            &[3],
+            &[1],
+            &[0],
+            &[1],
+            &[5],
+            &[3],
+        ));
+    }
+
+    #[test]
+    fn backward_data_checks_kernel_overhang_without_begin_padding() {
+        assert!(spatial_bounds_required(
+            ConvolutionOperation::BackwardData,
+            &[3],
+            &[1],
+            &[0],
+            &[1],
+            &[5],
+            &[3],
+        ));
+    }
+
+    #[test]
+    fn backward_data_skips_bounds_for_pointwise_geometry() {
+        assert!(!spatial_bounds_required(
+            ConvolutionOperation::BackwardData,
+            &[1],
+            &[1],
+            &[0],
+            &[1],
+            &[5],
+            &[5],
+        ));
+    }
+
+    #[test]
+    fn backward_data_checks_stride_divisibility() {
+        assert!(spatial_bounds_required(
+            ConvolutionOperation::BackwardData,
+            &[1],
+            &[2],
+            &[0],
+            &[1],
+            &[5],
+            &[3],
+        ));
     }
 }
 

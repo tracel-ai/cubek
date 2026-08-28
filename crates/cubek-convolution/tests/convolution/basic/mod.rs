@@ -9,6 +9,7 @@
 
 mod common;
 
+mod backward_data;
 mod simple_async;
 mod simple_cyclic;
 mod simple_strided;
