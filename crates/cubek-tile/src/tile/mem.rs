@@ -382,55 +382,63 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) with one axis's window origin resolved through an index tensor: `ids`
-    /// holds one `u32` entry per fire-level tile of `indirection.index_axes`, and the descent
-    /// places the operand's `indirection.target` window at the entry it reads ([`Indirection`]).
-    /// MoE expert routing is exactly this: `values` is `[num_experts, K, N]` with `EXPERT` held at
-    /// [`Static(1)`](crate::Extent::Static) in the kernel space, `ids` is `[m_tiles]`, and the
-    /// weights operand does not span `M` at all.
+    /// [`of`](Tile::of) with one axis's window resolved through a routing table. Replacement
+    /// routing places the origin at an indexed slice or page; a variable-length sequence reads
+    /// adjacent cumulative lengths and translates and bounds the target window as one operation.
     ///
     /// The operand stays direct and untiled, so every dense, cmma and straight-fill path still
     /// describes it. Caller contracts:
     ///
     /// - The tile does not [`witness`](Tile::witnesses) the target axis. Its bound is the index
     ///   tensor's range, not the operation's extent, so the kernel space states that axis itself.
-    /// - Under [`IndexPolicy::Trusted`] nothing checks an entry. Under
-    ///   [`IndexPolicy::Checked`] the spec must carry a [`Boundary`] on the target axis, which is
-    ///   what masks an entry past its bound. [`StridedTileSource::indexed`](crate::StridedTileSource::indexed)
-    ///   derives it from the policy; hand-built specs state it themselves.
+    /// - A checked replacement must carry a target [`Boundary`]. A variable-length sequence must
+    ///   carry [`Boundary::Zero`], which masks at its exclusive end. The launch-side builder
+    ///   derives both; hand-built specs state them themselves.
     /// - The lookup resolves during [`Tile::at`], not at construction. An indexed tile that is
     ///   read without descending through a region still addresses its entry-0 window.
     pub fn of_indexed<E: CubePrimitive<Scalar = T>>(
         values: &Tensor<E>,
-        ids: &Tensor<u32>,
+        table: &Tensor<u32>,
         #[comptime] indirection: IndirectionSpec,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
         let projected = comptime!(space.project(spec.axes()));
-        // The engine's own backstop, like `validate_dequant_at`: `StridedTileSource::indexed`
-        // runs this on the caller's thread, but a hand-built `IndexedTileArgLaunch` reaches here
-        // without passing through it.
+        // The engine's own backstop, like `validate_dequant_at`: every routing constructor on
+        // `StridedTileSource` runs this on the caller's thread, but a hand-built
+        // `IndexedTileArgLaunch` reaches here without passing through one.
         comptime!(indirection.validate(&space, &projected, &spec.projection));
-        comptime!(assert!(
-            indirection.policy == IndexPolicy::Trusted
-                || spec
-                    .boundaries
-                    .get(projected.position(indirection.target))
-                    .copied()
-                    .flatten()
-                    .is_some(),
-            "Tile::of_indexed: IndexPolicy::Checked masks an out-of-range entry against the \
-             target axis's bound, but the operand states no boundary on {:?}",
-            indirection.target
-        ));
+        let target_boundary = comptime!(
+            spec.boundaries
+                .get(projected.position(indirection.target))
+                .copied()
+                .flatten()
+        );
+        // One refusal per rule: the two modes fail for different reasons and a caller is owed the
+        // one that applies to it.
+        if comptime!(indirection.is_sequence_range()) {
+            comptime!(assert!(
+                target_boundary == Some(Boundary::Zero),
+                "Tile::of_indexed: a variable-length sequence masks at its exclusive end, so \
+                 {:?} owes Boundary::Zero, not {target_boundary:?}",
+                indirection.target
+            ));
+        } else {
+            comptime!(assert!(
+                indirection.replacement_policy() == Some(IndexPolicy::Trusted)
+                    || target_boundary.is_some(),
+                "Tile::of_indexed: IndexPolicy::Checked masks an out-of-range entry against the \
+                 target axis's bound, but the operand states no boundary on {:?}",
+                indirection.target
+            ));
+        }
         let mut table_strides = Coords::<u32>::new();
         #[unroll]
         for a in 0..comptime!(indirection.index_axes.len()) {
-            table_strides.push(ids.stride(a) as u32);
+            table_strides.push(table.stride(a) as u32);
         }
         let carrier = Indirection {
-            table: unsafe { ids.as_slice().as_boxed_unchecked() },
+            table: unsafe { table.as_slice().as_boxed_unchecked() },
             table_base: 0u32,
             table_strides,
             spec: comptime!(indirection),
@@ -1540,7 +1548,7 @@ impl<T: Numeric> MemData<T> {
     /// Unchecked only, and unreachable any other way: a checked operand cannot vectorize
     /// ([`realize`](crate::StridedTileSource) refuses it), and a word-serving operand is
     /// `num_quants` wide, so a checked source never gets here; the assert below is a backstop for
-    /// hand-built args. The ragged-tail obligation this leaves is the engine's ordinary unchecked
+    /// hand-built args. The variable-tail obligation this leaves is the engine's ordinary unchecked
     /// contract, stated at the operand: a cut that overhangs the buffer *panics at launch* unless
     /// the caller declared `checked(false)`, and that declaration is the caller's claim that every
     /// staged block lies inside the allocation (e.g. an S block pinned to a divisor of the cache's
@@ -1628,7 +1636,7 @@ impl<T: Numeric> MemData<T> {
         dequant_at
     }
 
-    /// Which axes' region coordinates address this operand's index tensor, empty for an operand
+    /// Which axes' region coordinates address this operand's routing table, empty for an operand
     /// with no indirection. Read by the staging plan: an operand routed by an axis it does not
     /// span is *not* invariant across a walk that steps that axis, however its own space reads.
     pub(crate) fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {
@@ -2235,32 +2243,42 @@ impl<T: Numeric> MemData<T> {
         let last = comptime!(rank - 1);
         let w = comptime!(self.store.vector_size);
 
-        // A pending indirection resolves once at the fire level (where target edge <= granularity).
-        // At resolution, the displacement applies on both address routes and the child drops the
-        // carrier; above it, only the table base advances.
-        let (displacement, indirection, displaced_at) = #[comptime]
-        match &self.indirection {
-            ComptimeOption::Some(ind) => {
-                if comptime!(ind.spec.fires_at(&space)) {
-                    (
-                        ind.displacement(region, &self.window.origin, comptime!(space.clone())),
-                        ComptimeOption::new_None(),
-                        comptime!(Some(space.position(ind.spec.target))),
-                    )
-                } else {
-                    (
-                        0i32.runtime(),
-                        ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone()))),
-                        comptime!(None::<usize>),
-                    )
+        // A pending indirection resolves once at its mode's fire level. At resolution, the
+        // displacement applies on both address routes, a sequence range also narrows the target
+        // bound, and the child drops the carrier; above it, only the table base advances.
+        let (displacement, sequence_end, indirection, displaced_at, bounded_at) =
+            #[comptime]
+            match &self.indirection {
+                ComptimeOption::Some(ind) => {
+                    if comptime!(ind.spec.fires_at(&space)) {
+                        let (displacement, sequence_end) =
+                            ind.resolve(region, &self.window.origin, comptime!(space.clone()));
+                        let target = comptime!(space.position(ind.spec.target));
+                        (
+                            displacement,
+                            sequence_end,
+                            ComptimeOption::new_None(),
+                            comptime!(Some(target)),
+                            comptime!(ind.spec.is_sequence_range().then_some(target)),
+                        )
+                    } else {
+                        (
+                            0i32.runtime(),
+                            0u32.runtime(),
+                            ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone()))),
+                            comptime!(None::<usize>),
+                            comptime!(None::<usize>),
+                        )
+                    }
                 }
-            }
-            ComptimeOption::None => (
-                0i32.runtime(),
-                ComptimeOption::new_None(),
-                comptime!(None::<usize>),
-            ),
-        };
+                ComptimeOption::None => (
+                    0i32.runtime(),
+                    0u32.runtime(),
+                    ComptimeOption::new_None(),
+                    comptime!(None::<usize>),
+                    comptime!(None::<usize>),
+                ),
+            };
 
         let map = if comptime!(proj.is_direct()) {
             // One logical axis per physical axis at coefficient 1. Kept as its own loop because
@@ -2364,6 +2382,23 @@ impl<T: Numeric> MemData<T> {
             .window_start
             .fadd(advances.fsum(comptime!((0..rank).collect::<Vec<_>>())));
 
+        // A sequence range narrows exactly one physical bound when it resolves; every other axis
+        // keeps the bound it inherited. Re-pushing those is free: `Coords` holds expression
+        // handles, so the rebuilt list carries the same ones a clone would have, and only the
+        // narrowed axis costs an instruction.
+        let mut bound = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let inherited = self.window.bound.at(p);
+            if comptime!(bounded_at == Some(p)) {
+                // Never past the buffer itself: the sequence end is data, and a bad one may name
+                // a position the values tensor does not back.
+                bound.push(min(sequence_end, inherited));
+            } else {
+                bound.push(inherited);
+            }
+        }
+
         // Re-window the scales alongside the values.
         let mut origin_u32 = Coords::<u32>::new();
         #[unroll]
@@ -2406,7 +2441,7 @@ impl<T: Numeric> MemData<T> {
             window: Window::new(
                 origin,
                 extent,
-                self.window.bound.clone(),
+                bound,
                 comptime!(self.window.signed),
                 comptime!(self.window.boundaries.clone()),
             ),

@@ -19,7 +19,7 @@ pub(crate) struct SlotOperand<'a> {
     residence: Residence,
     source: StageSource,
     space: &'a Space,
-    /// The axes addressing this operand's index tensor, empty for a plain one. Carried because a
+    /// The axes addressing this operand's routing table, empty for a plain one. Carried because a
     /// walk over one of them moves an indirect operand's window even though its own space says
     /// nothing about that axis (see [`Space::walk_invariant`]).
     index_axes: SmallVec<[Axis; MAX_AXES]>,
@@ -637,8 +637,10 @@ mod tests {
         let spec = IndirectionSpec {
             index_axes: index_axes.clone(),
             target: EXPERT,
-            granularity: 1,
-            policy: IndexPolicy::Trusted,
+            mode: IndirectionMode::Replace {
+                granularity: 1,
+                policy: IndexPolicy::Trusted,
+            },
         };
         SlotPlan::new(
             &[SlotOperand::new(
@@ -646,6 +648,33 @@ mod tests {
                 StageSource::Transport(Delivery::Copy),
                 &weights,
                 index_axes,
+                Some(spec),
+            )],
+            &space,
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "an indirect operand cannot be staged above the level where its lookup resolves"
+    )]
+    fn a_variable_length_operand_cannot_be_staged_before_one_sequence_is_isolated() {
+        let space = Tiling::new()
+            .extents(&[(M, 4), (N, 4), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(2))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(2))
+            })
+            .build();
+        let values = space.project(&[K, N]);
+        let spec = IndirectionSpec::variable_length(M, K);
+        SlotPlan::new(
+            &[SlotOperand::new(
+                Residence::Smem,
+                StageSource::Transport(Delivery::Copy),
+                &values,
+                spec.index_axes.clone(),
                 Some(spec),
             )],
             &space,

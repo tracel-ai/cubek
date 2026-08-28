@@ -416,29 +416,56 @@ pub enum IndexPolicy {
     Checked,
 }
 
+/// How an [`Indirection`] interprets its table entries.
+///
+/// Replacement routing selects independently placed slices or pages. A sequence range instead
+/// translates one logical token axis into the packed interval delimited by two adjacent cumulative
+/// lengths. Keeping the policy inside `Replace` makes a sequence range intrinsically checked: its
+/// end entry is the logical boundary, not an optional safety policy.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum IndirectionMode {
+    /// `table[..., t / granularity]` names the physical entry holding logical target coordinate
+    /// `t`, and the lookup replaces the window's origin with it.
+    Replace {
+        /// Elements of `target` per table entry: a page size for a paged cache, `1` for a slice
+        /// index. Comptime so the divide folds and the divisibility rules are checkable on the
+        /// host.
+        granularity: usize,
+        /// What an entry past the target axis's bound means. Only replacement routing has the
+        /// choice; see [`IndexPolicy`].
+        policy: IndexPolicy,
+    },
+    /// Adjacent entries `table[b]` and `table[b + 1]` are the physical start and exclusive end of
+    /// the sequence at coordinate `b` of the single index axis. The lookup translates the target
+    /// window to that start and narrows its bound to that end.
+    SequenceRange,
+}
+
 /// The comptime half of an [`Indirection`]: everything that decides *where* to look, with no
-/// buffer. Part of a kernel's identity, so two granularities never share a compiled kernel.
+/// buffer. Part of a kernel's identity, so different routing semantics never share a compiled
+/// kernel.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct IndirectionSpec {
     /// The operand axis whose window origin the lookup displaces.
     pub target: Axis,
-    /// Elements of `target` per table entry: a page size for a paged cache, `1` for a slice index.
-    /// Comptime so the divide folds and the divisibility rules are checkable on the host.
-    pub granularity: usize,
-    /// Which axes' region coordinates address the table, outer to inner.
+    /// Which axes' region coordinates address the table, outer to inner. A sequence range takes
+    /// exactly one, the axis its cumulative lengths are indexed by.
     pub index_axes: SmallVec<[Axis; MAX_AXES]>,
-    pub policy: IndexPolicy,
+    /// What a table entry means, and so what the lookup does when it fires.
+    pub mode: IndirectionMode,
 }
 
 impl IndirectionSpec {
     /// A per-tile slice index: one entry per `index_axis` tile, displacing `target`'s origin to
-    /// the entry outright (`granularity = 1`). MoE expert routing and `cu_seqlens` are both this.
+    /// the entry outright (`granularity = 1`). MoE expert routing is exactly this.
     pub fn indexed(index_axis: Axis, target: Axis, policy: IndexPolicy) -> Self {
         IndirectionSpec {
             target,
-            granularity: 1,
             index_axes: SmallVec::from_slice(&[index_axis]),
-            policy,
+            mode: IndirectionMode::Replace {
+                granularity: 1,
+                policy,
+            },
         }
     }
 
@@ -458,10 +485,38 @@ impl IndirectionSpec {
         );
         IndirectionSpec {
             target,
-            granularity: page_size,
             index_axes: SmallVec::from_slice(&[index_axis]),
-            policy,
+            mode: IndirectionMode::Replace {
+                granularity: page_size,
+                policy,
+            },
         }
+    }
+
+    /// A variable-length packed sequence. Adjacent entries in `cumulative_lengths` delimit the
+    /// physical target-axis range for one coordinate of `sequence_axis`: entry `b` is its start
+    /// and entry `b + 1` its exclusive end. The range translates the target origin and always
+    /// masks at its end.
+    pub fn variable_length(sequence_axis: Axis, target: Axis) -> Self {
+        IndirectionSpec {
+            target,
+            index_axes: SmallVec::from_slice(&[sequence_axis]),
+            mode: IndirectionMode::SequenceRange,
+        }
+    }
+
+    /// The policy attached to replacement routing. A sequence range has no policy: its exclusive
+    /// end is necessarily a checked boundary.
+    pub(crate) fn replacement_policy(&self) -> Option<IndexPolicy> {
+        match self.mode {
+            IndirectionMode::Replace { policy, .. } => Some(policy),
+            IndirectionMode::SequenceRange => None,
+        }
+    }
+
+    /// Whether this lookup translates a sequence range rather than replacing a slice or page.
+    pub(crate) fn is_sequence_range(&self) -> bool {
+        matches!(self.mode, IndirectionMode::SequenceRange)
     }
 
     /// Refuse a plan whose lookup could not fire correctly. `kernel` is the whole launched space,
@@ -473,12 +528,11 @@ impl IndirectionSpec {
     /// worker thread, where it reads as zeroed output rather than as a rejection, so this is the
     /// one gate. The rules: the operand carries the target axis and does not carry it innermost
     /// (that window is addressed in lines, not elements); the mapping is direct and untiled, so
-    /// one dim carries the target alone; some level's cut of `target` fits inside one table entry
-    /// (else the lookup never fires); that level's cut divides the entry (else a child window
-    /// starts mid-entry); every level above steps whole entries (else a window below the fire
-    /// level straddles two); and every index axis is distributed across cubes or planes rather
-    /// than lanes (a per-lane origin would hand `dense_lines` and `window_offset` a divergent
-    /// base pointer).
+    /// one dim carries the target alone; replacement routing reaches a target cut wholly inside
+    /// one table entry, with whole entries above and dividing cuts below; sequence-range routing
+    /// reaches a level that isolates one sequence; and every index axis is distributed across
+    /// cubes or planes rather than lanes (a per-lane origin would hand `dense_lines` and
+    /// `window_offset` a divergent base pointer).
     ///
     /// One rule has no host-side site and is asserted in [`Indirection::advanced_base`]: that the
     /// *operation*'s region actually spans each index axis. Which operands meet at a level is not
@@ -511,6 +565,13 @@ impl IndirectionSpec {
             !self.index_axes.is_empty(),
             "Indirection: an indirection with no index axis reads one entry for every tile"
         );
+        if self.is_sequence_range() {
+            assert_eq!(
+                self.index_axes.len(),
+                1,
+                "Indirection: a variable-length sequence has exactly one sequence axis"
+            );
+        }
         assert!(
             !self.index_axes.contains(&self.target),
             "Indirection: {:?} both addresses the table and is displaced by it",
@@ -530,27 +591,32 @@ impl IndirectionSpec {
             // This level still reads the table when the lookup fires here. Its child does not,
             // so distribution below it cannot make the resolved pointer lane-divergent.
             let lookup_pending = !fires;
-            let edge = partitioner.edge(self.target);
             if !fires {
-                if edge <= self.granularity {
-                    assert!(
-                        self.granularity.is_multiple_of(edge),
-                        "Indirection: a level cuts {:?} into {edge}-element windows, which do \
-                         not divide the {}-element table entry, so a child window would start \
-                         mid-entry",
-                        self.target,
-                        self.granularity
-                    );
-                    fires = true;
-                } else {
-                    assert!(
-                        edge.is_multiple_of(self.granularity),
-                        "Indirection: a level above the lookup cuts {:?} into {edge}-element \
-                         windows, which are not whole {}-element table entries, so a window below \
-                         would straddle two",
-                        self.target,
-                        self.granularity
-                    );
+                // The one definition of the fire level, so what validation accepts and what the
+                // descent actually resolves cannot drift apart.
+                fires = self.fires_with(partitioner);
+                // Only replacement routing constrains how the target is cut: its entries are
+                // whole slices of that axis. A sequence range translates a target tile of any
+                // size once one sequence is isolated, so it has nothing to say here.
+                if let IndirectionMode::Replace { granularity, .. } = self.mode {
+                    let edge = partitioner.edge(self.target);
+                    if fires {
+                        assert!(
+                            granularity.is_multiple_of(edge),
+                            "Indirection: a level cuts {:?} into {edge}-element windows, which do \
+                             not divide the {granularity}-element table entry, so a child window \
+                             would start mid-entry",
+                            self.target,
+                        );
+                    } else {
+                        assert!(
+                            edge.is_multiple_of(granularity),
+                            "Indirection: a level above the lookup cuts {:?} into {edge}-element \
+                             windows, which are not whole {granularity}-element table entries, so \
+                             a window below would straddle two",
+                            self.target,
+                        );
+                    }
                 }
             }
             if lookup_pending {
@@ -566,17 +632,25 @@ impl IndirectionSpec {
             }
             partitioner = partitioner.next();
         }
-        assert!(
-            fires,
-            "Indirection: no level cuts {:?} down to a {}-element table entry, so the \
-             lookup never resolves",
-            self.target, self.granularity
-        );
+        match self.mode {
+            IndirectionMode::Replace { granularity, .. } => assert!(
+                fires,
+                "Indirection: no level cuts {:?} down to a {granularity}-element table entry, so \
+                 the lookup never resolves",
+                self.target,
+            ),
+            IndirectionMode::SequenceRange => assert!(
+                fires,
+                "Indirection: no level isolates the variable-length sequence axis {:?} to one \
+                 sequence, so the lookup never resolves",
+                self.index_axes[0],
+            ),
+        }
     }
 }
 
 /// A data-dependent displacement of one axis's window origin, resolved exactly once during the
-/// descent. Rides beside [`QuantInfo`] on [`MemData`] and follows its shape: the index tensor is a
+/// descent. Rides beside [`QuantInfo`] on [`MemData`] and follows its shape: the routing table is a
 /// lifetime-erased `Box<[u32]>`, and everything deciding *where* to look is comptime
 /// ([`IndirectionSpec`]).
 ///
@@ -587,7 +661,7 @@ impl IndirectionSpec {
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Indirection {
-    /// The index tensor, lifetime-erased like every other tile buffer.
+    /// The routing table, lifetime-erased like every other tile buffer.
     pub(crate) table: Box<[u32]>,
     /// The offset into `table` this descent has accumulated, advanced at each
     /// [`at`](MemData::at) by the index axes' region coordinates. Accumulated rather than read
@@ -601,12 +675,33 @@ pub struct Indirection {
 }
 
 impl IndirectionSpec {
-    /// Whether the level `space` describes is the one that resolves the lookup: its cut of the
-    /// target axis fits inside a single table entry, so the child window it is about to build
-    /// lies wholly in one slice. [`validate`](Self::validate) has already proven such a level
-    /// exists and that no window straddles an entry.
+    /// Whether the level `space` describes resolves the lookup. Replacement routing fires once
+    /// the target fits in one table entry; a sequence range fires once its sequence axis has been
+    /// isolated to one sequence.
     pub(crate) fn fires_at(&self, space: &Space) -> bool {
-        space.partitioner().edge(self.target) <= self.granularity
+        self.fires_with(space.partitioner())
+    }
+
+    /// The fire predicate itself, over one level. Every other fire-level question in the crate
+    /// routes through this, so there is one place the rule is stated per mode.
+    fn fires_with(&self, partitioner: &Partitioner) -> bool {
+        match self.mode {
+            IndirectionMode::Replace { granularity, .. } => {
+                partitioner.edge(self.target) <= granularity
+            }
+            IndirectionMode::SequenceRange => partitioner.edge(self.index_axes[0]) == 1,
+        }
+    }
+
+    /// The first partitioner whose child can carry a resolved window. Validation proves the walk
+    /// reaches one before this helper is used by launch-side table derivation or descent math;
+    /// without that proof the walk runs off the final level, which carries no edges to read.
+    pub(crate) fn fire_partitioner<'a>(&self, space: &'a Space) -> &'a Partitioner {
+        let mut partitioner = space.partitioner();
+        while !self.fires_with(partitioner) {
+            partitioner = partitioner.next();
+        }
+        partitioner
     }
 
     /// Number of table entries represented by one coordinate step at `space` for `axis`.
@@ -615,10 +710,7 @@ impl IndirectionSpec {
     /// scaled by the number of fire-level table entries per step below it.
     fn table_entries_per_step(&self, space: &Space, axis: Axis) -> usize {
         let current_edge = space.partitioner().edge(axis);
-        let mut partitioner = space.partitioner();
-        while partitioner.edge(self.target) > self.granularity {
-            partitioner = partitioner.next();
-        }
+        let partitioner = self.fire_partitioner(space);
         let fire_edge = partitioner.edge(axis);
         comptime!(assert!(
             current_edge.is_multiple_of(fire_edge),
@@ -674,37 +766,60 @@ impl Indirection {
         ))
     }
 
-    /// How far this level moves the target axis's window origin, in elements of that axis; `0`
-    /// above the level that resolves the lookup.
+    /// What this level's lookup resolves to, as `(displacement, sequence_end)`. `displacement` is
+    /// how far the target axis's window origin moves, in elements of that axis. `sequence_end` is
+    /// the exclusive physical end the child window is bounded at, and is meaningful only under
+    /// [`IndirectionMode::SequenceRange`]; replacement routing returns `0` for it and the caller
+    /// leaves the inherited bound alone. Both are `0` above the level that resolves the lookup.
     ///
-    /// The entry is addressed by the *absolute* logical coordinate `origin[target] + index·edge`,
-    /// never by the region coordinate alone: below the top level a region coordinate is a
-    /// within-parent tile index, and addressing a table with one reads garbage.
-    pub(crate) fn displacement(
+    /// A replacement entry is addressed by the *absolute* logical coordinate
+    /// `origin[target] + index·edge`, never by the region coordinate alone: below the top level a
+    /// region coordinate is a within-parent tile index, and addressing a table with one reads
+    /// garbage. A sequence range reads no target coordinate at all; its pair of entries is
+    /// addressed by the accumulated index-axis base alone.
+    pub(crate) fn resolve(
         &self,
         region: &Region,
         origin: &Coords<i32>,
         #[comptime] space: Space,
-    ) -> i32 {
+    ) -> (i32, u32) {
         if comptime!(self.spec.fires_at(&space)) {
-            let target = comptime!(self.spec.target);
-            let edge = comptime!(space.partitioner().edge(target) as i32);
-            let granularity = comptime!(self.spec.granularity as i32).runtime();
-            let t = origin.at(comptime!(space.position(target))).fadd(
-                region
-                    .coord(target)
-                    .fcast::<i32>()
-                    .fmul(comptime!(edge).runtime()),
-            );
-            let entry = t.fdiv(granularity);
-            let base = self.advanced_base(region, space);
-            let found = self.table[base.fadd(entry.fcast::<u32>()).fcast::<usize>()];
-            found
-                .fcast::<i32>()
-                .fmul(granularity)
-                .fsub(entry.fmul(granularity))
+            match comptime!(self.spec.mode) {
+                IndirectionMode::Replace { granularity, .. } => {
+                    let target = comptime!(self.spec.target);
+                    let edge = comptime!(space.partitioner().edge(target) as i32);
+                    let granularity = comptime!(granularity as i32).runtime();
+                    let t = origin.at(comptime!(space.position(target))).fadd(
+                        region
+                            .coord(target)
+                            .fcast::<i32>()
+                            .fmul(comptime!(edge).runtime()),
+                    );
+                    let entry = t.fdiv(granularity);
+                    let base = self.advanced_base(region, space);
+                    let found = self.table[base.fadd(entry.fcast::<u32>()).fcast::<usize>()];
+                    (
+                        found
+                            .fcast::<i32>()
+                            .fmul(granularity)
+                            .fsub(entry.fmul(granularity)),
+                        0u32.runtime(),
+                    )
+                }
+                IndirectionMode::SequenceRange => {
+                    let base = self.advanced_base(region, space);
+                    // The end is the next entry, one *stride* along, which is what
+                    // `advanced_base` already scaled this base by. A literal `1` would agree
+                    // only for the dense table the host validates, and the host defers that
+                    // check when the sequence axis is dynamic.
+                    let stride = self.table_strides.at(0);
+                    let start = self.table[base.fcast::<usize>()];
+                    let end = self.table[base.fadd(stride).fcast::<usize>()];
+                    (start.fcast::<i32>(), end)
+                }
+            }
         } else {
-            0i32.runtime()
+            (0i32.runtime(), 0u32.runtime())
         }
     }
 }
@@ -1129,7 +1244,7 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// Which axes' region coordinates address this operand's index tensor; empty for an operand
+    /// Which axes' region coordinates address this operand's routing table; empty for an operand
     /// with no indirection. Comptime, and read by the staging plan
     /// ([`Space::walk_invariant`](crate::Space::walk_invariant)).
     pub(crate) fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {

@@ -11,15 +11,17 @@ use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Geometry, IndexPolicy, IndexedTileArgLaunch,
-    IndirectionSpec, Instruction, LoadMethod, PhysicalAxis, Projection, QuantTileArgLaunch,
-    Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    IndirectionMode, IndirectionSpec, Instruction, LoadMethod, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
 pub struct Set;
 /// Typestate marker: a required [`StridedTileSource`] field is still missing.
 pub struct Unset;
-/// Typestate marker: [`indexed`](StridedTileSource::indexed) was called, so
+/// Typestate marker: a routing method such as [`indexed`](StridedTileSource::indexed) or
+/// [`variable_length`](StridedTileSource::variable_length) was called, so
 /// [`build`](StridedTileSource::build) yields an [`IndexedOperand`].
 pub struct Indexed;
 
@@ -56,12 +58,11 @@ struct TileSourceData<'a, R: Runtime> {
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization<R>>,
-    /// Present when the operand is routed through an index tensor
-    /// ([`indexed`](StridedTileSource::indexed)).
+    /// Present when the operand is routed through a table.
     indirection: Option<IndexTable<R>>,
 }
 
-/// How an operand is routed: the index tensor beside its values and the comptime
+/// How an operand is routed: the table beside its values and the comptime
 /// [`IndirectionSpec`] saying what a table entry means. The launch-side twin of the kernel's
 /// [`Indirection`](crate::Indirection), and one thing for the same reason [`Quantization`] is: a
 /// table without a spec cannot be read, and a spec without a table has nothing to read.
@@ -75,9 +76,8 @@ pub struct IndexTable<R: Runtime> {
 /// markers make [`build`](Self::build) exist only once both required setters are [`Set`];
 /// `Sub` is satisfied by [`subspace`](Self::subspace), which labels the buffer's dims, or by
 /// [`gathered`](Self::gathered), which states the affine mapping outright;
-/// the `Q` marker records whether [`quantized`](Self::quantized) was called, so `build`
-/// returns a [`StridedOperand`] (plain) or a [`QuantOperand`] (quantized) and no call
-/// site ever probes an option.
+/// the `Q` marker records whether [`quantized`](Self::quantized) or a routing method was called,
+/// so `build` returns the corresponding operand type and no call site ever probes an option.
 pub struct StridedTileSource<'a, Sp, Sub, Q, R: Runtime> {
     data: TileSourceData<'a, R>,
     _state: PhantomData<(Sp, Sub, Q)>,
@@ -358,8 +358,30 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
         self.routed(table, spec)
     }
 
-    /// The half [`indexed`](Self::indexed) and [`paged`](Self::paged) share: only the spec they
-    /// hand over differs, and every rule below reads that spec rather than which one built it.
+    /// Address a variable-length sequence stored on a packed target axis. `cumulative_lengths`
+    /// is a dense rank-1 `u32` tensor of length `sequence_count + 1`; adjacent entries are the
+    /// physical start and exclusive end for one coordinate of `sequence_axis`.
+    ///
+    /// Unlike paging, the range lookup does not consume the logical target coordinate and may
+    /// resolve around a target tile of any size. It fires once the tiling isolates one sequence,
+    /// translates that tile's target origin, and masks reads or writes at the sequence end.
+    ///
+    /// The exclusive end *is* the mask, so the target axis always carries [`Boundary::Zero`] and
+    /// there is no policy to choose. [`build`](Self::build) refuses a
+    /// [`with_boundary`](Self::with_boundary) or [`checked`](Self::checked) that states anything
+    /// else rather than overriding it silently.
+    pub fn variable_length(
+        self,
+        cumulative_lengths: TensorBinding<R>,
+        sequence_axis: Axis,
+        target_axis: Axis,
+    ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
+        let spec = IndirectionSpec::variable_length(sequence_axis, target_axis);
+        self.routed(cumulative_lengths, spec)
+    }
+
+    /// The half every routing constructor shares: only the spec they hand over differs, and every
+    /// rule below reads that spec rather than which method built it.
     fn routed(
         mut self,
         table: TensorBinding<R>,
@@ -527,7 +549,7 @@ impl<R: Runtime> QuantOperand<R> {
     }
 }
 
-/// A built indirect operand: the values tensor and its spec, plus the index tensor and the
+/// A built indirect operand: the values tensor and its spec, plus the routing table and the
 /// comptime [`IndirectionSpec`] that routes it. [`StridedOperand`]'s twin.
 pub struct IndexedOperand<R: Runtime> {
     pub tensor: TensorArg<R>,
@@ -613,6 +635,24 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             None => labeled(&mut geometry, subspace, batch_axes, tiling),
         };
 
+        // A sequence range masks at its exclusive end, so `Boundary::Zero` on the target is the
+        // only mode that spells it. Refused rather than silently overridden: a caller who stated
+        // a mode is owed the news that this operand cannot honour it.
+        if let Some(spec) = indirection.as_ref().map(|table| &table.spec)
+            && spec.is_sequence_range()
+            && let Some(stated) = boundary
+            && stated != Some(Boundary::Zero)
+        {
+            let stated = match stated {
+                Some(mode) => format!("{mode:?}"),
+                None => "unchecked".to_string(),
+            };
+            panic!(
+                "StridedTileSource::variable_length: a sequence range masks at its exclusive end \
+                 and owes its target Boundary::Zero, but this operand states {stated}"
+            );
+        }
+
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
         let boundary = boundary.unwrap_or_else(|| match concrete {
             Some(concrete) => {
@@ -693,9 +733,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             .map(|pa| {
                 let axis = coords.physical_axis(pa).identity_axis();
                 match indirection_spec.filter(|spec| axis == Some(spec.target)) {
-                    Some(spec) => match spec.policy {
-                        IndexPolicy::Trusted => None,
-                        IndexPolicy::Checked => Some(boundary.unwrap_or(Boundary::Zero)),
+                    Some(spec) => match spec.mode {
+                        IndirectionMode::SequenceRange => Some(Boundary::Zero),
+                        IndirectionMode::Replace { policy, .. } => match policy {
+                            IndexPolicy::Trusted => None,
+                            IndexPolicy::Checked => Some(boundary.unwrap_or(Boundary::Zero)),
+                        },
                     },
                     None => boundary.filter(|_| !settled(pa)),
                 }
@@ -736,7 +779,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Some(indirection) = &indirection
             && let Some(concrete) = concrete.or_else(|| space.is_static().then_some(space))
         {
-            validate_index_table(indirection, concrete);
+            validate_indirection_table(indirection, concrete);
         }
         Realized {
             tensor: binding.map(|mut binding| {
@@ -755,43 +798,52 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
     }
 }
 
-/// Validate the host-visible part of an indirection's addressing contract before the index
-/// tensor reaches device code. Its leading dimensions enumerate fire-level tiles of the index
-/// axes. When the target has multiple entries, a final dimension enumerates them; singleton
-/// targets omit that dimension entirely. The whole table is dense row-major so its shape also
-/// proves that the largest computed offset is backed by storage.
-fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
+/// Validate the host-visible table shape before it reaches device code. Replacement tables use
+/// leading fire-level index dimensions and an optional trailing target-entry dimension. Sequence
+/// ranges use one cumulative-length vector with a final exclusive-end entry. Both forms are dense
+/// row-major so their shape also proves that the largest computed table offset is backed.
+fn validate_indirection_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
     let spec = &table.spec;
     if !spec
         .index_axes
         .iter()
         .all(|&a| space.contains(a) && !space.is_dynamic(a))
-        || !space.contains(spec.target)
-        || space.is_dynamic(spec.target)
+        || (!spec.is_sequence_range()
+            && (!space.contains(spec.target) || space.is_dynamic(spec.target)))
     {
         return;
     }
-    let mut fire = space.partitioner();
-    while fire.edge(spec.target) > spec.granularity {
-        fire = fire.next();
-    }
+    let expected_shape = match spec.mode {
+        IndirectionMode::SequenceRange => vec![space.extent(spec.index_axes[0]) + 1],
+        IndirectionMode::Replace { granularity, .. } => {
+            let fire = spec.fire_partitioner(space);
+            let mut shape = spec
+                .index_axes
+                .iter()
+                .map(|&axis| space.extent(axis).div_ceil(fire.edge(axis)))
+                .collect::<Vec<_>>();
+            let target_entries = space.extent(spec.target).div_ceil(granularity);
+            if target_entries > 1 {
+                shape.push(target_entries);
+            }
+            shape
+        }
+    };
 
-    let mut expected_shape = spec
-        .index_axes
-        .iter()
-        .map(|&axis| space.extent(axis).div_ceil(fire.edge(axis)))
-        .collect::<Vec<_>>();
-    let target_entries = space.extent(spec.target).div_ceil(spec.granularity);
-    if target_entries > 1 {
-        expected_shape.push(target_entries);
-    }
-
+    let shape_contract = match spec.mode {
+        IndirectionMode::Replace { .. } => {
+            "index table shape must have one leading dimension per index axis (one entry per \
+             fire-level tile), plus a trailing target-entry dimension when the target has more \
+             than one entry"
+        }
+        IndirectionMode::SequenceRange => {
+            "cumulative sequence lengths have shape [sequence_count + 1]"
+        }
+    };
     assert_eq!(
         table.table.shape(),
         expected_shape,
-        "StridedTileSource::indexed: index table shape must have one leading dimension per \
-         index axis (one entry per fire-level tile), plus a trailing target-entry dimension \
-         when the target has more than one entry"
+        "StridedTileSource: {shape_contract}"
     );
     let mut expected_strides = vec![0; expected_shape.len()];
     let mut stride = 1;
@@ -799,11 +851,20 @@ fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
         expected_strides[axis] = stride;
         stride *= expected_shape[axis];
     }
+    let stride_contract = match spec.mode {
+        IndirectionMode::Replace { .. } => {
+            "index table must be dense row-major; its target entries are addressed at unit stride \
+             and its shape must bound every computed table offset"
+        }
+        IndirectionMode::SequenceRange => {
+            "cumulative sequence lengths must be dense row-major so adjacent entries delimit one \
+             sequence"
+        }
+    };
     assert_eq!(
         table.table.strides(),
         expected_strides,
-        "StridedTileSource::indexed: the index table must be dense row-major; its target entries \
-         are addressed at unit stride and its shape must bound every computed table offset"
+        "StridedTileSource: {stride_contract}"
     );
 }
 
@@ -971,7 +1032,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
 }
 
 impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Indexed, R> {
-    /// Build the indirect operand: the plain derivation plus the index tensor that routes it.
+    /// Build the indirect operand: the plain derivation plus the table that routes it.
     pub fn build(self) -> IndexedOperand<R> {
         let Realized {
             tensor,
@@ -982,7 +1043,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Indexed, R> {
         } = self.realize();
         IndexedOperand {
             tensor: tensor.expect(
-                "StridedTileSource::build: an indexed operand is always bound; only a fused \
+                "StridedTileSource::build: an indirect operand is always bound; only a fused \
                  store is built over geometry alone",
             ),
             vector_size,
