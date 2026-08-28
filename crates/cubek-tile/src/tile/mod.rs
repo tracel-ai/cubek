@@ -509,28 +509,27 @@ impl IndirectionSpec {
             // so distribution below it cannot make the resolved pointer lane-divergent.
             let lookup_pending = !fires;
             let edge = partitioner.edge(self.target);
-            if fires {
-                // Below the fire level nothing may move: the child window is dense by
-                // construction and carries no indirection at all.
-            } else if edge <= self.granularity {
-                assert!(
-                    self.granularity.is_multiple_of(edge),
-                    "Indirection: a level cuts {:?} into {edge}-element windows, which do \
-                     not divide the {}-element table entry, so a child window would start \
-                     mid-entry",
-                    self.target,
-                    self.granularity
-                );
-                fires = true;
-            } else {
-                assert!(
-                    edge.is_multiple_of(self.granularity),
-                    "Indirection: a level above the lookup cuts {:?} into {edge}-element \
-                     windows, which are not whole {}-element table entries, so a window below \
-                     would straddle two",
-                    self.target,
-                    self.granularity
-                );
+            if !fires {
+                if edge <= self.granularity {
+                    assert!(
+                        self.granularity.is_multiple_of(edge),
+                        "Indirection: a level cuts {:?} into {edge}-element windows, which do \
+                         not divide the {}-element table entry, so a child window would start \
+                         mid-entry",
+                        self.target,
+                        self.granularity
+                    );
+                    fires = true;
+                } else {
+                    assert!(
+                        edge.is_multiple_of(self.granularity),
+                        "Indirection: a level above the lookup cuts {:?} into {edge}-element \
+                         windows, which are not whole {}-element table entries, so a window below \
+                         would straddle two",
+                        self.target,
+                        self.granularity
+                    );
+                }
             }
             if lookup_pending {
                 for &axis in self.index_axes.iter() {

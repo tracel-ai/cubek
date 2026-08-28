@@ -163,7 +163,7 @@ fn check_moe(moe: &Moe, residence: Residence, policy: IndexPolicy) {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    let launcher = space.launcher(&client);
+    let launcher = space.launcher_over(&client, &[M, N, K]);
     let a_operand = launcher.bind(&operands.0, a_t.binding()).build();
     let w_operand = launcher
         .bind(&operands.1, w_t.binding())
@@ -197,12 +197,7 @@ fn check_moe(moe: &Moe, residence: Residence, policy: IndexPolicy) {
     }
 }
 
-/// Two token tiles routed to two different experts, weights staged in shared memory.
-///
-/// This is the regression test for the staging rule: `w` spans `{EXPERT, K, N}` and the level
-/// steps `M`, so the old `walk_invariant` reported it invariant, filled the stage once above the
-/// loop, and contracted the second tile against the first tile's expert. Nothing asserted; the
-/// numbers were simply wrong.
+/// Verify staged weights refill when token tiles advance across different experts.
 #[test]
 fn a_staged_moe_refills_its_weights_per_token_tile() {
     check_moe(
@@ -219,9 +214,7 @@ fn a_staged_moe_refills_its_weights_per_token_tile() {
     );
 }
 
-/// The same shape read where it lies: nothing is staged, so every read re-resolves the lookup
-/// and this passes with or without the staging fix. Here to localize a failure of the test above
-/// to the staging plan rather than to the addressing.
+/// In-place weights reading the routed expert directly without staging.
 #[test]
 fn an_in_place_moe_reads_the_routed_expert() {
     check_moe(
@@ -238,9 +231,7 @@ fn an_in_place_moe_reads_the_routed_expert() {
     );
 }
 
-/// A routing that is neither the identity nor a reversal, over more tiles than experts: an
-/// off-by-one in the table base, or a base read off the window instead of the region, lands on a
-/// neighbouring expert and shows up here rather than cancelling.
+/// Arbitrary shuffled routing across more tiles than experts.
 #[test]
 fn a_shuffled_routing_reads_every_expert_it_names() {
     check_moe(
@@ -257,8 +248,7 @@ fn a_shuffled_routing_reads_every_expert_it_names() {
     );
 }
 
-/// Several token tiles sharing one expert, which is what a sorted MoE dispatch actually produces.
-/// The window must land on the same slab each time without the repeats folding into one fill.
+/// Several token tiles sharing one expert in a sorted MoE dispatch.
 #[test]
 fn consecutive_tiles_may_share_an_expert() {
     check_moe(
@@ -275,10 +265,7 @@ fn consecutive_tiles_may_share_an_expert() {
     );
 }
 
-/// `IndexPolicy::Checked` masks an entry past the target axis's bound, including when the operand
-/// is built through `Launcher` and ordinary tiling proves the target itself does not overhang.
-/// The displaced window sits outside the weights, so the reads zero and the tile contracts to
-/// nothing rather than reading a neighbouring expert's memory.
+/// Checked policy masks out-of-range expert IDs to zero.
 #[test]
 fn a_checked_entry_past_the_bound_reads_as_zero() {
     check_moe(
@@ -303,7 +290,7 @@ fn checked_policy_arms_its_own_target_boundary() {
     let (client, w, ids) = refusal_fixture();
     let space = refusal_space(1);
     let operand = space
-        .launcher(&client)
+        .launcher_over(&client, &[K, N])
         .arg(w)
         .subspace(&[EXPERT, K, N])
         .indexed(ids, M, EXPERT, IndexPolicy::Checked)
@@ -627,15 +614,3 @@ fn a_gathered_operand_is_refused() {
         .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
 }
-
-// Quantization and indirection both read from the window origin, and the lookup moves it, so the
-// two may not meet. That refusal has no test because it is not a runtime one: `quantized` and
-// `indexed` both live on the builder's `Q = Unset` impl, so either call consumes the typestate
-// the other needs and neither order compiles.
-
-// The last rule of `IndirectionSpec::validate` — that the *operation*'s region spans each index
-// axis — has no test here. Which operands meet at a level is only known once the walk builds the
-// merged space, so the check lives in `Indirection::advanced_base` as a comptime assert, and a
-// comptime assert inside a kernel fires on a worker thread, where `#[should_panic]` never sees it
-// and the launch merely returns zeros (the same reason `blocked.rs` and `packed.rs` unit-test
-// their kernel-side refusals host-side instead).

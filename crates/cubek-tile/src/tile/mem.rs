@@ -390,7 +390,7 @@ impl<T: Numeric> Tile<T> {
     /// weights operand does not span `M` at all.
     ///
     /// The operand stays direct and untiled, so every dense, cmma and straight-fill path still
-    /// describes it. Two things the caller owns:
+    /// describes it. Caller contracts:
     ///
     /// - The tile does not [`witness`](Tile::witnesses) the target axis. Its bound is the index
     ///   tensor's range, not the operation's extent, so the kernel space states that axis itself.
@@ -2226,14 +2226,9 @@ impl<T: Numeric> MemData<T> {
         let last = comptime!(rank - 1);
         let w = comptime!(self.store.vector_size);
 
-        // A pending indirection resolves at exactly one level, the first whose cut of the target
-        // axis lies inside one table entry. Above it only the table base moves; at it the origin
-        // takes the displacement on both address routes and the child carries no indirection at
-        // all, so nothing can displace twice.
-        // Resolve the comptime state once. At the fire level the displacement and its physical
-        // axis travel together, while the child drops the carrier; above it only the table base
-        // advances. Keeping these three outcomes in one match makes that single-fire invariant
-        // explicit.
+        // A pending indirection resolves once at the fire level (where target edge <= granularity).
+        // At resolution, the displacement applies on both address routes and the child drops the
+        // carrier; above it, only the table base advances.
         let (displacement, indirection, displaced_at) = #[comptime]
         match &self.indirection {
             ComptimeOption::Some(ind) => {
