@@ -42,19 +42,17 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
         let a = comptime!(self.a.as_f32());
         let x = self.coordinate.evaluate(coordinates).abs();
         let x2 = x * x;
+        // (a + 2)x^3 - (a + 3)x^2 + 1, the x^2 factored out so the constant term costs no step.
         let first = fma(
-            fma(T::new(comptime!(a + 2.0)), x, T::new(comptime!(-(a + 3.0)))),
+            fma(T::new(a + 2.0), x, T::new(-(a + 3.0))),
             x2,
             T::new(1.0_f32),
         );
+        // a*x^3 - 5a*x^2 + 8a*x - 4a
         let second = fma(
-            fma(
-                fma(T::new(comptime!(a)), x, T::new(comptime!(-5.0 * a))),
-                x,
-                T::new(comptime!(8.0 * a)),
-            ),
+            fma(fma(T::new(a), x, T::new(-5.0 * a)), x, T::new(8.0 * a)),
             x,
-            T::new(comptime!(-4.0 * a)),
+            T::new(-4.0 * a),
         );
         select(
             x <= T::new(1.0_f32),
