@@ -13,6 +13,7 @@
 use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
+use half::f16;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -880,6 +881,116 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         ),
         space,
         dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| a[m * depth + k] * b[k * cols + n] * s[n / inside])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// [`wide_scaled_matmul`] with the scales at their own element type as well as their own width.
+#[cube(launch)]
+fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, S, SW>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+}
+
+/// **A scale is whatever its tensor holds, however many of them a read serves.** `f16` scales
+/// against `f32` values, four to a line: the element type is the binding's and the width is the
+/// binding's, and neither is the values'.
+#[test]
+fn scales_keep_their_own_element_when_served_as_lines() {
+    let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
+    let cols = blocks * inside;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let scale_dtype = f16::elem_type_native();
+    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Halves, exact in f16 and in f32 alike.
+    let s: Vec<f32> = (0..blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let (b_t, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(b.clone())
+        .generate_with_f32_host_data();
+    let (s_t, _) = TestInput::builder(client.clone(), shape![blocks])
+        .dtype(scale_dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(rows))
+                .axis(NB, Cut::sequential(blocks))
+                .axis(NI, Cut::sequential(inside))
+                .axis(K, Cut::sequential(depth))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    wide_typed_scaled_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        lanes,
+        TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(
+            b_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[K, NB, NI],
+                &[
+                    PhysicalAxisMap::of(K),
+                    PhysicalAxisMap::disjoint(&[(NB, inside), (NI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(&[K, NB], &[PhysicalAxisMap::of(NB)])),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, inside), (NI, 1)]),
+                ],
+            )),
+        ),
+        space,
+        [dtype, scale_dtype],
     );
 
     let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
