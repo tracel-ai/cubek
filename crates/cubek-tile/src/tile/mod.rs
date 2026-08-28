@@ -582,26 +582,46 @@ impl IndirectionSpec {
     pub(crate) fn fires_at(&self, space: &Space) -> bool {
         space.partitioner().edge(self.target) <= self.granularity
     }
+
+    /// Number of table tiles represented by one coordinate step at `space` for `axis`.
+    /// Table coordinates name the tiles at the level where the lookup fires, while a region
+    /// coordinate is local to its current parent. An outer coordinate therefore has to be
+    /// scaled by the number of fire-level tiles below it.
+    fn descendant_table_tiles(&self, space: &Space, axis: Axis) -> usize {
+        let current_edge = space.partitioner().edge(axis);
+        let mut partitioner = space.partitioner();
+        while partitioner.edge(self.target) > self.granularity {
+            partitioner = partitioner.next();
+        }
+        let table_tile_edge = partitioner.edge(axis);
+        comptime!(assert!(
+            current_edge.is_multiple_of(table_tile_edge),
+            "Indirection: the {current_edge}-element tile on {axis:?} does not contain a whole \
+             number of {table_tile_edge}-element table tiles"
+        ));
+        current_edge / table_tile_edge
+    }
 }
 
 #[cube]
 impl Indirection {
     /// This indirection with its table base advanced by `region`'s index-axis coordinates, for the
     /// child of a level that does not yet resolve it.
-    pub(crate) fn advance(&self, region: &Region) -> Indirection {
+    pub(crate) fn advance(&self, region: &Region, #[comptime] space: Space) -> Indirection {
         Indirection {
             table: unsafe { self.table.as_boxed_unchecked() },
-            table_base: self.advanced_base(region),
+            table_base: self.advanced_base(region, space),
             table_strides: self.table_strides.clone(),
             spec: comptime!(self.spec.clone()),
         }
     }
 
-    /// The table offset this level reaches: the parent's, plus each index axis's region
-    /// coordinate times its stride. Read off the *region*, whose space is the operation's, not off
-    /// the window: an indirect operand need not span its index axes at all, which is the whole
-    /// point for MoE (the weights are routed by the token tile they never span).
-    fn advanced_base(&self, region: &Region) -> u32 {
+    /// The table offset this level reaches: the parent's, plus each index axis's local region
+    /// coordinate converted to fire-level tile units and multiplied by its tensor stride. Read
+    /// off the *region*, whose space is the operation's, not off the window: an indirect operand
+    /// need not span its index axes at all, which is the whole point for MoE (the weights are
+    /// routed by the token tile they never span).
+    fn advanced_base(&self, region: &Region, #[comptime] space: Space) -> u32 {
         let mut parts = Sequence::<u32>::new();
         parts.push(self.table_base);
         #[unroll]
@@ -617,6 +637,9 @@ impl Indirection {
                 region
                     .coord(axis)
                     .fcast::<u32>()
+                    .fmul(
+                        comptime!(self.spec.descendant_table_tiles(&space, axis) as u32).runtime(),
+                    )
                     .fmul(self.table_strides.at(a)),
             );
         }
@@ -648,7 +671,7 @@ impl Indirection {
                     .fmul(comptime!(edge).runtime()),
             );
             let entry = t.fdiv(granularity);
-            let base = self.advanced_base(region);
+            let base = self.advanced_base(region, space);
             let found = self.table[base.fadd(entry.fcast::<u32>()).fcast::<usize>()];
             found
                 .fcast::<i32>()

@@ -7,6 +7,7 @@
 //! at all. Every test here turns on that asymmetry: the routing varies over a walk the operand's
 //! own space says nothing about.
 
+use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{
     Runtime, TestRuntime, client::ComputeClient, prelude::*, std::tensor::TensorHandle,
     zspace::shape,
@@ -34,6 +35,44 @@ fn moe_matmul<E: Numeric>(
     let w = w.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.mm(&a, &w, Semiring::SUM_PROD);
+}
+
+/// Copy a routed target slice into an output that also spans the index axis. This makes both the
+/// index coordinate and the target entry observable without involving contraction semantics.
+#[cube(launch)]
+fn nested_indexed_copy<E: Numeric>(
+    input: &IndexedTileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let output = output.tile(comptime!(space.clone()));
+    for outer_region in Walk::over(output.runtime_space()) {
+        let outer_input = input.at(&outer_region);
+        let outer_output = output.at(&outer_region);
+        for inner_region in Walk::over(outer_output.runtime_space()) {
+            let inner_input = outer_input.at(&inner_region);
+            let mut inner_output = outer_output.at(&inner_region);
+            let source = inner_input.view::<Const<1>>();
+            let mut destination = inner_output.view_mut::<Const<1>>();
+            let source_shape = source.shape();
+            let destination_shape = destination.shape();
+            for m in 0..destination_shape[0] {
+                for target in 0..source_shape[0] {
+                    for n in 0..source_shape[1] {
+                        let mut source_pos = CoordsDyn::new();
+                        source_pos.push(target);
+                        source_pos.push(n);
+                        let mut destination_pos = CoordsDyn::new();
+                        destination_pos.push(m);
+                        destination_pos.push(target);
+                        destination_pos.push(n);
+                        destination.write(destination_pos, source.read(source_pos));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// One `[experts, k, n]` weight tensor, one `[m, k]` activation tensor, and a routing that hands
@@ -122,25 +161,24 @@ fn check_moe(moe: &Moe, residence: Residence, policy: IndexPolicy) {
 
     let mut weights = Operand::new(&[EXPERT, K, N], dtype);
     weights.stage(residence);
-    let w_operand = StridedOperand::source(w_t.binding())
-        .space(&space)
-        .subspace(&[EXPERT, K, N])
-        .operand(&weights)
+    let launcher = space.launcher_over(&client, &[]);
+    let w_operand = launcher
+        .bind(&weights, w_t.binding())
         .checked(policy == IndexPolicy::Checked)
         .indexed(ids_t.binding(), M, EXPERT, policy)
         .build();
 
     moe_matmul::launch::<TestRuntime>(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         w_operand.arg(),
         TileArgLaunch::new(
             c_t.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space().clone(),
         dtype,
     );
 
@@ -237,9 +275,10 @@ fn consecutive_tiles_may_share_an_expert() {
     );
 }
 
-/// `IndexPolicy::Checked` masks an entry past the target axis's bound: the displaced window sits
-/// outside the weights, so the reads zero and the tile contracts to nothing rather than reading a
-/// neighbouring expert's memory.
+/// `IndexPolicy::Checked` masks an entry past the target axis's bound, including when the operand
+/// is built through `Launcher` and ordinary tiling proves the target itself does not overhang.
+/// The displaced window sits outside the weights, so the reads zero and the tile contracts to
+/// nothing rather than reading a neighbouring expert's memory.
 #[test]
 fn a_checked_entry_past_the_bound_reads_as_zero() {
     check_moe(
@@ -255,6 +294,86 @@ fn a_checked_entry_past_the_bound_reads_as_zero() {
         Residence::Smem,
         IndexPolicy::Checked,
     );
+}
+
+/// Both `M` and the displaced target are cut at two levels. The outer `M` coordinate must be
+/// scaled by its two descendant table tiles: without that scale, rows 2 and 3 alias rows 1 and 2.
+#[test]
+fn nested_tiling_addresses_absolute_index_table_tiles() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let source_targets = 8;
+    let m = 16;
+    let logical_targets = 4;
+    let n = 2;
+
+    let values = (0..source_targets * n)
+        .map(|i| (100 * (i / n) + i % n) as f32)
+        .collect::<Vec<_>>();
+    let routing = vec![
+        6, 2, 7, 1, // M tile 0
+        0, 5, 3, 4, // M tile 1
+        7, 6, 1, 0, // M tile 2
+        2, 4, 5, 3, // M tile 3
+    ];
+    let (values_t, _) = TestInput::builder(client.clone(), shape![source_targets, n])
+        .dtype(dtype)
+        .custom(values.clone())
+        .generate_with_f32_host_data();
+    let ids_t = TestInput::builder(client.clone(), shape![m / 4, logical_targets])
+        .dtype(u32::elem_type_native())
+        .custom(routing.iter().map(|&i| i as f32).collect())
+        .generate_without_host_data();
+    let output_t = TestInput::builder(client.clone(), shape![m, logical_targets, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (EXPERT, logical_targets), (N, n)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(8))
+                .axis(EXPERT, Cut::sequential(2))
+                .axis(N, Cut::sequential(n))
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+                .axis(N, Cut::sequential(n))
+        })
+        .build();
+    let input = StridedOperand::source(values_t.binding())
+        .space(&space)
+        .subspace(&[EXPERT, N])
+        .checked(false)
+        .indexed(ids_t.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+
+    nested_indexed_copy::launch::<f32, TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        input.arg(),
+        TileArgLaunch::new(
+            output_t.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, EXPERT, N]),
+        ),
+        space,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output_t, HostDataType::F32);
+    for row in 0..m {
+        for target in 0..logical_targets {
+            let routed = routing[(row / 4) * logical_targets + target];
+            for col in 0..n {
+                assert_eq!(
+                    got.get_f32(&[row, target, col]),
+                    values[routed * n + col],
+                    "wrong routed value at ({row}, {target}, {col})"
+                );
+            }
+        }
+    }
 }
 
 // ---- construction-time refusals --------------------------------------------
@@ -305,6 +424,61 @@ fn build_indexed(subspace: &[Axis], index: Axis, target: Axis, expert_edge: usiz
 #[test]
 fn a_well_formed_indirection_builds() {
     build_indexed(&[EXPERT, K, N], M, EXPERT, 1);
+}
+
+/// The index table is read without a device-side bounds check, so the builder must reject a
+/// table that cannot cover every fire-level index tile.
+#[test]
+#[should_panic(expected = "index table shape must have one leading dimension per index axis")]
+fn a_short_index_table_is_refused() {
+    let (client, w, _) = refusal_fixture();
+    let ids = TestInput::builder(client.clone(), shape![1])
+        .dtype(u32::elem_type_native())
+        .zeros()
+        .generate_without_host_data();
+    let space = refusal_space(1);
+    let _ = StridedOperand::source(w.binding())
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .checked(false)
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+}
+
+/// A singleton target has no trailing target-entry dimension. Refusing an extra dimension keeps
+/// the table rank contract explicit instead of silently accepting a layout the kernel ignores.
+#[test]
+#[should_panic(expected = "index table shape must have one leading dimension per index axis")]
+fn an_unexpected_index_table_rank_is_refused() {
+    let (client, w, _) = refusal_fixture();
+    let ids = TestInput::builder(client.clone(), shape![2, 1])
+        .dtype(u32::elem_type_native())
+        .zeros()
+        .generate_without_host_data();
+    let space = refusal_space(1);
+    let _ = StridedOperand::source(w.binding())
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .checked(false)
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+}
+
+/// Shape alone cannot bound a strided tensor's largest offset. Requiring a dense row-major table
+/// prevents a short backing allocation with padded strides from becoming an out-of-bounds read.
+#[test]
+#[should_panic(expected = "index table must be dense row-major")]
+fn an_index_table_with_padded_strides_is_refused() {
+    let (_, w, ids) = refusal_fixture();
+    let mut ids = ids.binding();
+    ids.strides = vec![2].into();
+    let space = refusal_space(1);
+    let _ = StridedOperand::source(w.binding())
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .checked(false)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
+        .build();
 }
 
 /// An operand that does not span its target axis has no window origin for the entry to displace.

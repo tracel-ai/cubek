@@ -383,9 +383,9 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) with one axis's window origin resolved through an index tensor: `ids`
-    /// holds one `u32` entry per tile of `indirection.index_axes`, and the descent places the
-    /// operand's `indirection.target` window at the entry it reads ([`Indirection`]). MoE expert
-    /// routing is exactly this: `values` is `[num_experts, K, N]` with `EXPERT` held at
+    /// holds one `u32` entry per fire-level tile of `indirection.index_axes`, and the descent
+    /// places the operand's `indirection.target` window at the entry it reads ([`Indirection`]).
+    /// MoE expert routing is exactly this: `values` is `[num_experts, K, N]` with `EXPERT` held at
     /// [`Static(1)`](crate::Extent::Static) in the kernel space, `ids` is `[m_tiles]`, and the
     /// weights operand does not span `M` at all.
     ///
@@ -2236,7 +2236,7 @@ impl<T: Numeric> MemData<T> {
                 if comptime!(ind.spec.fires_at(&space)) {
                     ComptimeOption::new_None()
                 } else {
-                    ComptimeOption::new_Some(ind.advance(region))
+                    ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone())))
                 }
             }
             ComptimeOption::None => ComptimeOption::new_None(),

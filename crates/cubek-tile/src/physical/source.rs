@@ -311,9 +311,9 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
         }
     }
 
-    /// Route this operand through `table`: one `u32` entry per tile of `index_axis`, displacing
-    /// `target_axis`'s window origin to the entry it reads. MoE expert selection is exactly this
-    /// (`index_axis = M`, `target_axis = EXPERT`, the weights holding `EXPERT` at
+    /// Route this operand through `table`: one `u32` entry per fire-level tile of `index_axis`,
+    /// displacing `target_axis`'s window origin to the entry it reads. MoE expert selection is
+    /// exactly this (`index_axis = M`, `target_axis = EXPERT`, the weights holding `EXPERT` at
     /// [`Static(1)`](crate::Extent::Static)), and so is a `cu_seqlens` base offset.
     ///
     /// The indirection is a side-channel, not a mapping: the operand stays
@@ -614,12 +614,16 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // reaches further than any axis extent describes, and how far is the caller's to size the
         // buffer for, which is the trust the derivation above already runs on; no proof here can
         // retire its policy.
+        // A routed origin comes from data, so divisibility of the ordinary tiled coordinate says
+        // nothing about whether that window remains inside the values tensor.
+        let indirection_target = indirection.as_ref().map(|table| table.spec.target);
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
             // that same silence to drop one.
             Some(axis) => {
-                concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
+                indirection_target != Some(axis)
+                    && concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
             }
             None => false,
         };
@@ -681,6 +685,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             indirection
                 .spec
                 .validate(space, &space.project(spec.axes()), &spec.projection);
+            validate_index_table(indirection, concrete.unwrap_or(space));
         }
         Realized {
             tensor: binding.map(|mut binding| {
@@ -697,6 +702,49 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             indirection,
         }
     }
+}
+
+/// Validate the host-visible part of an indirection's addressing contract before the index
+/// tensor reaches device code. Its leading dimensions enumerate fire-level tiles of the index
+/// axes. When the target has multiple entries, a final dimension enumerates them; singleton
+/// targets omit that dimension entirely. The whole table is dense row-major so its shape also
+/// proves that the largest computed offset is backed by storage.
+fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
+    let spec = &table.spec;
+    let mut fire = space.partitioner();
+    while fire.edge(spec.target) > spec.granularity {
+        fire = fire.next();
+    }
+
+    let mut expected_shape = spec
+        .index_axes
+        .iter()
+        .map(|&axis| space.extent(axis).div_ceil(fire.edge(axis)))
+        .collect::<Vec<_>>();
+    let target_entries = space.extent(spec.target).div_ceil(spec.granularity);
+    if target_entries > 1 {
+        expected_shape.push(target_entries);
+    }
+
+    assert_eq!(
+        table.table.shape(),
+        expected_shape,
+        "StridedTileSource::indexed: index table shape must have one leading dimension per \
+         index axis (one entry per fire-level tile), plus a trailing target-entry dimension \
+         when the target has more than one entry"
+    );
+    let mut expected_strides = vec![0; expected_shape.len()];
+    let mut stride = 1;
+    for axis in (0..expected_shape.len()).rev() {
+        expected_strides[axis] = stride;
+        stride *= expected_shape[axis];
+    }
+    assert_eq!(
+        table.table.strides(),
+        expected_strides,
+        "StridedTileSource::indexed: the index table must be dense row-major; its target entries \
+         are addressed at unit stride and its shape must bound every computed table offset"
+    );
 }
 
 /// Derives a [`Projection`] from labeled subspace and batch axes.
