@@ -119,6 +119,23 @@ impl ContractShape {
         }
     }
 
+    /// The accumulator's column axes with their extents.
+    pub fn column_edge(&self) -> Vec<(Axis, usize)> {
+        (self.acc_axes.col_split..self.space.rank())
+            .map(|p| (self.space.axis_at(p), self.space.extent_at(p)))
+            .collect()
+    }
+
+    /// The contracted axes with theirs, which the accumulator cannot size: a contracted axis is by
+    /// definition absent from it, so the extents come off the operands' merged space.
+    pub fn reduce_edge(&self) -> Vec<(Axis, usize)> {
+        self.reduce
+            .iter()
+            .copied()
+            .zip(self.reduce_extents.iter().copied())
+            .collect()
+    }
+
     /// The accumulator's batch axes: everything above the row edge.
     pub fn batch_extents(&self) -> Vec<usize> {
         (0..self.acc_axes.row_split)

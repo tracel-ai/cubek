@@ -808,6 +808,26 @@ impl<T: Numeric> Tile<T> {
     /// Spanning an axis and having to supply it are therefore separate questions: an operation
     /// sizes each `Dynamic` axis from whichever of its operands witnesses it and lets the others
     /// pass ([`witnessed_space`]).
+    /// The axes of `walk` this tile is constant along, so that one read of it serves every
+    /// position of all of them at once.
+    ///
+    /// Two spellings, one fact. An axis the tile's own space does not span it cannot vary over at
+    /// all; an axis it spans but whose projection addresses nothing it cannot vary over either.
+    /// Both say the same thing — the operand distinguishes nothing there — and a consumer that
+    /// wants to know how far out of a nest a read lifts wants both.
+    ///
+    /// The [gathered nest](crate::FactorReuse) asks this of a procedural factor through its
+    /// recipe, which reads its own axes rather than addressing them. Same question, and the answer
+    /// means the same thing: the scope over which the value holds.
+    pub(crate) fn invariant_over(&self, #[comptime] walk: Space) -> comptime_type!(Vec<Axis>) {
+        let projection = self.projection();
+        comptime!(
+            walk.axes()
+                .filter(|axis| !self.space.contains(*axis) || !projection.addresses(*axis))
+                .collect::<Vec<_>>()
+        )
+    }
+
     pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();

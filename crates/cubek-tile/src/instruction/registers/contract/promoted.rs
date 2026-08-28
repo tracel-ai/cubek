@@ -147,22 +147,38 @@ impl<T: Numeric> RegisterData<T> {
         let side = comptime!(scale_side(&scales.space, &out, acc_axes));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
-        // The scales share the values' row edge and count their columns in blocks: their own
-        // innermost extent says how many, and `per_scale` how many values each covers.
+        // The scales share one edge with the values: the contraction where the lhs carries them,
+        // the accumulator's columns otherwise. `value_width` is the width that edge is served at.
+        let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
         let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
-        let (scales_axes, per_scale, value_width) = comptime!(match side {
+        let (scales_axes, edge, value_width) = comptime!(match side {
             ScaleSide::Lhs => (
                 MatrixAxes::of(&scales.space, mr, scale_cols),
-                kc / scale_cols,
+                operands
+                    .contracting(&out)
+                    .iter()
+                    .map(|&axis| (axis, operands.extent(axis)))
+                    .collect::<Vec<_>>(),
                 lw
             ),
             ScaleSide::Rhs => (
                 MatrixAxes::of(&scales.space, kc, scale_cols),
-                cols / scale_cols,
+                (acc_axes.col_split..out.rank())
+                    .map(|p| (out.axis_at(p), out.extent_at(p)))
+                    .collect::<Vec<_>>(),
                 vw
             ),
         });
-        let lines_per_scale = comptime!(per_scale / value_width);
+        // How many value lines share one scale, read off the axes rather than divided out of the
+        // extents: the scale is constant along the edge axes it does not distinguish.
+        let invariant = scales.invariant_over(comptime!(operands.clone()));
+        let lines_per_scale = comptime!(
+            edge.iter()
+                .filter(|(axis, _)| invariant.contains(axis))
+                .map(|(_, extent)| *extent)
+                .product::<usize>()
+                / value_width
+        );
         // The block walks its columns under a constant ordinal, which a scale line wider than one
         // scale needs; the lhs's columns are the contraction, whose step is a runtime index.
         comptime!(assert!(

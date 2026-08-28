@@ -42,6 +42,12 @@ pub(super) enum RhsRole {
 }
 
 /// The accumulator scope at which one factor's complete tap walk is computed and cached.
+///
+/// The same question a memory-backed operand answers through
+/// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones a
+/// single read of it serves, and so how far out of the nest that read lifts. A factor answers it
+/// through its recipe rather than a projection, because it reads its axes instead of addressing
+/// them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum FactorReuse {
     /// Once for the entire accumulator block.
@@ -52,6 +58,18 @@ pub(super) enum FactorReuse {
     Column,
     /// Once for each accumulator cell.
     Cell,
+}
+
+impl FactorReuse {
+    /// The scope a factor varying over these two axes can be cached at.
+    pub(super) fn of(varies_row: bool, varies_col: bool) -> Self {
+        match (varies_row, varies_col) {
+            (false, false) => FactorReuse::Block,
+            (true, false) => FactorReuse::Row,
+            (false, true) => FactorReuse::Column,
+            (true, true) => FactorReuse::Cell,
+        }
+    }
 }
 
 /// The gather-specific half of a contraction's comptime geometry, over the
@@ -164,12 +182,7 @@ impl GatherProblem {
                             varies_col |=
                                 masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, col);
                         }
-                        match (varies_row, varies_col) {
-                            (false, false) => FactorReuse::Block,
-                            (true, false) => FactorReuse::Row,
-                            (false, true) => FactorReuse::Column,
-                            (true, true) => FactorReuse::Cell,
-                        }
+                        FactorReuse::of(varies_row, varies_col)
                     })
                     .collect()
             }

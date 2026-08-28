@@ -345,29 +345,40 @@ fn nest_scaled<
 
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
-    // The scales share the values' *column* edge and count it in blocks: their own innermost
-    // extent says how many, `per_scale` how many values each covers, and `value_width` the width
-    // that edge is served at. Which axis the edge is depends on the step, the same way the rhs's
-    // own matrix does.
+    // The scales share one edge with the values: the contraction where a folded step or the lhs
+    // carries them, the accumulator's columns otherwise. `value_width` is the width that edge is
+    // served at, and each axis is paired with its extent because a contracted one is not the
+    // accumulator's to size.
     let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
-    let (scales_axes, per_scale, value_width) = comptime!(match (side, contracted_per_step > 1) {
+    let (scales_axes, edge, value_width) = comptime!(match (side, contracted_per_step > 1) {
         (ScaleSide::Lhs, _) => (
             MatrixAxes::of(&scales.space, mr, scale_cols),
-            kc / scale_cols,
+            shape.reduce_edge(),
             lw
         ),
         (ScaleSide::Rhs, false) => (
             MatrixAxes::of(&scales.space, kc, scale_cols),
-            cols / scale_cols,
+            shape.column_edge(),
             aw
         ),
         (ScaleSide::Rhs, true) => (
             MatrixAxes::of(&scales.space, cols, scale_cols),
-            kc / scale_cols,
+            shape.reduce_edge(),
             contracted_per_step
         ),
     });
-    let lines_per_scale = comptime!(per_scale / value_width);
+    // How many value lines share one scale, read off the axes rather than divided out of the
+    // extents: the scale is constant along the edge axes it does not distinguish, so one read of
+    // it serves every position of them.
+    let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+    let invariant = scales.invariant_over(operands);
+    let lines_per_scale = comptime!(
+        edge.iter()
+            .filter(|(axis, _)| invariant.contains(axis))
+            .map(|(_, extent)| *extent)
+            .product::<usize>()
+            / value_width
+    );
     // A scale line wider than one scale needs each value line's ordinal along the shared edge as a
     // constant. The rhs's columns are walked under one at a step; the lhs's are the contraction,
     comptime!(assert!(
