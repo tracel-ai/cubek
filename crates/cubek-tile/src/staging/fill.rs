@@ -66,14 +66,14 @@ impl SlotPlan {
              materialize it at a level above instead"
         );
         for op in operands {
-            if op.residence != Residence::InPlace {
-                if let Some(ind) = &op.indirection {
-                    assert!(
-                        ind.fires_at(op_space),
-                        "Staging: an indirect operand cannot be staged above the level where its \
-                         lookup resolves; stage it at or below the fire level instead"
-                    );
-                }
+            if op.residence != Residence::InPlace
+                && let Some(ind) = &op.indirection
+            {
+                assert!(
+                    ind.fires_at(op_space),
+                    "Staging: an indirect operand cannot be staged above the level where its \
+                     lookup resolves; stage it at or below the fire level instead"
+                );
             }
         }
         let residences: Vec<_> = operands.iter().map(|op| op.residence).collect();
@@ -877,5 +877,42 @@ mod tests {
             SlotPayload::Windowed(WindowMode::Streamed)
         );
         assert_eq!(plan.sync(), Sync::Barrier);
+    }
+
+    /// Staging above the fire level would fill from the undisplaced window, and the stage it
+    /// builds is dense and carries no indirection for the descent below to resolve. Refused here
+    /// rather than read as the wrong expert: `IndirectionSpec::validate` accepts this space, since
+    /// the second level does resolve the lookup.
+    #[test]
+    #[should_panic(expected = "cannot be staged above the level where its lookup resolves")]
+    fn an_indirect_operand_staged_above_its_fire_level_is_refused() {
+        const EXPERT: Axis = Axis(3);
+        // Level 0 still spans both experts, so the lookup resolves at level 1.
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 2)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(2))
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(1))
+            })
+            .build();
+        let weights = space.project(&[EXPERT, K, N]);
+        SlotPlan::new(
+            &[SlotOperand::new(
+                Residence::Smem,
+                StageSource::Transport(Delivery::Copy),
+                &weights,
+                SmallVec::from_slice(&[M]),
+                Some(IndirectionSpec::indexed(M, EXPERT, IndexPolicy::Trusted)),
+            )],
+            &space,
+        );
     }
 }

@@ -606,9 +606,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             // On the caller's thread, so a plan whose lookup never fires (or fires at a level
             // that splits a table entry) fails with a host backtrace rather than as zeroed
             // output from a device assert. `Tile::of_indexed` re-runs it for hand-built specs.
-            indirection
-                .spec
-                .validate(space, &space.project(projection.logical_axes()), &projection);
+            indirection.spec.validate(
+                space,
+                &space.project(projection.logical_axes()),
+                &projection,
+            );
         }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
@@ -699,10 +701,10 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             );
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
-        if let Some(indirection) = &indirection {
-            if let Some(concrete) = concrete.or_else(|| space.is_static().then_some(space)) {
-                validate_index_table(indirection, concrete);
-            }
+        if let Some(indirection) = &indirection
+            && let Some(concrete) = concrete.or_else(|| space.is_static().then_some(space))
+        {
+            validate_index_table(indirection, concrete);
         }
         Realized {
             tensor: binding.map(|mut binding| {
@@ -728,7 +730,10 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 /// proves that the largest computed offset is backed by storage.
 fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
     let spec = &table.spec;
-    if !spec.index_axes.iter().all(|&a| space.contains(a) && !space.is_dynamic(a))
+    if !spec
+        .index_axes
+        .iter()
+        .all(|&a| space.contains(a) && !space.is_dynamic(a))
         || !space.contains(spec.target)
         || space.is_dynamic(spec.target)
     {

@@ -550,7 +550,7 @@ fn a_target_axis_the_operand_omits_is_refused() {
 /// The innermost axis's window is addressed in lines, not elements, so a displacement there has
 /// no line to land on.
 #[test]
-#[should_panic(expected = "innermost axis")]
+#[should_panic(expected = "has no line to land on")]
 fn displacing_the_innermost_axis_is_refused() {
     build_indexed(&[EXPERT, K, N], M, N, 1);
 }
@@ -558,7 +558,7 @@ fn displacing_the_innermost_axis_is_refused() {
 /// Naming the innermost axis with `checked(true)` and `v > 1` must trip the innermost axis
 /// refusal rather than the vectorization fallback panic.
 #[test]
-#[should_panic(expected = "innermost axis")]
+#[should_panic(expected = "has no line to land on")]
 fn displacing_the_innermost_axis_with_checked_vectorization_is_refused() {
     let (_, w, ids) = refusal_fixture();
     let space = refusal_space(1);
