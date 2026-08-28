@@ -8,7 +8,6 @@ mod instruction;
 mod launcher;
 mod matmul;
 mod packed;
-mod probe;
 mod procedural;
 mod quant;
 mod recursive;

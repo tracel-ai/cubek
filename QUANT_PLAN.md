@@ -232,6 +232,34 @@ cut a split column group would, and that is where to look next.
 **Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
 a hardware number, so grouping it by extent is right there and stays.
 
+### The staged spelling, probed
+
+The count a scale line covers is a *binding width* today, reconciled against the walk at the leaf
+(`FoldRun`, `lines_per_scale`, a divisibility assert). It should be a **cut**, stated where the
+level is:
+
+```rust
+Tiling::over((values, scales, rhs, out), &[(M, m), (NB, blocks), (NI, bn), (K, k)])
+    .level(order, buffering, |cuts, o| {
+        cuts.axis(NB, Cut::sequential(8));   // this unit takes 8 column blocks
+        o.1.stage(Residence::Register);      // and reads its 8 scales here, once
+    })
+```
+
+**The DSL already accepts that.** A four-operand `Tiling::over` with the scales spanning `[M, KB]`,
+the axis cut, and the residence stated builds, launches, and computes correct numbers;
+`OperandSet` already goes to four and no ternary ring is needed, because an operand stages through
+its own stage plan rather than the walk's ring.
+
+**What it does not do is honour it.** Stating the residence emits a fill (the kernel grows from 450
+to 490 lines and gains a loop), and the contraction reads the scales from global memory anyway —
+byte for byte the same four reads at the same loop depth as without it. The staged copy is filled
+and never read.
+
+So the whole remaining job is one thing: **the contraction reads the scales from the tile the level
+staged.** Everything upstream of that already works, and `FoldRun`, `folded_lane_walk`,
+`lines_per_scale` and the divisibility assert all come out when it lands.
+
 ### Item 4, surveyed
 
 Three groups, and only the first is a port.
