@@ -32,7 +32,9 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
-    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    let contracted_per_step = comptime!(step_contracted_per_step(
+        &lhs.space, &rhs.space, &space, lw, rw, aw
+    ));
     // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
     // several contracted axes still form one `k` edge when the operand carries them as one run,
     // which is what a partitioned axis is.
@@ -40,7 +42,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
         &lhs.space,
         &rhs.space,
         space.clone(),
-        served,
+        contracted_per_step,
         lw,
         rw,
         aw
@@ -52,13 +54,13 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
             || rhs_gathered
             || lhs_procedural
             || rhs_procedural
-            || (served == 1 && rw != aw)
+            || (contracted_per_step == 1 && rw != aw)
     );
 
     if nd {
-        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config, semiring);
+        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
     } else {
-        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, served, config, semiring);
+        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
     }
 }
 
@@ -106,7 +108,7 @@ pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> Sc
 ///
 /// A scale covers a block because the operand has no axis to vary over inside one: the block is an
 /// axis and the scales omit it. A rational axis (`PhysicalAxisMap::of(N).over(bn)`) states the same
-/// granularity arithmetically, and then whether a served line straddles a block stops being a fact
+/// granularity arithmetically, and then whether a contracted_per_step line straddles a block stops being a fact
 /// about the axes and becomes one about the line width, which no operand states. Split the axis
 /// instead, and the invariance is structural.
 pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
@@ -146,14 +148,16 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
-    let served = comptime!(step_served(&lhs.space, &rhs.space, &space, lw, rw, aw));
+    let contracted_per_step = comptime!(step_contracted_per_step(
+        &lhs.space, &rhs.space, &space, lw, rw, aw
+    ));
     // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
     // how many axes they contract over.
     let shape = comptime!(ContractShape::new(
         &lhs.space,
         &rhs.space,
         space.clone(),
-        served,
+        contracted_per_step,
         lw,
         rw,
         aw
@@ -164,7 +168,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
             && !rhs_gathered
             && !lhs_procedural
             && !rhs_procedural
-            && !(served == 1 && rw != aw),
+            && !(contracted_per_step == 1 && rw != aw),
         "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
          N-D nest, which addresses every operand at the cell instead"
     ));
@@ -172,18 +176,33 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let scales_projection = scales.projection();
     comptime!(check_scales_omit_rather_than_divide(&scales_projection));
     direct::contract_scaled::<E, EL, ER, ES>(
-        acc, lhs, rhs, scales, space, served, side, config, semiring,
+        acc,
+        lhs,
+        rhs,
+        scales,
+        space,
+        contracted_per_step,
+        side,
+        config,
+        semiring,
     );
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the
 /// accumulator.
 ///
-/// Asked per operand ([`Space::served`]) because the answer differs per operand: an lhs lined
+/// Asked per operand ([`Space::contracted_per_step`]) because the answer differs per operand: an lhs lined
 /// along the contracted axis folds, an rhs lined along the accumulator's innermost axis holds
 /// cells that must stay apart. Both must serve the same count, and the block's lanes mean one
-/// axis, so a folded step needs a scalar-served accumulator.
-fn step_served(lhs: &Space, rhs: &Space, acc: &Space, lw: usize, rw: usize, aw: usize) -> usize {
+/// axis, so a folded step needs a scalar-contracted_per_step accumulator.
+fn step_contracted_per_step(
+    lhs: &Space,
+    rhs: &Space,
+    acc: &Space,
+    lw: usize,
+    rw: usize,
+    aw: usize,
+) -> usize {
     let contracted = Space::contracted(&[lhs, rhs], acc);
     let k = contracted[contracted.len() - 1];
     let lined = rhs.axis_at(rhs.rank() - 1);
@@ -191,30 +210,30 @@ fn step_served(lhs: &Space, rhs: &Space, acc: &Space, lw: usize, rw: usize, aw: 
         assert!(
             rw == aw || aw == 1,
             "contract: the rhs lines along {lined:?} together with the accumulator, so both must \
-             be served at one width unless the accumulator is scalar and the rhs is a padded \
+             be contracted_per_step at one width unless the accumulator is scalar and the rhs is a padded \
              stage (rhs {rw}, accumulator {aw})"
         );
         return 1;
     }
-    let served = rhs.served(&contracted, rw);
+    let contracted_per_step = rhs.contracted_per_step(&contracted, rw);
     assert!(
-        served > 1,
-        "contract: the rhs lines along the contracted axis {k:?}, which is served in whole lines; \
+        contracted_per_step > 1,
+        "contract: the rhs lines along the contracted axis {k:?}, which is contracted_per_step in whole lines; \
          its width {rw} must exceed 1 and divide the axis's extent {}",
         rhs.extent(k)
     );
     assert_eq!(
-        lhs.served(&contracted, lw),
-        served,
-        "contract: the rhs serves {served} contracted values a step; line the lhs along {k:?} at \
+        lhs.contracted_per_step(&contracted, lw),
+        contracted_per_step,
+        "contract: the rhs serves {contracted_per_step} contracted values a step; line the lhs along {k:?} at \
          the same width (it is {lw} wide)"
     );
     assert_eq!(
         aw, 1,
-        "contract: a step serving {served} contracted values holds partials of one cell in the \
-         block's lanes, so the accumulator cannot also be served in {aw}-wide lines"
+        "contract: a step serving {contracted_per_step} contracted values holds partials of one cell in the \
+         block's lanes, so the accumulator cannot also be contracted_per_step in {aw}-wide lines"
     );
-    served
+    contracted_per_step
 }
 
 #[cfg(test)]
@@ -243,22 +262,22 @@ mod tests {
     #[test]
     fn an_rhs_lined_along_the_accumulator_serves_one_value_a_step() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
-        assert_eq!(step_served(&lhs, &rhs, &acc, 4, 2, 2), 1);
+        assert_eq!(step_contracted_per_step(&lhs, &rhs, &acc, 4, 2, 2), 1);
     }
 
     /// Both operands lined along the contracted axis: the lanes are partials of one cell.
     #[test]
     fn both_operands_lined_along_the_contracted_axis_serve_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        assert_eq!(step_served(&lhs, &rhs, &acc, 4, 4, 1), 4);
+        assert_eq!(step_contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
     }
 
     /// A width the contracted extent does not divide would leave a masked tail.
     #[test]
-    #[should_panic(expected = "served in whole lines")]
+    #[should_panic(expected = "contracted_per_step in whole lines")]
     fn a_width_that_misdivides_the_contracted_axis_is_refused() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_served(&lhs, &rhs, &acc, 3, 3, 1);
+        step_contracted_per_step(&lhs, &rhs, &acc, 3, 3, 1);
     }
 
     /// A lined rhs has nothing to fold against when the lhs serves one value a step.
@@ -266,22 +285,22 @@ mod tests {
     #[should_panic(expected = "line the lhs along")]
     fn a_folded_step_needs_both_operands_lined() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_served(&lhs, &rhs, &acc, 1, 4, 1);
+        step_contracted_per_step(&lhs, &rhs, &acc, 1, 4, 1);
     }
 
     /// The block's lanes mean one axis, and a lined accumulator has already claimed them.
     #[test]
-    #[should_panic(expected = "cannot also be served")]
+    #[should_panic(expected = "cannot also be contracted_per_step")]
     fn a_folded_step_needs_a_scalar_accumulator() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_served(&lhs, &rhs, &acc, 4, 4, 2);
+        step_contracted_per_step(&lhs, &rhs, &acc, 4, 4, 2);
     }
 
     /// The rhs and the accumulator share their line, so they share its width.
     #[test]
-    #[should_panic(expected = "served at one width")]
+    #[should_panic(expected = "contracted_per_step at one width")]
     fn an_rhs_lined_along_the_accumulator_shares_its_width() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
-        step_served(&lhs, &rhs, &acc, 4, 1, 2);
+        step_contracted_per_step(&lhs, &rhs, &acc, 4, 1, 2);
     }
 }

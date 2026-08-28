@@ -28,8 +28,8 @@ pub(super) struct ContractShape {
     pub nr: usize,
     /// The accumulator's innermost (column) extent in scalars.
     pub cols: usize,
-    /// Contracted values one step consumes ([`Space::served`]).
-    pub served: usize,
+    /// Contracted values one step consumes ([`Space::contracted_per_step`]).
+    pub contracted_per_step: usize,
     /// How many sink cells one block column's vector lanes spread across.
     pub spread: usize,
     /// The lhs's line width.
@@ -46,7 +46,7 @@ impl ContractShape {
         lhs: &Space,
         rhs: &Space,
         space: Space,
-        served: usize,
+        contracted_per_step: usize,
         lw: usize,
         vw: usize,
         aw: usize,
@@ -59,13 +59,13 @@ impl ContractShape {
             .map(|&axis| merged.extent(axis))
             .collect::<Vec<_>>();
         let cols = acc_axes.cols(&space);
-        let spread = if served > 1 { 1 } else { vw / aw };
+        let spread = if contracted_per_step > 1 { 1 } else { vw / aw };
         // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
         // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
         let nr = if spread > 1 {
             cols.div_ceil(spread)
         } else {
-            cols / (if served > 1 { 1 } else { vw })
+            cols / (if contracted_per_step > 1 { 1 } else { vw })
         };
 
         let mr = acc_axes.rows(&space);
@@ -79,7 +79,7 @@ impl ContractShape {
             acc_axes,
             reduce,
             reduce_extents,
-            served,
+            contracted_per_step,
             spread,
             lw,
             vw,
@@ -94,7 +94,7 @@ impl ContractShape {
     /// — and reads as a matrix. One it does not is read a cell at a time.
     pub fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
         let lhs_axes = MatrixAxes::find(lhs, self.mr, self.kc)?;
-        let rhs_axes = match self.served > 1 {
+        let rhs_axes = match self.contracted_per_step > 1 {
             true => MatrixAxes::find(rhs, self.cols, self.kc)?,
             false => MatrixAxes::find(rhs, self.kc, self.cols)?,
         };
@@ -111,9 +111,9 @@ impl ContractShape {
     }
 
     /// The rhs's twin. A folded step lines it along the contraction, so its matrix is `(col, k)`;
-    /// at one served value it lines along the accumulator and reads `(k, col)`.
+    /// at one contracted value per step it lines along the accumulator and reads `(k, col)`.
     pub fn rhs_axes(&self, rhs: &Space) -> MatrixAxes {
-        match self.served > 1 {
+        match self.contracted_per_step > 1 {
             true => MatrixAxes::of(rhs, self.cols, self.kc),
             false => MatrixAxes::of(rhs, self.kc, self.cols),
         }
@@ -132,10 +132,10 @@ impl ContractShape {
     }
 
     /// The block's size in scalars, which is what [`RegisterBlock::budget`] counts: `mr * nr`
-    /// lines of `served * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
+    /// lines of `contracted_per_step * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
     /// the budget a schedule rolls its loops rather than keeping the block in registers.
     pub fn scalars(&self) -> usize {
-        self.mr * self.nr * self.served * self.aw * self.spread
+        self.mr * self.nr * self.contracted_per_step * self.aw * self.spread
     }
 
     /// Whether the lane fan-out's fixed extracts stay in step with the coordinate

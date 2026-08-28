@@ -215,7 +215,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
@@ -227,7 +227,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     comptime!(assert!(
         rw == aw || aw == 1,
         "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
-         so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
+         so the accumulator must be contracted_per_step scalar (rhs {rw}, accumulator {aw})"
     ));
     let factors = lhs.factors();
     let normalization = lhs.factor_normalization();
@@ -237,7 +237,15 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         &lhs.space,
         &rhs.space,
         &rhs_projection,
-        ContractShape::new(&lhs.space, &rhs.space, space, served, lw, rw, aw),
+        ContractShape::new(
+            &lhs.space,
+            &rhs.space,
+            space,
+            contracted_per_step,
+            lw,
+            rw,
+            aw
+        ),
         factors,
         normalization,
     ));
@@ -246,16 +254,16 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         // A separable lhs is a scalar procedural weight, so it never lines along the contracted
         // axis and its step serves one value. The block is then the accumulator's own width.
         comptime!(assert!(
-            served == 1 && lw == 1,
-            "contract gather: a separable lhs needs scalar weights served one value a step"
+            contracted_per_step == 1 && lw == 1,
+            "contract gather: a separable lhs needs scalar weights contracted_per_step one value a step"
         ));
         let size!(V) = rw;
         let size!(A) = aw;
         separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
-    } else if comptime!(served > 1) {
-        // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
+    } else if comptime!(contracted_per_step > 1) {
+        // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.
-        let size!(W) = served;
+        let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
         nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);
     } else {
@@ -302,7 +310,7 @@ mod tests {
         assert_eq!((block.mr, block.nr), (4, 2));
         assert_eq!(block.batch_extents(), Vec::<usize>::new());
         assert_eq!(block.matrices(), 1);
-        // `mr * nr` lines of `served * aw`.
+        // `mr * nr` lines of `contracted_per_step * aw`.
         assert_eq!(block.scalars(), 32);
     }
 
