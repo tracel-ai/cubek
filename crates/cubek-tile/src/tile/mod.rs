@@ -1135,6 +1135,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The indirection spec if this operand carries a pending indirection, empty otherwise.
+    pub(crate) fn indirection_spec(&self) -> comptime_type!(Option<IndirectionSpec>) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.indirection_spec(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(None::<IndirectionSpec>)
+            }
+        }
+    }
+
     /// How this tile's logical axes address its buffer's physical ones. A fragment and a tma source
     /// have no buffer to project onto, so they answer [`direct`](Projection::direct) over their own
     /// space, which is what every non-gather operand carries anyway.

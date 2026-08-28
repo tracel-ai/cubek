@@ -1648,6 +1648,15 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// The indirection spec if this operand carries a pending indirection, empty otherwise.
+    pub(crate) fn indirection_spec(&self) -> comptime_type!(Option<IndirectionSpec>) {
+        #[comptime]
+        match &self.indirection {
+            ComptimeOption::Some(ind) => comptime!(Some(ind.spec.clone())),
+            ComptimeOption::None => comptime!(None::<IndirectionSpec>),
+        }
+    }
+
     /// How this store's values sit in memory, as stated at construction.
     pub(crate) fn packing(&self) -> comptime_type!(Packing) {
         comptime!(self.store.packing)

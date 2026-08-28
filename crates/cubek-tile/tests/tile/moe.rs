@@ -555,6 +555,35 @@ fn displacing_the_innermost_axis_is_refused() {
     build_indexed(&[EXPERT, K, N], M, N, 1);
 }
 
+/// Naming the innermost axis with `checked(true)` and `v > 1` must trip the innermost axis
+/// refusal rather than the vectorization fallback panic.
+#[test]
+#[should_panic(expected = "innermost axis")]
+fn displacing_the_innermost_axis_with_checked_vectorization_is_refused() {
+    let (_, w, ids) = refusal_fixture();
+    let space = refusal_space(1);
+    let _ = StridedOperand::source(w)
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .vectorize(2)
+        .checked(true)
+        .indexed(ids, M, N, IndexPolicy::Checked)
+        .build();
+}
+
+/// A raw builder over a dynamic space builds without panicking on static extent getters.
+#[test]
+fn an_indexed_operand_over_a_dynamic_space_builds() {
+    let (_, w, ids) = refusal_fixture();
+    let dynamic_space = refusal_space(1).all_dynamic();
+    let _ = StridedOperand::source(w)
+        .space(&dynamic_space)
+        .subspace(&[EXPERT, K, N])
+        .checked(false)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
+        .build();
+}
+
 /// No level cuts the target axis down to a single table entry, so the lookup would never fire and
 /// the operand would silently read expert `0` forever.
 #[test]

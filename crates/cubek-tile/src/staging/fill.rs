@@ -23,6 +23,8 @@ pub(crate) struct SlotOperand<'a> {
     /// walk over one of them moves an indirect operand's window even though its own space says
     /// nothing about that axis (see [`Space::walk_invariant`]).
     index_axes: SmallVec<[Axis; MAX_AXES]>,
+    /// The spec if this operand carries a pending indirection.
+    indirection: Option<IndirectionSpec>,
 }
 
 impl<'a> SlotOperand<'a> {
@@ -31,12 +33,14 @@ impl<'a> SlotOperand<'a> {
         source: StageSource,
         space: &'a Space,
         index_axes: SmallVec<[Axis; MAX_AXES]>,
+        indirection: Option<IndirectionSpec>,
     ) -> Self {
         SlotOperand {
             residence,
             source,
             space,
             index_axes,
+            indirection,
         }
     }
 }
@@ -61,6 +65,17 @@ impl SlotPlan {
              materialize from, so it can only be read where it lies (Residence::InPlace); \
              materialize it at a level above instead"
         );
+        for op in operands {
+            if op.residence != Residence::InPlace {
+                if let Some(ind) = &op.indirection {
+                    assert!(
+                        ind.fires_at(op_space),
+                        "Staging: an indirect operand cannot be staged above the level where its \
+                         lookup resolves; stage it at or below the fire level instead"
+                    );
+                }
+            }
+        }
         let residences: Vec<_> = operands.iter().map(|op| op.residence).collect();
         if !compatible_slot_residences(&residences) {
             if operands
@@ -212,10 +227,24 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let rhs_source = rhs.stage_source();
         let lhs_index_axes = lhs.index_axes();
         let rhs_index_axes = rhs.index_axes();
+        let lhs_indirection = lhs.indirection_spec();
+        let rhs_indirection = rhs.indirection_spec();
         let plan = comptime!(SlotPlan::new(
             &[
-                SlotOperand::new(lhs_residence, lhs_source, &lhs.space, lhs_index_axes),
-                SlotOperand::new(rhs_residence, rhs_source, &rhs.space, rhs_index_axes),
+                SlotOperand::new(
+                    lhs_residence,
+                    lhs_source,
+                    &lhs.space,
+                    lhs_index_axes,
+                    lhs_indirection
+                ),
+                SlotOperand::new(
+                    rhs_residence,
+                    rhs_source,
+                    &rhs.space,
+                    rhs_index_axes,
+                    rhs_indirection
+                ),
             ],
             &op_space,
         ));
@@ -340,12 +369,14 @@ impl<T: Numeric> Ring<Tile<T>> {
         let residence = input.residence(comptime!(&out));
         let source = input.stage_source();
         let index_axes = input.index_axes();
+        let indirection = input.indirection_spec();
         let plan = comptime!(SlotPlan::new(
             &[SlotOperand::new(
                 residence,
                 source,
                 &input.space,
-                index_axes
+                index_axes,
+                indirection,
             )],
             &op_space,
         ));
@@ -514,6 +545,7 @@ mod tests {
             StageSource::Transport(delivery),
             space,
             SmallVec::new(),
+            None,
         )
     }
 
@@ -525,6 +557,7 @@ mod tests {
             StageSource::ResidentFragment,
             space,
             SmallVec::new(),
+            None,
         )
     }
 
@@ -579,6 +612,42 @@ mod tests {
                 operand(Residence::Smem, Delivery::Copy, &lhs),
                 operand(Residence::Register, Delivery::Copy, &rhs),
             ],
+            &space,
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "an indirect operand cannot be staged above the level where its lookup resolves"
+    )]
+    fn an_indirect_operand_cannot_be_staged_above_the_fire_level() {
+        const EXPERT: Axis = Axis(3);
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 2)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(2))
+            })
+            .build();
+        let weights = space.project(&[EXPERT, K, N]);
+        let mut index_axes = SmallVec::new();
+        index_axes.push(M);
+        let spec = IndirectionSpec {
+            index_axes: index_axes.clone(),
+            target: EXPERT,
+            granularity: 1,
+            policy: IndexPolicy::Trusted,
+        };
+        SlotPlan::new(
+            &[SlotOperand::new(
+                Residence::Smem,
+                StageSource::Transport(Delivery::Copy),
+                &weights,
+                index_axes,
+                Some(spec),
+            )],
             &space,
         );
     }

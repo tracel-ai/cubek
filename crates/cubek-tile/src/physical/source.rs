@@ -602,6 +602,14 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Err(why) = geometry.serves_lines(v) {
             panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide — {why}");
         }
+        if let Some(indirection) = &indirection {
+            // On the caller's thread, so a plan whose lookup never fires (or fires at a level
+            // that splits a table entry) fails with a host backtrace rather than as zeroed
+            // output from a device assert. `Tile::of_indexed` re-runs it for hand-built specs.
+            indirection
+                .spec
+                .validate(space, &space.project(projection.logical_axes()), &projection);
+        }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
         assert!(
@@ -692,13 +700,9 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
         if let Some(indirection) = &indirection {
-            // On the caller's thread, so a plan whose lookup never fires (or fires at a level
-            // that splits a table entry) fails with a host backtrace rather than as zeroed
-            // output from a device assert. `Tile::of_indexed` re-runs it for hand-built specs.
-            indirection
-                .spec
-                .validate(space, &space.project(spec.axes()), &spec.projection);
-            validate_index_table(indirection, concrete.unwrap_or(space));
+            if let Some(concrete) = concrete.or_else(|| space.is_static().then_some(space)) {
+                validate_index_table(indirection, concrete);
+            }
         }
         Realized {
             tensor: binding.map(|mut binding| {
@@ -724,6 +728,12 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 /// proves that the largest computed offset is backed by storage.
 fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
     let spec = &table.spec;
+    if !spec.index_axes.iter().all(|&a| space.contains(a) && !space.is_dynamic(a))
+        || !space.contains(spec.target)
+        || space.is_dynamic(spec.target)
+    {
+        return;
+    }
     let mut fire = space.partitioner();
     while fire.edge(spec.target) > spec.granularity {
         fire = fire.next();
