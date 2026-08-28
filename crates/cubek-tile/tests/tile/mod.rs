@@ -9,6 +9,7 @@ mod launcher;
 mod matmul;
 mod moe;
 mod packed;
+mod paged;
 mod procedural;
 mod quant;
 mod recursive;
