@@ -1,16 +1,22 @@
 use cubecl::{
     Runtime, TestRuntime,
-    benchmark::{Benchmark, TimingMethod},
+    benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::ComputeClient,
     future,
     prelude::*,
     std::tensor::TensorHandle,
+    std::throughput::measure_peak_throughput,
+    throughput::{ThroughputKey, ThroughputMode},
     zspace::Shape,
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{definition::InterpolateProblem, launch::InterpolateStrategy};
-use crate::{interpolate, interpolate_backward};
+use crate::{
+    definition::{InterpolateCost, InterpolateProblem},
+    interpolate, interpolate_backward,
+};
+
+use crate::InterpolateStrategy;
 
 pub fn bench(
     strategy: &InterpolateStrategy,
@@ -19,13 +25,14 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
+
     let dtype = f32::elem_type_native();
 
     let bench = InterpolateBench {
         problem: problem.clone(),
         strategy: *strategy,
         device,
-        client,
+        client: client.clone(),
         dtype,
         samples: num_samples,
     };
@@ -35,7 +42,25 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations))
+    let work = InterpolateCost::new(problem.clone(), dtype).work();
+
+    Ok(RunSamples::new(durations)
+        .with_flops(work.compute_ops as f64, None)
+        .with_bytes(work.bytes, memory_peak_bytes_per_s(&client)))
+}
+
+/// The device's measured copy peak, in bytes/s, for the resampling to be judged against.
+///
+/// [`ThroughputMode::Memory`] is a copy, which is the access interpolation performs: it
+/// reads one tensor and writes another. `measure_peak_throughput` caches per device, so
+/// this does not need to as well.
+fn memory_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
+    let key = ThroughputKey {
+        mode: ThroughputMode::Memory,
+    };
+    let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
+
+    (peak > 0.0).then_some(peak)
 }
 
 struct InterpolateBench {
@@ -91,19 +116,19 @@ impl Benchmark for InterpolateBench {
                         .uniform(0, -1., 1.)
                         .generate_without_host_data();
 
-                let output = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
+                let input_grad = TensorHandle::empty(&self.client, input_grad_shape, self.dtype);
 
                 interpolate_backward(
                     &self.client,
                     backward_input.binding(),
                     input.clone().binding(),
-                    output.clone().binding(),
+                    input_grad.clone().binding(),
                     prob.options,
                     self.dtype,
                 )
                 .map_err(|err| format!("{err}"))?;
 
-                Ok(output)
+                Ok(input_grad)
             }
         }
     }
@@ -115,7 +140,8 @@ impl Benchmark for InterpolateBench {
     fn name(&self) -> String {
         match &self.problem {
             InterpolateProblem::Forward(prob) => format!(
-                "interpolate-{:?}-{:?}-{:?}-{:?}",
+                "interpolate-{:?}-{:?}-{:?}-{:?}-{:?}",
+                self.strategy,
                 self.dtype,
                 prob.options.mode,
                 self.device,
@@ -123,8 +149,8 @@ impl Benchmark for InterpolateBench {
             )
             .to_lowercase(),
             InterpolateProblem::Backward(prob) => format!(
-                "interpolate-backward-{:?}-{:?}-{:?}-{:?}",
-                self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
+                "interpolate-backward-{:?}-{:?}-{:?}-{:?}-{:?}",
+                self.strategy, self.dtype, prob.options.mode, self.device, prob.out_grad_shape,
             )
             .to_lowercase(),
         }
@@ -132,5 +158,14 @@ impl Benchmark for InterpolateBench {
 
     fn sync(&self) {
         future::block_on(self.client.sync()).unwrap()
+    }
+
+    /// Measure with device timestamps around the launch, so the reported duration is the
+    /// kernel's rather than the host's view of launch, output allocation and sync.
+    fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
+        self.client
+            .profile(|| self.execute(args), "interpolate-bench")
+            .map(|it| it.1)
+            .map_err(|err| format!("{err:?}"))
     }
 }

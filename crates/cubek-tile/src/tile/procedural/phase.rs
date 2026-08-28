@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::{Axis, Fold, FoldExpand, floor_div_rem};
 
-use super::{Recipe, RecipeCoords, RecipeExpand};
+use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 
 /// The fractional part a rational coordinate mapping leaves behind, scaled:
 /// `coefficient * frac((coord[axis] * numerator_scale + numerator_offset) / divisor)`.
@@ -58,5 +58,11 @@ impl<T: Float> Recipe<T> for Phase<T> {
             residue / T::cast_from(self.divisor)
         };
         self.coefficient * fraction
+    }
+}
+
+impl<T: Float> RecipeAxisDependencies for PhaseExpand<T> {
+    fn reads_axis(&self, _scope: &Scope, axis: Axis) -> bool {
+        self.axis == axis
     }
 }

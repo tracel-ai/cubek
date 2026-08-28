@@ -20,6 +20,7 @@ const V: Axis = Axis(4); // value dim
 // Local labels for the kernel-allocated smem tiles.
 const R: Axis = Axis(5); // score rows = G × QP, group-major
 const C: Axis = Axis(6); // score cols = one S block
+const T: Axis = Axis(7); // split team, one window per team
 
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -283,6 +284,12 @@ fn fold_scalar_odd_bound() {
 /// ([`merge_splits`](cubek_tile::Tile)) and the drain folds the split
 /// weights and the normalizer in. `splits == 1` degenerates to the plain
 /// fold: one code path for both.
+///
+/// `split_inner` flips where the split axis sits on the row lanes, which is
+/// the one thing `merge_splits` reads off the space. Both orders run the same
+/// cuts and the same op and must give the same answer — a cross-cube merge
+/// lays the split innermost so its drain can contract it, and nothing but a
+/// test here says that layout works.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_split_kernel<W: Size>(
@@ -299,6 +306,7 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] row_chunk: usize,
+    #[comptime] split_inner: bool,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -318,6 +326,10 @@ fn attention_fold_split_kernel<W: Size>(
 
     // Split-wide working set: a leading `splits` slice on every tile, one
     // window per team.
+    //
+    // Only the row lanes name the split as an axis: they are what
+    // `merge_splits` reads. The score and the accumulator stack it into their
+    // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
     let score_space = comptime!(
         Tiling::new()
@@ -328,11 +340,19 @@ fn attention_fold_split_kernel<W: Size>(
             })
             .build()
     );
+    // The split outermost gives a team one contiguous run of rows; innermost
+    // gives it a strided column. Only the declared order differs — the cuts
+    // below are the same either way, and so is every op that reads them.
+    let row_extents = comptime!(if split_inner {
+        [(R, rows), (T, splits)]
+    } else {
+        [(T, splits), (R, rows)]
+    });
     let row_space = comptime!(
         Tiling::new()
-            .extents(&[(R, split_rows)])
+            .extents(&row_extents)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(R, Cut::sequential(rows))
+                l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows))
             })
             .build()
     );
@@ -356,11 +376,6 @@ fn attention_fold_split_kernel<W: Size>(
     let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
-    let mut recip = MemData::<f32>::smem(
-        comptime!(Space::new(&[(R, rows)])),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
     acc_all.zero();
 
     // This team's windows.
@@ -427,13 +442,12 @@ fn attention_fold_split_kernel<W: Size>(
     m_win.store_rows(&state.m, rpu);
     l_win.store_rows(&state.l, rpu);
     sync_cube();
-    factors_all.merge_splits(&mut recip, &m_all, &l_all, splits);
+    factors_all.merge_splits(&m_all, &l_all, T);
     sync_cube();
 
     let size!(W1) = 1usize;
     let acc_flat = acc_all.flat::<W1>();
     let w_flat = factors_all.flat::<W1>();
-    let r_flat = recip.flat::<W1>();
     let total = comptime!(rows * val_dim);
     let workers = CUBE_DIM as usize;
     let mut i = UNIT_POS as usize;
@@ -442,18 +456,39 @@ fn attention_fold_split_kernel<W: Size>(
         let vi = i % val_dim;
         let mut sum = 0.0f32;
         for ti in 0..splits {
+            // The accumulator always stacks the split into its row axis; only
+            // the weights follow `split_inner`.
             let sr = ti * rows + r;
+            let w = if comptime!(split_inner) {
+                r * splits + ti
+            } else {
+                sr
+            };
             sum +=
-                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(sr).extract(0usize);
+                acc_flat.read(sr * val_dim + vi).extract(0usize) * w_flat.read(w).extract(0usize);
         }
-        out[i] = sum * r_flat.read(r).extract(0usize);
+        out[i] = sum;
         i += workers;
     }
 }
 
-/// Launch the split fold and check against direct host math.
+/// Launch the split fold and check against direct host math, once per row-lane
+/// layout: the answer cannot depend on where the space puts the split axis.
 #[allow(clippy::too_many_arguments)]
 fn run_split(
+    shape: (usize, usize, usize, usize, usize, usize, usize, usize),
+    bound_s: usize,
+    causal: bool,
+    vec: usize,
+) {
+    for split_inner in [false, true] {
+        run_split_at(shape, bound_s, causal, vec, split_inner);
+    }
+}
+
+/// One launch, at the stated layout.
+#[allow(clippy::too_many_arguments)]
+fn run_split_at(
     (team, splits, g, qp, s_total, block, d, val_dim): (
         usize,
         usize,
@@ -467,6 +502,7 @@ fn run_split(
     bound_s: usize,
     causal: bool,
     vec: usize,
+    split_inner: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
     let cap = client.properties().hardware.max_units_per_cube as usize;
@@ -554,6 +590,7 @@ fn run_split(
         causal,
         block,
         row_chunk,
+        split_inner,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);

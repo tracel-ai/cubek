@@ -335,6 +335,17 @@ impl Space {
         self.extents.contains(axis)
     }
 
+    /// Whether `other` holds the same cells in the same order: the same axes at the same
+    /// positions with the same extents. Two spaces can address one buffer identically and
+    /// still differ (a different partitioner, a different level), so this is what a
+    /// flat-indexing op checks, not equality.
+    pub(crate) fn laid_out_like(&self, other: &Space) -> bool {
+        self.rank() == other.rank()
+            && (0..self.rank()).all(|p| {
+                self.axis_at(p) == other.axis_at(p) && self.extent_at(p) == other.extent_at(p)
+            })
+    }
+
     /// The smallest space containing every `part`, axes in first-appearance order. A
     /// shared axis is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else
     /// conflict); an omitted axis broadcasts along all of it. E.g.

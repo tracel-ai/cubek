@@ -54,7 +54,7 @@ fn scales_are_an_operand_staged_at_a_level() {
                 .axis(N, Cut::sequential(n))
                 .axis(KB, Cut::sequential(blocks))
                 .axis(KI, Cut::sequential(block));
-            let _ = &ops;
+            ops.2.stage(Residence::Register);
         })
         // ...and walks them one block at a time below.
         .instruction(Instruction::registers(64), |level, _| {

@@ -27,6 +27,7 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 [dependencies]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
+cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false }
 half = { workspace = true }
 thiserror = { workspace = true }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false, optional = true }

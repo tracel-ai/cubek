@@ -10,9 +10,9 @@ use cubecl::quant::scheme::QuantScheme;
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Instruction, LoadMethod, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec,
-    validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Instruction, LoadMethod, PhysicalAxis,
+    Projection, QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch,
+    TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -22,7 +22,15 @@ pub struct Unset;
 
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, R: Runtime> {
-    binding: TensorBinding<R>,
+    /// The tensor this operand is served from, when there is one. `None` for a
+    /// destination that has no address — a fused store writes through a call, so
+    /// the launch has nothing to bind, and only the comptime half is derived
+    /// ([`build_spec`](StridedTileSource::build_spec)).
+    binding: Option<TensorBinding<R>>,
+    /// The operand's physical extents and strides. The source of truth for the
+    /// whole derivation: a bound operand copies them off its binding, an
+    /// unbound one states them, and both reach [`labeled`] the same way.
+    geometry: Geometry,
     space: Option<&'a Space>,
     /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
     /// lets [`build`](StridedTileSource::build) derive the bounds-check from overhang.
@@ -62,9 +70,21 @@ pub struct StridedTileSource<'a, Sp, Sub, Q, R: Runtime> {
 
 impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
     pub(crate) fn new(binding: TensorBinding<R>) -> Self {
+        let geometry = Geometry::from(&binding);
+        Self::over(Some(binding), geometry)
+    }
+
+    /// The same builder over geometry alone, for an operand with no tensor to
+    /// bind. See [`TileSourceData::binding`].
+    pub(crate) fn of_geometry(geometry: &Geometry) -> Self {
+        Self::over(None, geometry.clone())
+    }
+
+    fn over(binding: Option<TensorBinding<R>>, geometry: Geometry) -> Self {
         StridedTileSource {
             data: TileSourceData {
                 binding,
+                geometry,
                 space: None,
                 concrete: None,
                 subspace: &[],
@@ -370,6 +390,24 @@ impl<R: Runtime> StridedOperand<R> {
     }
 }
 
+/// What [`build_spec`](StridedTileSource::build_spec) settles for an operand with
+/// no tensor to bind: the comptime [`TileSpec`], the served width, and the
+/// geometry the derivation arrived at.
+///
+/// `geometry` is what a bound operand's `TensorArg` would have shipped, which is
+/// not always what the caller stated: the labeling step drops broadcast batch dims
+/// and folds the rank down to the projection's physical one. The kernel's
+/// [`Tile::of_sink`](crate::Tile::of_sink) addresses through exactly this
+/// geometry, so it is what comes back — re-deriving it at the call site is the
+/// drift `build_spec` exists to remove, and reaching for the stated one instead
+/// is the same mistake one step later.
+pub struct DerivedSpec {
+    pub spec: TileSpec,
+    /// Served width (values per line).
+    pub vector_size: usize,
+    pub geometry: Geometry,
+}
+
 /// A built quantized operand: the storage-typed tensor and its spec, plus the scales and
 /// the comptime scheme as first-class fields; nothing to probe or drain at the call site.
 pub struct QuantOperand<R: Runtime> {
@@ -421,10 +459,14 @@ impl<R: Runtime> StridedOperand<R> {
 
 /// [`realize`](StridedTileSource::realize)'s product, consumed by the two typed builds.
 struct Realized<R: Runtime> {
-    tensor: TensorArg<R>,
+    /// `None` exactly when the source was built over geometry alone.
+    tensor: Option<TensorArg<R>>,
     vector_size: usize,
     spec: TileSpec,
     quant: Option<Quantization<R>>,
+    /// The geometry the derivation settled on, which is what `tensor` ships when
+    /// there is one. See [`DerivedSpec`].
+    geometry: Geometry,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -433,7 +475,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
     /// as given), derive the bounds-check, and mint the comptime [`TileSpec`].
     fn realize(self) -> Realized<R> {
         let TileSourceData {
-            mut binding,
+            binding,
+            mut geometry,
             space,
             concrete,
             batch_axes,
@@ -454,11 +497,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // `addressed` contains all logical axes used for bounds checking.
         let (projection, addressed) = match projection {
             Some(projection) => {
-                check_stated(&binding, space, &projection, subspace, batch_axes, &tiling);
+                check_stated(&geometry, space, &projection, subspace, batch_axes, &tiling);
                 let addressed = projection.logical_axes().to_vec();
                 (projection, addressed)
             }
-            None => labeled(&mut binding, subspace, batch_axes, tiling),
+            None => labeled(&mut geometry, subspace, batch_axes, tiling),
         };
 
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
@@ -474,6 +517,14 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         });
 
         projection.validate(v);
+        // The width against the *settled* geometry, which is the one the kernel re-expresses in
+        // lines. `Launcher::vector_size` derives a width that divides; a caller that states one
+        // — a pinned width, a fused destination the negotiation never saw — reaches here, and
+        // the failure it prevents is silent: `stride / v` truncates in bounds and addresses a
+        // fraction of the operand.
+        if let Err(why) = geometry.serves_lines(v) {
+            panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide — {why}");
+        }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
         assert!(
@@ -550,10 +601,17 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
         Realized {
-            tensor: binding.into_tensor_arg(),
+            tensor: binding.map(|mut binding| {
+                // The derivation may have dropped broadcast batch dims; the arg
+                // ships the geometry it settled on, not the one it arrived with.
+                binding.shape = geometry.shape().into();
+                binding.strides = geometry.strides().into();
+                binding.into_tensor_arg()
+            }),
             vector_size: v,
             spec,
             quant,
+            geometry,
         }
     }
 }
@@ -564,13 +622,13 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
 /// The inner subspace axes are laid out according to `tiling`.
 ///
 /// Returns the projection along with all physical axes prior to broadcast omission (for bounds checking).
-fn labeled<R: Runtime>(
-    binding: &mut TensorBinding<R>,
+fn labeled(
+    geometry: &mut Geometry,
     subspace: &[Axis],
     batch_axes: &[Axis],
     tiling: Option<StorageTiling>,
 ) -> (Projection, Vec<Axis>) {
-    let rank = binding.shape.len();
+    let rank = geometry.rank();
     let tiling = tiling.unwrap_or_else(|| StorageTiling::uniform(subspace.len(), 0));
     assert_eq!(
         tiling.rank(),
@@ -583,7 +641,7 @@ fn labeled<R: Runtime>(
     let block_dims = block.len();
     assert!(
         rank >= block_dims,
-        "StridedTileSource: binding rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
+        "StridedTileSource: operand rank {rank} is smaller than its subspace block of {block_dims} dims ({} axes over {tiling:?})",
         subspace.len()
     );
     let batch_dims = rank - block_dims;
@@ -597,22 +655,18 @@ fn labeled<R: Runtime>(
     physical_axes.extend_from_slice(&block);
 
     let mut phys = Vec::new();
-    let mut shape = Vec::new();
-    let mut strides = Vec::new();
+    let mut dims = Vec::new();
 
-    for (i, &axis) in physical_axes.iter().enumerate() {
-        let extent = binding.shape[i];
+    for (&axis, (extent, stride)) in physical_axes.iter().zip(geometry.dims()) {
         // A subspace axis never drops out, however small, since the tile is shaped over it.
         if batch_axes.contains(&axis) && extent == 1 && !subspace.contains(&axis) {
             continue;
         }
         phys.push(PhysicalAxis::new(axis, extent));
-        shape.push(extent);
-        strides.push(binding.strides[i]);
+        dims.push((extent, stride));
     }
 
-    binding.shape = shape[..].into();
-    binding.strides = strides[..].into();
+    *geometry = Geometry::of_dims(&dims);
     (
         Projection::of_layout(&ConcreteLayout::new(&phys)),
         physical_axes,
@@ -621,8 +675,8 @@ fn labeled<R: Runtime>(
 
 /// Validates an explicit gathered [`Projection`] against the tensor binding and iteration space.
 /// Ensures mutually exclusive labeling options (`subspace`, `batch_axes`, `tiling`) were not provided.
-fn check_stated<R: Runtime>(
-    binding: &TensorBinding<R>,
+fn check_stated(
+    geometry: &Geometry,
     space: &Space,
     projection: &Projection,
     subspace: &[Axis],
@@ -636,10 +690,10 @@ fn check_stated<R: Runtime>(
     );
     assert_eq!(
         projection.physical_rank(),
-        binding.shape.len(),
-        "StridedTileSource::gathered: the mapping addresses {} dims but the binding has {}",
+        geometry.rank(),
+        "StridedTileSource::gathered: the mapping addresses {} dims but the operand has {}",
         projection.physical_rank(),
-        binding.shape.len()
+        geometry.rank()
     );
     for &axis in projection.logical_axes() {
         assert!(
@@ -661,9 +715,37 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
             ..
         } = self.realize();
         StridedOperand {
-            tensor,
+            tensor: tensor.expect(
+                "StridedTileSource::build: this source was built over geometry alone and has no \
+                 tensor to bind; use `build_spec`",
+            ),
             vector_size,
             spec,
+        }
+    }
+
+    /// The untensored half: everything [`build`](Self::build) would have derived
+    /// but the tensor argument itself.
+    ///
+    /// For a destination that has no address. A fused store writes through a
+    /// call, so the launch has no handle to bind — but the tile that walks it is
+    /// projected, bounds-checked and staged exactly as a bound one is, and this
+    /// is that same derivation rather than a restatement of it. Restating it is
+    /// what drifts: the labeled mapping drops broadcast batch dims, folds the
+    /// rest into a `ConcreteLayout` and rewrites the geometry around it, none of
+    /// which a caller should be reproducing — so the rewritten geometry comes
+    /// back too, rather than only the spec derived from it. See [`DerivedSpec`].
+    pub fn build_spec(self) -> DerivedSpec {
+        let Realized {
+            vector_size,
+            spec,
+            geometry,
+            ..
+        } = self.realize();
+        DerivedSpec {
+            spec,
+            vector_size,
+            geometry,
         }
     }
 }
@@ -676,9 +758,13 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             vector_size,
             spec,
             quant,
+            ..
         } = self.realize();
         QuantOperand {
-            tensor,
+            tensor: tensor.expect(
+                "StridedTileSource::build_quant: a quantized operand is always bound; only a \
+                 fused store is built over geometry alone",
+            ),
             vector_size,
             spec,
             quant: quant.unwrap(),

@@ -97,6 +97,10 @@ name = "interpolate"
 
 [[bench]]
 harness = false
+name = "interpolate_cpu"
+
+[[bench]]
+harness = false
 name = "pool"
 
 [[bench]]

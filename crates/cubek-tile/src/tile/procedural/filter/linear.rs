@@ -2,7 +2,7 @@ use cubecl::prelude::*;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeCoords, RecipeExpand};
+use super::super::{AffineCoordinate, Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 
 /// A [`Linear`] filter applied directly to an [`AffineCoordinate`].
 pub type LinearAxis<T> = Linear<AffineCoordinate<T>>;
@@ -30,5 +30,14 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Linear<C> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
         let x = self.coordinate.evaluate(coordinates).abs();
         select(x < T::new(1.0_f32), T::new(1.0_f32) - x, T::new(0.0_f32))
+    }
+}
+
+impl<C: CubeType> RecipeAxisDependencies for LinearExpand<C>
+where
+    C::ExpandType: RecipeAxisDependencies,
+{
+    fn reads_axis(&self, scope: &Scope, axis: Axis) -> bool {
+        self.coordinate.reads_axis(scope, axis)
     }
 }

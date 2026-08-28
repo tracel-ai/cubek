@@ -3,7 +3,7 @@
 #![cfg(feature = "benchmarks")]
 
 use cubek_interpolate::eval::benchmarks::InterpolateCorrectness;
-use cubek_interpolate::{definition::InterpolateProblem, launch::InterpolateStrategy};
+use cubek_interpolate::{InterpolateStrategy, definition::InterpolateProblem};
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
@@ -19,9 +19,9 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    use cubek_interpolate::eval::benchmarks::{problems, strategies};
+    use cubek_interpolate::eval::benchmarks::{every_strategy, problems};
 
-    let strategy: InterpolateStrategy = lookup(strategies(), strategy_id);
+    let strategy: InterpolateStrategy = lookup(every_strategy(), strategy_id);
     let problem: InterpolateProblem = lookup(problems(), problem_id);
 
     let actual = match InterpolateCorrectness.kernel_result(&strategy, &problem, &SEEDS) {
@@ -37,7 +37,23 @@ fn run(strategy_id: &str, problem_id: &str) {
         .enforce();
 }
 
-const STRATEGY: &str = "global_memory";
+/// The catalogue id of the baseline geometry. The catalogue also lists the selector's own intents,
+/// but these tests pin one geometry so a reference mismatch names a launch and not a choice the
+/// device made.
+const STRATEGY: &str = "in_place_p4_r2_c1";
+
+/// The id above has to name a real catalogue entry. Without this, a catalogue rename leaves every
+/// test in this file panicking on lookup rather than saying what moved, and it does so behind a
+/// feature flag the default test run never compiles.
+#[test]
+fn the_strategy_id_names_a_catalogue_entry() {
+    use cubek_interpolate::eval::benchmarks::every_strategy;
+
+    assert!(
+        every_strategy().iter().any(|entry| entry.id == STRATEGY),
+        "{STRATEGY} is not in the catalogue"
+    );
+}
 
 #[test]
 fn nearest_upsample_default() {

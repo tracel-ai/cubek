@@ -10,6 +10,37 @@ pub enum InterpolateError {
     )]
     SharedMemoryLimitExceeded { requested: usize, available: usize },
 
+    #[error("Shared memory residence is not supported on CPU")]
+    SharedMemoryUnsupportedOnCpu,
+
+    #[error("Requested {requested} units per cube exceeds the device limit of {available} units")]
+    UnitsPerCubeExceeded { requested: usize, available: usize },
+
+    #[error("Interpolation config must use at least one plane per cube")]
+    ZeroPlanesPerCube,
+
+    #[error("Interpolation config must use at least one row per plane")]
+    ZeroRowsPerPlane,
+
+    #[error("Interpolation config must use at least one column per lane")]
+    ZeroColsPerLane,
+
+    #[error("Interpolation config channel block must contain at least one channel")]
+    ZeroChannelBlock,
+
+    #[error("Tensor shape {shape:?} has a zero-sized dimension at axis {axis}")]
+    ZeroDimension { shape: Vec<usize>, axis: usize },
+
+    #[error(
+        "Tensor shape {shape:?} has spatial dimension {axis} of size {size}, which exceeds the maximum of {max}"
+    )]
+    SpatialDimensionTooLarge {
+        shape: Vec<usize>,
+        axis: usize,
+        size: usize,
+        max: usize,
+    },
+
     #[error(
         "Interpolate expects 4D tensors (NHWC), but got input rank {input} and output rank {output}"
     )]
@@ -22,11 +53,11 @@ pub enum InterpolateError {
     ChannelMismatch { input: usize, output: usize },
 
     #[error(
-        "Shape mismatch: input shape {input:?} and output gradient shape {output:?} must match exactly"
+        "Shape mismatch: input shape {input:?} and input gradient shape {input_grad:?} must match exactly"
     )]
     ShapeMismatch {
         input: Vec<usize>,
-        output: Vec<usize>,
+        input_grad: Vec<usize>,
     },
 }
 
