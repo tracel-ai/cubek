@@ -608,7 +608,7 @@ impl<T: Numeric> Tile<T> {
              logical axes, which its buffer's physical axes no longer match"
         ));
         // Scales are re-windowed from the origin (`QuantInfo::window`), so a displaced origin
-        // would address the wrong scale block. Refuse the pair rather than silently mis-scale.
+        // would address the wrong scale block. Refuse the pair rather than silently misapply one.
         comptime!(assert!(
             quant.is_none() || indirection.is_none(),
             "Tile::of: an indirect operand cannot be quantized; its scale grid is addressed from \
