@@ -398,6 +398,8 @@ impl<T: Numeric> Tile<T> {
     ///   [`IndexPolicy::Checked`] the spec must carry a [`Boundary`] on the target axis, which is
     ///   what masks an entry past its bound. [`StridedTileSource::indexed`](crate::StridedTileSource::indexed)
     ///   derives it from the policy; hand-built specs state it themselves.
+    /// - The lookup resolves during [`Tile::at`], not at construction. An indexed tile that is
+    ///   read without descending through a region still addresses its entry-0 window.
     pub fn of_indexed<E: CubePrimitive<Scalar = T>>(
         values: &Tensor<E>,
         ids: &Tensor<u32>,
@@ -2228,34 +2230,32 @@ impl<T: Numeric> MemData<T> {
         // axis lies inside one table entry. Above it only the table base moves; at it the origin
         // takes the displacement on both address routes and the child carries no indirection at
         // all, so nothing can displace twice.
-        let displacement = #[comptime]
-        match &self.indirection {
-            ComptimeOption::Some(ind) => {
-                ind.displacement(region, &self.window.origin, comptime!(space.clone()))
-            }
-            ComptimeOption::None => 0i32.runtime(),
-        };
-        let indirection = #[comptime]
+        // Resolve the comptime state once. At the fire level the displacement and its physical
+        // axis travel together, while the child drops the carrier; above it only the table base
+        // advances. Keeping these three outcomes in one match makes that single-fire invariant
+        // explicit.
+        let (displacement, indirection, displaced_at) = #[comptime]
         match &self.indirection {
             ComptimeOption::Some(ind) => {
                 if comptime!(ind.spec.fires_at(&space)) {
-                    ComptimeOption::new_None()
+                    (
+                        ind.displacement(region, &self.window.origin, comptime!(space.clone())),
+                        ComptimeOption::new_None(),
+                        comptime!(Some(space.position(ind.spec.target))),
+                    )
                 } else {
-                    ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone())))
+                    (
+                        0i32.runtime(),
+                        ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone()))),
+                        comptime!(None::<usize>),
+                    )
                 }
             }
-            ComptimeOption::None => ComptimeOption::new_None(),
-        };
-        // Which physical axis the displacement lands on, once, comptime. `None` above the fire
-        // level and for an operand that never had an indirection, where `displacement` is `0`.
-        let displaced_at = #[comptime]
-        match &self.indirection {
-            ComptimeOption::Some(ind) => comptime!(
-                ind.spec
-                    .fires_at(&space)
-                    .then(|| space.position(ind.spec.target))
+            ComptimeOption::None => (
+                0i32.runtime(),
+                ComptimeOption::new_None(),
+                comptime!(None::<usize>),
             ),
-            ComptimeOption::None => comptime!(None::<usize>),
         };
 
         let map = if comptime!(proj.is_direct()) {
@@ -2314,6 +2314,10 @@ impl<T: Numeric> MemData<T> {
                         &self.layout.physical_strides,
                     );
                     origin.push(start.fadd(displacement));
+                    // `displacement` may be negative when a page entry precedes this logical
+                    // position. The address accumulator is `u32`, so this cast deliberately
+                    // uses modular two's-complement arithmetic; adding it is the matching
+                    // subtraction in the unsigned address domain.
                     advances.push(advance.fadd(displacement.fcast::<u32>().fmul(unit)));
                 } else {
                     origin.push(start);

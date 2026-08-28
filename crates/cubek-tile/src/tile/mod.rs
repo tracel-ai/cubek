@@ -1111,7 +1111,7 @@ impl<T: Numeric> Tile<T> {
     /// Which axes' region coordinates address this operand's index tensor; empty for an operand
     /// with no indirection. Comptime, and read by the staging plan
     /// ([`Space::walk_invariant`](crate::Space::walk_invariant)).
-    pub fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {
+    pub(crate) fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.index_axes(),
             TileKind::PlaneTile(_)
