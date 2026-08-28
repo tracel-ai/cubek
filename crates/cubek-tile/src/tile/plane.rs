@@ -29,6 +29,7 @@ pub enum PlaneTile<T: Numeric> {
 impl<T: Numeric> PlaneTile<T> {
     /// An accumulator tile over the whole `m × n` MMA tile, uninitialized, in the `form` the
     /// instruction contracts through.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
         #[comptime] form: Instruction,
         #[comptime] m: usize,
