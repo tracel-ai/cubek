@@ -17,8 +17,8 @@ was "operand does not span a stepped axis implies its window does not move", and
 precisely the case where spanning stops implying that.
 
 The original P1 findings all concerned behavior outside the single-level
-`EXPERT = Static(1)` case. They are now fixed and covered below; the remaining P2/P3 findings are
-unchanged.
+`EXPERT = Static(1)` case. The P1 and P2 findings are now fixed and covered below; only the P3
+cleanup remains.
 
 ---
 
@@ -36,65 +36,17 @@ All P1 findings are fixed:
 
 ---
 
-## P2: the lane-distribution rule is applied below the fire level
+## P2: completed
 
-**`crates/cubek-tile/src/tile/mod.rs:527`** (inside `IndirectionSpec::validate`)
+All P2 findings are fixed:
 
-`fires` is set at `:516`, and the child produced at that level carries no indirection at all, so
-nothing below the fire level reads the table. The index-axis scope check nevertheless runs on
-every remaining level.
-
-Consequence: a two-level MoE matmul that distributes `M` across units at the leaf, which is the
-normal shape, is refused with a message about lanes resolving divergent origins, by which point
-that is no longer true. The moe tests are single-level and do not catch it.
-
-Gate the loop on the value of `fires` at loop entry. Keep the check *at* the fire level:
-`advanced_base` genuinely does read the region there, so a per-lane coordinate at that level is
-the real hazard the message describes.
-
----
-
-## P2: `MemData::at` does not guard its own invariant
-
-**`crates/cubek-tile/src/tile/mem.rs:1960`**
-
-`displacement` is computed unconditionally, but only the `proj.is_direct()` branch
-(`mem.rs:1990`) consumes it. The gathered branch discards it silently, and would emit a dead
-`self.table[...]` load. The invariant is enforced two layers away, in `IndirectionSpec::validate`
-and `StridedTileSource::indexed`, while `flat_accumulate` directly above asserts its own analogous
-invariant locally.
-
-Add, at the top of `at`:
-
-```rust
-comptime!(assert!(
-    self.indirection.is_none()
-        || (proj.is_direct() && !self.layout.projection.is_tiled()),
-    "..."
-));
-```
-
-Costs nothing and makes the invariant local.
-
----
-
-## P2: `IndexPolicy` carries no codegen consequence
-
-**`crates/cubek-tile/src/tile/mod.rs:404`**
-
-Nothing reads the policy except the assert at `tile/mem.rs:339`. Masking is driven entirely by
-`spec.boundaries`, which `.checked(true)` sets independently. Three consequences:
-
-- `Trusted`'s doc, "no test is emitted and the window is placed wherever the entry says", is false
-  whenever `.checked(true)` was also called. The test is emitted and the window is masked.
-- The caller has to state one fact twice:
-  `.checked(policy == IndexPolicy::Checked).indexed(..., policy)` (`tests/tile/moe.rs:129`).
-- `IndexPolicy` is in `IndirectionSpec`'s `Hash`/`Eq`, so `Trusted` and `Checked` are distinct
-  kernel identities compiling identical code.
-
-Either make the policy drive the boundary derivation, which is also the fix for the `settled`
-issue above and would collapse the two builder calls into one, or drop the enum and read the
-policy off `spec.boundaries` at the target position.
+- Lane-distribution validation stops after the fire level; the fire level itself remains checked.
+  A two-level construction test covers a unit-distributed index axis below resolution.
+- `MemData::at` asserts its direct, untiled indirection invariant locally before computing the
+  displacement.
+- `IndexPolicy` now drives the target-axis boundary derivation. `Checked` arms the target without
+  a duplicate `.checked(true)`, while `Trusted` suppresses a generic target mask; both behaviors
+  have focused tests and now produce distinct boundary codegen.
 
 ---
 
@@ -122,8 +74,6 @@ repeated-expert cases would catch a table-base off-by-one that identity or rever
 and the refusal set covers every `validate` rule that has a host-side site. The reasoning recorded
 at the bottom of `moe.rs` for the two rules that have no test is sound.
 
-The remaining gap lines up with the P2 lane-scope finding above:
-
-| Missing case | Finding it would catch |
-| --- | --- |
-| An index axis distributed across units only below the fire level | Lane-scope over-restriction |
+The P1/P2 gaps identified by this review now have regression coverage: launcher-built checked
+routing, multi-level deep-fire addressing, short and malformed tables, post-fire lane
+distribution, and policy-driven target boundaries.

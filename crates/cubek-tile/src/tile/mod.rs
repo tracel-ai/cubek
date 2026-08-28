@@ -411,8 +411,8 @@ pub enum IndexPolicy {
     /// emitted and the window is placed wherever the entry says.
     Trusted,
     /// The displaced window is masked against the target axis's own bound, so an entry past it
-    /// reads as the window's [`Boundary`]. The operand must state a boundary on that axis, else
-    /// there is nothing to mask with.
+    /// reads as the window's [`Boundary`]. The launch-side builder arms that axis directly from
+    /// this policy; a hand-built [`TileSpec`] must carry the corresponding boundary itself.
     Checked,
 }
 
@@ -505,6 +505,9 @@ impl IndirectionSpec {
         let mut partitioner = kernel.partitioner();
         let mut fires = false;
         while !partitioner.is_final() {
+            // This level still reads the table when the lookup fires here. Its child does not,
+            // so distribution below it cannot make the resolved pointer lane-divergent.
+            let lookup_pending = !fires;
             let edge = partitioner.edge(self.target);
             if fires {
                 // Below the fire level nothing may move: the child window is dense by
@@ -529,14 +532,16 @@ impl IndirectionSpec {
                     self.granularity
                 );
             }
-            for &axis in self.index_axes.iter() {
-                let scope = partitioner.distribution(axis).scope();
-                assert!(
-                    !matches!(scope, Some(ComputeScope::Unit)),
-                    "Indirection: {axis:?} addresses the table but is distributed across \
-                     lanes, so each lane would resolve a different window origin while the \
-                     dense and fragment reads below share one base pointer"
-                );
+            if lookup_pending {
+                for &axis in self.index_axes.iter() {
+                    let scope = partitioner.distribution(axis).scope();
+                    assert!(
+                        !matches!(scope, Some(ComputeScope::Unit)),
+                        "Indirection: {axis:?} addresses the table but is distributed across \
+                         lanes, so each lane would resolve a different window origin while the \
+                         dense and fragment reads below share one base pointer"
+                    );
+                }
             }
             partitioner = partitioner.next();
         }

@@ -395,8 +395,9 @@ impl<T: Numeric> Tile<T> {
     /// - The tile does not [`witness`](Tile::witnesses) the target axis. Its bound is the index
     ///   tensor's range, not the operation's extent, so the kernel space states that axis itself.
     /// - Under [`IndexPolicy::Trusted`] nothing checks an entry. Under
-    ///   [`IndexPolicy::Checked`] the operand must state a [`Boundary`] on the target axis, which
-    ///   is what masks an entry past its bound.
+    ///   [`IndexPolicy::Checked`] the spec must carry a [`Boundary`] on the target axis, which is
+    ///   what masks an entry past its bound. [`StridedTileSource::indexed`](crate::StridedTileSource::indexed)
+    ///   derives it from the policy; hand-built specs state it themselves.
     pub fn of_indexed<E: CubePrimitive<Scalar = T>>(
         values: &Tensor<E>,
         ids: &Tensor<u32>,
@@ -2215,6 +2216,10 @@ impl<T: Numeric> MemData<T> {
         let mut advances = Coords::<u32>::new();
 
         let proj = comptime!(self.projection.clone());
+        comptime!(assert!(
+            self.indirection.is_none() || (proj.is_direct() && !self.layout.projection.is_tiled()),
+            "MemData::at: an indirection requires a direct, untiled memory mapping"
+        ));
         let rank = comptime!(proj.physical_rank());
         let last = comptime!(rank - 1);
         let w = comptime!(self.store.vector_size);

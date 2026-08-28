@@ -164,7 +164,6 @@ fn check_moe(moe: &Moe, residence: Residence, policy: IndexPolicy) {
     let launcher = space.launcher_over(&client, &[]);
     let w_operand = launcher
         .bind(&weights, w_t.binding())
-        .checked(policy == IndexPolicy::Checked)
         .indexed(ids_t.binding(), M, EXPERT, policy)
         .build();
 
@@ -294,6 +293,88 @@ fn a_checked_entry_past_the_bound_reads_as_zero() {
         Residence::Smem,
         IndexPolicy::Checked,
     );
+}
+
+/// The policy is the target-axis bounds statement. No separate `.checked(true)` is needed for a
+/// checked route built through `Launcher`; this also keeps policy in the generated kernel spec.
+#[test]
+fn checked_policy_arms_its_own_target_boundary() {
+    let (client, w, ids) = refusal_fixture();
+    let space = refusal_space(1);
+    let launcher = space.launcher_over(&client, &[]);
+    let operand = launcher
+        .arg(w.binding())
+        .subspace(&[EXPERT, K, N])
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Checked)
+        .build();
+    assert_eq!(operand.spec.boundaries[0], Some(Boundary::Zero));
+}
+
+/// Conversely, `Trusted` promises that the routed target needs no test even when a generic
+/// `.checked(true)` mode is requested for other axes.
+#[test]
+fn trusted_policy_keeps_its_target_unchecked() {
+    let (_, w, ids) = refusal_fixture();
+    let space = refusal_space(1);
+    let operand = StridedOperand::source(w.binding())
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .checked(true)
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+    assert_eq!(operand.spec.boundaries[0], None);
+    assert_eq!(operand.spec.boundaries[1], Some(Boundary::Zero));
+}
+
+/// Once the lookup fires, its child carries no indirection. Distributing the index axis across
+/// lanes at that child therefore cannot produce lane-divergent table reads and must be accepted.
+#[test]
+fn an_index_axis_may_be_distributed_across_lanes_below_the_fire_level() {
+    let (client, w, ids) = refusal_fixture();
+    let space = Tiling::new()
+        .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::unit(1))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+        })
+        .build();
+    let launcher = space.launcher(&client);
+    let _ = launcher
+        .arg(w.binding())
+        .subspace(&[EXPERT, K, N])
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+}
+
+/// The fire level itself still reads the table, so a lane-distributed index coordinate there
+/// would resolve a different base pointer per lane and remains invalid.
+#[test]
+#[should_panic(expected = "distributed across lanes")]
+fn an_index_axis_distributed_across_lanes_at_the_fire_level_is_refused() {
+    let (client, w, ids) = refusal_fixture();
+    let space = Tiling::new()
+        .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::unit(4))
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+        })
+        .build();
+    let launcher = space.launcher(&client);
+    let _ = launcher
+        .arg(w.binding())
+        .subspace(&[EXPERT, K, N])
+        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
 }
 
 /// Both `M` and the displaced target are cut at two levels. The outer `M` coordinate must be

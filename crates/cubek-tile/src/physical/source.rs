@@ -204,11 +204,12 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// before this call is silently dropped back to `Zero`. Sequence a `Clamp` override after
     /// `checked`, not before it.
     ///
-    /// `checked(false)` disarms the operand outright. `checked(true)` states the *mode*, not the
-    /// axis list: [`build`](Self::build) still lands it only on the coordinate axes that can
-    /// leave the buffer, so an axis whose map is the identity of a logical axis whose tiling
-    /// divides stays unchecked whatever this says. That filtering is what lets a clamped operand
-    /// keep a vectorized innermost axis; there is no setter that masks a settled axis.
+    /// `checked(false)` disarms ordinary coordinate checks. `checked(true)` states the *mode*,
+    /// not the axis list: [`build`](Self::build) still lands it only on the coordinate axes that
+    /// can leave the buffer, so an axis whose map is the identity of a logical axis whose tiling
+    /// divides stays unchecked whatever this says. An indexed target is the exception: its
+    /// [`IndexPolicy`] determines that axis directly because its origin comes from data. That
+    /// filtering is what lets a clamped operand keep a vectorized innermost axis.
     pub fn checked(mut self, check: bool) -> Self {
         self.data.boundary = Some(if check { Some(Boundary::Zero) } else { None });
         self
@@ -322,7 +323,9 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// [`quantized`](Self::quantized) is no longer reachable in either order (both read from the
     /// window origin, and the lookup moves it). [`gathered`](Self::gathered) and
     /// [`tiling`](Self::tiling) stay reachable and are refused by [`build`](Self::build) instead:
-    /// neither leaves a single dim carrying the target axis alone.
+    /// neither leaves a single dim carrying the target axis alone. `policy` determines the
+    /// target axis's boundary directly: [`IndexPolicy::Checked`] arms it and
+    /// [`IndexPolicy::Trusted`] leaves it unchecked, independently of [`checked`](Self::checked).
     pub fn indexed(
         mut self,
         table: TensorBinding<R>,
@@ -616,7 +619,8 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // retire its policy.
         // A routed origin comes from data, so divisibility of the ordinary tiled coordinate says
         // nothing about whether that window remains inside the values tensor.
-        let indirection_target = indirection.as_ref().map(|table| table.spec.target);
+        let indirection_spec = indirection.as_ref().map(|table| &table.spec);
+        let indirection_target = indirection_spec.map(|spec| spec.target);
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
@@ -644,7 +648,16 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // axis would pay for a mask that can never fire, and a settled *innermost* axis must be
         // left alone outright, since a window clamps in lines and would alias the edge line.
         let boundaries = (0..coord_rank)
-            .map(|pa| boundary.filter(|_| !settled(pa)))
+            .map(|pa| {
+                let axis = coords.physical_axis(pa).identity_axis();
+                match indirection_spec.filter(|spec| axis == Some(spec.target)) {
+                    Some(spec) => match spec.policy {
+                        IndexPolicy::Trusted => None,
+                        IndexPolicy::Checked => Some(boundary.unwrap_or(Boundary::Zero)),
+                    },
+                    None => boundary.filter(|_| !settled(pa)),
+                }
+            })
             .collect::<Vec<_>>();
 
         // Validate that explicit residences match the space's depth: extra or missing levels lead
