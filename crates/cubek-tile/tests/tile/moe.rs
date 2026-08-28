@@ -339,7 +339,7 @@ fn an_index_axis_may_be_distributed_across_lanes_below_the_fire_level() {
     let (client, w, ids) = refusal_fixture();
     let space = lane_distribution_space(Cut::sequential(4), Cut::unit(1));
     let _ = space
-        .launcher(&client)
+        .launcher_over(&client, &[K, N])
         .arg(w)
         .subspace(&[EXPERT, K, N])
         .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
@@ -354,7 +354,7 @@ fn an_index_axis_distributed_across_lanes_at_the_fire_level_is_refused() {
     let (client, w, ids) = refusal_fixture();
     let space = lane_distribution_space(Cut::unit(4), Cut::sequential(4));
     let _ = space
-        .launcher(&client)
+        .launcher_over(&client, &[K, N])
         .arg(w)
         .subspace(&[EXPERT, K, N])
         .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
