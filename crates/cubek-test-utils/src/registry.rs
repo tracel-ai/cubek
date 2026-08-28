@@ -400,7 +400,7 @@ pub trait BenchmarkCategory: Sync {
     ) -> Result<RunSamples, String>;
 
     /// `None` means the category doesn't expose a kernel result (e.g.
-    /// memcpy_async — no semantic-level output).
+    /// memcpy_async: no semantic-level output).
     fn kernel_result(
         &self,
         _strategy_id: &str,
