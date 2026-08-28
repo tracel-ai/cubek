@@ -201,7 +201,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
     assert!(!broadcast.spec.axes().contains(&B1));
 }
 
-// ---- Launcher::spec --------------------------------------------------------
+// ---- Launcher::bind_geometry -----------------------------------------------
 
 /// An `f32` operand over `axes`, staged once per level of [`batched_space`]: `Smem` at the cube
 /// level, in place at the leaf. What a destination a fused store writes through would declare.
@@ -227,11 +227,42 @@ fn spec_derives_what_a_bound_operand_derives() {
         .bind(&operand, binding(&client, geometry.shape()))
         .vectorize(1)
         .build();
-    let derived = launch.spec(&operand, &geometry, &[], 1);
+    let derived = launch
+        .bind_geometry(&operand, &geometry)
+        .vectorize(1)
+        .build_spec();
 
     // The spec alone: `vector_size` is the argument echoed back by both, so comparing the two
     // would compare `1` with `1` and pass however far apart the derivations drifted.
     assert_eq!(derived.spec, bound.spec);
+}
+
+/// The knobs a bound operand tunes are the same knobs an unbound one tunes, which is why what
+/// comes back is the builder rather than a finished spec. A fused operand that knows its bounds
+/// better than the concrete overhang does, or that stages narrower than it reads, states it *on*
+/// the derivation — hand-building a spec beside it is the drift `build_spec` exists to remove.
+#[test]
+fn spec_tunes_what_a_bound_operand_tunes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    // k = 18 overhangs its leaf (4), so the derivation arms a check there is something to disarm.
+    let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
+    let operand = staged_operand(&[M, K]);
+    let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
+
+    let derived = launch
+        .bind_geometry(&operand, &geometry)
+        .vectorize(1)
+        .build_spec();
+    assert!(derived.spec.is_checked());
+
+    let tuned = launch
+        .bind_geometry(&operand, &geometry)
+        .vectorize(1)
+        .checked(false)
+        .stage_width(2)
+        .build_spec();
+    assert!(!tuned.spec.is_checked());
+    assert_eq!(tuned.spec.stage_width, Some(2));
 }
 
 /// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
@@ -244,12 +275,13 @@ fn spec_returns_the_geometry_it_settled_on() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
-    let derived = launch.spec(
-        &staged_operand(&[M, K]),
-        &Geometry::of_dims(&[(64, 16), (16, 1)]),
-        &[],
-        1,
-    );
+    let derived = launch
+        .bind_geometry(
+            &staged_operand(&[M, K]),
+            &Geometry::of_dims(&[(64, 16), (16, 1)]),
+        )
+        .vectorize(1)
+        .build_spec();
 
     assert_eq!(derived.geometry.shape(), [64, 16]);
     assert_eq!(derived.geometry.strides(), [16, 1]);
@@ -259,30 +291,31 @@ fn spec_returns_the_geometry_it_settled_on() {
     );
 }
 
-/// A leading broadcast dim is refused, not silently folded away. `spec` labels the operand's own
-/// axes and no batches, so a dim past them has no axis to belong to: the derivation that *would*
-/// drop it is the one that never runs here, and a caller who states a rank the projection cannot
-/// address learns it at the launch rather than through a store landing at the wrong offsets.
+/// A leading broadcast dim is refused, not silently folded away. `bind_geometry` labels the
+/// operand's own axes, and no batches are stated here, so a dim past them has no axis to belong
+/// to: the derivation that *would* drop it is the one that never runs here, and a caller who
+/// states a rank the projection cannot address learns it at the launch rather than through a
+/// store landing at the wrong offsets.
 #[test]
 #[should_panic(expected = "batch dims but only 0 batch axes given")]
 fn spec_refuses_a_dim_it_cannot_label() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
-    let _ = launch.spec(
-        &staged_operand(&[M, K]),
-        &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
-        &[],
-        1,
-    );
+    let _ = launch
+        .bind_geometry(
+            &staged_operand(&[M, K]),
+            &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
+        )
+        .vectorize(1)
+        .build_spec();
 }
 
 /// A broadcast batch dim is dropped from the geometry that comes back, which is the case the
 /// stated and the settled pair actually part company over.
 ///
-/// `spec` right-aligns `batches` above the operand's own axes exactly as a bound operand's
-/// [`batches`](cubek_tile::StridedTileSource::batches) does, and a size-one batch dim drops out
-/// there. A caller that handed [`Tile::of_sink`] the geometry it *stated* would address a rank
+/// [`batches`](cubek_tile::StridedTileSource::batches) right-aligns above the operand's own axes
+/// here exactly as it does for a bound operand, and a size-one batch dim drops out there. A caller that handed [`Tile::of_sink`] the geometry it *stated* would address a rank
 /// the projection no longer has; the settled one is a dim shorter, and that is the one returned.
 #[test]
 fn spec_settles_a_broadcast_batch_dim_away() {
@@ -290,12 +323,14 @@ fn spec_settles_a_broadcast_batch_dim_away() {
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
 
     // Three dims stated, the leading one broadcast over B1.
-    let derived = launch.spec(
-        &staged_operand(&[M, K]),
-        &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
-        &[B0, B1],
-        1,
-    );
+    let derived = launch
+        .bind_geometry(
+            &staged_operand(&[M, K]),
+            &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
+        )
+        .batches(&[B0, B1])
+        .vectorize(1)
+        .build_spec();
 
     assert!(!derived.spec.axes().contains(&B1));
     assert_eq!(derived.geometry.shape(), [64, 16]);
@@ -319,12 +354,13 @@ fn spec_refuses_a_width_the_geometry_cannot_serve() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
-    let _ = launch.spec(
-        &staged_operand(&[M, K]),
-        &Geometry::of_dims(&[(64, 17), (16, 1)]),
-        &[],
-        2,
-    );
+    let _ = launch
+        .bind_geometry(
+            &staged_operand(&[M, K]),
+            &Geometry::of_dims(&[(64, 17), (16, 1)]),
+        )
+        .vectorize(2)
+        .build_spec();
 }
 
 // ---- StridedTileSource::gathered -------------------------------------------

@@ -153,15 +153,15 @@ fn a_sink_stores_where_a_buffer_stores() {
 }
 
 // ===========================================================================
-// The host half: `Launcher::spec`
+// The host half: `Launcher::bind_geometry`
 // ===========================================================================
 
 /// The same sink store, with the destination's [`TileSpec`] and geometry derived on the host by
-/// [`Launcher::spec`] instead of stated at the call site.
+/// [`Launcher::bind_geometry`] instead of stated at the call site.
 ///
 /// This is the pair a fused store actually reaches for. The kernels above take their spec off a
 /// `TileArg` — but a destination written through a call has no `TileArg` to take it off, which is
-/// the whole reason `spec` exists: it runs the derivation a bound operand runs and hands back
+/// the whole reason `bind_geometry` exists: it runs the derivation a bound operand runs and hands
 /// both halves, the spec *and* the geometry it settled on, so neither is restated here.
 #[cube(launch)]
 fn derived_sink_kernel<E: Float>(
@@ -185,7 +185,7 @@ fn derived_sink_kernel<E: Float>(
     dst.copy_from(&src);
 }
 
-/// A sink whose spec and geometry both come from [`Launcher::spec`] stores what the buffer kernel
+/// A sink whose spec and geometry both come from [`Launcher::bind_geometry`] stores what the buffer
 /// stores: the host-derived pair addresses the destination the same way the binding-derived one
 /// does, which is the only thing that makes a fused store a drop-in for the kernel it replaces.
 #[test]
@@ -199,12 +199,13 @@ fn a_launcher_derived_spec_addresses_the_sink() {
         .generate_without_host_data();
 
     // What the destination would have been, had it been a tensor to bind.
-    let derived = launcher.spec(
-        &Operand::new(&[ROW, COL], dtype),
-        &Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]),
-        &[],
-        1,
-    );
+    let derived = launcher
+        .bind_geometry(
+            &Operand::new(&[ROW, COL], dtype),
+            &Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]),
+        )
+        .vectorize(1)
+        .build_spec();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
     assert_eq!(derived.geometry.strides(), [COLS, 1]);
 

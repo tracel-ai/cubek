@@ -5,9 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{
-    Axis, DerivedSpec, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource, Unset,
-};
+use crate::{Axis, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -103,42 +101,42 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         self.arg(binding).subspace(operand.axes()).operand(operand)
     }
 
-    /// What [`bind`](Self::bind) would derive for `operand`, from the geometry
-    /// alone: for a destination with no tensor to bind, which is what a fused
-    /// store writes through.
+    /// [`bind`](Self::bind) over a stated geometry rather than a binding: for an
+    /// operand with no tensor to bind — the destination a fused store writes
+    /// through ([`Tile::of_sink`](crate::Tile::of_sink)), or the producer a fused
+    /// read comes from ([`Tile::of_source`](crate::Tile::of_source)).
     ///
     /// `geometry` is the physical extents and strides the operand *would* have
     /// had. Everything else — the projection, the bounds-check derived from this
     /// launcher's concrete overhang, the residence column, the cube size — is
-    /// settled exactly as it is for a bound operand, because it is the same
-    /// derivation.
+    /// settled exactly as it is for a bound operand, because this is the builder a
+    /// bound operand configures: [`batches`](StridedTileSource::batches),
+    /// [`vectorize`](StridedTileSource::vectorize),
+    /// [`checked`](StridedTileSource::checked),
+    /// [`stage_width`](StridedTileSource::stage_width) and
+    /// [`tiling`](StridedTileSource::tiling) all read the same here as there, and
+    /// an operand that needs one of them tunes it rather than hand-building a spec
+    /// beside the derivation.
     ///
-    /// `batches` right-aligns the dims above the operand's own axes, exactly as
-    /// [`batches`](StridedTileSource::batches) does for a bound operand — a fused
-    /// destination is as often batched as any other, and stating them here is what
-    /// lets the derivation drop a broadcast one.
-    ///
-    /// The geometry comes back in the [`DerivedSpec`], and that is what
-    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. The two part company
-    /// exactly where a batch dim is dropped, which is why it is the settled one that travels:
-    /// reading it keeps the dropping an implementation detail of the derivation rather than a
-    /// fact the call site has to reproduce.
-    pub fn spec<'a>(
+    /// End it with [`build_spec`](StridedTileSource::build_spec) rather than
+    /// [`build`](StridedTileSource::build): there is no tensor to ship, and the
+    /// settled geometry comes back beside the spec, which is what
+    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. The two
+    /// part company exactly where a broadcast batch dim is dropped, which is why it
+    /// is the settled one that travels: reading it keeps the dropping an
+    /// implementation detail of the derivation rather than a fact the call site has
+    /// to reproduce.
+    pub fn bind_geometry<'a>(
         &'a self,
         operand: &'a Operand,
         geometry: &Geometry,
-        batches: &[Axis],
-        vector_size: usize,
-    ) -> DerivedSpec {
+    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
         StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
             .subspace(operand.axes())
             .operand(operand)
-            .batches(batches)
-            .vectorize(vector_size)
-            .build_spec()
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width

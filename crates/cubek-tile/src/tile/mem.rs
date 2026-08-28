@@ -425,6 +425,10 @@ impl<T: Numeric> Tile<T> {
     /// staged into shared memory, written dense ([`Tile::dense_mut`]), quantized,
     /// or filled by a tensor map: each of those wants an address rather than a
     /// call, and says so.
+    ///
+    /// Nor may its spec state a [`packing`](TileSpec::packed): a packed operand is
+    /// addressed at the *stored* width and serves several values per element, so
+    /// the width stated here would no longer be the width the sink is written at.
     pub fn of_sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
@@ -432,6 +436,16 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        // A bound operand reads its width off its binding, so a packing multiplying it is a
+        // fact about the two together; a sink has only what it states, and `of_impl` would
+        // address it at `vector_size * factor`. Refused here, where the spec says it, rather
+        // than left to the width mismatch cubecl reports off the erased tensor.
+        comptime!(assert!(
+            spec.packing == Packing::Plain,
+            "Tile::of_sink: a sink is written at the width it states, so its spec may not \
+             state a packing ({:?}) on top of it",
+            spec.packing
+        ));
         Tile::<T>::of_impl(
             Backing::<T>::new_WriteCall(sink),
             geometry,
@@ -457,6 +471,11 @@ impl<T: Numeric> Tile<T> {
     /// A source serves the layout-addressed reads and only those. It cannot be
     /// staged into shared memory, read dense, quantized, or loaded by a tensor
     /// map: each of those wants an address rather than a call, and says so.
+    ///
+    /// Nor may its spec state a [`packing`](TileSpec::packed), for the reason
+    /// [`of_sink`](Tile::of_sink) states: a packed operand is addressed at the
+    /// *stored* width, and the width stated here would no longer be the one the
+    /// source is read at.
     pub fn of_source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
@@ -464,6 +483,12 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        comptime!(assert!(
+            spec.packing == Packing::Plain,
+            "Tile::of_source: a source is read at the width it states, so its spec may not \
+             state a packing ({:?}) on top of it",
+            spec.packing
+        ));
         Tile::<T>::of_impl(
             Backing::<T>::new_ReadCall(source),
             geometry,
