@@ -780,7 +780,7 @@ impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
+        future::block_on(self.client.sync([])).unwrap()
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {

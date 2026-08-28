@@ -36,7 +36,7 @@ pub fn strategy_result(
     let inputs = seed_inputs(&client, &spec, &dtypes, seed_lhs, seed_rhs);
     let out_handle = inputs.out.clone();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
         let conv_inputs = ConvolutionInputs::Forward {
             input: InputBinding::new(inputs.input.clone().binding(), dtypes.lhs_global),
             weight: InputBinding::new(inputs.weight.clone().binding(), dtypes.rhs_global),

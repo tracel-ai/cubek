@@ -88,7 +88,7 @@ where
 
     let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
         launch(c, lhs_handle, rhs_handle, out_handle, &mut dtypes).into()
     });
 

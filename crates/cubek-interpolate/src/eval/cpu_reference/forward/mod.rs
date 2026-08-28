@@ -31,7 +31,7 @@ pub fn kernel_result(
 
     let output_handle = make_zero_handle(&client, problem.output_shape().to_vec(), dtype);
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         interpolate::<TestRuntime>(
             c,
             input_handle.clone().binding(),

@@ -305,7 +305,7 @@ impl Benchmark for QuantMatmulBench {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
+        future::block_on(self.client.sync([])).unwrap()
     }
 
     fn profile(&self, args: Self::Input) -> Result<cubecl::benchmark::ProfileDuration, String> {

@@ -219,6 +219,6 @@ impl Benchmark for PoolBench {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
+        future::block_on(self.client.sync([])).unwrap()
     }
 }

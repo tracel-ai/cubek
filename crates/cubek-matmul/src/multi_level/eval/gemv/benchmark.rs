@@ -165,6 +165,6 @@ impl Benchmark for GemvBench {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
+        future::block_on(self.client.sync([])).unwrap()
     }
 }

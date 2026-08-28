@@ -34,7 +34,7 @@ pub fn kernel_result(
     let input_grad_shape = input_shape;
     let input_grad_handle = make_zero_handle(&client, input_grad_shape, dtype);
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&input_grad_handle.handle], |c| {
         interpolate_backward(
             c,
             input_handle.clone().binding(),

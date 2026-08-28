@@ -222,6 +222,6 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync()).unwrap()
+        future::block_on(self.client.sync([])).unwrap()
     }
 }
