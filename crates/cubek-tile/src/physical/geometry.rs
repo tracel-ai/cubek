@@ -60,8 +60,11 @@ impl Geometry {
     ///
     /// [`Tile::of`]: crate::Tile::of
     pub(crate) fn serves_lines(&self, vector_size: usize) -> Result<(), LineMisfit> {
-        if vector_size == 1 || self.rank() == 0 {
+        if vector_size == 1 {
             return Ok(());
+        }
+        if self.rank() == 0 {
+            return Err(LineMisfit::NoDims);
         }
         let last = self.rank() - 1;
         if self.strides[last] != 1 {
@@ -90,6 +93,9 @@ pub(crate) enum LineMisfit {
     PartialLine(usize),
     /// A coarser stride, when re-expressing it as `stride / width` would land inside a line.
     StrideInsideLine(usize),
+    /// No dims at all: there is no innermost extent to count in lines, so no width but `1`
+    /// describes it. Carries nothing, because the misfit is the absence.
+    NoDims,
 }
 
 impl Display for LineMisfit {
@@ -108,6 +114,10 @@ impl Display for LineMisfit {
                 f,
                 "its stride {stride} is not a whole number of lines, so a coarser step lands \
                  inside a line"
+            ),
+            Self::NoDims => write!(
+                f,
+                "it has no dims, so it has no innermost extent to count in lines"
             ),
         }
     }

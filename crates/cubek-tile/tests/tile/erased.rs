@@ -202,6 +202,7 @@ fn a_launcher_derived_spec_addresses_the_sink() {
     let derived = launcher.spec(
         &Operand::new(&[ROW, COL], dtype),
         &Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]),
+        &[],
         1,
     );
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
@@ -530,7 +531,40 @@ fn wide_sink_kernel<E: Float>(
     dst.copy_from(&src);
 }
 
-fn run_masked(sink: bool) -> HostData {
+/// [`wide_buffer_kernel`] with the *input* reached through an erased source, over the same
+/// masked space: the read-side twin of [`wide_sink_kernel`].
+#[cube(launch)]
+fn wide_source_kernel<E: Float>(
+    input: &TileArg<'_, E, Const<2>>,
+    out: &TileArg<'_, E, Const<2>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.tensor, 2usize);
+    let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.tensor);
+    let src = Tile::<E>::of_source(
+        source,
+        geometry,
+        2usize,
+        comptime!(space.clone()),
+        comptime!(input.spec.clone()),
+    );
+    let mut dst = out.tile(comptime!(space.clone()));
+    dst.copy_from(&src);
+}
+
+/// Which side of the masked, vectorized copy is erased.
+#[derive(Clone, Copy)]
+enum Erased {
+    /// Neither: the control.
+    Neither,
+    /// The destination.
+    Sink,
+    /// The input.
+    Source,
+}
+
+fn run_masked(erased: Erased) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let launcher = masked_space().launcher(&client);
@@ -554,8 +588,8 @@ fn run_masked(sink: bool) -> HostData {
         .vectorize(2)
         .build();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
-    match sink {
-        true => wide_sink_kernel::launch::<TestRuntime>(
+    match erased {
+        Erased::Sink => wide_sink_kernel::launch::<TestRuntime>(
             &client,
             count,
             dim,
@@ -564,7 +598,16 @@ fn run_masked(sink: bool) -> HostData {
             launcher.space().clone(),
             dtype,
         ),
-        false => wide_buffer_kernel::launch::<TestRuntime>(
+        Erased::Source => wide_source_kernel::launch::<TestRuntime>(
+            &client,
+            count,
+            dim,
+            src.arg(),
+            out.arg(),
+            launcher.space().clone(),
+            dtype,
+        ),
+        Erased::Neither => wide_buffer_kernel::launch::<TestRuntime>(
             &client,
             count,
             dim,
@@ -586,8 +629,8 @@ fn run_masked(sink: bool) -> HostData {
 /// re-expresses every coarser stride as `stride / 2`, on numbers nobody read off a tensor.
 #[test]
 fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
-    let through_sink = run_masked(true);
-    let through_buffer = run_masked(false);
+    let through_sink = run_masked(Erased::Sink);
+    let through_buffer = run_masked(Erased::Neither);
     for row in 0..MASKED_ROWS {
         for col in 0..COLS {
             let expected = (row * COLS + col) as f32;
@@ -600,6 +643,35 @@ fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
                 through_sink.get_f32(&[row, col]),
                 expected,
                 "the masked sink stored the wrong value at [{row}, {col}]"
+            );
+        }
+    }
+}
+
+/// A masked, vectorized read through a source reads the cells a buffer read reads.
+///
+/// The read half of the same question, and not the same code: a buffer's masked read is the
+/// slice's, while an erased one is [`ErasedTensor`]'s own — it folds an out-of-bounds index to
+/// zero, reads *that* cell, and selects the mask value after. So a guard dropped between the walk
+/// and the call does not fault here either; it returns the wrong cell's value, which the
+/// `row * COLS + col` fill makes visible as another cell rather than as a near miss. The width is
+/// the other half, on a geometry stated rather than read.
+#[test]
+fn a_masked_vectorized_source_reads_where_a_buffer_reads() {
+    let through_source = run_masked(Erased::Source);
+    let through_buffer = run_masked(Erased::Neither);
+    for row in 0..MASKED_ROWS {
+        for col in 0..COLS {
+            let expected = (row * COLS + col) as f32;
+            assert_eq!(
+                through_buffer.get_f32(&[row, col]),
+                expected,
+                "the buffer read is wrong at [{row}, {col}], so the comparison means nothing"
+            );
+            assert_eq!(
+                through_source.get_f32(&[row, col]),
+                expected,
+                "the masked source read the wrong value at [{row}, {col}]"
             );
         }
     }

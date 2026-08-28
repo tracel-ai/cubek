@@ -27,12 +27,14 @@ impl<T: Numeric> RegisterData<T> {
     /// own to serve one. `register_matmul_promoted_accumulator_quant` checks a packed lhs against
     /// a host reference built from the quantized values and their scales.
     ///
-    /// The rhs is a different question, and refused. A packed operand's `vector_size` is the
-    /// *served* width — the binding's times the packing factor — and the rhs's width is the
-    /// block's (asserted below), so a packed rhs would make the packing factor the accumulator's
-    /// line width. Nothing reaches that: a promoted block wider than one line does not drain
-    /// correctly even for plain operands, so admitting a packed rhs would buy a configuration
-    /// that reads back wrong values instead of one that says why.
+    /// The rhs may be packed too, and the width assert below is the whole of what governs it. A
+    /// packed operand's `vector_size` is the *served* width — the binding's times the packing
+    /// factor — and the rhs's width must be the block's, so a packed rhs is served exactly when
+    /// the accumulator is declared at that served width. A caller that declares it narrower is
+    /// refused there, by an assert that names both widths; nothing packing-specific is left over
+    /// to refuse on its own. `a_packed_rhs_drains_from_a_promoted_accumulator` runs the unscaled
+    /// form, and `a_packed_decode_gemv_runs_in_this_spelling` the scaled one, which reaches this
+    /// same block through [`mma_scaled`](Self::mma_scaled).
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -48,19 +50,14 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
-        // The lhs may be packed (it is read per element and decoded there); the rhs may not, since
-        // its width is the block's and a packed one would set that to the packing factor. See the
-        // note above.
-        let rhs_packing = rhs.packing();
-        comptime!(assert!(
-            rhs_packing == Packing::Plain,
-            "RegisterData::mma: a packed rhs would serve the block's lines at its packing factor, \
-             which a promoted accumulator does not drain correctly; the memory-backed leaf serves \
-             a packed rhs, and a packed lhs is served here"
-        ));
+        // Either operand may be packed: the decode is the read's, and this is the only width
+        // either one owes. A packed rhs is served at its packing factor, so it is this assert,
+        // not a packing test, that asks the accumulator to have been declared that wide.
         comptime!(assert!(
             vw == self.vector_size,
-            "RegisterData::mma: the block's lines must match the rhs's"
+            "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
+             rhs serves its packing factor, so declare the accumulator at that width",
+            self.vector_size
         ));
         // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
         // A contracted axis is one both operands span, which is what this rules out.
@@ -127,9 +124,13 @@ impl<T: Numeric> RegisterData<T> {
             sw == 1,
             "mm_scaled: the scales are read one value at a time, so their operand is scalar (it              is {sw} wide)"
         ));
+        // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
+        // packing factor, so this is the assert that asks the accumulator to be that wide.
         comptime!(assert!(
             vw == self.vector_size,
-            "RegisterData::mma_scaled: the block's lines must match the rhs's"
+            "RegisterData::mma_scaled: the block's lines are {} wide but the rhs serves {vw}; a \
+             packed rhs serves its packing factor, so declare the accumulator at that width",
+            self.vector_size
         ));
         // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
         comptime!(assert!(

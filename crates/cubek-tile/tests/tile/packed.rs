@@ -1327,3 +1327,136 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         );
     }
 }
+
+/// [`packed_gemv`] with the scales taken away: a packed rhs contracting into a promoted
+/// accumulator through the plain `mm`.
+#[cube(launch)]
+fn packed_gemv_unscaled<E: Numeric, V: Size>(
+    x: &TileArg<'_, E, Const<1>>,
+    w: &TileArg<'_, u32, Const<1>>,
+    c: &TileArg<'_, E, V>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
+    acc.mm(&x, &w, Semiring::SUM_PROD);
+}
+
+/// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
+///
+/// [`a_packed_decode_gemv_runs_in_this_spelling`] runs this block with the scales folded in, and
+/// the two reach the same `block::contract` through the same `RegisterData` — so if a packed rhs
+/// were what a promoted accumulator could not drain, the gemv could not be spelled either. What
+/// makes both work is the accumulator being declared at the *served* width (`V = factor`); a
+/// narrower one is refused by the width assert, and that is the only thing packing owes here.
+#[test]
+fn a_packed_rhs_drains_from_a_promoted_accumulator() {
+    let (field, block_k, blocks_k) = (QuantValue::Q8S, 8, 4);
+    let depth = block_k * blocks_k;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+    // Two cubes, each owning one packed line of columns.
+    let (cols, bn) = (factor * 2, factor);
+
+    let x: Vec<f32> = (0..depth).map(|i| (i % 7) as f32 - 3.0).collect();
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..depth * cols)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+
+    let dtype = f32::elem_type_native();
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![1, depth])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+        vec![depth, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let c = TestInput::builder(client.clone(), shape![1, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(1))
+                .axis(N, Cut::cube(CubeAxis::X, bn))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(block_k))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    // One entry per level: the accumulator opens at the outermost and lives to the leaf.
+    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
+    residence[0] = Residence::Register;
+
+    packed_gemv_unscaled::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        factor,
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&residence),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for n in 0..cols {
+        let want: f32 = (0..depth).map(|k| x[k] * w[k * cols + n] as f32).sum();
+        let have = got.get_f32(&[0, n]);
+        assert!(
+            (have - want).abs() < 1e-3,
+            "at col {n}: got {have}, want {want}"
+        );
+    }
+}

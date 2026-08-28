@@ -113,16 +113,21 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// settled exactly as it is for a bound operand, because it is the same
     /// derivation.
     ///
+    /// `batches` right-aligns the dims above the operand's own axes, exactly as
+    /// [`batches`](StridedTileSource::batches) does for a bound operand — a fused
+    /// destination is as often batched as any other, and stating them here is what
+    /// lets the derivation drop a broadcast one.
+    ///
     /// The geometry comes back in the [`DerivedSpec`], and that is what
-    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. They
-    /// agree while `spec` labels the operand's own axes and no batches, since the
-    /// derivation then has no broadcast dim to drop and refuses a rank it cannot
-    /// address. Reading the settled geometry is what keeps that an implementation
-    /// detail of the derivation rather than a fact the call site depends on.
+    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. The two part company
+    /// exactly where a batch dim is dropped, which is why it is the settled one that travels:
+    /// reading it keeps the dropping an implementation detail of the derivation rather than a
+    /// fact the call site has to reproduce.
     pub fn spec<'a>(
         &'a self,
         operand: &'a Operand,
         geometry: &Geometry,
+        batches: &[Axis],
         vector_size: usize,
     ) -> DerivedSpec {
         StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
@@ -131,6 +136,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .cube_units(self.cube_dim().num_elems() as usize)
             .subspace(operand.axes())
             .operand(operand)
+            .batches(batches)
             .vectorize(vector_size)
             .build_spec()
     }

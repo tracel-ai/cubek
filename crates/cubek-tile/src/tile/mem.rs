@@ -8,14 +8,12 @@ use cubecl::{
     std::quant::unpack_fields,
     std::quant::view::KnownScale,
     std::tensor::{
-        AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
+        AsView, AsViewExpand, AsViewMut, AsViewMutExpand, ErasedTensor, View, ViewMut, WriteOnly,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
     },
 };
 
 use crate::*;
-use cubecl::prelude::ReadOnly;
-use cubecl::std::tensor::{ErasedTensor, WriteOnly};
 
 /// A lifetime-erased buffer, how to address it ([`layout`](GmemLayout)), and which part of it this
 /// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem

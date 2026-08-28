@@ -227,17 +227,18 @@ fn spec_derives_what_a_bound_operand_derives() {
         .bind(&operand, binding(&client, geometry.shape()))
         .vectorize(1)
         .build();
-    let derived = launch.spec(&operand, &geometry, 1);
+    let derived = launch.spec(&operand, &geometry, &[], 1);
 
+    // The spec alone: `vector_size` is the argument echoed back by both, so comparing the two
+    // would compare `1` with `1` and pass however far apart the derivations drifted.
     assert_eq!(derived.spec, bound.spec);
-    assert_eq!(derived.vector_size, bound.vector_size);
 }
 
 /// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
-/// re-deriving it at the call site is the drift `build_spec` removes. Nothing here drops a dim —
-/// `spec` labels no batch axes, so it cannot (see
-/// [`spec_refuses_a_dim_it_cannot_label`]) — but the caller reads the settled pair either way
-/// rather than assuming the stated one survived.
+/// re-deriving it at the call site is the drift `build_spec` removes. Nothing is dropped here —
+/// no batch axes are stated, so there is no broadcast dim to drop — and the caller still reads
+/// the settled pair rather than assuming the stated one survived. See
+/// [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
 #[test]
 fn spec_returns_the_geometry_it_settled_on() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -246,6 +247,7 @@ fn spec_returns_the_geometry_it_settled_on() {
     let derived = launch.spec(
         &staged_operand(&[M, K]),
         &Geometry::of_dims(&[(64, 16), (16, 1)]),
+        &[],
         1,
     );
 
@@ -270,7 +272,37 @@ fn spec_refuses_a_dim_it_cannot_label() {
     let _ = launch.spec(
         &staged_operand(&[M, K]),
         &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
+        &[],
         1,
+    );
+}
+
+/// A broadcast batch dim is dropped from the geometry that comes back, which is the case the
+/// stated and the settled pair actually part company over.
+///
+/// `spec` right-aligns `batches` above the operand's own axes exactly as a bound operand's
+/// [`batches`](cubek_tile::StridedTileSource::batches) does, and a size-one batch dim drops out
+/// there. A caller that handed [`Tile::of_sink`] the geometry it *stated* would address a rank
+/// the projection no longer has; the settled one is a dim shorter, and that is the one returned.
+#[test]
+fn spec_settles_a_broadcast_batch_dim_away() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
+
+    // Three dims stated, the leading one broadcast over B1.
+    let derived = launch.spec(
+        &staged_operand(&[M, K]),
+        &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
+        &[B0, B1],
+        1,
+    );
+
+    assert!(!derived.spec.axes().contains(&B1));
+    assert_eq!(derived.geometry.shape(), [64, 16]);
+    assert_eq!(derived.geometry.strides(), [16, 1]);
+    assert_eq!(
+        derived.spec.projection.physical_rank(),
+        derived.geometry.rank()
     );
 }
 
@@ -290,6 +322,7 @@ fn spec_refuses_a_width_the_geometry_cannot_serve() {
     let _ = launch.spec(
         &staged_operand(&[M, K]),
         &Geometry::of_dims(&[(64, 17), (16, 1)]),
+        &[],
         2,
     );
 }
