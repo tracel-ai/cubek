@@ -8,10 +8,7 @@
 //! own space says nothing about.
 
 use cubecl::std::tensor::layout::CoordsDyn;
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, prelude::*, std::tensor::TensorHandle,
-    zspace::shape,
-};
+use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
@@ -146,37 +143,41 @@ fn check_moe(moe: &Moe, residence: Residence, policy: IndexPolicy) {
         .zeros()
         .generate_without_host_data();
 
-    // One level: it steps `M` and cuts nothing else, which is exactly the level that stages the
-    // weights. `EXPERT` is cut at its whole extent of 1, so the lookup resolves here.
-    let space = Tiling::new()
-        .extents(&[(M, moe.m), (N, moe.n), (K, moe.k), (EXPERT, 1)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(moe.tile_m))
-                .axis(N, Cut::sequential(moe.n))
-                .axis(K, Cut::sequential(moe.k))
-                .axis(EXPERT, Cut::sequential(1))
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let mut operands = (
+        Operand::new(&[M, K], dtype),
+        Operand::new(&[EXPERT, K, N], dtype),
+        Operand::new(&[M, N], dtype),
+    );
 
-    let mut weights = Operand::new(&[EXPERT, K, N], dtype);
-    weights.stage(residence);
-    let launcher = space.launcher_over(&client, &[]);
+    let space = Tiling::over(
+        &mut operands,
+        &[(M, moe.m), (N, moe.n), (K, moe.k), (EXPERT, 1)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, ops| {
+        l.axis(M, Cut::sequential(moe.tile_m))
+            .axis(N, Cut::sequential(moe.n))
+            .axis(K, Cut::sequential(moe.k))
+            .axis(EXPERT, Cut::sequential(1));
+        ops.1.stage(residence);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
+
+    let launcher = space.launcher(&client);
+    let a_operand = launcher.bind(&operands.0, a_t.binding()).build();
     let w_operand = launcher
-        .bind(&weights, w_t.binding())
+        .bind(&operands.1, w_t.binding())
         .indexed(ids_t.binding(), M, EXPERT, policy)
         .build();
+    let c_operand = launcher.bind(&operands.2, c_t.clone().binding()).build();
 
     moe_matmul::launch::<TestRuntime>(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
-        TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        a_operand.arg(),
         w_operand.arg(),
-        TileArgLaunch::new(
-            c_t.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
-        ),
+        c_operand.arg(),
         launcher.space().clone(),
         dtype,
     );
@@ -301,11 +302,11 @@ fn a_checked_entry_past_the_bound_reads_as_zero() {
 fn checked_policy_arms_its_own_target_boundary() {
     let (client, w, ids) = refusal_fixture();
     let space = refusal_space(1);
-    let launcher = space.launcher_over(&client, &[]);
-    let operand = launcher
-        .arg(w.binding())
+    let operand = space
+        .launcher(&client)
+        .arg(w)
         .subspace(&[EXPERT, K, N])
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Checked)
+        .indexed(ids, M, EXPERT, IndexPolicy::Checked)
         .build();
     assert_eq!(operand.spec.boundaries[0], Some(Boundary::Zero));
 }
@@ -316,14 +317,32 @@ fn checked_policy_arms_its_own_target_boundary() {
 fn trusted_policy_keeps_its_target_unchecked() {
     let (_, w, ids) = refusal_fixture();
     let space = refusal_space(1);
-    let operand = StridedOperand::source(w.binding())
+    let operand = StridedOperand::source(w)
         .space(&space)
         .subspace(&[EXPERT, K, N])
         .checked(true)
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
     assert_eq!(operand.spec.boundaries[0], None);
     assert_eq!(operand.spec.boundaries[1], Some(Boundary::Zero));
+}
+
+fn lane_distribution_space(level1_m: Cut, level2_m: Cut) -> Space {
+    Tiling::new()
+        .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, level1_m)
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, level2_m)
+                .axis(N, Cut::sequential(4))
+                .axis(K, Cut::sequential(4))
+                .axis(EXPERT, Cut::sequential(1))
+        })
+        .build()
 }
 
 /// Once the lookup fires, its child carries no indirection. Distributing the index axis across
@@ -331,26 +350,12 @@ fn trusted_policy_keeps_its_target_unchecked() {
 #[test]
 fn an_index_axis_may_be_distributed_across_lanes_below_the_fire_level() {
     let (client, w, ids) = refusal_fixture();
-    let space = Tiling::new()
-        .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
-                .axis(EXPERT, Cut::sequential(1))
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::unit(1))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
-                .axis(EXPERT, Cut::sequential(1))
-        })
-        .build();
-    let launcher = space.launcher(&client);
-    let _ = launcher
-        .arg(w.binding())
+    let space = lane_distribution_space(Cut::sequential(4), Cut::unit(1));
+    let _ = space
+        .launcher(&client)
+        .arg(w)
         .subspace(&[EXPERT, K, N])
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
 }
 
@@ -360,27 +365,19 @@ fn an_index_axis_may_be_distributed_across_lanes_below_the_fire_level() {
 #[should_panic(expected = "distributed across lanes")]
 fn an_index_axis_distributed_across_lanes_at_the_fire_level_is_refused() {
     let (client, w, ids) = refusal_fixture();
-    let space = Tiling::new()
-        .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 1)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::unit(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
-                .axis(EXPERT, Cut::sequential(1))
-        })
-        .build();
-    let launcher = space.launcher(&client);
-    let _ = launcher
-        .arg(w.binding())
+    let space = lane_distribution_space(Cut::unit(4), Cut::sequential(4));
+    let _ = space
+        .launcher(&client)
+        .arg(w)
         .subspace(&[EXPERT, K, N])
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
 }
 
 /// Both `M` and the displaced target are cut at two levels. The outer `M` coordinate must be
-/// scaled by its two descendant table tiles: without that scale, rows 2 and 3 alias rows 1 and 2.
+/// scaled by its two table entries per step: without that scale, rows 2 and 3 alias rows 1 and 2.
 #[test]
-fn nested_tiling_addresses_absolute_index_table_tiles() {
+fn nested_tiling_addresses_absolute_index_table_entries() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
     let source_targets = 8;
@@ -410,36 +407,39 @@ fn nested_tiling_addresses_absolute_index_table_tiles() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (EXPERT, logical_targets), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let mut operands = (
+        Operand::new(&[EXPERT, N], dtype),
+        Operand::new(&[M, EXPERT, N], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(M, m), (EXPERT, logical_targets), (N, n)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(8))
                 .axis(EXPERT, Cut::sequential(2))
-                .axis(N, Cut::sequential(n))
+                .axis(N, Cut::sequential(n));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(4))
                 .axis(EXPERT, Cut::sequential(1))
-                .axis(N, Cut::sequential(n))
+                .axis(N, Cut::sequential(n));
         })
         .build();
-    let input = StridedOperand::source(values_t.binding())
-        .space(&space)
-        .subspace(&[EXPERT, N])
-        .checked(false)
+
+    let launcher = space.launcher(&client);
+    let input = launcher
+        .bind(&operands.0, values_t.binding())
         .indexed(ids_t.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .build();
+    let output = launcher
+        .bind(&operands.1, output_t.clone().binding())
         .build();
 
     nested_indexed_copy::launch::<f32, TestRuntime>(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         input.arg(),
-        TileArgLaunch::new(
-            output_t.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, EXPERT, N]),
-        ),
-        space,
+        output.arg(),
+        launcher.space().clone(),
     );
 
     let got = HostData::from_tensor_handle(&client, output_t, HostDataType::F32);
@@ -463,19 +463,25 @@ fn nested_tiling_addresses_absolute_index_table_tiles() {
 /// every refusal below varies one thing against.
 fn refusal_fixture() -> (
     ComputeClient<TestRuntime>,
-    TensorHandle<TestRuntime>,
-    TensorHandle<TestRuntime>,
+    TensorBinding<TestRuntime>,
+    TensorBinding<TestRuntime>,
 ) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let w = TestInput::builder(client.clone(), shape![2, 4, 4])
         .dtype(f32::elem_type_native())
         .zeros()
-        .generate_without_host_data();
-    let ids = TestInput::builder(client.clone(), shape![2])
+        .generate_without_host_data()
+        .binding();
+    let ids = u32_tensor(&client, &[2]);
+    (client, w, ids)
+}
+
+fn u32_tensor(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBinding<TestRuntime> {
+    TestInput::builder(client.clone(), shape.to_vec())
         .dtype(u32::elem_type_native())
         .zeros()
-        .generate_without_host_data();
-    (client, w, ids)
+        .generate_without_host_data()
+        .binding()
 }
 
 fn refusal_space(expert_edge: usize) -> Space {
@@ -490,14 +496,25 @@ fn refusal_space(expert_edge: usize) -> Space {
         .build()
 }
 
+fn build_indexed_with_table(ids: TensorBinding<TestRuntime>) {
+    let (_, w, _) = refusal_fixture();
+    let space = refusal_space(1);
+    let _ = StridedOperand::source(w)
+        .space(&space)
+        .subspace(&[EXPERT, K, N])
+        .checked(false)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
+        .build();
+}
+
 fn build_indexed(subspace: &[Axis], index: Axis, target: Axis, expert_edge: usize) {
     let (_, w, ids) = refusal_fixture();
     let space = refusal_space(expert_edge);
-    let _ = StridedOperand::source(w.binding())
+    let _ = StridedOperand::source(w)
         .space(&space)
         .subspace(subspace)
         .checked(false)
-        .indexed(ids.binding(), index, target, IndexPolicy::Trusted)
+        .indexed(ids, index, target, IndexPolicy::Trusted)
         .build();
 }
 
@@ -512,18 +529,8 @@ fn a_well_formed_indirection_builds() {
 #[test]
 #[should_panic(expected = "index table shape must have one leading dimension per index axis")]
 fn a_short_index_table_is_refused() {
-    let (client, w, _) = refusal_fixture();
-    let ids = TestInput::builder(client.clone(), shape![1])
-        .dtype(u32::elem_type_native())
-        .zeros()
-        .generate_without_host_data();
-    let space = refusal_space(1);
-    let _ = StridedOperand::source(w.binding())
-        .space(&space)
-        .subspace(&[EXPERT, K, N])
-        .checked(false)
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
-        .build();
+    let (client, _, _) = refusal_fixture();
+    build_indexed_with_table(u32_tensor(&client, &[1]));
 }
 
 /// A singleton target has no trailing target-entry dimension. Refusing an extra dimension keeps
@@ -531,18 +538,8 @@ fn a_short_index_table_is_refused() {
 #[test]
 #[should_panic(expected = "index table shape must have one leading dimension per index axis")]
 fn an_unexpected_index_table_rank_is_refused() {
-    let (client, w, _) = refusal_fixture();
-    let ids = TestInput::builder(client.clone(), shape![2, 1])
-        .dtype(u32::elem_type_native())
-        .zeros()
-        .generate_without_host_data();
-    let space = refusal_space(1);
-    let _ = StridedOperand::source(w.binding())
-        .space(&space)
-        .subspace(&[EXPERT, K, N])
-        .checked(false)
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
-        .build();
+    let (client, _, _) = refusal_fixture();
+    build_indexed_with_table(u32_tensor(&client, &[2, 1]));
 }
 
 /// Shape alone cannot bound a strided tensor's largest offset. Requiring a dense row-major table
@@ -550,16 +547,10 @@ fn an_unexpected_index_table_rank_is_refused() {
 #[test]
 #[should_panic(expected = "index table must be dense row-major")]
 fn an_index_table_with_padded_strides_is_refused() {
-    let (_, w, ids) = refusal_fixture();
-    let mut ids = ids.binding();
+    let (client, _, _) = refusal_fixture();
+    let mut ids = u32_tensor(&client, &[2]);
     ids.strides = vec![2].into();
-    let space = refusal_space(1);
-    let _ = StridedOperand::source(w.binding())
-        .space(&space)
-        .subspace(&[EXPERT, K, N])
-        .checked(false)
-        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
-        .build();
+    build_indexed_with_table(ids);
 }
 
 /// An operand that does not span its target axis has no window origin for the entry to displace.
@@ -602,7 +593,7 @@ fn a_storage_tiled_operand_is_refused() {
     let (client, _, ids) = refusal_fixture();
     let space = refusal_space(1);
     // Rank 4: `N` splits into a grid dim and a tile dim, which is what the tiling describes.
-    let w = TestInput::builder(client.clone(), shape![2, 4, 2, 2])
+    let w = TestInput::builder(client, shape![2, 4, 2, 2])
         .dtype(f32::elem_type_native())
         .zeros()
         .generate_without_host_data();
@@ -611,7 +602,7 @@ fn a_storage_tiled_operand_is_refused() {
         .subspace(&[EXPERT, K, N])
         .tiling(StorageTiling::per_axis(&[1, 1, 2]))
         .checked(false)
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
 }
 
@@ -622,7 +613,7 @@ fn a_storage_tiled_operand_is_refused() {
 fn a_gathered_operand_is_refused() {
     let (_, w, ids) = refusal_fixture();
     let space = refusal_space(1);
-    let _ = StridedOperand::source(w.binding())
+    let _ = StridedOperand::source(w)
         .space(&space)
         .gathered(Projection::new(
             &[EXPERT, K, N],
@@ -633,7 +624,7 @@ fn a_gathered_operand_is_refused() {
             ],
         ))
         .checked(false)
-        .indexed(ids.binding(), M, EXPERT, IndexPolicy::Trusted)
+        .indexed(ids, M, EXPERT, IndexPolicy::Trusted)
         .build();
 }
 

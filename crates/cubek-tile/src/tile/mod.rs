@@ -588,23 +588,23 @@ impl IndirectionSpec {
         space.partitioner().edge(self.target) <= self.granularity
     }
 
-    /// Number of table tiles represented by one coordinate step at `space` for `axis`.
+    /// Number of table entries represented by one coordinate step at `space` for `axis`.
     /// Table coordinates name the tiles at the level where the lookup fires, while a region
     /// coordinate is local to its current parent. An outer coordinate therefore has to be
-    /// scaled by the number of fire-level tiles below it.
-    fn descendant_table_tiles(&self, space: &Space, axis: Axis) -> usize {
+    /// scaled by the number of fire-level table entries per step below it.
+    fn table_entries_per_step(&self, space: &Space, axis: Axis) -> usize {
         let current_edge = space.partitioner().edge(axis);
         let mut partitioner = space.partitioner();
         while partitioner.edge(self.target) > self.granularity {
             partitioner = partitioner.next();
         }
-        let table_tile_edge = partitioner.edge(axis);
+        let fire_edge = partitioner.edge(axis);
         comptime!(assert!(
-            current_edge.is_multiple_of(table_tile_edge),
+            current_edge.is_multiple_of(fire_edge),
             "Indirection: the {current_edge}-element tile on {axis:?} does not contain a whole \
-             number of {table_tile_edge}-element table tiles"
+             number of {fire_edge}-element fire-level tiles"
         ));
-        current_edge / table_tile_edge
+        current_edge / fire_edge
     }
 }
 
@@ -622,7 +622,7 @@ impl Indirection {
     }
 
     /// The table offset this level reaches: the parent's, plus each index axis's local region
-    /// coordinate converted to fire-level tile units and multiplied by its tensor stride. Read
+    /// coordinate converted to fire-level table entry units and multiplied by its tensor stride. Read
     /// off the *region*, whose space is the operation's, not off the window: an indirect operand
     /// need not span its index axes at all, which is the whole point for MoE (the weights are
     /// routed by the token tile they never span).
@@ -643,7 +643,7 @@ impl Indirection {
                     .coord(axis)
                     .fcast::<u32>()
                     .fmul(
-                        comptime!(self.spec.descendant_table_tiles(&space, axis) as u32).runtime(),
+                        comptime!(self.spec.table_entries_per_step(&space, axis) as u32).runtime(),
                     )
                     .fmul(self.table_strides.at(a)),
             );
