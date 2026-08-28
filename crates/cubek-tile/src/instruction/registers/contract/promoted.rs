@@ -21,6 +21,20 @@ impl<T: Numeric> RegisterData<T> {
     /// block is seeded from the sink and committed back on every visit, so a `K` walk that
     /// returns here repeatedly loses precision to the sink's element between visits. This one
     /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
+    ///
+    /// A **packed lhs is served here too**: the decode is [`Tile::matrix_packed`]'s and it
+    /// happens per read for whichever leaf asks, so a promoted accumulator needs nothing of its
+    /// own to serve one. `register_matmul_promoted_accumulator_quant` checks a packed lhs against
+    /// a host reference built from the quantized values and their scales.
+    ///
+    /// The rhs may be packed too, and the width assert below is the whole of what governs it. A
+    /// packed operand's `vector_size` is the *served* width — the binding's times the packing
+    /// factor — and the rhs's width must be the block's, so a packed rhs is served exactly when
+    /// the accumulator is declared at that served width. A caller that declares it narrower is
+    /// refused there, by an assert that names both widths; nothing packing-specific is left over
+    /// to refuse on its own. `a_packed_rhs_drains_from_a_promoted_accumulator` runs the unscaled
+    /// form, and `a_packed_decode_gemv_runs_in_this_spelling` the scaled one, which reaches this
+    /// same block through [`mma_scaled`](Self::mma_scaled).
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -34,18 +48,16 @@ impl<T: Numeric> RegisterData<T> {
              way, so it cannot contract under {semiring:?}",
             self.monoid
         ));
-        let lhs_packing = lhs.packing();
-        let rhs_packing = rhs.packing();
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
-        comptime!(assert!(
-            lhs_packing == Packing::Plain && rhs_packing == Packing::Plain,
-            "RegisterData::mma: a quantized operand against a promoted accumulator is not wired \
-             yet; the memory-backed leaf serves those (it dequantizes per read)"
-        ));
+        // Either operand may be packed: the decode is the read's, and this is the only width
+        // either one owes. A packed rhs is served at its packing factor, so it is this assert,
+        // not a packing test, that asks the accumulator to have been declared that wide.
         comptime!(assert!(
             vw == self.vector_size,
-            "RegisterData::mma: the block's lines must match the rhs's"
+            "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
+             rhs serves its packing factor, so declare the accumulator at that width",
+            self.vector_size
         ));
         // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
         // A contracted axis is one both operands span, which is what this rules out.
@@ -112,9 +124,13 @@ impl<T: Numeric> RegisterData<T> {
             sw == 1,
             "mm_scaled: the scales are read one value at a time, so their operand is scalar (it              is {sw} wide)"
         ));
+        // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
+        // packing factor, so this is the assert that asks the accumulator to be that wide.
         comptime!(assert!(
             vw == self.vector_size,
-            "RegisterData::mma_scaled: the block's lines must match the rhs's"
+            "RegisterData::mma_scaled: the block's lines are {} wide but the rhs serves {vw}; a \
+             packed rhs serves its packing factor, so declare the accumulator at that width",
+            self.vector_size
         ));
         // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
         comptime!(assert!(

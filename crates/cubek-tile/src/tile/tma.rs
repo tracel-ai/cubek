@@ -62,8 +62,11 @@ impl<T: Numeric> TmaData<T> {
         // One elected issuer only: the declared transaction count is that unit's alone, so
         // more issuers would over-count and corrupt the stage.
         if UNIT_POS == 0 {
-            self.view
-                .tensor_map_load(barrier, dst.store.buffer.downcast_mut(), self.pos.clone());
+            self.view.tensor_map_load(
+                barrier,
+                dst.store.buffer_mut().downcast_mut(),
+                self.pos.clone(),
+            );
         }
     }
 

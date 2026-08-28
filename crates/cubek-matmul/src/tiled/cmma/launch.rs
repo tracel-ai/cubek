@@ -7,8 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand},
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, Launcher, Operand, Residence, Space, Strided,
-    Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, Buffering, CubeAxis, Cut, Geometry, Instruction, Launcher, Operand, Residence, Space,
+    Strided, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
 };
 
 use crate::{
@@ -291,19 +291,31 @@ fn launch_strided<R: Runtime>(
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
 ) {
-    let v_a = launch.vector_size(K, &[(&lhs, ops.a.axes())], ops.a.dtype().size());
+    let v_a = launch.vector_size(
+        K,
+        &[(&Geometry::from(&lhs), ops.a.axes())],
+        ops.a.dtype().size(),
+    );
     let a = launch
         .bind(&ops.a, lhs)
         .batches(out_batch_axes)
         .vectorize(v_a)
         .build();
-    let v_b = launch.vector_size(N, &[(&rhs, ops.b.axes())], ops.b.dtype().size());
+    let v_b = launch.vector_size(
+        N,
+        &[(&Geometry::from(&rhs), ops.b.axes())],
+        ops.b.dtype().size(),
+    );
     let b = launch
         .bind(&ops.b, rhs)
         .batches(out_batch_axes)
         .vectorize(v_b)
         .build();
-    let v_c = launch.vector_size(N, &[(&out, ops.out.axes())], ops.out.dtype().size());
+    let v_c = launch.vector_size(
+        N,
+        &[(&Geometry::from(&out), ops.out.axes())],
+        ops.out.dtype().size(),
+    );
     let c = launch
         .bind(&ops.out, out)
         .batches(out_batch_axes)
@@ -365,7 +377,11 @@ fn launch_tma<R: Runtime>(
     }
     let a = operand(&ops.a, lhs, (stage_m, stage_k), (m as u32, k as u32));
     let b = operand(&ops.b, rhs, (stage_k, stage_n), (k as u32, n as u32));
-    let v_out = launch.vector_size(N, &[(&out, ops.out.axes())], ops.out.dtype().size());
+    let v_out = launch.vector_size(
+        N,
+        &[(&Geometry::from(&out), ops.out.axes())],
+        ops.out.dtype().size(),
+    );
     let c = launch
         .bind(&ops.out, out)
         .batches(out_batch_axes)

@@ -41,6 +41,19 @@ pub(super) enum RhsRole {
     PerCell,
 }
 
+/// The accumulator scope at which one factor's complete tap walk is computed and cached.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum FactorReuse {
+    /// Once for the entire accumulator block.
+    Block,
+    /// Once for each accumulator row.
+    Row,
+    /// Once for each accumulator column.
+    Column,
+    /// Once for each accumulator cell.
+    Cell,
+}
+
 /// The gather-specific half of a contraction's comptime geometry, over the
 /// [`ContractShape`] every schedule shares.
 ///
@@ -62,19 +75,24 @@ pub(super) struct GatherProblem {
     pub taps: usize,
     /// Where each factor's taps start in that walk.
     pub offsets: Vec<usize>,
+    /// Maximal reuse of each factor's tap walk within one accumulator block.
+    pub factor_reuse: Vec<FactorReuse>,
     /// How each operand varies over the accumulator's own axes.
     pub lhs: LhsRole,
     pub rhs: RhsRole,
 }
 
 impl GatherProblem {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         lhs: &Space,
         rhs: &Space,
         rhs_projection: &Projection,
         block: ContractShape,
         factors: Option<usize>,
+        factor_dependencies: Option<Vec<(bool, bool)>>,
         normalization: Option<(TapMask, DivGuard, Space)>,
+        rhs_boundaries: &[Option<Boundary>],
     ) -> Self {
         let rank = block.space.rank();
         let col = block.space.axis_at(rank - 1);
@@ -129,13 +147,35 @@ impl GatherProblem {
             (mask, guard)
         });
         if matches!(normalization, Some((TapMask::Masked, _))) {
-            assert_factorized_mask(
-                rhs_projection,
-                &block.reduce,
-                col,
-                lhs_role != LhsRole::FreeOfColumn,
-            );
+            assert_factorized_mask(rhs_projection, &block.reduce);
         }
+        let row = block.space.axis_at(rank - 2);
+        let factor_reuse = match (factors, factor_dependencies) {
+            (Some(factors), Some(dependencies)) => {
+                assert_eq!(dependencies.len(), factors);
+                dependencies
+                    .into_iter()
+                    .enumerate()
+                    .map(|(f, (mut varies_row, mut varies_col))| {
+                        if matches!(normalization, Some((TapMask::Masked, _))) {
+                            let tap = block.reduce[f];
+                            varies_row |=
+                                masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, row);
+                            varies_col |=
+                                masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, col);
+                        }
+                        match (varies_row, varies_col) {
+                            (false, false) => FactorReuse::Block,
+                            (true, false) => FactorReuse::Row,
+                            (false, true) => FactorReuse::Column,
+                            (true, true) => FactorReuse::Cell,
+                        }
+                    })
+                    .collect()
+            }
+            (None, None) => Vec::new(),
+            _ => panic!("contract gather: factor dependencies must accompany the factorization"),
+        };
         let offsets = block
             .reduce_extents
             .iter()
@@ -152,6 +192,7 @@ impl GatherProblem {
             lhs_space: lhs.clone(),
             rhs_space: rhs.clone(),
             offsets,
+            factor_reuse,
             factors,
             normalization,
             lhs: lhs_role,
@@ -163,22 +204,12 @@ impl GatherProblem {
 /// A rectangular source mask factorizes only when no physical input axis is moved by two
 /// contracted axes. Output axes may share the same physical axis: they are fixed for one cached
 /// tap walk and therefore do not couple factor sums.
-fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis], acc_col: Axis, lhs_spans_col: bool) {
+fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis]) {
     for (f, &axis) in reduce.iter().enumerate() {
         if !rhs.logical_axes().contains(&axis) {
             continue;
         }
         for pa in rhs.carriers(axis) {
-            assert!(
-                lhs_spans_col
-                    || !rhs
-                        .physical_axis(pa)
-                        .terms()
-                        .iter()
-                        .any(|term| term.axis == acc_col),
-                "contract gather: TapMask::Masked cannot cache weights across {acc_col:?} when \
-                 that axis shares a source coordinate with contracted axis {axis:?}"
-            );
             for &other in &reduce[(f + 1)..] {
                 assert!(
                     !rhs.physical_axis(pa)
@@ -191,6 +222,24 @@ fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis], acc_col: Axis, lhs_
             }
         }
     }
+}
+
+/// Whether the physical bound tested for `tap` also moves with accumulator `axis`.
+fn masked_bound_depends_on(
+    rhs: &Projection,
+    boundaries: &[Option<Boundary>],
+    tap: Axis,
+    axis: Axis,
+) -> bool {
+    rhs.logical_axes().contains(&tap)
+        && rhs.carriers(tap).iter().any(|&pa| {
+            boundaries.get(pa).copied().flatten() == Some(Boundary::Zero)
+                && rhs
+                    .physical_axis(pa)
+                    .terms()
+                    .iter()
+                    .any(|term| term.axis == axis)
+        })
 }
 
 /// N-D variant of [`direct::contract`](super::direct::contract) for operations with
@@ -232,6 +281,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     let factors = lhs.factors();
     let normalization = lhs.factor_normalization();
     let rhs_projection = rhs.projection();
+    let rhs_boundaries = rhs.separable_boundaries();
+    let rank = comptime!(space.rank());
+    let factor_dependencies = lhs.factor_dependencies(
+        factors,
+        comptime!(space.axis_at(rank - 2)),
+        comptime!(space.axis_at(rank - 1)),
+    );
 
     let problem = comptime!(GatherProblem::new(
         &lhs.space,
@@ -239,7 +295,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         &rhs_projection,
         ContractShape::new(&lhs.space, &rhs.space, space, served, lw, rw, aw),
         factors,
+        factor_dependencies,
         normalization,
+        &rhs_boundaries,
     ));
 
     if comptime!(factors.is_some()) {
@@ -287,7 +345,16 @@ mod tests {
         let (lhs, rhs, acc) = spaces();
         let projection = Projection::direct(&[K0, K1, N]);
         let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, vw, vw);
-        GatherProblem::new(&lhs, &rhs, &projection, block, factors, None)
+        GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            factors,
+            factors.map(|n| vec![(true, true); n]),
+            None,
+            &[],
+        )
     }
 
     #[test]
@@ -333,7 +400,9 @@ mod tests {
             &projection,
             block,
             Some(2),
+            Some(vec![(true, true); 2]),
             Some((TapMask::Unmasked, DivGuard::default(), original)),
+            &[],
         );
     }
 
@@ -353,29 +422,80 @@ mod tests {
             &projection,
             block,
             Some(2),
+            Some(vec![(true, true); 2]),
             Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
+            &[],
         );
     }
 
     #[test]
-    #[should_panic(expected = "TapMask::Masked cannot cache weights across")]
-    fn problem_rejects_masked_normalization_caching_across_shared_column_axis() {
+    fn a_masked_bound_blocks_only_the_unsafe_column_hoist() {
         let (lhs, rhs, acc) = spaces();
-        // Fixture targets the column-caching check: K0 shares physical axis 0 with N, while
-        // physical axis 1 carries N to satisfy assert_separable_shapes.
+        // K0's checked carrier also moves with N. K1 has its own carrier, while the final N
+        // carrier satisfies the separable reader's innermost-axis requirement.
         let map = vec![
             PhysicalAxisMap::affine(&[(K0, 1), (N, 1)]),
+            PhysicalAxisMap::of(K1),
             PhysicalAxisMap::of(N),
         ];
         let projection = Projection::new(&[K0, K1, N], &map);
         let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
-        GatherProblem::new(
+        let problem = GatherProblem::new(
             &lhs,
             &rhs,
             &projection,
             block,
             Some(2),
+            Some(vec![(false, false); 2]),
             Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
+            &[Some(Boundary::Zero), None, None],
+        );
+
+        assert_eq!(problem.factor_reuse[0], FactorReuse::Column);
+        assert_eq!(problem.factor_reuse[1], FactorReuse::Block);
+    }
+
+    #[test]
+    fn recipe_dependencies_choose_the_maximal_factor_cache() {
+        let (lhs, rhs, acc) = spaces();
+        let projection = Projection::direct(&[K0, K1, N]);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        let problem = GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some(vec![(true, false), (false, true)]),
+            None,
+            &[],
+        );
+
+        assert_eq!(
+            problem.factor_reuse,
+            vec![FactorReuse::Row, FactorReuse::Column]
+        );
+    }
+
+    #[test]
+    fn constant_and_fully_dependent_factors_choose_the_extreme_caches() {
+        let (lhs, rhs, acc) = spaces();
+        let projection = Projection::direct(&[K0, K1, N]);
+        let block = ContractShape::new(&lhs, &rhs, acc, 1, 1, 1, 1);
+        let problem = GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            Some(2),
+            Some(vec![(false, false), (true, true)]),
+            None,
+            &[],
+        );
+
+        assert_eq!(
+            problem.factor_reuse,
+            vec![FactorReuse::Block, FactorReuse::Cell]
         );
     }
 
@@ -394,7 +514,16 @@ mod tests {
         let acc = Space::new(&[(M, 4), (N, 8)]);
         let projection = Projection::direct(&[M, K0, K1, N]);
         let block = ContractShape::new(&lhs, &rhs, acc, 1, width, width, width);
-        GatherProblem::new(&lhs, &rhs, &projection, block, factors, None)
+        GatherProblem::new(
+            &lhs,
+            &rhs,
+            &projection,
+            block,
+            factors,
+            factors.map(|n| vec![(true, true); n]),
+            None,
+            &[],
+        )
     }
 
     /// An lhs lined along the accumulator's column reads its line *as* the cell, with no `K`

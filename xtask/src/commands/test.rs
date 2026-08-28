@@ -29,7 +29,6 @@ pub(crate) fn handle_command(
                 "cubek-quant",
                 "cubek-random",
                 "cubek-reduce",
-                "cubek-resample",
                 "cubek-std",
                 "cubek-test-utils",
                 "cubek-tile",

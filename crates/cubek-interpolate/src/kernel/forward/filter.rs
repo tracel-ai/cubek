@@ -2,8 +2,8 @@ use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe, SeparableProduct,
-    Sum, TapMask,
+    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
+    RecipeAxisDependencies, SeparableProduct, Sum, TapMask,
 };
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
@@ -13,7 +13,10 @@ type BicubicAxis<E> = Cubic<TapDistance<E>>;
 type Lanczos3Axis<E> = Lanczos<TapDistance<E>>;
 
 #[cube]
-pub trait SeparableFilter<E: Float>: Send + std::marker::Sync + 'static {
+pub trait SeparableFilter<E: Float>: Send + std::marker::Sync + 'static
+where
+    <Self::Axis as CubeType>::ExpandType: RecipeAxisDependencies,
+{
     type Axis: Recipe<E> + 'static;
     fn along(distance: TapDistance<E>) -> Self::Axis;
 }

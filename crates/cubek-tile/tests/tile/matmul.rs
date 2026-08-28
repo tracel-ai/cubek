@@ -45,6 +45,28 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
     supported
 }
 
+/// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the
+/// feature: a backend can advertise manual mma and offer only `16x16x16`
+/// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
+/// not have — it reads back zeros, which looks like a leaf bug and is a missing
+/// guard.
+fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+    let f32_ty = f32::elem_type_native();
+    let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
+        cfg.a_type == f32_ty
+            && cfg.b_type == f32_ty
+            && cfg.cd_type == f32_ty
+            && (cfg.m, cfg.n, cfg.k) == (8, 8, 8)
+    });
+    if !supported {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "backend offers no 8x8x8 f32 manual mma".to_string(),
+        ))
+        .enforce();
+    }
+    supported
+}
+
 // Matmul's axes: the labels this client gives the engine's opaque `Axis`. `B`
 // is the leading batch axis; `M`/`N`/`K` are the matrix axes.
 const M: Axis = Axis(0);
@@ -2943,11 +2965,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
 #[test]
 fn mma_matmul_8x8x8() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
-        ))
-        .enforce();
+    if !require_mma_8x8x8_f32(&client) {
         return;
     }
 
@@ -3509,11 +3527,12 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
-        TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
-        ))
-        .enforce();
+    // The shape, not just the feature — see `require_mma_8x8x8_f32`. The `f32`
+    // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
+    // the *walk*, cut `Cut::sequential(8)` deep, and `A` decodes at the read, so
+    // the instruction this leaf reaches for is the same f32 `8x8x8` the plain
+    // manual-mma test runs.
+    if !require_mma_8x8x8_f32(&client) {
         return;
     }
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
@@ -5064,6 +5083,114 @@ fn assert_matmul_arange(
         })
         .collect();
     let (_, expected) = TestInput::builder(client.clone(), shape![m, n])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// The promoted twin of [`launch_matmul_folded_quant`]'s shape, with the rhs lined along the
+/// accumulator rather than along the contraction: a packed lhs contracting into a register block.
+#[cube(launch)]
+fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
+    a: &QuantTileArg<'_, I, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(I)] _a_dtype: ElemType,
+    #[define(E)] _e_dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile::<E>(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// A packed lhs contracts into a register block to the product its scales and values describe.
+///
+/// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
+/// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
+/// its own. What that is worth is only checkable against a reference the kernel had no hand in —
+/// built on the host from the quantized values and their scales — since a leaf that decoded
+/// wrongly and a reference that decoded the same way wrongly would agree.
+#[test]
+fn register_matmul_promoted_accumulator_quant() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let (m, n, k, edge, bm) = (4usize, 4usize, 8usize, 4usize, 4usize);
+    let scheme = QuantScheme::default()
+        .per_block([bm as u8, k as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S);
+    let pack = scheme.num_quants();
+
+    let max_width = client.properties().hardware.max_vector_size;
+    if pack > max_width {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max_width}, below the packing factor ({pack})"
+        )))
+        .enforce();
+        return;
+    }
+
+    let partitioner = Partitioner::row_major(
+        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
+        ByAxis::new(&[
+            (M, Distribution::Sequential),
+            (N, Distribution::Sequential),
+            (K, Distribution::Sequential),
+        ]),
+    )
+    .buffered(Buffering::SINGLE);
+    let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner);
+
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .packed(&scheme, DequantAt::Read)
+        .arange();
+    let b = TileInput::builder(&client, space.project(&[K, N]))
+        .untiled()
+        .arange();
+    // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .operand(&accumulator_in_registers(&space))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    launch_promoted_matmul_quant::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        QuantTileArgLaunch::new(
+            a.tile.tensor_arg(1),
+            a.scales_binding().into_tensor_arg(),
+            None.into(),
+            None.into(),
+            TileSpec::direct(&[M, K]),
+            scheme,
+            DequantAt::Read,
+        ),
+        b.arg(),
+        c.arg(),
+        space.with_instruction(Instruction::registers(64)),
+        u32::elem_type_native(),
+        f32::elem_type_native(),
+        f32::elem_type_native(),
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    // Row-major arange rhs: b(p, j) = p·n + j.
+    let expected: Vec<f32> = (0..m * n)
+        .map(|idx| {
+            let (i, j) = (idx / n, idx % n);
+            (0..k)
+                .map(|p| (a.q[i * k + p] as f32) * a.scale_values[i / bm] * ((p * n + j) as f32))
+                .sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![m, n])
         .custom(expected)
         .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)

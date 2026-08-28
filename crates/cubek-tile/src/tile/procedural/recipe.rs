@@ -9,6 +9,20 @@ use cubecl::unexpanded;
 use super::SeparableRecipeExpand;
 use crate::{Axis, Coords, Space};
 
+/// Coordinate dependence of a recipe, queried while a kernel is expanded.
+///
+/// This deliberately lives on expand types: axes are compile-time state of recipe values, not a
+/// runtime GPU value, and composing the answer in ordinary Rust avoids turning a collected list
+/// of axes into mutable kernel state.
+pub trait RecipeAxisDependencies {
+    fn reads_axis(&self, scope: &Scope, axis: Axis) -> bool;
+}
+
+/// Per-factor coordinate dependencies of a separable recipe, queried during expansion.
+pub trait SeparableRecipeAxisDependencies {
+    fn factor_reads_axis(&self, scope: &Scope, factor: usize, axis: Axis) -> bool;
+}
+
 /// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
 /// position it is read at, within its [`Space`]. Rebased one axis at a time on demand, so a recipe
 /// emits an add only for the axes it actually reads, and one that ignores its coordinates emits none.
@@ -56,12 +70,15 @@ pub trait Recipe<T: Numeric> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T;
 }
 
-pub(crate) trait RecipeOps<T: Numeric> {
+#[doc(hidden)]
+pub trait RecipeOps<T: Numeric> {
     fn evaluate_virtual(&self, scope: &Scope, coordinates: &RecipeCoordsExpand) -> NativeExpand<T>;
 }
 
-pub(crate) trait SeparableRecipeOps<T: Numeric>: RecipeOps<T> {
+#[doc(hidden)]
+pub trait SeparableRecipeOps<T: Numeric>: RecipeOps<T> {
     fn factors_virtual(&self, scope: &Scope) -> usize;
+    fn factor_reads_axis_virtual(&self, scope: &Scope, factor: usize, axis: Axis) -> bool;
     fn evaluate_factor_virtual(
         &self,
         scope: &Scope,
@@ -70,9 +87,15 @@ pub(crate) trait SeparableRecipeOps<T: Numeric>: RecipeOps<T> {
     ) -> NativeExpand<T>;
 }
 
-impl<T: Numeric, R: SeparableRecipeExpand<T> + RecipeExpand<T>> SeparableRecipeOps<T> for R {
+impl<T: Numeric, R> SeparableRecipeOps<T> for R
+where
+    R: SeparableRecipeExpand<T> + RecipeExpand<T> + SeparableRecipeAxisDependencies,
+{
     fn factors_virtual(&self, scope: &Scope) -> usize {
         self.__expand_factors_method(scope)
+    }
+    fn factor_reads_axis_virtual(&self, scope: &Scope, factor: usize, axis: Axis) -> bool {
+        self.factor_reads_axis(scope, factor, axis)
     }
     fn evaluate_factor_virtual(
         &self,
@@ -114,7 +137,10 @@ impl<T: Numeric> VirtualRecipe<T> {
     pub fn __expand_new_separable<R: super::SeparableRecipe<T> + 'static>(
         _scope: &Scope,
         recipe: R::ExpandType,
-    ) -> VirtualRecipeExpand<T> {
+    ) -> VirtualRecipeExpand<T>
+    where
+        R::ExpandType: SeparableRecipeOps<T>,
+    {
         let recipe = Arc::new(recipe);
         VirtualRecipeExpand {
             state: recipe.clone(),
@@ -134,6 +160,11 @@ impl<T: Numeric> VirtualRecipe<T> {
     }
 
     pub fn evaluate_factor(&self, _coordinates: &RecipeCoords, _factor: usize) -> T {
+        unexpanded!()
+    }
+
+    /// Whether one separable factor reads `axis` from its recipe coordinates.
+    pub fn factor_reads_axis(&self, _factor: usize, _axis: Axis) -> comptime_type!(bool) {
         unexpanded!()
     }
 }
@@ -167,6 +198,18 @@ impl<T: Numeric> VirtualRecipeExpand<T> {
                 assert_eq!(factor, 0, "recipe states no factorization beyond itself");
                 self.state.evaluate_virtual(scope, coordinates)
             }
+        }
+    }
+
+    pub fn __expand_factor_reads_axis_method(
+        &self,
+        scope: &Scope,
+        factor: usize,
+        axis: Axis,
+    ) -> bool {
+        match &self.separable {
+            Some(separable) => separable.factor_reads_axis_virtual(scope, factor, axis),
+            None => true,
         }
     }
 }

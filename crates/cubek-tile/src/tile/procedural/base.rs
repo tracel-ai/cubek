@@ -117,6 +117,14 @@ impl<T: Numeric> ProceduralData<T> {
         self.recipe.factors()
     }
 
+    pub(crate) fn factor_reads_axis(
+        &self,
+        #[comptime] factor: usize,
+        #[comptime] axis: Axis,
+    ) -> comptime_type!(bool) {
+        self.recipe.factor_reads_axis(factor, axis)
+    }
+
     pub(crate) fn evaluate_factor_dyn(
         &self,
         pos: &CoordsDyn,

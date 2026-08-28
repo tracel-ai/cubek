@@ -3,6 +3,7 @@ mod blocked;
 mod coarse;
 mod conv;
 mod depthwise;
+mod erased;
 mod instruction;
 mod launcher;
 mod matmul;

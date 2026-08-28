@@ -10,7 +10,7 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
-use cubek_tile::Residence;
+use cubek_tile::{Geometry, Residence};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
@@ -150,7 +150,10 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
 
     let vector_size = launch.vector_size(
         CHANNEL,
-        &[(&input, &[CHANNEL]), (&output, &[CHANNEL])],
+        &[
+            (&Geometry::from(&input), &[CHANNEL]),
+            (&Geometry::from(&output), &[CHANNEL]),
+        ],
         dtype.size(),
     );
 

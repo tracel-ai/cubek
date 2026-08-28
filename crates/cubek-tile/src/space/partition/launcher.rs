@@ -5,7 +5,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Axis, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
+use crate::{Axis, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource, Unset};
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
@@ -101,16 +101,58 @@ impl<'c, R: Runtime> Launcher<'c, R> {
         self.arg(binding).subspace(operand.axes()).operand(operand)
     }
 
+    /// [`bind`](Self::bind) over a stated geometry rather than a binding: for an
+    /// operand with no tensor to bind — the destination a fused store writes
+    /// through ([`Tile::of_sink`](crate::Tile::of_sink)), or the producer a fused
+    /// read comes from ([`Tile::of_source`](crate::Tile::of_source)).
+    ///
+    /// `geometry` is the physical extents and strides the operand *would* have
+    /// had. Everything else — the projection, the bounds-check derived from this
+    /// launcher's concrete overhang, the residence column, the cube size — is
+    /// settled exactly as it is for a bound operand, because this is the builder a
+    /// bound operand configures: [`batches`](StridedTileSource::batches),
+    /// [`vectorize`](StridedTileSource::vectorize),
+    /// [`checked`](StridedTileSource::checked),
+    /// [`stage_width`](StridedTileSource::stage_width) and
+    /// [`tiling`](StridedTileSource::tiling) all read the same here as there, and
+    /// an operand that needs one of them tunes it rather than hand-building a spec
+    /// beside the derivation.
+    ///
+    /// End it with [`build_spec`](StridedTileSource::build_spec) rather than
+    /// [`build`](StridedTileSource::build): there is no tensor to ship, and the
+    /// settled geometry comes back beside the spec, which is what
+    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. The two
+    /// part company exactly where a broadcast batch dim is dropped, which is why it
+    /// is the settled one that travels: reading it keeps the dropping an
+    /// implementation detail of the derivation rather than a fact the call site has
+    /// to reproduce.
+    pub fn bind_geometry<'a>(
+        &'a self,
+        operand: &'a Operand,
+        geometry: &Geometry,
+    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
+        StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
+            .space(&self.kernel)
+            .concrete(&self.concrete)
+            .cube_units(self.cube_dim().num_elems() as usize)
+            .subspace(operand.axes())
+            .operand(operand)
+    }
+
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width
     /// for all of them, since a kernel reading one operand's lines writes the other's. Each
-    /// `(binding, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
+    /// `(geometry, subspace)` must be unchecked (no [`overhangs`](Space::overhangs) on its
     /// subspace; a masked access reports its length in lines and would wrongly clip) and
-    /// innermost-contiguous; the width must divide each inner buffer extent, every coarser
-    /// stride, and the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
+    /// innermost-contiguous; the width must divide each inner extent, every coarser stride, and
+    /// the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
+    ///
+    /// A [`Geometry`] rather than a binding, so that an operand with no tensor to bind — the
+    /// destination of a fused store — constrains the shared width like any other. It is one
+    /// width for *all* of them, and one the destination cannot serve is not a width.
     pub fn vector_size(
         &self,
         axis: Axis,
-        operands: &[(&TensorBinding<R>, &[Axis])],
+        operands: &[(&Geometry, &[Axis])],
         type_size: usize,
     ) -> usize {
         // The width gates below test the physical innermost dim, so `axis` must be the label
@@ -122,11 +164,13 @@ impl<'c, R: Runtime> Launcher<'c, R> {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        let qualifies = operands.iter().all(|(binding, subspace)| {
-            binding.strides.last() == Some(&1)
-                && !subspace.iter().any(|&a| self.concrete.overhangs(a))
-        });
-        if !qualifies {
+        // The one gate that is about the space rather than the geometry: a masked access reports
+        // its length in lines and would wrongly clip, so an overhanging subspace is served scalar
+        // whatever its extents and strides would allow. `serves_lines` below answers the rest.
+        let masked = operands
+            .iter()
+            .any(|(_, subspace)| subspace.iter().any(|&a| self.concrete.overhangs(a)));
+        if masked {
             return 1;
         }
         let leaf = self.concrete.final_space().extent(axis);
@@ -134,14 +178,10 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
-                    && operands.iter().all(|(b, _)| {
-                        b.shape.last().is_some_and(|&e| e.is_multiple_of(v))
-                            // Coarser strides re-express in lines (`stride / v`), so `v`
-                            // must divide them or a padded/sliced view truncates.
-                            && b.strides[..b.strides.len() - 1]
-                                .iter()
-                                .all(|&s| s.is_multiple_of(v))
-                    })
+                    // The same gates `Geometry::serves_lines` refuses a stated width on: the
+                    // innermost extent counts in lines and every coarser stride re-expresses
+                    // as `stride / v`, which truncates when `v` does not divide it.
+                    && operands.iter().all(|(g, _)| g.serves_lines(v).is_ok())
             })
             .max()
             .unwrap_or(1)

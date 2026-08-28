@@ -8,7 +8,7 @@ use cubecl::{
     std::quant::unpack_fields,
     std::quant::view::KnownScale,
     std::tensor::{
-        AsView, AsViewExpand, AsViewMut, AsViewMutExpand, View, ViewMut,
+        AsView, AsViewExpand, AsViewMut, AsViewMutExpand, ErasedTensor, View, ViewMut, WriteOnly,
         layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand},
     },
 };
@@ -81,27 +81,101 @@ pub struct MemData<T: Numeric> {
     pub(crate) indirection: ComptimeOption<Indirection>,
 }
 
-/// What a [`MemData`]'s bytes are and mean: the erased buffer, the width it groups into lines at,
-/// and, when the buffer physically holds quantized data, how a *stored* value becomes a *served*
-/// one. Reads through [`Tile::flat`] dequantize into `T`; every other element view refuses a
-/// quantized tile.
+/// What backs a [`MemData`]'s values, and what can be done with them there.
+///
+/// These are not three spellings of one thing. A [`Buffer`](Backing::Buffer) has
+/// an address: it can be read back, sliced, re-typed, staged into shared memory,
+/// handed to a tensor-map load. The erased two have none — the walk ends in a
+/// *call*, which is what lets a kernel hand its values to a generated epilogue,
+/// or take them from a generated producer, instead of moving them through
+/// memory. So every address-shaped operation is a comptime panic rather than a
+/// fallback, and what each serves is one layout-addressed view:
+/// [`write_view`](MemData::write_view) for a [`WriteCall`](Backing::WriteCall),
+/// [`read_view`](MemData::read_view) for a [`ReadCall`](Backing::ReadCall).
+///
+/// The visibility markers carry the direction. A destination is written and
+/// never read, a producer read and never written, and neither can be handed
+/// where the other belongs without the type saying so.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub(crate) enum Backing<T: Numeric> {
+    /// Bytes this kernel addresses directly. Scalar-typed by Rust-side erasure
+    /// only: the real binding/alloc element is `Vector<T, vector_size>`, so
+    /// re-grouping to lines at that width is a no-op.
+    Buffer(Box<[T]>),
+    /// A destination that is not memory: written through its layout and never read,
+    /// which is what [`WriteOnly`] states. See [`ErasedTensor`].
+    WriteCall(ErasedTensor<T, WriteOnly>),
+    /// A producer that is not memory: read through its layout and never written,
+    /// which is what [`ReadOnly`] states. The fuse-on-read twin of
+    /// [`WriteCall`](Backing::WriteCall).
+    ReadCall(ErasedTensor<T, ReadOnly>),
+}
+
+/// What a [`MemData`]'s values are and mean: where they go, the width they group into lines at,
+/// and, when the destination physically holds quantized data, how a *stored* value becomes a
+/// *served* one. Reads through [`Tile::flat`] dequantize into `T`; every other element view
+/// refuses a quantized tile.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Store<T: Numeric> {
-    /// Backing store, scalar-typed by Rust-side erasure only: the real binding/alloc element is
-    /// `Vector<T, vector_size>`, so re-grouping to lines at that width is a no-op.
-    pub(crate) buffer: Box<[T]>,
-    /// Physical line size (`Vector<T, vector_size>`) of the backing store, `1` when
+    /// What backs the values.
+    pub(crate) backing: Backing<T>,
+    /// Physical line size (`Vector<T, vector_size>`) of the destination, `1` when
     /// unvectorized; held comptime so `size!` can read it.
     #[cube(comptime)]
     pub(crate) vector_size: usize,
-    /// Present when the buffer holds quantized data (see [`QuantInfo`]).
+    /// Present when the destination holds quantized data (see [`QuantInfo`]).
     pub(crate) quant: ComptimeOption<QuantInfo>,
     /// How the buffer's values sit in it: whether a stored element *is* a served one, and what a
     /// read has to unpack if it is not. Stated at construction, from the operand's spec
     /// ([`TileSpec::packed`]) or from its scheme where it has one, so no reader re-derives it.
     #[cube(comptime)]
     pub(crate) packing: Packing,
+}
+
+#[cube]
+impl<T: Numeric> Store<T> {
+    /// The bytes, for a destination that has an address.
+    ///
+    /// Every reader goes through here, so an erased backing meets one message
+    /// rather than a different confusion per call site.
+    // `Box<[T]>` is cubecl's owned-slice handle rather than a Rust box, and `&[T]`
+    // is a different kernel type with a different set of operations (the
+    // re-typing and re-grouping every reader below does), so the lint's
+    // suggestion does not apply.
+    #[allow(clippy::borrowed_box)]
+    pub(crate) fn buffer(&self) -> &Box<[T]> {
+        match &self.backing {
+            Backing::Buffer(buffer) => buffer,
+            Backing::WriteCall(_) => panic!(
+                "Store::buffer: this tile's backing is written through a call, which has no \
+                 address — it can only be written through its layout"
+            ),
+            Backing::ReadCall(_) => panic!(
+                "Store::buffer: this tile's backing is read through a call, which has no \
+                 address — it can only be read through its layout (MemData::read_view), so the \
+                 slice-shaped paths (a dense run, a re-typed quant storage, a tensor-map load) \
+                 are closed to it"
+            ),
+        }
+    }
+
+    /// The mutable twin of [`buffer`](Self::buffer).
+    #[allow(clippy::borrowed_box)]
+    pub(crate) fn buffer_mut(&mut self) -> &mut Box<[T]> {
+        match &mut self.backing {
+            Backing::Buffer(buffer) => buffer,
+            Backing::WriteCall(_) => panic!(
+                "Store::buffer_mut: this tile's backing is written through a call, which has no \
+                 address — it can only be written through its layout"
+            ),
+            Backing::ReadCall(_) => panic!(
+                "Store::buffer_mut: this tile's backing is read through a call, which is \
+                 read-only"
+            ),
+        }
+    }
 }
 
 /// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
@@ -185,7 +259,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        Tile::<T>::of_impl::<E>(
+        Tile::<T>::of_tensor::<E>(
             tensor,
             space,
             spec,
@@ -214,7 +288,7 @@ impl<T: Numeric> Tile<T> {
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<T> {
-        Tile::<T>::of_impl::<E>(
+        Tile::<T>::of_tensor::<E>(
             tensor,
             space,
             spec,
@@ -240,7 +314,7 @@ impl<T: Numeric> Tile<T> {
             spec.packing != Packing::Plain,
             "Tile::of_packed: the operand states no packing, so it is a plain tile (Tile::of)"
         ));
-        Tile::<T>::of_impl::<E>(
+        Tile::<T>::of_tensor::<E>(
             values,
             space,
             spec,
@@ -297,7 +371,7 @@ impl<T: Numeric> Tile<T> {
             table,
             scheme: comptime!(scheme),
         };
-        Tile::<T>::of_impl::<E>(
+        Tile::<T>::of_tensor::<E>(
             values,
             space,
             spec,
@@ -358,7 +432,7 @@ impl<T: Numeric> Tile<T> {
             table_strides,
             spec: comptime!(indirection),
         };
-        Tile::<T>::of_impl::<E>(
+        Tile::<T>::of_tensor::<E>(
             values,
             space,
             spec,
@@ -372,9 +446,143 @@ impl<T: Numeric> Tile<T> {
     /// Shared body of [`of`](Tile::of)/[`of_dequant`](Tile::of_dequant): `E` is the *binding*
     /// element (its scalar the stored type), `T` the served scalar; they differ only for a
     /// quantized operand, whose served width is the binding's width × the packing factor.
-    #[allow(clippy::too_many_arguments)]
-    fn of_impl<E: CubePrimitive>(
+    /// [`of_impl`](Self::of_impl) reading its geometry off a launched tensor,
+    /// which is where every destination that *has* an address comes from.
+    ///
+    /// Re-typing the buffer to the served scalar `T` is a static coercion for a
+    /// plain operand (the binding's real element is `Vector<T, w>`, same bytes);
+    /// a quantized store truly holds the stored type and the read view downcasts
+    /// back ([`lines_storage`](MemData::lines_storage)).
+    fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+        quant: ComptimeOption<QuantInfo>,
+        indirection: ComptimeOption<Indirection>,
+        coefficients: Coords<u32>,
+        offsets: Coords<i32>,
+    ) -> Tile<T> {
+        let rank = comptime!(spec.projection.physical_rank());
+        let backing = Backing::<T>::new_Buffer(unsafe {
+            tensor
+                .as_slice()
+                .downcast_unchecked::<T>()
+                .as_boxed_unchecked()
+        });
+        Tile::<T>::of_impl(
+            backing,
+            RuntimeGeometry::of_tensor::<E>(tensor, rank),
+            tensor.vector_size(),
+            space,
+            spec,
+            quant,
+            indirection,
+            coefficients,
+            offsets,
+        )
+    }
+
+    /// A tile whose values are handed to `sink` instead of stored: the walk is the walk a buffer
+    /// gets, and only its last step is a call rather than a store.
+    ///
+    /// The geometry is *stated* rather than read, because a destination with no
+    /// address has none to read: it is the physical extents and strides in
+    /// scalars that the product would have had, and `vector_size` the line width
+    /// the sink takes. The tile addresses the sink through exactly the layout
+    /// those describe, so a caller that states the product's own metadata gets
+    /// the store the unfused kernel would have made.
+    ///
+    /// A sink serves the layout-addressed writes and only those. It cannot be
+    /// staged into shared memory, written dense ([`Tile::dense_mut`]), quantized,
+    /// or filled by a tensor map: each of those wants an address rather than a
+    /// call, and says so.
+    ///
+    /// Nor may its spec state a [`packing`](TileSpec::packed): a packed operand is
+    /// addressed at the *stored* width and serves several values per element, so
+    /// the width stated here would no longer be the width the sink is written at.
+    pub fn of_sink(
+        sink: ErasedTensor<T, WriteOnly>,
+        geometry: RuntimeGeometry,
+        #[comptime] vector_size: usize,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        // A bound operand reads its width off its binding, so a packing multiplying it is a
+        // fact about the two together; a sink has only what it states, and `of_impl` would
+        // address it at `vector_size * factor`. Refused here, where the spec says it, rather
+        // than left to the width mismatch cubecl reports off the erased tensor.
+        comptime!(assert!(
+            spec.packing == Packing::Plain,
+            "Tile::of_sink: a sink is written at the width it states, so its spec may not \
+             state a packing ({:?}) on top of it",
+            spec.packing
+        ));
+        Tile::<T>::of_impl(
+            Backing::<T>::new_WriteCall(sink),
+            geometry,
+            vector_size,
+            space,
+            spec,
+            ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
+            Coords::<u32>::new(),
+            Coords::<i32>::new(),
+        )
+    }
+
+    /// A tile whose values come from `source` instead of from memory — the
+    /// fuse-on-read twin of [`of_sink`](Tile::of_sink).
+    ///
+    /// The geometry is *stated* for the same reason it is there: a source with
+    /// no address has none to read off. It is the physical extents and strides in
+    /// scalars the operand *would* have had, and `vector_size` the line width the
+    /// source serves. The tile reads through exactly the layout those describe,
+    /// so a caller that states the producer's own metadata gets the reads the
+    /// unfused kernel would have made.
+    ///
+    /// A source serves the layout-addressed reads and only those. It cannot be
+    /// staged into shared memory, read dense, quantized, or loaded by a tensor
+    /// map: each of those wants an address rather than a call, and says so.
+    ///
+    /// Nor may its spec state a [`packing`](TileSpec::packed), for the reason
+    /// [`of_sink`](Tile::of_sink) states: a packed operand is addressed at the
+    /// *stored* width, and the width stated here would no longer be the one the
+    /// source is read at.
+    pub fn of_source(
+        source: ErasedTensor<T, ReadOnly>,
+        geometry: RuntimeGeometry,
+        #[comptime] vector_size: usize,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        comptime!(assert!(
+            spec.packing == Packing::Plain,
+            "Tile::of_source: a source is read at the width it states, so its spec may not \
+             state a packing ({:?}) on top of it",
+            spec.packing
+        ));
+        Tile::<T>::of_impl(
+            Backing::<T>::new_ReadCall(source),
+            geometry,
+            vector_size,
+            space,
+            spec,
+            ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
+            Coords::<u32>::new(),
+            Coords::<i32>::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn of_impl(
+        backing: Backing<T>,
+        // `geometry` is the destination's physical extents and strides in scalars,
+        // one per physical axis; `bound_width` the binding's own line width, on top
+        // of which a packed destination serves `packing.factor()` values per stored
+        // element.
+        geometry: RuntimeGeometry,
+        #[comptime] bound_width: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
@@ -416,6 +624,16 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
+        // Free for a bound operand, which builds its geometry off the projection's own rank; the
+        // check is for a *stated* one ([`of_sink`](Tile::of_sink)), where too few dims panic on an
+        // opaque `Sequence` index below and too many silently ignore their tail.
+        let dims_given = geometry.shape.len();
+        let physical_rank = comptime!(projection.physical_rank());
+        comptime!(assert!(
+            dims_given == physical_rank,
+            "Tile::of: the projection addresses {physical_rank} physical dims but {dims_given} \
+             were given"
+        ));
         let stage = comptime!(spec.stage_plan(space.instruction()));
         // How the buffer holds its values: what a quantized operand's scheme says, else what the
         // spec states. One statement, whichever door minted it, so nothing below asks twice.
@@ -429,9 +647,8 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: a quantized operand's scheme already states how its values are stored, so \
              its spec may not state a packing too"
         ));
-        // The binding type's own width, comptime; a packed store serves `factor` values per
-        // stored element.
-        let bound_width = tensor.vector_size();
+        // A packed store serves `factor` values per stored element, on top of the binding's own
+        // line width.
         let vector_size = comptime!(bound_width * packing.factor());
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows. Same for a
@@ -455,17 +672,18 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
              {vector_size})"
         ));
-        // Off the projection, not the space: a gathered operand's buffer has fewer physical axes
-        // than its logical space has axes, and a storage-tiled one has more.
-        let rank = comptime!(projection.physical_rank());
+        // `physical_rank` above, off the projection rather than the space: a gathered operand's
+        // buffer has fewer physical axes than its logical space has axes, and a storage-tiled one
+        // has more.
+        let rank = physical_rank;
         let last = comptime!(rank - 1);
         let w = comptime!(vector_size as u32);
         let mut physical_shape = Coords::<u32>::new();
         let mut physical_strides = Coords::<u32>::new();
         #[unroll]
         for i in 0..rank {
-            let extent = tensor.shape(i) as u32;
-            let stride = tensor.stride(i) as u32;
+            let extent = geometry.shape.at(i);
+            let stride = geometry.strides.at(i);
             if comptime!(i == last) {
                 // Innermost (contiguous, scalar stride 1): count lines; consecutive lines
                 // are one line apart.
@@ -477,15 +695,6 @@ impl<T: Numeric> Tile<T> {
                 physical_strides.push(stride / w);
             }
         }
-        // Re-typing the buffer to the served scalar `T` is a static coercion for a plain
-        // operand (the binding's real element is `Vector<T, w>`, same bytes); a quantized
-        // store truly holds the stored type and the read view downcasts back (`lines_storage`).
-        let buffer = unsafe {
-            tensor
-                .as_slice()
-                .downcast_unchecked::<T>()
-                .as_boxed_unchecked()
-        };
         // `GmemLayout`'s own physical-position map: the operand's own projection relabeled by
         // position, since the layout is handed coordinates a gather has already resolved. Storage
         // tiling survives that relabeling, so `physical_shape` is exactly
@@ -507,7 +716,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind: TileKind::new_Gmem(MemData::<T> {
                 store: Store::<T> {
-                    buffer,
+                    backing,
                     vector_size: comptime!(vector_size),
                     quant,
                     packing: comptime!(packing),
@@ -823,11 +1032,13 @@ impl<T: Numeric> MemData<T> {
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
     ) -> Tile<T> {
-        let buffer = unsafe {
+        // Shared memory is always an address: a stage is read back by the
+        // instruction that consumes it, which is the one thing a sink cannot do.
+        let backing = Backing::<T>::new_Buffer(unsafe {
             smem.inner_ref()
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
-        };
+        });
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
@@ -836,7 +1047,7 @@ impl<T: Numeric> MemData<T> {
         Tile::<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
-                    buffer,
+                    backing,
                     vector_size: meta.vector_size,
                     quant,
                     packing: comptime!(packing),
@@ -913,7 +1124,8 @@ impl<T: Numeric> Tile<T> {
                          (Tile::copy_from, Tile::matrix_transparent)"
                     )
                 }
-                g.lines::<W>().view(g.base()).view(g.window())
+                let base = g.base();
+                g.read_view::<W>(base).view(g.window())
             }
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -931,7 +1143,7 @@ impl<T: Numeric> Tile<T> {
                 }
                 let base = g.base();
                 let window = g.window();
-                g.lines_mut::<W>().view_mut(base).view_mut(window)
+                g.write_view::<W>(base).view_mut(window)
             }
             TileKind::TmaGmem(_) => panic!("Tile::view_mut: a tma source has no element view"),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -1445,7 +1657,7 @@ impl<T: Numeric> MemData<T> {
     /// destinations ask, and a TMA source never stages into a quantized register), but computed
     /// correctly rather than refused.
     pub(crate) fn size_bytes(&self) -> u32 {
-        let lines = self.store.buffer.len() as u32;
+        let lines = self.store.buffer().len() as u32;
         #[comptime]
         match &self.store.quant {
             ComptimeOption::None => {
@@ -1491,22 +1703,82 @@ impl<T: Numeric> MemData<T> {
     /// The buffer re-grouped into `Vector<T, W>` lines, which the line-unit base/window
     /// layouts address. `W` is the width the buffer already has, so the regroup is a
     /// no-op; only the cmma row stride widens back to scalars ([`row_stride`](MemData::row_stride)).
+    ///
+    /// Buffers only, and only where a *slice* is what is wanted:
+    /// [`dense_lines`](MemData::dense_lines) addresses one contiguous run by
+    /// index and has no layout to walk. Every layout-addressed read goes through
+    /// [`read_view`](MemData::read_view) instead, which an erased source serves
+    /// and this cannot.
     fn lines<W: Size>(&self) -> &[Vector<T, W>] {
-        self.store.buffer.as_vectorized().with_vector_size::<W>()
+        self.store.buffer().as_vectorized().with_vector_size::<W>()
     }
 
     /// The mutable twin of [`lines`](MemData::lines).
+    ///
+    /// Buffers only: an erased destination has no lines to hand out, because it
+    /// has no address. [`write_view`](MemData::write_view) is the write path both
+    /// backings share.
     fn lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.store
-            .buffer
+            .buffer_mut()
             .as_vectorized_mut()
             .with_vector_size_mut::<W>()
+    }
+
+    /// The backing as a [`ViewMut`] addressed by `layout` — the write path, and
+    /// the only one a [`WriteCall`](Backing::WriteCall) serves.
+    ///
+    /// The layout is the same for every backing, which is the point: an erased
+    /// destination is addressed by the tile's own `GmemLayout` exactly as a buffer
+    /// is, and what differs is only what happens at the end of the address — a
+    /// store, or a call. So every mutable view above composes onto this and none
+    /// of them has to know what it is writing to.
+    fn write_view<W: Size>(&mut self, layout: GmemLayout) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+        match &mut self.store.backing {
+            Backing::Buffer(buffer) => buffer
+                .as_vectorized_mut()
+                .with_vector_size_mut::<W>()
+                .view_mut(layout),
+            Backing::WriteCall(destination) => {
+                ViewMut::new::<&mut ErasedTensor<T, WriteOnly>, Coords1d>(destination, layout)
+            }
+            Backing::ReadCall(_) => panic!(
+                "MemData::write_view: this tile's backing is read through a call, which is \
+                 read-only"
+            ),
+        }
+    }
+
+    /// The backing as a [`View`] addressed by `layout` — the read path, and the
+    /// only one a [`ReadCall`](Backing::ReadCall) serves.
+    ///
+    /// The mirror of [`write_view`](MemData::write_view), and for the same
+    /// reason: every read view above composes onto this rather than onto
+    /// [`lines`](MemData::lines), so a producer that has no slice to hand out is
+    /// still read exactly where a buffer is read.
+    ///
+    /// What that leaves out is the slice-shaped half, and deliberately. A dense
+    /// run wants a contiguous slice; a quantized read re-types the buffer to its
+    /// storage element; a tma load wants a tensor map. None of the three is a
+    /// view over `Coords1d`, so none of them narrows to a call, and each keeps
+    /// saying so through [`Store::buffer`].
+    fn read_view<W: Size>(&self, layout: GmemLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
+        match &self.store.backing {
+            Backing::Buffer(buffer) => buffer.as_vectorized().with_vector_size::<W>().view(layout),
+            Backing::ReadCall(producer) => {
+                View::new::<&ErasedTensor<T, ReadOnly>, Coords1d>(producer, layout)
+            }
+            Backing::WriteCall(_) => panic!(
+                "MemData::read_view: this tile's backing is written through a call, and is never \
+                 read"
+            ),
+        }
     }
 
     /// [`lines`](MemData::lines) with the buffer re-typed to the quantized storage
     /// element `I` it truly holds (see [`QuantInfo`]).
     fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
-        let storage = unsafe { self.store.buffer.downcast_unchecked::<I>() };
+        let storage = unsafe { self.store.buffer().downcast_unchecked::<I>() };
         storage.as_vectorized().with_vector_size::<W>()
     }
 
@@ -1514,7 +1786,7 @@ impl<T: Numeric> MemData<T> {
     /// [`fill_straight`](MemData::fill_straight) writes the packed storage words. `I == T` on a
     /// plain copy, a same-type reinterpret.
     fn lines_storage_mut<I: Numeric, W: Size>(&mut self) -> &mut [Vector<I, W>] {
-        let storage = unsafe { self.store.buffer.downcast_mut_unchecked::<I>() };
+        let storage = unsafe { self.store.buffer_mut().downcast_mut_unchecked::<I>() };
         storage.as_vectorized_mut().with_vector_size_mut::<W>()
     }
 
@@ -1575,14 +1847,14 @@ impl<T: Numeric> MemData<T> {
     /// rows across storage tiles.
     pub(crate) fn window_slice(&self) -> &[T] {
         let offset = self.window_offset();
-        self.store.buffer.slice(offset, self.store.buffer.len())
+        self.store.buffer().slice(offset, self.store.buffer().len())
     }
 
     /// The mutable twin of [`window_slice`](MemData::window_slice).
     pub(crate) fn window_slice_mut(&mut self) -> &mut [T] {
         let offset = self.window_offset();
-        let end = self.store.buffer.len();
-        self.store.buffer.slice_mut(offset, end)
+        let end = self.store.buffer().len();
+        self.store.buffer_mut().slice_mut(offset, end)
     }
 
     /// Line offset of the window origin: the accumulated `window_start`. On a tiled
@@ -1628,8 +1900,7 @@ impl<T: Numeric> MemData<T> {
             )
         }
         MaskedView::new(
-            self.lines::<W>()
-                .view(self.base())
+            self.read_view::<W>(self.base())
                 .view(self.window().with_guard(guard))
                 .view(layout),
             comptime!(guard.checks() && self.access.overhang.masks()),
@@ -1665,10 +1936,7 @@ impl<T: Numeric> MemData<T> {
         let window = self.window();
         let check = self.write_check();
         MaskedViewMut::new(
-            self.lines_mut::<W>()
-                .view_mut(base)
-                .view_mut(window)
-                .view_mut(layout),
+            self.write_view::<W>(base).view_mut(window).view_mut(layout),
             check,
         )
     }
@@ -1677,8 +1945,7 @@ impl<T: Numeric> MemData<T> {
     /// carrying the `check` flag so a flat scan masks the overhang without being asked.
     pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         FlatView::new(
-            self.lines::<W>()
-                .view(self.base())
+            self.read_view::<W>(self.base())
                 .view(self.window())
                 .view(FlatLayout::new(self.window.extent.clone())),
             comptime!(self.access.overhang.masks()),
@@ -1860,8 +2127,7 @@ impl<T: Numeric> MemData<T> {
         let extent = self.window.extent.clone();
         let check = self.write_check();
         FlatViewMut::new(
-            self.lines_mut::<W>()
-                .view_mut(base)
+            self.write_view::<W>(base)
                 .view_mut(window)
                 .view_mut(FlatLayout::new(extent)),
             check,
@@ -2117,7 +2383,7 @@ impl<T: Numeric> MemData<T> {
 
         MemData::<T> {
             store: Store::<T> {
-                buffer: unsafe { self.store.buffer.as_boxed_unchecked() },
+                backing: self.store.backing.clone(),
                 vector_size: comptime!(self.store.vector_size),
                 quant,
                 packing: comptime!(self.store.packing),

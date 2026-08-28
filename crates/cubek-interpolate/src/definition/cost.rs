@@ -125,7 +125,7 @@ fn bound_check_ops(mode: InterpolateMode) -> usize {
 /// Arithmetic operations one `compute_weight` call emits.
 ///
 /// A transcendental counts as one operation, as everything else here does: this is an
-/// instruction count, not a cycle estimate, so Lanczos3's two sines are understated by
+/// instruction count, not a cycle estimate, so Lanczos3's sine and divide are understated by
 /// whatever their hardware cost is.
 fn weight_ops(mode: InterpolateMode) -> usize {
     match mode {
@@ -133,14 +133,16 @@ fn weight_ops(mode: InterpolateMode) -> usize {
         InterpolateMode::Nearest(_) => 0,
         // An abs, the comparison against one, the subtraction, and the select.
         InterpolateMode::Bilinear => 4,
-        // An abs and the two multiplies that raise it to the second and third powers, four
-        // operations for the inner cubic, six for the outer one, then the two comparisons
-        // and two selects that pick between them and zero.
-        InterpolateMode::Bicubic => 3 + 4 + 6 + 4,
-        // An abs, the scale by pi, the squared denominator and its third; the comparison
-        // and select guarding a zero denominator; the two sines, the argument's third, the
-        // product and the divide; then the two comparisons and two selects around them.
-        InterpolateMode::Lanczos3 => 4 + 2 + 5 + 4,
+        // An abs and the multiply that squares it, two fused multiply-adds for the inner
+        // cubic in Horner form, three for the outer one, then the two comparisons and two
+        // selects that pick between them and zero.
+        InterpolateMode::Bicubic => 2 + 2 + 3 + 4,
+        // An abs, the scale into `pi * x / 3`, and the one sine the triple-angle identity
+        // leaves; the squaring, multiply-add and multiply that finish the numerator; the
+        // squared denominator and its scale; the comparison and select guarding a zero
+        // denominator; then the divide, the support comparison and the two selects. The
+        // comparison against zero is shared with the guard rather than recomputed.
+        InterpolateMode::Lanczos3 => 3 + 3 + 2 + 2 + 4,
     }
 }
 

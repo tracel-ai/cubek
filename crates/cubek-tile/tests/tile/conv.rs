@@ -1951,9 +1951,20 @@ fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
 
 fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    if client.properties().features.matmul.mma.is_empty() {
+    // The *shape*, not just the feature: a backend can advertise manual mma and
+    // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
+    // instruction the hardware does not have — it reads back zeros, which looks
+    // like a leaf bug and is a missing guard.
+    let f32_native = f32::elem_type_native();
+    let offers_8x8x8 = client.properties().features.matmul.mma.iter().any(|c| {
+        c.a_type == f32_native
+            && c.b_type == f32_native
+            && c.cd_type == f32_native
+            && (c.m, c.n, c.k) == (8, 8, 8)
+    });
+    if !offers_8x8x8 {
         TestOutcome::Validated(ValidationResult::Skipped(
-            "backend has no manual mma (features.matmul.mma) support".to_string(),
+            "backend offers no 8x8x8 f32 manual mma".to_string(),
         ))
         .enforce();
         return;
