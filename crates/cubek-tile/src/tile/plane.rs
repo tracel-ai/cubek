@@ -33,6 +33,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] form: Instruction,
         #[comptime] m: usize,
         #[comptime] n: usize,
+        #[comptime] axes: MatrixAxes,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
@@ -50,6 +51,7 @@ impl<T: Numeric> PlaneTile<T> {
             Instruction::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
+                axes,
                 vector_size,
                 lane_share,
                 config,
@@ -223,6 +225,7 @@ impl<T: Numeric> PlanePartition<T> {
                     form,
                     m,
                     n,
+                    axes,
                     k,
                     vector_size,
                     lane_share,
