@@ -210,7 +210,7 @@ fn step_contracted_per_step(
         assert!(
             rw == aw || aw == 1,
             "contract: the rhs lines along {lined:?} together with the accumulator, so both must \
-             be contracted_per_step at one width unless the accumulator is scalar and the rhs is a padded \
+             be served at one width unless the accumulator is scalar and the rhs is a padded \
              stage (rhs {rw}, accumulator {aw})"
         );
         return 1;
@@ -218,7 +218,7 @@ fn step_contracted_per_step(
     let contracted_per_step = rhs.contracted_per_step(&contracted, rw);
     assert!(
         contracted_per_step > 1,
-        "contract: the rhs lines along the contracted axis {k:?}, which is contracted_per_step in whole lines; \
+        "contract: the rhs lines along the contracted axis {k:?}, which is served in whole lines; \
          its width {rw} must exceed 1 and divide the axis's extent {}",
         rhs.extent(k)
     );
@@ -231,7 +231,7 @@ fn step_contracted_per_step(
     assert_eq!(
         aw, 1,
         "contract: a step serving {contracted_per_step} contracted values holds partials of one cell in the \
-         block's lanes, so the accumulator cannot also be contracted_per_step in {aw}-wide lines"
+         block's lanes, so the accumulator cannot also be served in {aw}-wide lines"
     );
     contracted_per_step
 }
@@ -274,7 +274,7 @@ mod tests {
 
     /// A width the contracted extent does not divide would leave a masked tail.
     #[test]
-    #[should_panic(expected = "contracted_per_step in whole lines")]
+    #[should_panic(expected = "served in whole lines")]
     fn a_width_that_misdivides_the_contracted_axis_is_refused() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
         step_contracted_per_step(&lhs, &rhs, &acc, 3, 3, 1);
@@ -290,7 +290,7 @@ mod tests {
 
     /// The block's lanes mean one axis, and a lined accumulator has already claimed them.
     #[test]
-    #[should_panic(expected = "cannot also be contracted_per_step")]
+    #[should_panic(expected = "cannot also be served")]
     fn a_folded_step_needs_a_scalar_accumulator() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
         step_contracted_per_step(&lhs, &rhs, &acc, 4, 4, 2);
@@ -298,7 +298,7 @@ mod tests {
 
     /// The rhs and the accumulator share their line, so they share its width.
     #[test]
-    #[should_panic(expected = "contracted_per_step at one width")]
+    #[should_panic(expected = "served at one width")]
     fn an_rhs_lined_along_the_accumulator_shares_its_width() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
         step_contracted_per_step(&lhs, &rhs, &acc, 4, 1, 2);

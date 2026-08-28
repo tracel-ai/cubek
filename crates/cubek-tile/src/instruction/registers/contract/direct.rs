@@ -347,7 +347,7 @@ fn nest_scaled<
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
     // The scales share the values' *column* edge and count it in blocks: their own innermost
     // extent says how many, `per_scale` how many values each covers, and `value_width` the width
-    // that edge is contracted_per_step at. Which axis the edge is depends on the step, the same way the rhs's
+    // that edge is served at. Which axis the edge is depends on the step, the same way the rhs's
     // own matrix does.
     let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
     let (scales_axes, per_scale, value_width) = comptime!(match (side, contracted_per_step > 1) {
@@ -370,12 +370,11 @@ fn nest_scaled<
     let lines_per_scale = comptime!(per_scale / value_width);
     // A scale line wider than one scale needs each value line's ordinal along the shared edge as a
     // constant. The rhs's columns are walked under one at a step; the lhs's are the contraction,
-    // whose step is a runtime index, so its scales are contracted_per_step one at a time.
     comptime!(assert!(
-        sw == 1 || (side == ScaleSide::Rhs && contracted_per_step == 1),
-        "mm_scaled: {sw} scales are contracted_per_step as one line, which needs the value line's ordinal along \
-         the shared edge as a constant. Only an rhs lined along the accumulator walks its columns \
-         that way; bind the scales scalar here"
+        sw == 1 || contracted_per_step == 1,
+        "mm_scaled: {sw} scales are served as one line, which needs each value line's ordinal \
+         along the shared edge as a constant. A step folding {contracted_per_step} contracted \
+         values walks no such edge; bind the scales scalar here"
     ));
     let eligible = comptime!(mr * nr * contracted_per_step * aw <= config.budget);
 

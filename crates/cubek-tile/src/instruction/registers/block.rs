@@ -9,7 +9,7 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
-use crate::instruction::registers::lines::{Lines, LinesExpand};
+use crate::instruction::registers::lines::{FoldRun, Lines, LinesExpand};
 use crate::*;
 
 /// `c += lhs · rhs` over the block: `kc / contracted_per_step` steps into the `mr × nr` lines of `c`.
@@ -53,6 +53,7 @@ pub(crate) fn contract<
                 0usize,
                 line as u32,
                 comptime!(None),
+                0usize,
                 contracted_per_step,
                 lw,
                 mr,
@@ -62,51 +63,46 @@ pub(crate) fn contract<
             );
         }
     } else if comptime!(lane_fanout && lw > 1) {
-        let k_lines = comptime!(kc / lw);
-        let k_tail = comptime!(kc % lw);
-
-        for line in 0..k_lines {
-            #[unroll]
-            for lane in 0..lw {
-                rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
-                    lhs,
-                    rhs,
-                    c,
-                    &mut b,
-                    line * lw + lane,
-                    line as u32,
-                    comptime!(Some(lane)),
-                    contracted_per_step,
-                    lw,
-                    mr,
-                    nr,
-                    unroll,
-                    semiring,
-                );
-            }
-        }
-
-        // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
-        // too, so the tail is straight-line code rather than a second, dynamic walk.
-        #[unroll]
-        for lane in 0..k_tail {
-            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+        // The lhs's fold repeats over a run of its lines. An operand with nothing to fold in walks
+        // line by line; one whose fold picks a lane of a wide read needs each fold's ordinal as a
+        // constant, so the run is unrolled around a rolled walk of the lines it covers.
+        let fold = lhs.fold_run();
+        match comptime!(fold == FoldRun::ONE) {
+            true => lane_walk::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
                 c,
                 &mut b,
-                comptime!(k_lines * lw + lane),
-                comptime!(k_lines) as u32,
-                comptime!(Some(lane)),
                 contracted_per_step,
                 lw,
                 mr,
                 nr,
+                kc,
                 unroll,
                 semiring,
-            );
+            ),
+            false => folded_lane_walk::<E, EL, L, ER, V, Lhs, Rhs>(
+                lhs,
+                rhs,
+                c,
+                &mut b,
+                fold,
+                contracted_per_step,
+                lw,
+                mr,
+                nr,
+                kc,
+                unroll,
+                semiring,
+            ),
         }
     } else {
+        let flat_fold = lhs.fold_run();
+        comptime!(assert!(
+            flat_fold.folds == 1,
+            "block::contract: a scalar walk reads one contracted value at a time and has no line \
+             ordinal to fold under; an operand folding several per read needs lines to walk"
+        ));
         // Flat scalar walk (CPU or scalar lines)
         for p in 0..kc {
             rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
@@ -117,6 +113,7 @@ pub(crate) fn contract<
                 p,
                 (p / lw) as u32,
                 comptime!(None),
+                0usize,
                 contracted_per_step,
                 lw,
                 mr,
@@ -124,6 +121,149 @@ pub(crate) fn contract<
                 unroll,
                 semiring,
             );
+        }
+    }
+}
+
+/// Walk `K` as (line, lane): one line read per `lw` steps, each step taking a fixed component of
+/// it, which is what lets the backend fold an `mr`-row fan-out's repeated line reads into one.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn lane_walk<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] lw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let k_lines = comptime!(kc / lw);
+    let k_tail = comptime!(kc % lw);
+
+    for line in 0..k_lines {
+        #[unroll]
+        for lane in 0..lw {
+            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+                lhs,
+                rhs,
+                c,
+                b,
+                line * lw + lane,
+                line as u32,
+                comptime!(Some(lane)),
+                0usize,
+                contracted_per_step,
+                lw,
+                mr,
+                nr,
+                unroll,
+                semiring,
+            );
+        }
+    }
+
+    // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
+    // too, so the tail is straight-line code rather than a second, dynamic walk.
+    #[unroll]
+    for lane in 0..k_tail {
+        rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+            lhs,
+            rhs,
+            c,
+            b,
+            comptime!(k_lines * lw + lane),
+            comptime!(k_lines) as u32,
+            comptime!(Some(lane)),
+            0usize,
+            contracted_per_step,
+            lw,
+            mr,
+            nr,
+            unroll,
+            semiring,
+        );
+    }
+}
+
+/// [`lane_walk`] where the lhs folds something in that arrives several to a read.
+///
+/// The folds are unrolled and the lines each covers are not: a fold is a lane of the read it came
+/// in, so its ordinal has to be a constant, while every line under one fold takes the same lane
+/// and can be walked at runtime. The unrolled factor is therefore the *fold count*, not the run,
+/// which is what keeps this off the block's budget cliff.
+///
+/// Costs one `lw`-wide body per fold. `kc` that the run does not divide keeps its lines on
+/// [`lane_walk`]'s tail, which folds nothing and needs no constant.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn folded_lane_walk<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    #[comptime] fold: FoldRun,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] lw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let k_lines = comptime!(kc / lw);
+    let span = comptime!(fold.span());
+    comptime!(assert!(
+        k_lines.is_multiple_of(span),
+        "block::contract: {k_lines} lines of a contraction do not divide into runs of {span}, so \
+         one run would fold a lane that is not there; cut the contraction at a whole run"
+    ));
+
+    for run in 0..comptime!(k_lines / span) {
+        #[unroll]
+        for f in 0..comptime!(fold.folds) {
+            for j in 0..comptime!(fold.lines) {
+                let line = run * comptime!(span) + comptime!(f * fold.lines) + j;
+                #[unroll]
+                for lane in 0..lw {
+                    rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+                        lhs,
+                        rhs,
+                        c,
+                        b,
+                        line * lw + lane,
+                        line as u32,
+                        comptime!(Some(lane)),
+                        comptime!(f * fold.lines),
+                        contracted_per_step,
+                        lw,
+                        mr,
+                        nr,
+                        unroll,
+                        semiring,
+                    );
+                }
+            }
         }
     }
 }
@@ -156,6 +296,7 @@ fn rank1_update<
     k: usize,
     k_line: u32,
     #[comptime] lane: Option<usize>,
+    #[comptime] lhs_run: usize,
     #[comptime] contracted_per_step: usize,
     #[comptime] lw: usize,
     #[comptime] mr: usize,
@@ -166,8 +307,8 @@ fn rank1_update<
     // A rhs whose fold is indexed per column needs each line's real ordinal, which only an
     // unconditionally unrolled walk gives; one fold per read does not care, and keeps the walk the
     // block's own budget decided.
-    let lanes = rhs.lanes();
-    if comptime!(lanes > 1) {
+    let fold = rhs.fold_run();
+    if comptime!(fold.folds > 1) {
         #[unroll]
         for n in 0..nr {
             b[n] =
@@ -185,7 +326,7 @@ fn rank1_update<
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let lhs_line = lhs.line((i as u32, k_line), 0usize);
+        let lhs_line = lhs.line((i as u32, k_line), lhs_run);
         let a = if comptime!(contracted_per_step > 1) {
             Vector::<E, V>::cast_from(lhs_line)
         } else if comptime!(lane.is_some()) {

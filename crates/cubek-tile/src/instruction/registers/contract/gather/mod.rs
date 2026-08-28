@@ -227,7 +227,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     comptime!(assert!(
         rw == aw || aw == 1,
         "contract gather: a rhs staged wider than its sink spreads its lanes across scalar cells, \
-         so the accumulator must be contracted_per_step scalar (rhs {rw}, accumulator {aw})"
+         so the accumulator must be served scalar (rhs {rw}, accumulator {aw})"
     ));
     let factors = lhs.factors();
     let normalization = lhs.factor_normalization();

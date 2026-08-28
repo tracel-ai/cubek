@@ -151,9 +151,9 @@ impl<T: Numeric> RegisterData<T> {
         // scale needs; the lhs's columns are the contraction, whose step is a runtime index.
         comptime!(assert!(
             sw == 1 || side == ScaleSide::Rhs,
-            "mm_scaled: {sw} scales are contracted_per_step as one line, which needs the value line's ordinal \
-             along the shared edge as a constant. The lhs's is its contraction step, which is not \
-             one; bind the scales scalar here"
+            "mm_scaled: {sw} scales are served as one line, which needs each value line's \
+             ordinal along the shared edge as a constant, and this block walks neither edge that \
+             way; bind the scales scalar here"
         ));
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
