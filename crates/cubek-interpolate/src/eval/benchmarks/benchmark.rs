@@ -157,7 +157,7 @@ impl Benchmark for InterpolateBench {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync([])).unwrap()
+        future::block_on(self.client.sync()).unwrap()
     }
 
     /// Measure with device timestamps around the launch, so the reported duration is the

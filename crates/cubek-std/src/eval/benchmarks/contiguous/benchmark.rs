@@ -79,6 +79,6 @@ impl Benchmark for IntoContiguousBench {
     }
 
     fn sync(&self) {
-        future::block_on(self.client.sync([])).unwrap()
+        future::block_on(self.client.sync()).unwrap()
     }
 }
