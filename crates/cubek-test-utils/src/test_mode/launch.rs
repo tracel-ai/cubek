@@ -15,11 +15,7 @@
 //! classification is [`ServerError::is_refusal`](cubecl::server::ServerError::is_refusal)'s
 //! to make, and not a formatted string's.
 
-use cubecl::{
-    TestRuntime,
-    prelude::ComputeClient,
-    server::Handle,
-};
+use cubecl::{TestRuntime, prelude::ComputeClient, server::Handle};
 
 use crate::{ExecutionOutcome, TestOutcome, ValidationResult};
 
