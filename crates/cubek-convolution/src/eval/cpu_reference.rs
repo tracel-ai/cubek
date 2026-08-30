@@ -81,6 +81,7 @@ pub fn cpu_reference_result(
         &inputs.input_data,
         &inputs.weight_data,
         &problem,
+        None,
         progress,
     ))
 }
@@ -230,8 +231,22 @@ pub fn assert_result(
     out: TensorHandle<TestRuntime>,
     dtypes: MatmulElems,
 ) -> ValidationResult {
+    assert_result_with_bias(lhs, rhs, None, problem, client, out, dtypes)
+}
+
+/// Validate convolution output against the CPU reference, including an optional
+/// per-output-channel bias.
+pub fn assert_result_with_bias(
+    lhs: &HostData,
+    rhs: &HostData,
+    bias: Option<&HostData>,
+    problem: &ConvolutionProblem,
+    client: &ComputeClient<TestRuntime>,
+    out: TensorHandle<TestRuntime>,
+    dtypes: MatmulElems,
+) -> ValidationResult {
     let epsilon = conv_epsilon(&dtypes, 500.);
-    let expected = conv_cpu_reference(lhs, rhs, problem, None);
+    let expected = conv_cpu_reference(lhs, rhs, problem, bias, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)
@@ -260,6 +275,7 @@ pub fn conv_cpu_reference(
     lhs: &HostData,
     rhs: &HostData,
     problem: &ConvolutionProblem,
+    bias: Option<&HostData>,
     progress: Option<&Progress>,
 ) -> HostData {
     let n = problem.batches;
@@ -288,7 +304,7 @@ pub fn conv_cpu_reference(
         for out_y in 0..out_h {
             for out_x in 0..out_w {
                 for out_c in 0..out_channels {
-                    let mut acc = 0.0_f32;
+                    let mut acc = bias.map(|bias| bias.get_f32(&[out_c])).unwrap_or(0.0);
                     for in_c in 0..c {
                         for ky in 0..kh {
                             for kx in 0..kw {

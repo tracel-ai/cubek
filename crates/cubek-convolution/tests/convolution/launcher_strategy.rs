@@ -31,7 +31,7 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
-use cubek_convolution::eval::cpu_reference::assert_result;
+use cubek_convolution::eval::cpu_reference::assert_result_with_bias;
 
 /// 2D convolution input/output channel + spatial size, used by `test_algo` to
 /// build a `ConvolutionProblem`.
@@ -41,6 +41,29 @@ pub struct ConvolutionSize {
     pub w: usize,
     pub c: usize,
     pub out_c: usize,
+}
+
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct ConvolutionCase {
+    pub size: ConvolutionSize,
+    pub batches: usize,
+    pub kernel_size: [u32; 2],
+    pub stride: [u32; 2],
+    pub padding: [i32; 2],
+    pub dilation: [u32; 2],
+}
+
+impl ConvolutionCase {
+    fn standard(size: ConvolutionSize) -> Self {
+        Self {
+            size,
+            batches: 2,
+            kernel_size: [4, 3],
+            stride: [1, 1],
+            padding: [3, 1],
+            dilation: [3, 2],
+        }
+    }
 }
 
 /// Build a 2D forward conv problem and run it via the public `launch_ref`.
@@ -59,15 +82,38 @@ pub fn test_algo(
     partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
 ) {
+    test_algo_case(
+        algorithm,
+        dtypes,
+        TileMatmulKind::Cmma,
+        tiling_scheme,
+        swizzle,
+        partition_buffering,
+        ConvolutionCase::standard(convolution_size),
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn test_algo_case(
+    algorithm: ConvAlgorithm,
+    dtypes: MatmulElems,
+    tile_kind: TileMatmulKind,
+    tiling_scheme: TilingScheme,
+    swizzle: SwizzleModes,
+    partition_buffering: PartitionBuffering,
+    case: ConvolutionCase,
+    has_bias: bool,
+) {
     let client = TestRuntime::client(&Default::default());
     let plane_dim = client.properties().hardware.plane_size_max;
 
-    // Fixed for now; mirrors the parameters baked into the previous test suite.
-    let batches = 2;
-    let kernel_size = vec![4, 3];
-    let stride = vec![1, 1];
-    let padding = vec![3, 1];
-    let dilation = vec![3, 2];
+    let convolution_size = case.size;
+    let batches = case.batches;
+    let kernel_size = case.kernel_size.to_vec();
+    let stride = case.stride.to_vec();
+    let padding = case.padding.to_vec();
+    let dilation = case.dilation.to_vec();
 
     let out_h = calculate_conv_output_size(
         kernel_size[0],
@@ -127,7 +173,7 @@ pub fn test_algo(
     };
 
     let matmul_blueprint = BatchMatmulBlueprint::builder(
-        TileMatmulKind::Cmma,
+        tile_kind,
         tiling_scheme,
         plane_dim,
         &problem.as_matmul_problem(),
@@ -165,10 +211,17 @@ pub fn test_algo(
         .zeros()
         .generate_without_host_data();
 
+    let bias = has_bias.then(|| {
+        TestInput::builder(client.clone(), shape![problem.n])
+            .dtype(dtypes.acc_global)
+            .uniform(9012, -1., 1.)
+            .generate_with_f32_host_data()
+    });
+
     let blueprint = ConvBlueprint::Forward(ForwardBlueprint {
         matmul: matmul_blueprint,
         dimensionality: Dimensionality::Dim2,
-        has_bias: false,
+        has_bias,
     });
     let strategy = Strategy::Forced {
         algorithm,
@@ -178,7 +231,9 @@ pub fn test_algo(
     let inputs = ConvolutionInputs::Forward {
         input: InputBinding::new(lhs.clone().binding(), dtypes.lhs_global),
         weight: InputBinding::new(rhs.clone().binding(), dtypes.rhs_global),
-        bias: None,
+        bias: bias
+            .as_ref()
+            .map(|(bias, _)| InputBinding::new(bias.clone().binding(), dtypes.acc_global)),
         out: out.clone().binding(),
     };
 
@@ -206,9 +261,10 @@ pub fn test_algo(
         );
 
     let outcome = match outcome {
-        ExecutionOutcome::Executed => TestOutcome::Validated(assert_result(
+        ExecutionOutcome::Executed => TestOutcome::Validated(assert_result_with_bias(
             &lhs_data,
             &rhs_data,
+            bias.as_ref().map(|(_, data)| data),
             &problem_for_check,
             &client,
             out,
