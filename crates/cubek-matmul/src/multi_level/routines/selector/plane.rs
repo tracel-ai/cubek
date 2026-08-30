@@ -127,7 +127,37 @@ pub fn infer_blueprint_plane<R: Runtime>(
         ));
     }
 
-    let (rows_per_plane, mut stage_size_m, mut partition_shape_n) = select_size(
+    let mut partition_size_k = options
+        .partition_k
+        .unwrap_or_else(|| plane_dim / tile_size.k());
+
+    if options.swizzled {
+        if problem.lhs_layout == MatrixLayout::RowMajor {
+            let elem_size = dtypes.lhs_global.size() as u32;
+            while partition_size_k * tile_size.k() * elem_size > 128 {
+                partition_size_k /= 2;
+            }
+        }
+        if problem.rhs_layout == MatrixLayout::ColMajor {
+            let elem_size = dtypes.rhs_global.size() as u32;
+            while partition_size_k * tile_size.k() * elem_size > 128 {
+                partition_size_k /= 2;
+            }
+        }
+    }
+
+    let max_stage_tiles_m = if options.swizzled && problem.lhs_layout == MatrixLayout::ColMajor {
+        max_swizzle_tiles(tile_size.m() as usize, dtypes.lhs_stage.size())
+    } else {
+        usize::MAX
+    };
+    let max_partition_size_n = if options.swizzled && problem.rhs_layout == MatrixLayout::RowMajor {
+        max_swizzle_tiles(tile_size.n() as usize, dtypes.rhs_stage.size())
+    } else {
+        usize::MAX
+    };
+
+    let (rows_per_plane, stage_size_m, partition_size_n) = select_size(
         options.multi_row_strategy,
         row_count as usize,
         tile_size.m() as usize,
@@ -136,48 +166,14 @@ pub fn infer_blueprint_plane<R: Runtime>(
         problem.n,
         vector_sizes.lhs,
         vector_sizes.rhs,
+        max_stage_tiles_m,
+        max_partition_size_n,
     );
-
-    if options.swizzled {
-        if problem.lhs_layout == MatrixLayout::ColMajor {
-            let elem_size = dtypes.lhs_global.size();
-            while partition_shape_n * tile_size.n() as usize * elem_size > 128 {
-                partition_shape_n /= 2;
-                stage_size_m /= 2;
-            }
-        }
-        if problem.rhs_layout == MatrixLayout::RowMajor {
-            let elem_size = dtypes.rhs_global.size();
-            while partition_shape_n * tile_size.n() as usize * elem_size > 128 {
-                partition_shape_n /= 2;
-                stage_size_m /= 2;
-            }
-        }
-    }
-
-    let mut partition_shape_k = options
-        .partition_k
-        .unwrap_or_else(|| plane_dim / tile_size.k());
-
-    if options.swizzled {
-        if problem.lhs_layout == MatrixLayout::RowMajor {
-            let elem_size = dtypes.lhs_global.size() as u32;
-            while partition_shape_k * tile_size.k() * elem_size > 128 {
-                partition_shape_k /= 2;
-            }
-        }
-        if problem.rhs_layout == MatrixLayout::ColMajor {
-            let elem_size = dtypes.rhs_global.size() as u32;
-            while partition_shape_k * tile_size.k() * elem_size > 128 {
-                partition_shape_k /= 2;
-            }
-        }
-    }
 
     let tiles_per_partition = PartitionSize::new(
         rows_per_plane as u32,
-        partition_shape_n as u32,
-        partition_shape_k,
+        partition_size_n as u32,
+        partition_size_k,
     );
 
     let partitions_per_stage = StageSize::new(stage_size_m as u32, 1, 1);
@@ -247,6 +243,11 @@ pub fn infer_blueprint_plane<R: Runtime>(
 
 /// All modes currently use atom size 16
 const SWIZZLE_ATOM: usize = 16;
+const MAX_SWIZZLE_SPAN: usize = 128;
+
+fn max_swizzle_tiles(instruction_size: usize, elem_size: usize) -> usize {
+    (MAX_SWIZZLE_SPAN / (instruction_size * elem_size)).max(1)
+}
 
 pub fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -> SwizzleMode {
     // Vector size exceeds swizzle atom
@@ -274,6 +275,8 @@ fn select_size(
     problem_n: usize,
     lhs_vector_size: VectorSize,
     rhs_vector_size: VectorSize,
+    max_stage_tiles_m: usize,
+    max_partition_size_n: usize,
 ) -> (usize, usize, usize) {
     let rows = match strategy {
         MultiRowStrategy::Never => 1,
@@ -296,16 +299,58 @@ fn select_size(
     // along `m` (e.g. a large `problem_m` requesting 2 rows when only 1 plane fits).
     let rows = rows.min(plane_count).max(1);
 
-    // Avoid assigning planes to columns outside the problem, then balance the LHS and RHS
-    // stage-loading work. This keeps rectangular instruction tiles from producing an
-    // unnecessarily large square stage.
+    // For narrow outputs, cover the useful N tiles with a bounded power-of-two partition.
+    // Otherwise preserve the existing geometry unless swizzling requires a smaller span.
     let required_n_tiles = problem_n.div_ceil(instruction_n).max(1);
-    let partition_shape_n = required_n_tiles.next_power_of_two().min(plane_count);
-    let lhs_work = instruction_m * rows * rhs_vector_size;
-    let rhs_work = instruction_n * partition_shape_n * lhs_vector_size;
-    let stage_size_m = rhs_work.div_ceil(lhs_work).clamp(1, plane_count / rows);
+    let balance_stage_loads = required_n_tiles < plane_count;
+    let partition_size_n_limit = plane_count.min(max_partition_size_n).max(1);
+    let partition_size_n = if balance_stage_loads {
+        power_of_two_at_most(required_n_tiles, partition_size_n_limit)
+    } else if partition_size_n_limit < plane_count {
+        power_of_two_at_most(plane_count, partition_size_n_limit)
+    } else {
+        plane_count
+    };
 
-    (rows, stage_size_m, partition_shape_n)
+    // Balance vector loads between the two stages. K cancels from this relationship:
+    //
+    // stage_m * instruction_m * rows / lhs_vector_size
+    //     ~= instruction_n * partition_n / rhs_vector_size
+    let stage_m_numerator = instruction_n * partition_size_n * lhs_vector_size;
+    let stage_m_denominator = instruction_m * rows * rhs_vector_size;
+    let default_stage_size_m = plane_count / rows;
+    let desired_stage_size_m = if balance_stage_loads {
+        stage_m_numerator.div_ceil(stage_m_denominator)
+    } else {
+        default_stage_size_m
+    };
+
+    // Keeping the power-of-two stage size no larger than the N partition makes it divide
+    // the RHS tile count without consuming the K factor needed by tilewise readers.
+    let max_swizzled_stage_size_m = (max_stage_tiles_m / rows).max(1);
+    let stage_size_m_limit = default_stage_size_m
+        .min(max_swizzled_stage_size_m)
+        .min(partition_size_n)
+        .max(1);
+    let stage_size_m = if !balance_stage_loads && desired_stage_size_m <= stage_size_m_limit {
+        desired_stage_size_m
+    } else {
+        power_of_two_at_most(desired_stage_size_m, stage_size_m_limit)
+    };
+
+    (rows, stage_size_m, partition_size_n)
+}
+
+fn power_of_two_at_most(target: usize, limit: usize) -> usize {
+    let limit = limit.max(1);
+    let target = target.clamp(1, limit);
+    let rounded = target.next_power_of_two();
+
+    if rounded <= limit {
+        rounded
+    } else {
+        1 << limit.ilog2()
+    }
 }
 
 /// The instruction shape for this problem: [`crate::multi_level::find_instruction_size`]
@@ -394,6 +439,27 @@ fn selection_tiny<R: Runtime>(
 mod tests {
     use super::*;
 
+    fn select_unswizzled(
+        strategy: MultiRowStrategy,
+        plane_count: usize,
+        instruction: (usize, usize),
+        problem: (usize, usize),
+        vector_sizes: (usize, usize),
+    ) -> (usize, usize, usize) {
+        select_size(
+            strategy,
+            plane_count,
+            instruction.0,
+            instruction.1,
+            problem.0,
+            problem.1,
+            vector_sizes.0,
+            vector_sizes.1,
+            usize::MAX,
+            usize::MAX,
+        )
+    }
+
     /// Regression test: when fewer planes are available than the requested
     /// rows-per-plane (e.g. a large `problem_m` asks for 2 rows but only 1 plane
     /// fits), `select_size` must not return `stage_size_m == 0`. The zero used to
@@ -413,15 +479,12 @@ mod tests {
                 minimum_stage_count: 8,
             },
         ] {
-            let (rows_per_plane, stage_size_m, _partition_shape_n) = select_size(
+            let (rows_per_plane, stage_size_m, _partition_shape_n) = select_unswizzled(
                 strategy,
                 plane_count,
-                instruction_m,
-                8,
-                problem_m,
-                problem_n,
-                4,
-                4,
+                (instruction_m, 8),
+                (problem_m, problem_n),
+                (4, 4),
             );
 
             assert!(
@@ -436,22 +499,112 @@ mod tests {
 
     #[test]
     fn select_size_balances_stage_work_for_narrow_n() {
-        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 64, 8, 8);
+        let (rows_per_plane, stage_size_m, partition_size_n) =
+            select_unswizzled(MultiRowStrategy::Never, 16, (16, 8), (65536, 64), (8, 8));
 
-        assert_eq!(size, (1, 4, 8));
+        assert_eq!(rows_per_plane, 1);
+        assert_eq!(stage_size_m, 4);
+        assert_eq!(partition_size_n, 8);
     }
 
     #[test]
-    fn select_size_respects_plane_limit_for_wide_n() {
-        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 1024, 8, 8);
+    fn select_size_covers_preferred_instruction_shapes() {
+        let cases = [
+            // Tall, wide, and square instruction preferences.
+            ((32, 8), (65536, 64), (1, 2, 8)),
+            ((8, 32), (64, 65536), (1, 16, 16)),
+            ((16, 16), (1024, 1024), (1, 16, 16)),
+        ];
 
-        assert_eq!(size, (1, 8, 16));
+        for ((instruction_m, instruction_n), (problem_m, problem_n), expected) in cases {
+            let size = select_unswizzled(
+                MultiRowStrategy::Never,
+                16,
+                (instruction_m, instruction_n),
+                (problem_m, problem_n),
+                (8, 8),
+            );
+
+            assert_eq!(size, expected);
+        }
     }
 
     #[test]
-    fn select_size_rounds_n_for_balanced_loading() {
-        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 33, 8, 8);
+    fn select_size_preserves_stage_m_when_n_uses_all_planes() {
+        let power_of_two = select_unswizzled(
+            MultiRowStrategy::Always(2),
+            16,
+            (32, 8),
+            (65536, 1024),
+            (8, 8),
+        );
+        let non_power_of_two =
+            select_unswizzled(MultiRowStrategy::Never, 10, (32, 8), (65536, 80), (8, 8));
 
-        assert_eq!(size, (1, 4, 8));
+        assert_eq!(power_of_two, (2, 8, 16));
+        assert_eq!(non_power_of_two, (1, 10, 10));
+    }
+
+    #[test]
+    fn select_size_rounds_partition_n_to_power_of_two() {
+        let (_, _, partition_size_n) =
+            select_unswizzled(MultiRowStrategy::Never, 16, (16, 8), (65536, 33), (8, 8));
+
+        assert_eq!(partition_size_n, 8);
+    }
+
+    #[test]
+    fn select_size_respects_vector_widths() {
+        let narrow_lhs =
+            select_unswizzled(MultiRowStrategy::Never, 16, (32, 8), (65536, 64), (1, 8));
+        let wide_lhs = select_unswizzled(MultiRowStrategy::Never, 16, (32, 8), (65536, 64), (8, 1));
+
+        assert_eq!(narrow_lhs, (1, 1, 8));
+        assert_eq!(wide_lhs, (1, 8, 8));
+    }
+
+    #[test]
+    fn select_size_m_divides_partition_n() {
+        let cases = [
+            (MultiRowStrategy::Never, 16, 8, 32, 64, 64),
+            (MultiRowStrategy::Always(3), 8, 16, 16, 1024, 128),
+            (MultiRowStrategy::Never, 10, 32, 8, 1024, 1024),
+        ];
+
+        for (strategy, plane_count, instruction_m, instruction_n, problem_m, problem_n) in cases {
+            let (_, stage_size_m, partition_size_n) = select_unswizzled(
+                strategy,
+                plane_count,
+                (instruction_m, instruction_n),
+                (problem_m, problem_n),
+                (8, 8),
+            );
+
+            assert!(partition_size_n.is_multiple_of(stage_size_m));
+        }
+    }
+
+    #[test]
+    fn select_size_applies_swizzle_limits_independently() {
+        let max_stage_tiles_m = max_swizzle_tiles(16, 2);
+        let max_partition_size_n = max_swizzle_tiles(8, 4);
+        let (rows_per_plane, stage_size_m, partition_size_n) = select_size(
+            MultiRowStrategy::Always(2),
+            16,
+            16,
+            8,
+            65536,
+            128,
+            8,
+            1,
+            max_stage_tiles_m,
+            max_partition_size_n,
+        );
+
+        assert_eq!(rows_per_plane, 2);
+        assert_eq!(stage_size_m, 2);
+        assert_eq!(partition_size_n, 4);
+        assert!(rows_per_plane * stage_size_m * 16 * 2 <= MAX_SWIZZLE_SPAN);
+        assert!(partition_size_n * 8 * 4 <= MAX_SWIZZLE_SPAN);
     }
 }
