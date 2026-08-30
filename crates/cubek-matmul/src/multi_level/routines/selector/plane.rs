@@ -131,7 +131,11 @@ pub fn infer_blueprint_plane<R: Runtime>(
         options.multi_row_strategy,
         row_count as usize,
         tile_size.m() as usize,
+        tile_size.n() as usize,
         problem.m,
+        problem.n,
+        vector_sizes.lhs,
+        vector_sizes.rhs,
     );
 
     if options.swizzled {
@@ -265,7 +269,11 @@ fn select_size(
     strategy: MultiRowStrategy,
     plane_count: usize,
     instruction_m: usize,
+    instruction_n: usize,
     problem_m: usize,
+    problem_n: usize,
+    lhs_vector_size: VectorSize,
+    rhs_vector_size: VectorSize,
 ) -> (usize, usize, usize) {
     let rows = match strategy {
         MultiRowStrategy::Never => 1,
@@ -288,7 +296,16 @@ fn select_size(
     // along `m` (e.g. a large `problem_m` requesting 2 rows when only 1 plane fits).
     let rows = rows.min(plane_count).max(1);
 
-    (rows, plane_count / rows, plane_count)
+    // Avoid assigning planes to columns outside the problem, then balance the LHS and RHS
+    // stage-loading work. This keeps rectangular instruction tiles from producing an
+    // unnecessarily large square stage.
+    let required_n_tiles = problem_n.div_ceil(instruction_n).max(1);
+    let partition_shape_n = required_n_tiles.next_power_of_two().min(plane_count);
+    let lhs_work = instruction_m * rows * rhs_vector_size;
+    let rhs_work = instruction_n * partition_shape_n * lhs_vector_size;
+    let stage_size_m = rhs_work.div_ceil(lhs_work).clamp(1, plane_count / rows);
+
+    (rows, stage_size_m, partition_shape_n)
 }
 
 /// The instruction shape for this problem: [`crate::multi_level::find_instruction_size`]
@@ -388,6 +405,7 @@ mod tests {
         let plane_count = 1;
         let instruction_m = 8;
         let problem_m = 1024;
+        let problem_n = 4;
 
         for strategy in [
             MultiRowStrategy::Always(2),
@@ -395,8 +413,16 @@ mod tests {
                 minimum_stage_count: 8,
             },
         ] {
-            let (rows_per_plane, stage_size_m, _partition_shape_n) =
-                select_size(strategy, plane_count, instruction_m, problem_m);
+            let (rows_per_plane, stage_size_m, _partition_shape_n) = select_size(
+                strategy,
+                plane_count,
+                instruction_m,
+                8,
+                problem_m,
+                problem_n,
+                4,
+                4,
+            );
 
             assert!(
                 stage_size_m >= 1,
@@ -406,5 +432,26 @@ mod tests {
             // With a single plane we can only fit a single row per plane.
             assert!(rows_per_plane <= plane_count);
         }
+    }
+
+    #[test]
+    fn select_size_balances_stage_work_for_narrow_n() {
+        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 64, 8, 8);
+
+        assert_eq!(size, (1, 4, 8));
+    }
+
+    #[test]
+    fn select_size_respects_plane_limit_for_wide_n() {
+        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 1024, 8, 8);
+
+        assert_eq!(size, (1, 8, 16));
+    }
+
+    #[test]
+    fn select_size_rounds_n_for_balanced_loading() {
+        let size = select_size(MultiRowStrategy::Never, 16, 16, 8, 65536, 33, 8, 8);
+
+        assert_eq!(size, (1, 4, 8));
     }
 }
