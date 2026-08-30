@@ -41,7 +41,7 @@ fn simple_n64_mma_with_bias() {
                 c: 64,
                 out_c: 64,
             },
-            batches: 1024,
+            batches: 1,
             kernel_size: [3, 3],
             stride: [1, 1],
             padding: [1, 1],

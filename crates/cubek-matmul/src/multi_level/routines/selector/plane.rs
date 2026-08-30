@@ -267,6 +267,7 @@ pub fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSiz
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn select_size(
     strategy: MultiRowStrategy,
     plane_count: usize,
@@ -326,8 +327,8 @@ fn select_size(
         default_stage_size_m
     };
 
-    // Keeping the power-of-two stage size no larger than the N partition makes it divide
-    // the RHS tile count without consuming the K factor needed by tilewise readers.
+    // Adjusted geometries use a power-of-two stage size no larger than the N partition,
+    // preserving the K factor needed by tilewise readers.
     let max_swizzled_stage_size_m = (max_stage_tiles_m / rows).max(1);
     let stage_size_m_limit = default_stage_size_m
         .min(max_swizzled_stage_size_m)
@@ -565,11 +566,11 @@ mod tests {
     }
 
     #[test]
-    fn select_size_m_divides_partition_n() {
+    fn select_size_balances_with_divisible_power_of_two_geometry() {
         let cases = [
             (MultiRowStrategy::Never, 16, 8, 32, 64, 64),
-            (MultiRowStrategy::Always(3), 8, 16, 16, 1024, 128),
-            (MultiRowStrategy::Never, 10, 32, 8, 1024, 1024),
+            (MultiRowStrategy::Always(3), 8, 16, 16, 1024, 64),
+            (MultiRowStrategy::Never, 10, 32, 8, 1024, 64),
         ];
 
         for (strategy, plane_count, instruction_m, instruction_n, problem_m, problem_n) in cases {

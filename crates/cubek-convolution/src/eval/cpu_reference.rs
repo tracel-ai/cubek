@@ -81,7 +81,6 @@ pub fn cpu_reference_result(
         &inputs.input_data,
         &inputs.weight_data,
         &problem,
-        None,
         progress,
     ))
 }
@@ -246,7 +245,7 @@ pub fn assert_result_with_bias(
     dtypes: MatmulElems,
 ) -> ValidationResult {
     let epsilon = conv_epsilon(&dtypes, 500.);
-    let expected = conv_cpu_reference(lhs, rhs, problem, bias, None);
+    let expected = conv_cpu_reference_with_bias(lhs, rhs, problem, bias, None);
     let actual = HostData::from_tensor_handle(client, out, HostDataType::F32);
 
     assert_equals_approx(&actual, &expected, epsilon)
@@ -272,6 +271,16 @@ fn conv_epsilon(elems: &MatmulElems, safety_factor: f32) -> f32 {
 ///
 /// All math is done in f32 against the host tensors carried in `HostData`.
 pub fn conv_cpu_reference(
+    lhs: &HostData,
+    rhs: &HostData,
+    problem: &ConvolutionProblem,
+    progress: Option<&Progress>,
+) -> HostData {
+    conv_cpu_reference_with_bias(lhs, rhs, problem, None, progress)
+}
+
+/// Naive CPU convolution with an optional per-output-channel bias.
+pub fn conv_cpu_reference_with_bias(
     lhs: &HostData,
     rhs: &HostData,
     problem: &ConvolutionProblem,
