@@ -614,3 +614,58 @@ stand alone and leave nothing speculative behind.
 
 **No phase may add a number.** If a phase lands and something in the engine says `2`, or asks how
 many levels there are, or derives what a level is at more than one call site, it is not done.
+
+### Phases 1 and 2: landed
+
+`e9128d87` and `bb7b22fa`, with `184cbff6` under them.
+
+`ScaleLevel::of` reads what a level is, once. The two derivations it replaced had already drifted —
+one took the shared edge from `shape.reduce_edge()`, the other rebuilt it from
+`operands.contracting(&out)` — and nothing compared them. `ContractEdges` is what each accumulator
+states about its own geometry, which genuinely differs, and it decides nothing.
+
+`EdgeOrdinal` is the one statement of the width scales may be served at. The two asserts it replaced
+said the same rule with different exceptions and neither said the rule; `Runtime` carries what about
+a walk makes it so, so the message did not get vaguer for being shared. With it came
+`rhs_scales_are_served_several_at_a_time`, the promoted block's half of that rule, which nothing had
+exercised.
+
+`ScaledLines` now takes a [`Lines`] on **both** sides, so one type serves every level: the values are
+an operand's own lines at the level nearest them, and the level below's scales at any level above.
+
+### Phase 3: two findings, and it does not start where this plan said
+
+**The lifetime is not a problem, which was not obvious.** A chain's reader type has to be nameable
+outside the leaf, and the first attempt tied it to a borrow of the chain — which needs either a
+generic associated type or a higher-ranked bound, neither of which is a safe bet through `#[cube]`.
+It is avoidable: an upper level **owns its tile and builds its view inside the read**, so no borrow
+escapes, the associated type is plain, and a chain can be stored in a walk and staged like any other
+operand. `PlainScales` on `wip/scale-chain-and-broadcast` is that, and `ScaleChain` compiles over it
+— `Tile` a chain of one, `Scaled` one more, `Tile::scale` building it.
+
+**But phase 3 cannot start at the surface, because its base case does not work.** A scales operand
+spanning *no* axis — the per-tensor level, the base of the hierarchy, and the second level of
+`nvfp4` — is refused by the engine in two places, and refused the worst way:
+
+- `Projection::carried_groups` identifies a physical axis by its first term and indexes an empty
+  term list. Naming the state it had no word for (`Addressed::Broadcast`, on the wip branch) fixes
+  that one.
+- `Tile::of`'s `top_window` then computes `rank - 1` on a rank it derives as zero.
+
+Both panic on a worker thread, and the launch returns **zeros** beside them. A per-tensor scale
+therefore reads today as a fast wrong answer, not as an error — the failure mode this whole design
+exists to avoid.
+
+So phase 3's order is:
+
+1. **A broadcast operand works, and is tested.** `a_scale_over_no_axis_covers_everything` (on the wip
+   branch, failing on the second panic) is the test. Until it passes, nothing above it can be
+   trusted: a two-level scheme whose outer level is per-tensor would silently read zeros.
+2. Then the surface, as written above. The leaf picks between the base case and the step by
+   [`ChainShape`], which is a recursion's two cases and not a count.
+3. Then each level's coverage in the units its consumer reads — `ScaleLevel::of` measures in value
+   lines, and a level above the first is read in the level below's *scale* lines. This is the piece
+   with real subtlety left in it, and it is why the surface was not landed blind.
+
+Nothing speculative was left on `cubek-paul`: the chain compiles but is unwired, so it sits on
+`wip/scale-chain-and-broadcast` until step 1 makes it safe to land.
