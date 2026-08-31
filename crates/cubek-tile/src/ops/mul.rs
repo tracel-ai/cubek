@@ -96,10 +96,38 @@ impl<T: Numeric> Tile<T> {
         let mut i = UNIT_POS as usize;
         while i < total {
             let at = unravel(&extents, i.fcast::<u32>());
+            let empty = Coords::<u32>::new();
+
+            // The fold is a *lane* of `b`'s read, not a step of it: every run in this group reads
+            // the same vector and differs only in which lane it takes. So the read happens here,
+            // once, above the loop that takes them — rather than four identical reads left for a
+            // compiler to notice are one.
+            let mut group = Coords::<u32>::new();
+            #[unroll]
+            for p in 0..rank {
+                let coord = match comptime!(p == fold_at) {
+                    true => at.at(p).fmul(comptime!(folds as u32)),
+                    false => at.at(p),
+                };
+                group.push(coord.fmul(comptime!(match p == rank - 1 {
+                    true => width as u32,
+                    false => 1u32,
+                })));
+            }
+            let scales = b_view.read(resolve_nd_coords(
+                comptime!(b.space.clone()),
+                comptime!(space.clone()),
+                comptime!(Vec::new()),
+                &group,
+                &empty,
+                folds,
+                true,
+            ));
+
             #[unroll]
             for f in 0..folds {
-                // This run's line, and the same coordinate back in values, which is what each
-                // operand's own resolution divides by its own width.
+                // This run's line, and the same coordinate back in values, which is what `a`'s own
+                // resolution divides by its own width.
                 let mut line = Coords::<u32>::new();
                 let mut cells = Coords::<u32>::new();
                 #[unroll]
@@ -109,14 +137,12 @@ impl<T: Numeric> Tile<T> {
                         false => at.at(p),
                     };
                     line.push(coord);
-                    let scale = comptime!(match p == rank - 1 {
+                    cells.push(coord.fmul(comptime!(match p == rank - 1 {
                         true => width as u32,
                         false => 1u32,
-                    });
-                    cells.push(coord.fmul(scale));
+                    })));
                 }
-                let empty = Coords::<u32>::new();
-                let a_pos = resolve_nd_coords(
+                let left = Vector::<T, W>::cast_from(a_view.read(resolve_nd_coords(
                     comptime!(a.space.clone()),
                     comptime!(space.clone()),
                     comptime!(Vec::new()),
@@ -124,18 +150,8 @@ impl<T: Numeric> Tile<T> {
                     &empty,
                     width,
                     true,
-                );
-                let b_pos = resolve_nd_coords(
-                    comptime!(b.space.clone()),
-                    comptime!(space.clone()),
-                    comptime!(Vec::new()),
-                    &cells,
-                    &empty,
-                    folds,
-                    true,
-                );
-                let left = Vector::<T, W>::cast_from(a_view.read(a_pos));
-                let right = Vector::<T, W>::cast_from(b_view.read(b_pos).extract(f));
+                )));
+                let right = Vector::<T, W>::cast_from(scales.extract(f));
                 dst.write(line.to_dyn(), left * right);
             }
             i += workers;
