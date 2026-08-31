@@ -164,6 +164,15 @@ const ROW_BLOCKS: [usize; 3] = [4, 2, 1];
 /// Planes per cube, widest first.
 const PLANE_STRIPS: [usize; 3] = [4, 2, 1];
 
+/// Lanes that share one output row and fold their partials together.
+///
+/// A target rather than a constant: how many of them fit *inside* a block is the block's
+/// business, so a group reaching this width is spelled as lanes of `KI` and lanes of `KB`
+/// together. Eight is where the fold was measured to sit — past it the butterfly costs more
+/// steps than the extra memory-level parallelism buys, and below it a lane's run of the
+/// contraction gets long enough that the row block goes cold.
+const GROUP_LANES: usize = 8;
+
 impl QuantGemvRoutine {
     /// Resolve `strategy` into a validated plan for `problem` on a `plane_dim`-lane plane.
     #[allow(clippy::result_large_err)]
@@ -222,9 +231,11 @@ impl QuantGemvRoutine {
         // or to take further blocks.
         let inside_lanes = (problem.block / problem.factor()).min(plane_dim);
         let free = plane_dim / inside_lanes;
-        // Widen the fold across blocks only as far as the blocks deal out evenly; the lanes
-        // that remain carry rows.
-        let block_lanes = (1..=free)
+        // Reach [`GROUP_LANES`] by taking whole blocks as well, as far as the blocks deal out
+        // evenly. Every lane past that carries rows instead: a wider fold is a longer drain
+        // against no more bytes in flight.
+        let wanted = GROUP_LANES.div_ceil(inside_lanes);
+        let block_lanes = (1..=free.min(wanted))
             .filter(|lanes| free.is_multiple_of(*lanes) && problem.blocks().is_multiple_of(*lanes))
             .max()
             .unwrap_or(1);
@@ -259,5 +270,100 @@ impl QuantGemvRoutine {
             inside_lanes,
             block_lanes,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routine::BlueprintStrategy;
+
+    /// The qwen3-8b decode projections, `(d_in, d_out)`.
+    const QWEN3_8B: [(usize, usize); 5] = [
+        (4096, 6144),
+        (4096, 4096),
+        (4096, 24576),
+        (12288, 4096),
+        (4096, 151936),
+    ];
+
+    fn q4(d_in: usize, d_out: usize) -> QuantGemvProblem {
+        QuantGemvProblem {
+            d_out,
+            d_in,
+            rows: 1,
+            field: QuantValue::Q4S,
+            block: 32,
+        }
+    }
+
+    fn plan(problem: &QuantGemvProblem, plane_dim: usize) -> QuantGemvBlueprint {
+        QuantGemvRoutine::blueprint(&BlueprintStrategy::default(), problem, plane_dim)
+            .unwrap_or_else(|e| panic!("no plan for {problem:?} on {plane_dim} lanes: {e}"))
+    }
+
+    /// A group is eight lanes whatever the block costs to cover, and the rest of the plane
+    /// carries rows. q4's 32-value block takes four lanes of `KI`, so the group reaches eight
+    /// by taking two blocks; q8's word is half as wide, so eight lanes of `KI` cover the block
+    /// alone and nothing splits `KB`.
+    #[test]
+    fn a_lane_group_is_eight_lanes_however_the_block_divides() {
+        let q4 = plan(&q4(4096, 4096), 32);
+        assert_eq!((q4.inside_lanes, q4.block_lanes), (4, 2));
+        assert_eq!(q4.group_lanes(), 8);
+        assert_eq!(q4.groups(), 4);
+
+        let q8 = plan(
+            &QuantGemvProblem {
+                field: QuantValue::Q8S,
+                ..q4_problem()
+            },
+            32,
+        );
+        assert_eq!((q8.inside_lanes, q8.block_lanes), (8, 1));
+        assert_eq!(q8.group_lanes(), 8);
+    }
+
+    fn q4_problem() -> QuantGemvProblem {
+        q4(4096, 4096)
+    }
+
+    /// Every qwen3-8b decode projection gets the widest strip: four rows a lane, four groups a
+    /// plane, four planes a cube. `lm_head`'s 151936 columns are not a power of two, so it is
+    /// the one that says the search is a search.
+    #[test]
+    fn every_qwen_projection_takes_a_plan() {
+        for (d_in, d_out) in QWEN3_8B {
+            let blueprint = plan(&q4(d_in, d_out), 32);
+            assert_eq!(
+                blueprint.rows_per_lane, 4,
+                "{d_in}x{d_out} narrowed its row block"
+            );
+            assert_eq!(blueprint.rows_per_cube, 64);
+        }
+    }
+
+    /// A plane too narrow for the block's own lanes still plans: the lanes that cover a block
+    /// are all of it, and the rows go one to a group.
+    #[test]
+    fn a_narrow_plane_spends_itself_on_the_block() {
+        let blueprint = plan(&q4(4096, 4096), 4);
+        assert_eq!((blueprint.inside_lanes, blueprint.block_lanes), (4, 1));
+        assert_eq!(blueprint.groups(), 1);
+    }
+
+    /// What no plan rescues, said as a refusal rather than a wrong answer.
+    #[test]
+    fn a_block_that_splits_a_word_is_refused() {
+        let problem = QuantGemvProblem {
+            block: 4, // four values, where a q4 word holds eight
+            ..q4_problem()
+        };
+        let error = QuantGemvRoutine::blueprint(&BlueprintStrategy::default(), &problem, 32)
+            .expect_err("a block inside a word has no spelling");
+        assert!(
+            format!("{error:?}").contains("whole"),
+            "the refusal must name the word it splits, got {error:?}"
+        );
     }
 }
