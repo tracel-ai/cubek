@@ -321,6 +321,35 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     }
 }
 
+/// One indirect operand as a single launch argument: the values tensor, the `u32` index tensor
+/// that routes it, and the comptime half of the indirection. [`TileArg`]'s twin, for the same
+/// reason [`QuantTileArg`] is one: an operand and the table that places it are one thing, so
+/// neither can be launched against the other's spec.
+#[derive(CubeType, CubeLaunch)]
+pub struct IndexedTileArg<'a, E: Numeric, V: Size> {
+    pub values: &'a Tensor<Vector<E, V>>,
+    pub table: &'a Tensor<u32>,
+    #[cube(comptime)]
+    pub spec: TileSpec,
+    #[cube(comptime)]
+    pub indirection: IndirectionSpec,
+}
+
+#[cube]
+impl<'a, E: Numeric, V: Size> IndexedTileArg<'a, E, V> {
+    /// Serve the operand as a [`Tile`] whose target axis resolves through the table; see
+    /// [`Tile::of_indexed`](crate::Tile::of_indexed) for what the caller still owns.
+    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
+        Tile::<E>::of_indexed(
+            self.values,
+            self.table,
+            comptime!(self.indirection.clone()),
+            space,
+            comptime!(self.spec.clone()),
+        )
+    }
+}
+
 /// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
 /// owns the box, the [`TmaDynLayout`] the coordinate rules) paired with its comptime
 /// [`TileSpec`], [`TileArg`]'s twin (a tensor map cannot ride a plain tensor binding).

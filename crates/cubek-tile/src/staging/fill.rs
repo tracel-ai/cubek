@@ -10,6 +10,7 @@
 use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
@@ -18,14 +19,28 @@ pub(crate) struct SlotOperand<'a> {
     residence: Residence,
     source: StageSource,
     space: &'a Space,
+    /// The axes addressing this operand's index tensor, empty for a plain one. Carried because a
+    /// walk over one of them moves an indirect operand's window even though its own space says
+    /// nothing about that axis (see [`Space::walk_invariant`]).
+    index_axes: SmallVec<[Axis; MAX_AXES]>,
+    /// The spec if this operand carries a pending indirection.
+    indirection: Option<IndirectionSpec>,
 }
 
 impl<'a> SlotOperand<'a> {
-    pub(crate) fn new(residence: Residence, source: StageSource, space: &'a Space) -> Self {
+    pub(crate) fn new(
+        residence: Residence,
+        source: StageSource,
+        space: &'a Space,
+        index_axes: SmallVec<[Axis; MAX_AXES]>,
+        indirection: Option<IndirectionSpec>,
+    ) -> Self {
         SlotOperand {
             residence,
             source,
             space,
+            index_axes,
+            indirection,
         }
     }
 }
@@ -50,6 +65,17 @@ impl SlotPlan {
              materialize from, so it can only be read where it lies (Residence::InPlace); \
              materialize it at a level above instead"
         );
+        for op in operands {
+            if op.residence != Residence::InPlace
+                && let Some(ind) = &op.indirection
+            {
+                assert!(
+                    ind.fires_at(op_space),
+                    "Staging: an indirect operand cannot be staged above the level where its \
+                     lookup resolves; stage it at or below the fire level instead"
+                );
+            }
+        }
         let residences: Vec<_> = operands.iter().map(|op| op.residence).collect();
         if !compatible_slot_residences(&residences) {
             if operands
@@ -79,7 +105,7 @@ impl SlotPlan {
                 // is nothing to fill and nothing whose invariance could save a fill.
                 let payload = if op.residence == Residence::InPlace {
                     SlotPayload::AtRegion
-                } else if can_fix_invariants && op_space.walk_invariant(op.space) {
+                } else if can_fix_invariants && op_space.walk_invariant(op.space, &op.index_axes) {
                     SlotPayload::Windowed(WindowMode::Fixed)
                 } else {
                     SlotPayload::Windowed(WindowMode::Streamed)
@@ -199,10 +225,26 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let rhs_residence = rhs.residence(comptime!(&out));
         let lhs_source = lhs.stage_source();
         let rhs_source = rhs.stage_source();
+        let lhs_index_axes = lhs.index_axes();
+        let rhs_index_axes = rhs.index_axes();
+        let lhs_indirection = lhs.indirection_spec();
+        let rhs_indirection = rhs.indirection_spec();
         let plan = comptime!(SlotPlan::new(
             &[
-                SlotOperand::new(lhs_residence, lhs_source, &lhs.space),
-                SlotOperand::new(rhs_residence, rhs_source, &rhs.space),
+                SlotOperand::new(
+                    lhs_residence,
+                    lhs_source,
+                    &lhs.space,
+                    lhs_index_axes,
+                    lhs_indirection
+                ),
+                SlotOperand::new(
+                    rhs_residence,
+                    rhs_source,
+                    &rhs.space,
+                    rhs_index_axes,
+                    rhs_indirection
+                ),
             ],
             &op_space,
         ));
@@ -326,8 +368,16 @@ impl<T: Numeric> Ring<Tile<T>> {
     ) -> Ring<Tile<T>> {
         let residence = input.residence(comptime!(&out));
         let source = input.stage_source();
+        let index_axes = input.index_axes();
+        let indirection = input.indirection_spec();
         let plan = comptime!(SlotPlan::new(
-            &[SlotOperand::new(residence, source, &input.space)],
+            &[SlotOperand::new(
+                residence,
+                source,
+                &input.space,
+                index_axes,
+                indirection,
+            )],
             &op_space,
         ));
 
@@ -490,13 +540,25 @@ mod tests {
     }
 
     fn operand(residence: Residence, delivery: Delivery, space: &Space) -> SlotOperand<'_> {
-        SlotOperand::new(residence, StageSource::Transport(delivery), space)
+        SlotOperand::new(
+            residence,
+            StageSource::Transport(delivery),
+            space,
+            SmallVec::new(),
+            None,
+        )
     }
 
     /// An operand a level above already materialized into registers: no delivery, since nothing
     /// moves it.
     fn fragment(residence: Residence, space: &Space) -> SlotOperand<'_> {
-        SlotOperand::new(residence, StageSource::ResidentFragment, space)
+        SlotOperand::new(
+            residence,
+            StageSource::ResidentFragment,
+            space,
+            SmallVec::new(),
+            None,
+        )
     }
 
     #[test]
@@ -550,6 +612,42 @@ mod tests {
                 operand(Residence::Smem, Delivery::Copy, &lhs),
                 operand(Residence::Register, Delivery::Copy, &rhs),
             ],
+            &space,
+        );
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "an indirect operand cannot be staged above the level where its lookup resolves"
+    )]
+    fn an_indirect_operand_cannot_be_staged_above_the_fire_level() {
+        const EXPERT: Axis = Axis(3);
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 2)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(2))
+            })
+            .build();
+        let weights = space.project(&[EXPERT, K, N]);
+        let mut index_axes = SmallVec::new();
+        index_axes.push(M);
+        let spec = IndirectionSpec {
+            index_axes: index_axes.clone(),
+            target: EXPERT,
+            granularity: 1,
+            policy: IndexPolicy::Trusted,
+        };
+        SlotPlan::new(
+            &[SlotOperand::new(
+                Residence::Smem,
+                StageSource::Transport(Delivery::Copy),
+                &weights,
+                index_axes,
+                Some(spec),
+            )],
             &space,
         );
     }
@@ -779,5 +877,42 @@ mod tests {
             SlotPayload::Windowed(WindowMode::Streamed)
         );
         assert_eq!(plan.sync(), Sync::Barrier);
+    }
+
+    /// Staging above the fire level would fill from the undisplaced window, and the stage it
+    /// builds is dense and carries no indirection for the descent below to resolve. Refused here
+    /// rather than read as the wrong expert: `IndirectionSpec::validate` accepts this space, since
+    /// the second level does resolve the lookup.
+    #[test]
+    #[should_panic(expected = "cannot be staged above the level where its lookup resolves")]
+    fn an_indirect_operand_staged_above_its_fire_level_is_refused() {
+        const EXPERT: Axis = Axis(3);
+        // Level 0 still spans both experts, so the lookup resolves at level 1.
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 4), (K, 4), (EXPERT, 2)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(2))
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+                    .axis(EXPERT, Cut::sequential(1))
+            })
+            .build();
+        let weights = space.project(&[EXPERT, K, N]);
+        SlotPlan::new(
+            &[SlotOperand::new(
+                Residence::Smem,
+                StageSource::Transport(Delivery::Copy),
+                &weights,
+                SmallVec::from_slice(&[M]),
+                Some(IndirectionSpec::indexed(M, EXPERT, IndexPolicy::Trusted)),
+            )],
+            &space,
+        );
     }
 }

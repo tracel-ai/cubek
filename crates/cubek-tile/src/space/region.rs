@@ -41,6 +41,14 @@ impl Region {
         Region::new(coords, comptime!(space.clone()))
     }
 
+    /// Whether this region's space carries `axis` at all. [`coord`](Region::coord) answers `0`
+    /// for one it does not, which is what broadcast by omission means for a window and what
+    /// silently reads one table entry for every tile under an indirection: a reader that cannot
+    /// treat the two alike asks this first.
+    pub fn spans(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
+        comptime!(self.space.contains(axis))
+    }
+
     /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
     /// the tile spans all of it).
     pub fn coord(&self, #[comptime] axis: Axis) -> usize {

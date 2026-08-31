@@ -75,6 +75,10 @@ pub struct MemData<T: Numeric> {
     /// for a gathered stage, whose fill replaced out-of-bounds samples with the boundary's value
     /// and whose own window can no longer say which those were.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
+    /// A data-dependent displacement of one axis's window origin, still pending
+    /// ([`Indirection`]). `None` once it has fired, and for every operand that never had one, so
+    /// the descent below the fire level is an ordinary dense one and nothing displaces twice.
+    pub(crate) indirection: ComptimeOption<Indirection>,
 }
 
 /// What backs a [`MemData`]'s values, and what can be done with them there.
@@ -260,6 +264,7 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
@@ -288,6 +293,7 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
             coefficients,
             offsets,
         )
@@ -312,6 +318,7 @@ impl<T: Numeric> Tile<T> {
             values,
             space,
             spec,
+            ComptimeOption::new_None(),
             ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
@@ -369,6 +376,71 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             ComptimeOption::new_Some(info),
+            ComptimeOption::new_None(),
+            Coords::<u32>::new(),
+            Coords::<i32>::new(),
+        )
+    }
+
+    /// [`of`](Tile::of) with one axis's window origin resolved through an index tensor: `ids`
+    /// holds one `u32` entry per fire-level tile of `indirection.index_axes`, and the descent
+    /// places the operand's `indirection.target` window at the entry it reads ([`Indirection`]).
+    /// MoE expert routing is exactly this: `values` is `[num_experts, K, N]` with `EXPERT` held at
+    /// [`Static(1)`](crate::Extent::Static) in the kernel space, `ids` is `[m_tiles]`, and the
+    /// weights operand does not span `M` at all.
+    ///
+    /// The operand stays direct and untiled, so every dense, cmma and straight-fill path still
+    /// describes it. Caller contracts:
+    ///
+    /// - The tile does not [`witness`](Tile::witnesses) the target axis. Its bound is the index
+    ///   tensor's range, not the operation's extent, so the kernel space states that axis itself.
+    /// - Under [`IndexPolicy::Trusted`] nothing checks an entry. Under
+    ///   [`IndexPolicy::Checked`] the spec must carry a [`Boundary`] on the target axis, which is
+    ///   what masks an entry past its bound. [`StridedTileSource::indexed`](crate::StridedTileSource::indexed)
+    ///   derives it from the policy; hand-built specs state it themselves.
+    /// - The lookup resolves during [`Tile::at`], not at construction. An indexed tile that is
+    ///   read without descending through a region still addresses its entry-0 window.
+    pub fn of_indexed<E: CubePrimitive<Scalar = T>>(
+        values: &Tensor<E>,
+        ids: &Tensor<u32>,
+        #[comptime] indirection: IndirectionSpec,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        let projected = comptime!(space.project(spec.axes()));
+        // The engine's own backstop, like `validate_dequant_at`: `StridedTileSource::indexed`
+        // runs this on the caller's thread, but a hand-built `IndexedTileArgLaunch` reaches here
+        // without passing through it.
+        comptime!(indirection.validate(&space, &projected, &spec.projection));
+        comptime!(assert!(
+            indirection.policy == IndexPolicy::Trusted
+                || spec
+                    .boundaries
+                    .get(projected.position(indirection.target))
+                    .copied()
+                    .flatten()
+                    .is_some(),
+            "Tile::of_indexed: IndexPolicy::Checked masks an out-of-range entry against the \
+             target axis's bound, but the operand states no boundary on {:?}",
+            indirection.target
+        ));
+        let mut table_strides = Coords::<u32>::new();
+        #[unroll]
+        for a in 0..comptime!(indirection.index_axes.len()) {
+            table_strides.push(ids.stride(a) as u32);
+        }
+        let carrier = Indirection {
+            table: unsafe { ids.as_slice().as_boxed_unchecked() },
+            table_base: 0u32,
+            table_strides,
+            spec: comptime!(indirection),
+        };
+        Tile::<T>::of_tensor::<E>(
+            values,
+            space,
+            spec,
+            ComptimeOption::new_None(),
+            ComptimeOption::new_Some(carrier),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
@@ -389,6 +461,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
+        indirection: ComptimeOption<Indirection>,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<T> {
@@ -406,6 +479,7 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             quant,
+            indirection,
             coefficients,
             offsets,
         )
@@ -453,6 +527,7 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
@@ -496,6 +571,7 @@ impl<T: Numeric> Tile<T> {
             space,
             spec,
             ComptimeOption::new_None(),
+            ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
         )
@@ -513,6 +589,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
+        indirection: ComptimeOption<Indirection>,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<T> {
@@ -529,6 +606,13 @@ impl<T: Numeric> Tile<T> {
             quant.is_none() || coords.is_direct(),
             "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
              logical axes, which its buffer's physical axes no longer match"
+        ));
+        // Scales are re-windowed from the origin (`QuantInfo::window`), so a displaced origin
+        // would address the wrong scale block. Refuse the pair rather than silently misapply one.
+        comptime!(assert!(
+            quant.is_none() || indirection.is_none(),
+            "Tile::of: an indirect operand cannot be quantized; its scale grid is addressed from \
+             the window origin the lookup displaces"
         ));
         let scales_given = coefficients.len();
         comptime!(assert!(
@@ -668,6 +752,7 @@ impl<T: Numeric> Tile<T> {
                 }),
                 lane_share: comptime!(LaneShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
+                indirection,
             }),
             space: comptime!(space),
         }
@@ -994,6 +1079,9 @@ impl<T: Numeric> MemData<T> {
                 lane_share: comptime!(LaneShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
+                // A stage is dense by construction: whatever indirection placed the window it was
+                // filled from has already fired, and re-inheriting it would displace a second time.
+                indirection: ComptimeOption::new_None(),
             }),
             space: comptime!(meta.space),
         }
@@ -1538,6 +1626,35 @@ impl<T: Numeric> MemData<T> {
             ComptimeOption::None => DequantAt::Load,
         };
         dequant_at
+    }
+
+    /// Which axes' region coordinates address this operand's index tensor, empty for an operand
+    /// with no indirection. Read by the staging plan: an operand routed by an axis it does not
+    /// span is *not* invariant across a walk that steps that axis, however its own space reads.
+    pub(crate) fn index_axes(&self) -> comptime_type!(SmallVec<[Axis; MAX_AXES]>) {
+        #[comptime]
+        match &self.indirection {
+            ComptimeOption::Some(ind) => comptime!(ind.spec.index_axes.clone()),
+            ComptimeOption::None => comptime!(SmallVec::new()),
+        }
+    }
+
+    /// The axis an indirection displaces on this operand, if it carries one.
+    pub(crate) fn indirection_target(&self) -> comptime_type!(Option<Axis>) {
+        #[comptime]
+        match &self.indirection {
+            ComptimeOption::Some(ind) => comptime!(Some(ind.spec.target)),
+            ComptimeOption::None => comptime!(None::<Axis>),
+        }
+    }
+
+    /// The indirection spec if this operand carries a pending indirection, empty otherwise.
+    pub(crate) fn indirection_spec(&self) -> comptime_type!(Option<IndirectionSpec>) {
+        #[comptime]
+        match &self.indirection {
+            ComptimeOption::Some(ind) => comptime!(Some(ind.spec.clone())),
+            ComptimeOption::None => comptime!(None::<IndirectionSpec>),
+        }
     }
 
     /// How this store's values sit in memory, as stated at construction.
@@ -2114,9 +2231,40 @@ impl<T: Numeric> MemData<T> {
         let mut advances = Coords::<u32>::new();
 
         let proj = comptime!(self.projection.clone());
+        comptime!(assert!(
+            self.indirection.is_none() || (proj.is_direct() && !self.layout.projection.is_tiled()),
+            "MemData::at: an indirection requires a direct, untiled memory mapping"
+        ));
         let rank = comptime!(proj.physical_rank());
         let last = comptime!(rank - 1);
         let w = comptime!(self.store.vector_size);
+
+        // A pending indirection resolves once at the fire level (where target edge <= granularity).
+        // At resolution, the displacement applies on both address routes and the child drops the
+        // carrier; above it, only the table base advances.
+        let (displacement, indirection, displaced_at) = #[comptime]
+        match &self.indirection {
+            ComptimeOption::Some(ind) => {
+                if comptime!(ind.spec.fires_at(&space)) {
+                    (
+                        ind.displacement(region, &self.window.origin, comptime!(space.clone())),
+                        ComptimeOption::new_None(),
+                        comptime!(Some(space.position(ind.spec.target))),
+                    )
+                } else {
+                    (
+                        0i32.runtime(),
+                        ComptimeOption::new_Some(ind.advance(region, comptime!(space.clone()))),
+                        comptime!(None::<usize>),
+                    )
+                }
+            }
+            ComptimeOption::None => (
+                0i32.runtime(),
+                ComptimeOption::new_None(),
+                comptime!(None::<usize>),
+            ),
+        };
 
         let map = if comptime!(proj.is_direct()) {
             // One logical axis per physical axis at coefficient 1. Kept as its own loop because
@@ -2146,20 +2294,43 @@ impl<T: Numeric> MemData<T> {
                 });
                 let index = region.coord(axis);
 
-                origin.push(
-                    self.window
-                        .origin
-                        .at(p)
-                        .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>()),
-                );
-                extent.push(comptime!(edge as u32).runtime());
-                advances.push(index.fcast::<u32>().fmul(step_offset(
+                let start = self
+                    .window
+                    .origin
+                    .at(p)
+                    .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>());
+                let advance = index.fcast::<u32>().fmul(step_offset(
                     comptime!(self.layout.projection.clone()),
                     comptime!(Axis(p as u8)),
                     edge,
                     &self.layout.physical_shape,
                     &self.layout.physical_strides,
-                )));
+                ));
+                extent.push(comptime!(edge as u32).runtime());
+                if comptime!(displaced_at == Some(p)) {
+                    // Both address routes move, in their own units: `origin` feeds the element
+                    // route through `GmemLayout::to_source_pos`, `window_start` the dense and
+                    // cmma one. They are independent in the engine, so a displacement applied to
+                    // one alone reads a correct tile through one route and a stale one through
+                    // the other. The step is one coordinate along this axis, which an indirect
+                    // operand's direct, untiled mapping makes exactly its stride.
+                    let unit = step_offset(
+                        comptime!(self.layout.projection.clone()),
+                        comptime!(Axis(p as u8)),
+                        1usize,
+                        &self.layout.physical_shape,
+                        &self.layout.physical_strides,
+                    );
+                    origin.push(start.fadd(displacement));
+                    // `displacement` may be negative when a page entry precedes this logical
+                    // position. The address accumulator is `u32`, so this cast deliberately
+                    // uses modular two's-complement arithmetic; adding it is the matching
+                    // subtraction in the unsigned address domain.
+                    advances.push(advance.fadd(displacement.fcast::<u32>().fmul(unit)));
+                } else {
+                    origin.push(start);
+                    advances.push(advance);
+                }
             }
             // Every axis at coefficient 1, which no Dynamic term and no divisor can spell, so
             // there is nothing to carry and no phase to leave over.
@@ -2262,6 +2433,7 @@ impl<T: Numeric> MemData<T> {
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
             init_from: comptime!(self.init_from),
+            indirection,
         }
     }
 }

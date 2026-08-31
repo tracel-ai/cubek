@@ -10,15 +10,18 @@ use cubecl::quant::scheme::QuantScheme;
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Instruction, LoadMethod, PhysicalAxis,
-    Projection, QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch,
-    TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, IndexPolicy, IndexedTileArgLaunch,
+    IndirectionSpec, Instruction, LoadMethod, PhysicalAxis, Projection, QuantTileArgLaunch,
+    Residence, Space, StageStorage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
 pub struct Set;
 /// Typestate marker: a required [`StridedTileSource`] field is still missing.
 pub struct Unset;
+/// Typestate marker: [`indexed`](StridedTileSource::indexed) was called, so
+/// [`build`](StridedTileSource::build) yields an [`IndexedOperand`].
+pub struct Indexed;
 
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, R: Runtime> {
@@ -53,6 +56,18 @@ struct TileSourceData<'a, R: Runtime> {
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization<R>>,
+    /// Present when the operand is routed through an index tensor
+    /// ([`indexed`](StridedTileSource::indexed)).
+    indirection: Option<IndexTable<R>>,
+}
+
+/// How an operand is routed: the index tensor beside its values and the comptime
+/// [`IndirectionSpec`] saying what a table entry means. The launch-side twin of the kernel's
+/// [`Indirection`](crate::Indirection), and one thing for the same reason [`Quantization`] is: a
+/// table without a spec cannot be read, and a spec without a table has nothing to read.
+pub struct IndexTable<R: Runtime> {
+    pub table: TensorArg<R>,
+    pub spec: IndirectionSpec,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -98,6 +113,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 stage_width: None,
                 units: 0,
                 quant: None,
+                indirection: None,
             },
             _state: PhantomData,
         }
@@ -188,11 +204,12 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// before this call is silently dropped back to `Zero`. Sequence a `Clamp` override after
     /// `checked`, not before it.
     ///
-    /// `checked(false)` disarms the operand outright. `checked(true)` states the *mode*, not the
-    /// axis list: [`build`](Self::build) still lands it only on the coordinate axes that can
-    /// leave the buffer, so an axis whose map is the identity of a logical axis whose tiling
-    /// divides stays unchecked whatever this says. That filtering is what lets a clamped operand
-    /// keep a vectorized innermost axis; there is no setter that masks a settled axis.
+    /// `checked(false)` disarms ordinary coordinate checks. `checked(true)` states the *mode*,
+    /// not the axis list: [`build`](Self::build) still lands it only on the coordinate axes that
+    /// can leave the buffer, so an axis whose map is the identity of a logical axis whose tiling
+    /// divides stays unchecked whatever this says. An indexed target is the exception: its
+    /// [`IndexPolicy`] determines that axis directly because its origin comes from data. That
+    /// filtering is what lets a clamped operand keep a vectorized innermost axis.
     pub fn checked(mut self, check: bool) -> Self {
         self.data.boundary = Some(if check { Some(Boundary::Zero) } else { None });
         self
@@ -289,6 +306,42 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
         dequant_at: DequantAt,
     ) -> StridedTileSource<'a, Sp, Sub, Set, R> {
         self.data.quant = Some(Quantization::lookup(scales, table, scheme, dequant_at));
+        StridedTileSource {
+            data: self.data,
+            _state: PhantomData,
+        }
+    }
+
+    /// Route this operand through `table`: one `u32` entry per fire-level tile of `index_axis`,
+    /// displacing `target_axis`'s window origin to the entry it reads. MoE expert selection is
+    /// exactly this (`index_axis = M`, `target_axis = EXPERT`, the weights holding `EXPERT` at
+    /// [`Static(1)`](crate::Extent::Static)), and so is a `cu_seqlens` base offset.
+    ///
+    /// The indirection is a side-channel, not a mapping: the operand stays
+    /// [`direct`](Projection::direct) and untiled, so nothing below it loses a dense, cmma or
+    /// straight-fill path. Flips the typestate: `build` now yields an [`IndexedOperand`], and
+    /// [`quantized`](Self::quantized) is no longer reachable in either order (both read from the
+    /// window origin, and the lookup moves it). [`gathered`](Self::gathered) and
+    /// [`tiling`](Self::tiling) stay reachable and are refused by [`build`](Self::build) instead:
+    /// neither leaves a single dim carrying the target axis alone. `policy` determines the
+    /// target axis's boundary directly: [`IndexPolicy::Checked`] arms it and
+    /// [`IndexPolicy::Trusted`] leaves it unchecked, independently of [`checked`](Self::checked).
+    pub fn indexed(
+        mut self,
+        table: TensorBinding<R>,
+        index_axis: Axis,
+        target_axis: Axis,
+        policy: IndexPolicy,
+    ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
+        assert!(
+            self.data.projection.is_none(),
+            "StridedTileSource::indexed: an indirection rides beside a direct mapping, so a \
+             gathered operand has no origin for it to displace"
+        );
+        self.data.indirection = Some(IndexTable {
+            table: table.into_tensor_arg(),
+            spec: IndirectionSpec::indexed(index_axis, target_axis, policy),
+        });
         StridedTileSource {
             data: self.data,
             _state: PhantomData,
@@ -442,6 +495,28 @@ impl<R: Runtime> QuantOperand<R> {
     }
 }
 
+/// A built indirect operand: the values tensor and its spec, plus the index tensor and the
+/// comptime [`IndirectionSpec`] that routes it. [`StridedOperand`]'s twin.
+pub struct IndexedOperand<R: Runtime> {
+    pub tensor: TensorArg<R>,
+    pub vector_size: usize,
+    pub spec: TileSpec,
+    pub indirection: IndexTable<R>,
+}
+
+impl<R: Runtime> IndexedOperand<R> {
+    /// The operand as the kernel's [`IndexedTileArg`](crate::IndexedTileArg) launch argument:
+    /// values, table and spec as one thing.
+    pub fn arg<E: Numeric, V: Size>(self) -> IndexedTileArgLaunch<'static, E, V, R> {
+        IndexedTileArgLaunch::new(
+            self.tensor,
+            self.indirection.table,
+            self.spec,
+            self.indirection.spec,
+        )
+    }
+}
+
 impl<R: Runtime> StridedOperand<R> {
     /// Start describing a strided tile kernel operand sourced from `binding`: a
     /// [`StridedTileSource`] builder. Set the required [`space`](StridedTileSource::space)
@@ -467,6 +542,7 @@ struct Realized<R: Runtime> {
     /// The geometry the derivation settled on, which is what `tensor` ships when
     /// there is one. See [`DerivedSpec`].
     geometry: Geometry,
+    indirection: Option<IndexTable<R>>,
 }
 
 impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
@@ -490,6 +566,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             stage_width,
             units,
             quant,
+            indirection,
         } = self.data;
         let space = space.unwrap();
 
@@ -525,6 +602,16 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Err(why) = geometry.serves_lines(v) {
             panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide — {why}");
         }
+        if let Some(indirection) = &indirection {
+            // On the caller's thread, so a plan whose lookup never fires (or fires at a level
+            // that splits a table entry) fails with a host backtrace rather than as zeroed
+            // output from a device assert. `Tile::of_indexed` re-runs it for hand-built specs.
+            indirection.spec.validate(
+                space,
+                &space.project(projection.logical_axes()),
+                &projection,
+            );
+        }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
         assert!(
@@ -540,12 +627,17 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // reaches further than any axis extent describes, and how far is the caller's to size the
         // buffer for, which is the trust the derivation above already runs on; no proof here can
         // retire its policy.
+        // A routed origin comes from data, so divisibility of the ordinary tiled coordinate says
+        // nothing about whether that window remains inside the values tensor.
+        let indirection_spec = indirection.as_ref().map(|table| &table.spec);
+        let indirection_target = indirection_spec.map(|spec| spec.target);
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
             // that same silence to drop one.
             Some(axis) => {
-                concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
+                indirection_target != Some(axis)
+                    && concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
             }
             None => false,
         };
@@ -566,7 +658,16 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         // axis would pay for a mask that can never fire, and a settled *innermost* axis must be
         // left alone outright, since a window clamps in lines and would alias the edge line.
         let boundaries = (0..coord_rank)
-            .map(|pa| boundary.filter(|_| !settled(pa)))
+            .map(|pa| {
+                let axis = coords.physical_axis(pa).identity_axis();
+                match indirection_spec.filter(|spec| axis == Some(spec.target)) {
+                    Some(spec) => match spec.policy {
+                        IndexPolicy::Trusted => None,
+                        IndexPolicy::Checked => Some(boundary.unwrap_or(Boundary::Zero)),
+                    },
+                    None => boundary.filter(|_| !settled(pa)),
+                }
+            })
             .collect::<Vec<_>>();
 
         // Validate that explicit residences match the space's depth: extra or missing levels lead
@@ -600,6 +701,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             );
             quant.validate(&space.project(spec.axes()), v, space.instruction());
         }
+        if let Some(indirection) = &indirection
+            && let Some(concrete) = concrete.or_else(|| space.is_static().then_some(space))
+        {
+            validate_index_table(indirection, concrete);
+        }
         Realized {
             tensor: binding.map(|mut binding| {
                 // The derivation may have dropped broadcast batch dims; the arg
@@ -612,8 +718,61 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             spec,
             quant,
             geometry,
+            indirection,
         }
     }
+}
+
+/// Validate the host-visible part of an indirection's addressing contract before the index
+/// tensor reaches device code. Its leading dimensions enumerate fire-level tiles of the index
+/// axes. When the target has multiple entries, a final dimension enumerates them; singleton
+/// targets omit that dimension entirely. The whole table is dense row-major so its shape also
+/// proves that the largest computed offset is backed by storage.
+fn validate_index_table<R: Runtime>(table: &IndexTable<R>, space: &Space) {
+    let spec = &table.spec;
+    if !spec
+        .index_axes
+        .iter()
+        .all(|&a| space.contains(a) && !space.is_dynamic(a))
+        || !space.contains(spec.target)
+        || space.is_dynamic(spec.target)
+    {
+        return;
+    }
+    let mut fire = space.partitioner();
+    while fire.edge(spec.target) > spec.granularity {
+        fire = fire.next();
+    }
+
+    let mut expected_shape = spec
+        .index_axes
+        .iter()
+        .map(|&axis| space.extent(axis).div_ceil(fire.edge(axis)))
+        .collect::<Vec<_>>();
+    let target_entries = space.extent(spec.target).div_ceil(spec.granularity);
+    if target_entries > 1 {
+        expected_shape.push(target_entries);
+    }
+
+    assert_eq!(
+        table.table.shape(),
+        expected_shape,
+        "StridedTileSource::indexed: index table shape must have one leading dimension per \
+         index axis (one entry per fire-level tile), plus a trailing target-entry dimension \
+         when the target has more than one entry"
+    );
+    let mut expected_strides = vec![0; expected_shape.len()];
+    let mut stride = 1;
+    for axis in (0..expected_shape.len()).rev() {
+        expected_strides[axis] = stride;
+        stride *= expected_shape[axis];
+    }
+    assert_eq!(
+        table.table.strides(),
+        expected_strides,
+        "StridedTileSource::indexed: the index table must be dense row-major; its target entries \
+         are addressed at unit stride and its shape must bound every computed table offset"
+    );
 }
 
 /// Derives a [`Projection`] from labeled subspace and batch axes.
@@ -776,6 +935,28 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Set, R> {
     /// Build the quantized operand.
     pub fn build(self) -> QuantOperand<R> {
         self.build_quant()
+    }
+}
+
+impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Indexed, R> {
+    /// Build the indirect operand: the plain derivation plus the index tensor that routes it.
+    pub fn build(self) -> IndexedOperand<R> {
+        let Realized {
+            tensor,
+            vector_size,
+            spec,
+            indirection,
+            ..
+        } = self.realize();
+        IndexedOperand {
+            tensor: tensor.expect(
+                "StridedTileSource::build: an indexed operand is always bound; only a fused \
+                 store is built over geometry alone",
+            ),
+            vector_size,
+            spec,
+            indirection: indirection.unwrap(),
+        }
     }
 }
 
