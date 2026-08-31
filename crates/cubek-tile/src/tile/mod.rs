@@ -3,6 +3,7 @@
 //! ([`mem`], [`cmma`], [`tma`]). The launch surface (specs, deliveries, builder) lives in
 //! `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
 
+mod atomic;
 mod cmma;
 mod geometry;
 mod mem;
@@ -14,6 +15,7 @@ mod register;
 mod tma;
 mod view;
 
+pub use atomic::*;
 pub use cmma::*;
 pub use geometry::*;
 pub use mem::*;
@@ -621,6 +623,21 @@ impl<T: Numeric> Tile<T> {
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
                 comptime!(LaneShare::Whole)
+            }
+        }
+    }
+
+    /// What a write to this tile does to the cell it lands on. A form that is not memory has no
+    /// cell to land on, so it answers with the only thing a later store into memory can be asked
+    /// to do, and the memory it drains into answers for itself.
+    pub(crate) fn write(&self) -> comptime_type!(Write) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.access.write),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(Write::Replace)
             }
         }
     }

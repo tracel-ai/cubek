@@ -37,7 +37,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] axes: MatrixAxes,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
-        #[comptime] lane_share: LaneShare,
+        #[comptime] lanes: Lanes,
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
@@ -54,7 +54,7 @@ impl<T: Numeric> PlaneTile<T> {
                 n,
                 axes,
                 vector_size,
-                lane_share,
+                lanes,
                 config,
                 monoid,
             )),
@@ -147,8 +147,14 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] space: Space,
     ) {
         match self {
-            PlaneTile::Cmma(d) => d.store_cast_window(mem),
-            PlaneTile::Mma(d) => d.store_cast_window(mem),
+            PlaneTile::Cmma(d) => {
+                comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Cmma"));
+                d.store_cast_window(mem)
+            }
+            PlaneTile::Mma(d) => {
+                comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Mma"));
+                d.store_cast_window(mem)
+            }
             PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }
@@ -207,7 +213,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] form: Instruction,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
-        #[comptime] lane_share: LaneShare,
+        #[comptime] lanes: Lanes,
         #[comptime] monoid: Monoid,
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
@@ -229,7 +235,7 @@ impl<T: Numeric> PlanePartition<T> {
                     axes,
                     k,
                     vector_size,
-                    lane_share,
+                    lanes,
                     monoid,
                 ));
             }

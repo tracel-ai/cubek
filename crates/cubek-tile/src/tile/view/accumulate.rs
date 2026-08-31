@@ -70,10 +70,12 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
         #[comptime] cube_share: CubeShare,
+        #[comptime] write: Write,
         #[comptime] monoid: Monoid,
         #[comptime] init_from: InitFrom,
     ) -> Self {
-        comptime!(cube_share.validate("AccumulateView"));
+        comptime!(write.validate_in_place("AccumulateView"));
+        comptime!(cube_share.validate(write, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,

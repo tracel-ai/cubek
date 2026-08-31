@@ -5,8 +5,8 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, CubeShare, Distribution, Instruction, LaneShare, LevelRole, MAX_AXES,
-    Partitioner, join_cube_share, join_lane_share,
+    Axis, ComputeScope, CubeShare, Distribution, Instruction, LaneShare, LaneWork, Lanes,
+    LevelRole, MAX_AXES, Partitioner, join_cube_share, join_lane_share,
 };
 
 use super::ByAxis;
@@ -452,6 +452,44 @@ impl Space {
             level = level.divide();
         }
         share
+    }
+
+    /// What the plane's lanes are to this space's cells, both halves at once. What a drain is
+    /// built from: [`leaf_lane_share`](Self::leaf_lane_share) alone cannot say who writes.
+    pub(crate) fn lanes(&self) -> Lanes {
+        Lanes {
+            share: self.leaf_lane_share(),
+            work: self.lane_work(),
+        }
+    }
+
+    /// Whether anything rides this space's lanes, across every level: [`Own`](LaneWork::Own) if
+    /// some `Unit` axis is dealt out to more than one lane, [`Repeated`](LaneWork::Repeated) if
+    /// none is and the plane's lanes therefore all run the same work.
+    ///
+    /// Read off the axes rather than off [`cube_dim`](Space::cube_dim), which asks the client for
+    /// the hardware `plane_size` and is a launch-side question; this one is comptime, and what a
+    /// drain needs to know before it elects a writer.
+    pub(crate) fn lane_work(&self) -> LaneWork {
+        let mut level = self.clone();
+        while !level.is_final() {
+            let rides = level.partitioner().axes().into_iter().any(|axis| {
+                let Distribution::Spatial {
+                    scope: ComputeScope::Unit,
+                    coverage,
+                    ..
+                } = level.partitioner().distribution(axis)
+                else {
+                    return false;
+                };
+                coverage.instances_const() != Some(1)
+            });
+            if rides {
+                return LaneWork::Own;
+            }
+            level = level.divide();
+        }
+        LaneWork::Repeated
     }
 
     /// What one cube holds of this space's cells at this level: [`Partial`](CubeShare::Partial)

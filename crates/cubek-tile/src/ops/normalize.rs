@@ -158,7 +158,10 @@ mod tests {
             MatrixAxes::trailing_pair(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
             8,
             1,
-            LaneShare::Whole,
+            Lanes {
+                share: LaneShare::Whole,
+                work: LaneWork::Repeated,
+            },
             Monoid::Sum,
         );
         let tile = TileExpand::<f32> {

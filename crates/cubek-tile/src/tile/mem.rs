@@ -188,10 +188,64 @@ pub struct Access {
     /// such a tile can be written in physical order.
     pub whole: bool,
     pub overhang: Overhang,
+    /// What a write here does to the cell it lands on.
+    pub write: Write,
     /// Where this operand lives at each level below, plus the [`StageStorage`] layout and launch
     /// cube size its materialized levels take. Carried from the operand's [`TileSpec`] so a fill
     /// re-derives none of them.
     pub stage: StagePlan,
+}
+
+/// What a write to a store does to the cell it lands on.
+///
+/// `Replace` is every buffer and every plain sink: the cell is its writer's own, so the value
+/// that lands is the value that stays. `Fold` is what lets a contraction be cut at cube scope:
+/// cubes that each hold a slice of one cell all write it, and the store adds rather than
+/// overwrites, so no cube has to know about the others and no second pass is needed.
+///
+/// Stated by the constructor that builds the store ([`Tile::of_atomic_sink`]), never derived. A
+/// backing cannot be asked what its writes mean: a folding sink and a fused epilogue are both
+/// calls through a layout, and only the caller knows which it built.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Write {
+    /// Replaces the cell.
+    Replace,
+    /// Folds into the cell, atomically.
+    Fold,
+}
+
+impl Write {
+    /// Refuse an accumulation that contracts *in* this destination.
+    ///
+    /// Contracting in place reads the cell back between steps, and what a folding destination
+    /// holds mid-flight is other cubes' slices. It is write-only precisely so that nothing tries,
+    /// so a fold is a drain and not a contraction.
+    pub(crate) fn validate_in_place(self, site: &str) {
+        match self {
+            Write::Replace => {}
+            Write::Fold => panic!(
+                "{site}: this output folds into its destination, so it cannot also contract \
+                 there. State Residence::Register on it, so the contraction runs in registers and \
+                 the drain folds the cube's whole contribution in one write."
+            ),
+        }
+    }
+
+    /// Refuse a fold from a drain that cannot elect one writer for it.
+    ///
+    /// A hardware fragment stores through its own intrinsic, over a slice of the destination or
+    /// over its lanes' own positions, and neither leaves anywhere to put the election a fold
+    /// needs. The register block is the one drain that writes cell by cell and so can.
+    pub(crate) fn validate_fragment_drain(self, fragment: &str) {
+        match self {
+            Write::Replace => {}
+            Write::Fold => panic!(
+                "{fragment}: a hardware fragment stores through its own intrinsic and elects no \
+                 writer, so it cannot drain into a destination that folds. Contract through \
+                 Instruction::Registers, whose block drains cell by cell."
+            ),
+        }
+    }
 }
 
 /// How a store relates to the window overhanging its valid data (`origin + pos` past
@@ -410,6 +464,7 @@ impl<T: Numeric> Tile<T> {
             tensor.vector_size(),
             space,
             spec,
+            Write::Replace,
             quant,
             coefficients,
             offsets,
@@ -441,6 +496,40 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        Tile::<T>::sink_writing(sink, geometry, vector_size, space, spec, Write::Replace)
+    }
+
+    /// [`of_sink`](Tile::of_sink) whose writes *fold* into the cell instead of replacing it, which
+    /// is what lets several cubes contract disjoint slices of one output cell and each write its
+    /// own. The destination is the sink's business: [`Tile::of_atomic_sink`] builds the one that
+    /// folds atomically into a buffer.
+    ///
+    /// The destination is never read, and under a split it must not be: what is there mid-flight
+    /// is other cubes' slices. [`WriteOnly`] already says so, and an accumulator that would read
+    /// it back meets that as a panic; state [`Register`](Residence::Register) on the output so the
+    /// contraction happens in registers and only the drain touches this.
+    ///
+    /// The buffer behind it holds the fold's identity before the launch, since the first cube to
+    /// arrive folds onto whatever is there rather than replacing it. Nothing here can check that:
+    /// the sink cannot read.
+    pub fn of_folding_sink(
+        sink: ErasedTensor<T, WriteOnly>,
+        geometry: RuntimeGeometry,
+        #[comptime] vector_size: usize,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        Tile::<T>::sink_writing(sink, geometry, vector_size, space, spec, Write::Fold)
+    }
+
+    fn sink_writing(
+        sink: ErasedTensor<T, WriteOnly>,
+        geometry: RuntimeGeometry,
+        #[comptime] vector_size: usize,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+        #[comptime] write: Write,
+    ) -> Tile<T> {
         // A bound operand reads its width off its binding, so a packing multiplying it is a
         // fact about the two together; a sink has only what it states, and `of_impl` would
         // address it at `vector_size * factor`. Refused here, where the spec says it, rather
@@ -457,6 +546,7 @@ impl<T: Numeric> Tile<T> {
             vector_size,
             space,
             spec,
+            write,
             ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
@@ -500,6 +590,7 @@ impl<T: Numeric> Tile<T> {
             vector_size,
             space,
             spec,
+            Write::Replace,
             ComptimeOption::new_None(),
             Coords::<u32>::new(),
             Coords::<i32>::new(),
@@ -517,6 +608,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] bound_width: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
+        #[comptime] write: Write,
         quant: ComptimeOption<QuantInfo>,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
@@ -669,6 +761,7 @@ impl<T: Numeric> Tile<T> {
                     } else {
                         Overhang::Fits
                     },
+                    write,
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
@@ -995,6 +1088,7 @@ impl<T: Numeric> MemData<T> {
                 access: comptime!(Access {
                     whole: true,
                     overhang: Overhang::Never,
+                    write: Write::Replace,
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
@@ -2077,11 +2171,13 @@ impl<T: Numeric> MemData<T> {
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
         let cube_share = comptime!(self.cube_share);
+        let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.matrix_mut::<W>(i, axes, space),
             lane_share,
             cube_share,
+            write,
             monoid,
             init_from,
         )
@@ -2106,11 +2202,13 @@ impl<T: Numeric> MemData<T> {
         ));
         let lane_share = comptime!(self.lane_share);
         let cube_share = comptime!(self.cube_share);
+        let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.flat_mut::<W>(),
             lane_share,
             cube_share,
+            write,
             monoid,
             init_from,
         )
@@ -2274,6 +2372,7 @@ impl<T: Numeric> MemData<T> {
             access: comptime!(Access {
                 whole: false,
                 overhang: self.access.overhang,
+                write: self.access.write,
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),

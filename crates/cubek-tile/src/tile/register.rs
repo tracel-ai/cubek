@@ -41,11 +41,12 @@ pub struct RegisterData<T: Numeric> {
     /// lines at coordinates the sink reads as something else.
     #[cube(comptime)]
     pub(crate) axes: MatrixAxes,
-    /// Whether each lane holds whole cells or a partial of them. Inherited from the memory this
-    /// was promoted from, and only read on drain: the contraction is per-lane either way, but a
-    /// partial is not the answer until the plane's lanes are summed.
+    /// What the plane's lanes are to these cells. Inherited from the memory this was promoted
+    /// from, and only read on drain: the contraction is per-lane either way, but a partial is not
+    /// the answer until the plane's lanes are combined, and a lane that repeats another's work
+    /// must not fold the same contribution twice.
     #[cube(comptime)]
-    pub(crate) lane_share: LaneShare,
+    pub(crate) lanes: Lanes,
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
@@ -74,7 +75,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
         #[comptime] vector_size: usize,
-        #[comptime] lane_share: LaneShare,
+        #[comptime] lanes: Lanes,
         #[comptime] config: RegisterBlock,
         #[comptime] monoid: Monoid,
     ) -> RegisterData<T> {
@@ -90,7 +91,7 @@ impl<T: Numeric> RegisterData<T> {
             mr: m,
             nr,
             axes,
-            lane_share,
+            lanes,
             config,
             monoid,
         }
@@ -108,7 +109,45 @@ impl<T: Numeric> RegisterData<T> {
             self.data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
+}
 
+/// Which of the plane's lanes carry a drain's writes, and what they do to their values first.
+///
+/// Derived from the three facts that decide it and matched on once, so the store below reads as
+/// four cases rather than as a lane guard nested in a share.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Drain {
+    /// Each lane holds whole cells of its own and writes them as they are.
+    EachLane,
+    /// Every lane holds the same whole cells, and the write folds, so one lane writes.
+    LaneZero,
+    /// The plane's lanes each hold a partial of one cell: combine across the plane, lane zero
+    /// writes.
+    PlaneFold,
+    /// Groups of lanes each hold a partial of one cell: combine within the group, its first
+    /// lane writes.
+    GroupFold { fold_mask: usize },
+}
+
+impl Drain {
+    const fn of(lanes: Lanes, write: Write) -> Self {
+        match lanes.share {
+            LaneShare::Plane => Drain::PlaneFold,
+            LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
+            // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
+            // all write is a different question, and the one a fold turns on: repeated lanes hold
+            // the same cells, so a store lands the same value however many make it and a fold
+            // lands it once per lane.
+            LaneShare::Whole => match (lanes.work, write) {
+                (LaneWork::Repeated, Write::Fold) => Drain::LaneZero,
+                (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
+            },
+        }
+    }
+}
+
+#[cube]
+impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element: the same manual,
     /// row-major store the mma fragment does, over lines instead of lane positions.
     ///
@@ -116,6 +155,9 @@ impl<T: Numeric> RegisterData<T> {
     /// the answer until those lanes are combined: fold first, then let one of them write. This is
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
+    ///
+    /// A write that folds ([`Write::Fold`]) rather than replaces adds one more election: lanes
+    /// that repeat each other's work would each add the same contribution.
     ///
     /// The write goes through the sink's masked matrix view, the same door
     /// [`AccumulateView::commit`] uses: a block is sized to the leaf, so it may overhang the real
@@ -126,6 +168,7 @@ impl<T: Numeric> RegisterData<T> {
         mem: &mut MemData<Out>,
         #[comptime] space: Space,
     ) {
+        let mem_write = comptime!(mem.access.write);
         // Addressed in lines at the width the block was promoted at, bounded by the window extent.
         let mut sink = mem.matrix_mut::<RA>(0usize, comptime!(self.axes), space);
 
@@ -133,8 +176,8 @@ impl<T: Numeric> RegisterData<T> {
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been
         // declared before"), and a `Whole` share (every CPU, whose planes are one lane) has
         // no reason to emit either.
-        match comptime!(self.lane_share) {
-            LaneShare::Whole =>
+        match comptime!(Drain::of(self.lanes, mem_write)) {
+            Drain::EachLane =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -147,7 +190,22 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            LaneShare::Plane =>
+            Drain::LaneZero =>
+            {
+                #[unroll]
+                for i in 0..comptime!(self.mr) {
+                    #[unroll]
+                    for n in 0..comptime!(self.nr) {
+                        if UNIT_POS_X == 0 {
+                            sink.write(
+                                ((i as u32).runtime(), (n as u32).runtime()),
+                                Vector::<Out, RA>::cast_from(self.data[comptime!(i * self.nr + n)]),
+                            );
+                        }
+                    }
+                }
+            }
+            Drain::PlaneFold =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {
@@ -166,7 +224,7 @@ impl<T: Numeric> RegisterData<T> {
                     }
                 }
             }
-            LaneShare::Group { fold_mask } =>
+            Drain::GroupFold { fold_mask } =>
             {
                 #[unroll]
                 for i in 0..comptime!(self.mr) {

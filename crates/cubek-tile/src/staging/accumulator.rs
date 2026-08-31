@@ -237,14 +237,18 @@ impl<Acc: Numeric> Tile<Acc> {
         lhs: &Tile<EL>,
         #[comptime] monoid: Monoid,
     ) -> AccumulatorScope<EA, Acc> {
-        comptime!(self.space.leaf_cube_share().validate("Tile::accumulate"));
+        let write = self.write();
+        comptime!(self.space.leaf_cube_share().validate(write, "Tile::accumulate"));
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
                 let tile = self.register_partition::<EA, EL>(lhs, monoid);
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone(), monoid)
             }
-            Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid),
+            Residence::InPlace => {
+                comptime!(write.validate_in_place("Tile::accumulate"));
+                AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid)
+            }
             Residence::Smem => panic!(
                 "Tile::accumulate: an accumulator has no shared-memory form; state \
                  Residence::Register to contract in registers, or nothing to contract in place"
@@ -273,7 +277,7 @@ impl<Acc: Numeric> Tile<Acc> {
         let vector_size = self.vector_size();
         // Not `self.lane_share()`: that is the stamped value, and stamping happens on the way
         // down, after this runs. The space already knows every level, so ask it.
-        let lane_share = comptime!(self.space.leaf_lane_share());
+        let lanes = comptime!(self.space.lanes());
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
             comptime!(MatrixAxes::accumulator(
@@ -283,7 +287,7 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(form),
             comptime!(k),
             vector_size,
-            lane_share,
+            lanes,
             monoid,
         )
     }

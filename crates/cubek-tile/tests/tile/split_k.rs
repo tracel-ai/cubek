@@ -16,8 +16,14 @@
 //! way, differing only in where the pieces are added up.
 #![allow(non_snake_case)]
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubecl::{
+    CubeCount, CubeDim, Runtime, TestRuntime,
+    features::AtomicUsage,
+    ir::{ElemType, FloatKind, Type},
+    prelude::*,
+    zspace::shape,
+};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
 use cubek_tile::*;
 
@@ -221,6 +227,288 @@ fn a_split_of_one_is_the_whole_contraction() {
     for i in 0..m {
         for j in 0..n {
             let have = out.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// The precondition the in-kernel combine rests on: this device folds `f32` atomically, and
+/// really does fold rather than race, across cubes that all target one cell.
+///
+/// Probed rather than assumed. `f32` atomic add is there on metal (native and through wgpu's MSL
+/// path), CUDA from sm60, and the CPU runtime, but WGSL only has it behind
+/// `SHADER_FLOAT32_ATOMIC`, so this is a real fork and not a formality. Nothing else in this file
+/// is worth reading if it fails.
+#[cube(launch)]
+fn atomic_add_probe(out: &mut Tensor<Atomic<f32>>) {
+    if UNIT_POS == 0 {
+        out[0].fetch_add(1.0);
+    }
+}
+
+#[test]
+fn the_device_folds_floats_atomically_across_cubes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let cubes = 64u32;
+    let out = TestInput::builder(client.clone(), shape![1])
+        .dtype(f32::elem_type_native())
+        .zeros()
+        .generate_without_host_data();
+
+    atomic_add_probe::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_1d(cubes),
+        CubeDim::new_single(),
+        out.clone().binding().into_tensor_arg(),
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    // Every cube added one. A lost update reads back low, never high.
+    assert_eq!(got.get_f32(&[0]), cubes as f32);
+}
+
+// -- The in-kernel combine --------------------------------------------------
+//
+// The same split, without the second buffer and the second pass: `K` stays one axis, the cubes
+// each take a slice of it, and the drain folds each cube's contribution into the output
+// atomically. What the workspace pipeline above does in two kernels, this does in one, and the
+// two must agree.
+
+const K: Axis = Axis(4);
+
+/// The output is bound as an atomic buffer and drained through a folding sink. `Residence::Register`
+/// on it is not decoration: the contraction runs in registers and only the drain touches the
+/// destination, which is the one shape a write-only fold admits.
+#[cube(launch)]
+fn atomic_split_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &Tensor<Atomic<E>>,
+    #[comptime] space: Space,
+    #[comptime] out_spec: TileSpec,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = Tile::<E>::of_atomic_sink::<Const<1>>(
+        out,
+        comptime!(space.clone()),
+        comptime!(out_spec.clone()),
+    );
+    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
+fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    // Zeroed, and the launch's own precondition: the first cube to arrive folds onto what is
+    // here rather than replacing it, so this is the fold's identity and not a convenience.
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    atomic_split_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        out.clone().binding().into_tensor_arg(),
+        space,
+        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
+}
+
+/// The in-kernel combine against the same contraction, unsplit: every cube folds its own slice of
+/// `K` into the output and the sum is the whole.
+#[test]
+fn an_atomic_drain_folds_the_slices_back_together() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, splits) = (4usize, 4usize, 16usize, 4usize);
+    let got = run_atomic_split_k(m, n, k, splits);
+    let want = reference(m, n, k, 0..k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// The two combines agree. Not a restatement of the test above: that one checks the arithmetic,
+/// this one checks that the two ways of putting the slices back together are the same program to
+/// the caller, which is what makes them interchangeable at launch.
+#[test]
+fn the_atomic_drain_agrees_with_the_workspace() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+
+    let (m, n, k, splits) = (4usize, 4usize, 16usize, 4usize);
+    let (_, workspace) = run_split_k(m, n, k, splits);
+    let atomic = run_atomic_split_k(m, n, k, splits);
+    for i in 0..m {
+        for j in 0..n {
+            let w = workspace.get_f32(&[i, j]);
+            let a = atomic.get_f32(&[i, j]);
+            assert!(
+                (w - a).abs() < 1e-3,
+                "at ({i}, {j}): workspace {w}, atomic {a}"
+            );
+        }
+    }
+}
+
+/// The same fold with the lanes carrying cells of their own: `N` rides the plane's lanes while
+/// `K` rides the cubes, so a lane owns its columns and a cube owns its slice of the contraction.
+///
+/// The control on the writer election. A fold from lanes that repeat each other's work has to be
+/// made by one of them, and a fold from lanes that each hold their own cells has to be made by
+/// all of them: an election that cannot tell the two apart is wrong one way or the other, and
+/// this is the half that a blanket "lane zero writes" would silently drop.
+#[test]
+fn an_atomic_drain_with_lanes_of_their_own() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let dtype = f32::elem_type_native();
+
+    let (m, k, splits, per_lane) = (4usize, 16usize, 4usize, 2usize);
+    let n = lanes * per_lane;
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::unit(per_lane))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+        })
+        .build()
+        .resolve_lanes(lanes)
+        .with_instruction(Instruction::registers(16));
+
+    atomic_split_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        out.clone().binding().into_tensor_arg(),
+        space,
+        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let want = reference(m, n, k, 0..k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
             let want = want[i * n + j];
             assert!(
                 (have - want).abs() < 1e-3,
