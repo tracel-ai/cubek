@@ -61,7 +61,7 @@ pub fn strategy_result(
     let output_shape = problem.output_shape(&problem.input_shape);
     let output_handle = make_zero_handle(&client, output_shape.to_vec(), dtype);
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         if problem.with_indices {
             if !matches!(&problem.mode, PoolMode::Max(_)) {
                 return Err("pool indices only supported for max".to_string()).into();

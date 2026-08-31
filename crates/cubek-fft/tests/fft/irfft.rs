@@ -38,7 +38,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     let im_binding = random_spectrum_im_handle.binding();
     let signal_binding = signal_handle.clone().binding();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&signal_handle.handle], |c| {
         irfft_launch::<TestRuntime>(c, re_binding, im_binding, signal_binding, dim, dtype).into()
     });
 
@@ -106,28 +106,32 @@ fn test_launch_padded(
     let padded_im_binding = padded_im.binding();
     let padded_signal_binding = padded_signal.clone().binding();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        if let Err(e) = irfft_launch_padded::<TestRuntime>(
-            c,
-            virtual_re_binding,
-            virtual_im_binding,
-            virtual_signal_binding,
-            dim,
-            spec_bins,
-            dtype,
-        ) {
-            return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
-        }
-        irfft_launch::<TestRuntime>(
-            c,
-            padded_re_binding,
-            padded_im_binding,
-            padded_signal_binding,
-            dim,
-            dtype,
-        )
-        .into()
-    });
+    let outcome = launch_and_capture_outcome(
+        &client,
+        &[&virtual_signal.handle, &padded_signal.handle],
+        |c| {
+            if let Err(e) = irfft_launch_padded::<TestRuntime>(
+                c,
+                virtual_re_binding,
+                virtual_im_binding,
+                virtual_signal_binding,
+                dim,
+                spec_bins,
+                dtype,
+            ) {
+                return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
+            }
+            irfft_launch::<TestRuntime>(
+                c,
+                padded_re_binding,
+                padded_im_binding,
+                padded_signal_binding,
+                dim,
+                dtype,
+            )
+            .into()
+        },
+    );
 
     match outcome {
         ExecutionOutcome::Executed => {

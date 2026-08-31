@@ -301,7 +301,7 @@ fn fully_masked_rows(strategy: Strategy) {
 
     let problem_for_launch = problem.clone();
     let out_binding = out_handle.clone().binding();
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
         launch_ref(
             strategy.clone(),
             c,
@@ -435,7 +435,7 @@ fn broadcast_mask(strategy: Strategy) {
 
     let problem_for_launch = problem.clone();
     let out_binding = out_handle.clone().binding();
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
         launch_ref(
             strategy.clone(),
             c,

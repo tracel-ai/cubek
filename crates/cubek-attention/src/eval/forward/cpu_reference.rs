@@ -36,7 +36,7 @@ pub fn strategy_result(
     let out_handle = inputs.out.clone();
     let mask_binding = inputs.mask.as_ref().map(|m| m.clone().binding());
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
         launch_ref(
             strategy.clone(),
             c,

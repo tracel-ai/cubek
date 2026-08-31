@@ -39,9 +39,13 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     let re_binding = spectrum_re_handle.clone().binding();
     let im_binding = spectrum_im_handle.clone().binding();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, dim, dtype).into()
-    });
+    let outcome = launch_and_capture_outcome(
+        &client,
+        &[&spectrum_re_handle.handle, &spectrum_im_handle.handle],
+        |c| {
+            rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, dim, dtype).into()
+        },
+    );
 
     match outcome {
         ExecutionOutcome::Executed => assert_rfft_result(
@@ -97,28 +101,37 @@ fn test_launch_padded(
     let padded_re_binding = padded_re.clone().binding();
     let padded_im_binding = padded_im.clone().binding();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        if let Err(e) = rfft_launch_padded::<TestRuntime>(
-            c,
-            virtual_signal_binding,
-            virtual_re_binding,
-            virtual_im_binding,
-            dim,
-            signal_len,
-            dtype,
-        ) {
-            return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
-        }
-        rfft_launch::<TestRuntime>(
-            c,
-            padded_signal_binding,
-            padded_re_binding,
-            padded_im_binding,
-            dim,
-            dtype,
-        )
-        .into()
-    });
+    let outcome = launch_and_capture_outcome(
+        &client,
+        &[
+            &virtual_re.handle,
+            &virtual_im.handle,
+            &padded_re.handle,
+            &padded_im.handle,
+        ],
+        |c| {
+            if let Err(e) = rfft_launch_padded::<TestRuntime>(
+                c,
+                virtual_signal_binding,
+                virtual_re_binding,
+                virtual_im_binding,
+                dim,
+                signal_len,
+                dtype,
+            ) {
+                return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
+            }
+            rfft_launch::<TestRuntime>(
+                c,
+                padded_signal_binding,
+                padded_re_binding,
+                padded_im_binding,
+                dim,
+                dtype,
+            )
+            .into()
+        },
+    );
 
     match outcome {
         ExecutionOutcome::Executed => {
@@ -407,9 +420,11 @@ fn rfft_nyquist_bin_large_sizes() {
         let re_binding = spectrum_re.clone().binding();
         let im_binding = spectrum_im.clone().binding();
 
-        let outcome = launch_and_capture_outcome(&client, |c| {
-            rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, 1, dtype).into()
-        });
+        let outcome =
+            launch_and_capture_outcome(&client, &[&spectrum_re.handle, &spectrum_im.handle], |c| {
+                rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, 1, dtype)
+                    .into()
+            });
 
         let outcome = match outcome {
             ExecutionOutcome::Executed => {

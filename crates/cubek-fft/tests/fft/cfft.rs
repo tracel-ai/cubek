@@ -55,6 +55,9 @@ fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
     let recovered_re = empty_tensor(&client, signal_shape.clone(), dtype);
     let recovered_im = empty_tensor(&client, signal_shape.clone(), dtype);
 
+    let spectrum_re_out = spectrum_re.handle.clone();
+    let spectrum_im_out = spectrum_im.handle.clone();
+
     let forward = CfftBindings {
         input_re: input_re.binding(),
         input_im: input_im.binding(),
@@ -68,14 +71,23 @@ fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
         output_im: recovered_im.clone().binding(),
     };
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        if let Err(e) =
-            cfft_launch_any_size::<TestRuntime>(c, forward, dim, dtype, FftMode::Forward)
-        {
-            return ExecutionOutcome::CompileError(format!("forward launch failed: {e}"));
-        }
-        cfft_launch_any_size::<TestRuntime>(c, inverse, dim, dtype, FftMode::Inverse).into()
-    });
+    let outcome = launch_and_capture_outcome(
+        &client,
+        &[
+            &spectrum_re_out,
+            &spectrum_im_out,
+            &recovered_re.handle,
+            &recovered_im.handle,
+        ],
+        |c| {
+            if let Err(e) =
+                cfft_launch_any_size::<TestRuntime>(c, forward, dim, dtype, FftMode::Forward)
+            {
+                return ExecutionOutcome::CompileError(format!("forward launch failed: {e}"));
+            }
+            cfft_launch_any_size::<TestRuntime>(c, inverse, dim, dtype, FftMode::Inverse).into()
+        },
+    );
 
     match outcome {
         ExecutionOutcome::Executed => {

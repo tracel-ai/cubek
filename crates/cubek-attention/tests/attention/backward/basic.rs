@@ -203,7 +203,7 @@ fn run_prepass(problem: AttentionProblem) {
     let d = zeros_row(&client, row_shape, f32::elem_type_native());
     let d_handle = d.clone();
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&d.handle], |c| {
         flash_attention_backward_prepass(
             c,
             o.clone().binding(),
@@ -263,7 +263,7 @@ fn run_dq(problem: AttentionProblem) {
     let dq_handle = dq.clone();
 
     let cfg = config(&problem);
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&dq.handle], |c| {
         flash_attention_backward_dq(
             c,
             inputs.q.clone().binding(),
@@ -338,7 +338,7 @@ fn run_dkdv(problem: AttentionProblem) {
     let dv_handle = dv.clone();
 
     let cfg = config(&problem);
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&dk.handle, &dv.handle], |c| {
         flash_attention_backward_dkdv(
             c,
             inputs.q.clone().binding(),
@@ -434,7 +434,7 @@ fn run_end_to_end(problem: AttentionProblem) {
     let dv_handle = dv.clone();
 
     let cfg = config(&problem);
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&dq.handle, &dk.handle, &dv.handle], |c| {
         flash_attention_backward(
             c,
             inputs.q.clone().binding(),
