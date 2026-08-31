@@ -66,6 +66,22 @@ fn a_packed_tensor_decodes_against_its_scales() {
     // Distinct per `(row, block)`, halves so the reference is exact.
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
+    // The scales are an operand like the others, and the axis they omit is the whole statement
+    // that one of their values covers a block of columns.
+    let mut operands = (
+        Operand::new(&[ROW, CB, CI], dtype),
+        Operand::new(&[ROW, CB], dtype),
+        Operand::new(&[ROW, CB, CI], dtype),
+    );
+    let space = Tiling::over(&mut operands, &[(ROW, rows), (CB, blocks), (CI, inside)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            level
+                .axis(ROW, Cut::sequential(rows))
+                .axis(CB, Cut::sequential(blocks))
+                .axis(CI, Cut::sequential(inside));
+        })
+        .build();
+
     // Shape and strides count values; the packing says how many share a stored word.
     let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
         vec![rows, cols],
@@ -81,45 +97,41 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]);
+    // `COL` is one physical dim that `(CB, CI)` partition, so each operand that spans both says
+    // so; the scales span only `CB` and address it as it stands.
+    let split = || {
+        Projection::new(
+            &[ROW, CB, CI],
+            &[
+                PhysicalAxisMap::of(ROW),
+                PhysicalAxisMap::disjoint(&[(CB, inside), (CI, 1)]),
+            ],
+        )
+    };
+    let launcher = space.clone().launcher(&client);
+    let w_op = launcher
+        .arg(w_tensor.binding())
+        .gathered(split())
+        .operand(&operands.0)
+        .packed(field)
+        .vectorize(factor)
+        .build();
+    let s_op = launcher.bind(&operands.1, s_tensor.binding()).build();
+    let out_op = launcher
+        .arg(out.clone().binding())
+        .gathered(split())
+        .operand(&operands.2)
+        .vectorize(factor)
+        .build();
 
     dequantize::launch::<TestRuntime>(
         &client,
-        CubeCount::new_single(),
-        CubeDim::new_single(),
-        // A packed operand serves a whole stored word per line, so that is the width the walk
-        // moves at; the scale of a line is one value, since the block is wider than the line.
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
-        TileArgLaunch::new(
-            w_tensor.binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[ROW, CB, CI],
-                &[
-                    PhysicalAxisMap::of(ROW),
-                    PhysicalAxisMap::disjoint(&[(CB, inside), (CI, 1)]),
-                ],
-            ))
-            .packed(field),
-        ),
-        TileArgLaunch::new(
-            s_tensor.binding().into_tensor_arg(),
-            // `CI` is not an axis of this operand at all: that absence is the broadcast, and it is
-            // the whole statement that one scale covers a block of columns.
-            TileSpec::new(Projection::new(
-                &[ROW, CB],
-                &[PhysicalAxisMap::of(ROW), PhysicalAxisMap::of(CB)],
-            )),
-        ),
-        TileArgLaunch::new(
-            out.clone().binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[ROW, CB, CI],
-                &[
-                    PhysicalAxisMap::of(ROW),
-                    PhysicalAxisMap::disjoint(&[(CB, inside), (CI, 1)]),
-                ],
-            )),
-        ),
+        w_op.arg(),
+        s_op.arg(),
+        out_op.arg(),
         space,
         [dtype, dtype],
     );

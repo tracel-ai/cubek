@@ -127,8 +127,14 @@ impl TileSpec {
     /// Values and nothing else. Scales, where the operand has any, are a second tensor and folding
     /// them in is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)), so a
     /// packed operand is sayable on its own and a q4 kernel needs no scheme.
-    pub fn packed(mut self, field: QuantValue) -> Self {
-        self.packing = Packing::Packed { field };
+    pub fn packed(self, field: QuantValue) -> Self {
+        self.packing(Packing::Packed { field })
+    }
+
+    /// [`packed`](Self::packed) for a caller holding the [`Packing`] itself, which the launch
+    /// derivation does.
+    pub fn packing(mut self, packing: Packing) -> Self {
+        self.packing = packing;
         self
     }
 
