@@ -658,9 +658,11 @@ exists to avoid.
 
 So phase 3's order is:
 
-1. **A broadcast operand works, and is tested.** `a_scale_over_no_axis_covers_everything` (on the wip
-   branch, failing on the second panic) is the test. Until it passes, nothing above it can be
-   trusted: a two-level scheme whose outer level is per-tensor would silently read zeros.
+1. ~~**A broadcast operand works, and is tested.**~~ **Done.** `a_scale_over_no_axis_covers_everything`
+   passes. A physical axis carrying no logical one is its own coordinate group — it shares one with
+   nothing, and it is still a buffer axis, so dropping it lost a dimension the layout had to
+   describe. That was the second panic; the first was reading a group's identity off an empty term
+   list.
 2. Then the surface, as written above. The leaf picks between the base case and the step by
    [`ChainShape`], which is a recursion's two cases and not a count.
 3. Then each level's coverage in the units its consumer reads — `ScaleLevel::of` measures in value
