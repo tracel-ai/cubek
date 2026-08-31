@@ -12,7 +12,8 @@
 //! - [`reduce`]: fold one operand's contracted axes into an accumulator cell.
 
 pub mod block;
+pub mod chain;
 pub mod contract;
 pub mod horizontal;
-pub(crate) mod lines;
+pub mod lines;
 pub mod reduce;

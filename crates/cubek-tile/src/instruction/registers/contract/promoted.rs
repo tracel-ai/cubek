@@ -190,7 +190,7 @@ impl<T: Numeric> RegisterData<T> {
         // source against one plain one. Which operand that is decides two types, so two calls.
         match comptime!(side) {
             ScaleSide::Lhs => {
-                let lhs_mat = ScaledLines::<EL, L, MatrixView<Vector<ES, S>>>::new(
+                let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, MatrixView<Vector<ES, S>>>::new(
                     lhs.matrix_packed::<L>(lhs_axes, 0usize),
                     scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
                     comptime!(level.lines_per_scale),
@@ -203,7 +203,7 @@ impl<T: Numeric> RegisterData<T> {
                     L,
                     ER,
                     RA,
-                    ScaledLines<EL, L, MatrixView<Vector<ES, S>>>,
+                    ScaledLines<MatrixView<Vector<EL, L>>, MatrixView<Vector<ES, S>>>,
                     MatrixView<Vector<ER, RA>>,
                 >(
                     &lhs_mat,
@@ -221,7 +221,7 @@ impl<T: Numeric> RegisterData<T> {
             }
             ScaleSide::Rhs => {
                 let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-                let rhs_mat = ScaledLines::<ER, RA, MatrixView<Vector<ES, S>>>::new(
+                let rhs_mat = ScaledLines::<MatrixView<Vector<ER, RA>>, MatrixView<Vector<ES, S>>>::new(
                     rhs.matrix_packed::<RA>(rhs_axes, 0usize),
                     scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
                     comptime!(level.lines_per_scale),
@@ -234,7 +234,7 @@ impl<T: Numeric> RegisterData<T> {
                     ER,
                     RA,
                     MatrixView<Vector<EL, L>>,
-                    ScaledLines<ER, RA, MatrixView<Vector<ES, S>>>,
+                    ScaledLines<MatrixView<Vector<ER, RA>>, MatrixView<Vector<ES, S>>>,
                 >(
                     &lhs_mat,
                     &rhs_mat,

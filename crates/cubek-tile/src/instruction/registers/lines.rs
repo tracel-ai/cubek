@@ -19,7 +19,7 @@ use crate::*;
 /// The element and width are the implementor's own, so a source can be wrapped by another source
 /// that reads it — which is what makes a scale chain a chain rather than an arity.
 #[cube]
-pub(crate) trait Lines: CubeType {
+pub trait Lines: CubeType {
     /// The element one line holds.
     type E: Numeric;
     /// Values per line.
@@ -45,7 +45,7 @@ pub(crate) trait Lines: CubeType {
 /// [`ONE`](FoldRun::ONE) is an operand with nothing to fold in: one fold, covering one line, so a
 /// caller walking it needs no constant at all.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct FoldRun {
+pub struct FoldRun {
     /// Folds one read serves, which is the operand's line width where it has one.
     pub folds: usize,
     /// Value lines one fold covers.
@@ -129,12 +129,13 @@ impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
 /// the view could not: `run` is the value line's ordinal along the shared edge, and the lane falls
 /// out of it. Which scale *line* to read is only an address, so it stays runtime.
 ///
-/// The scales are themselves a [`Lines`], so they may carry scales of their own; this level reads
-/// them at the ordinal one line of them covers and asks no more. A second level is then this same
-/// type wrapping this same type, which is why nothing here says how deep the chain goes.
+/// **Both sides are a [`Lines`]**, so this one type serves every level: the values are an operand's
+/// own lines at the level nearest them, and the level below's scales at any level above. The scales
+/// likewise carry scales of their own. A second level is then this same type wrapping this same
+/// type, which is why nothing here says how deep the chain goes.
 #[derive(CubeType)]
-pub(crate) struct ScaledLines<'a, E: Numeric, V: Size, S: Lines> {
-    values: MaskedView<'a, Vector<E, V>, Coords2d>,
+pub struct ScaledLines<V: Lines, S: Lines> {
+    values: V,
     scales: S,
     /// Value lines one scale covers along the shared edge.
     #[cube(comptime)]
@@ -145,9 +146,9 @@ pub(crate) struct ScaledLines<'a, E: Numeric, V: Size, S: Lines> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size, S: Lines> ScaledLines<'a, E, V, S> {
+impl<V: Lines, S: Lines> ScaledLines<V, S> {
     pub fn new(
-        values: MaskedView<'a, Vector<E, V>, Coords2d>,
+        values: V,
         scales: S,
         #[comptime] lines_per_scale: usize,
         #[comptime] lanes: usize,
@@ -157,7 +158,7 @@ impl<'a, E: Numeric, V: Size, S: Lines> ScaledLines<'a, E, V, S> {
             "ScaledLines: one scale covers less than a whole line of values, so a line straddles \
              two scales"
         ));
-        ScaledLines::<'a, E, V, S> {
+        ScaledLines::<V, S> {
             values,
             scales,
             lines_per_scale,
@@ -167,12 +168,12 @@ impl<'a, E: Numeric, V: Size, S: Lines> ScaledLines<'a, E, V, S> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size, S: Lines> Lines for ScaledLines<'a, E, V, S> {
-    type E = E;
-    type V = V;
+impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
+    type E = V::E;
+    type V = V::V;
 
-    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<E, V> {
-        let value = self.values.read(pos);
+    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<V::E, V::V> {
+        let value = self.values.line(pos, run);
         let (row, col) = pos;
         let per_line = comptime!(self.lines_per_scale * self.lanes);
         // One line of these scales covers `per_line` value lines, so that is both the column it
@@ -183,7 +184,7 @@ impl<'a, E: Numeric, V: Size, S: Lines> Lines for ScaledLines<'a, E, V, S> {
             comptime!(run / per_line),
         );
         let lane = comptime!((run / self.lines_per_scale) % self.lanes);
-        value * Vector::<E, V>::cast_from(scale.extract(lane))
+        value * Vector::<V::E, V::V>::cast_from(scale.extract(lane))
     }
 
     fn fold_run(&self) -> comptime_type!(FoldRun) {

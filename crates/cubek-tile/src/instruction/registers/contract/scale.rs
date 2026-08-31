@@ -123,7 +123,8 @@ pub(crate) struct ContractEdges {
 ///
 /// The level below is whatever this one scales: the operand's values at the first level, and the
 /// level beneath it at any level above. Nothing here knows which, or how many there are.
-pub(crate) struct ScaleLevel {
+#[derive(Clone, Copy)]
+pub struct ScaleLevel {
     /// The scales' own matrix, as the level below reads it.
     pub axes: MatrixAxes,
     /// Lines of the level below that one scale covers, along the edge they share.
@@ -144,7 +145,7 @@ impl ScaleLevel {
     /// distinguish — rather than out of dividing one extent by another. The scale is constant
     /// along every axis it does not address, so one read of it serves every position of them, and
     /// no line can straddle a block whatever width it is served at.
-    pub(crate) fn of(
+    pub fn of(
         scales: &Space,
         edges: &ContractEdges,
         side: ScaleSide,
