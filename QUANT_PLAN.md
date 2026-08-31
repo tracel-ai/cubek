@@ -225,6 +225,40 @@ correctness test and the probe assert on it. That counter earned its place immed
 was deriving its `QuantValue` from a bit count, which reads `Q8F` as `Q8S` — the same width, a
 different range, and no error anywhere.
 
+### Item 7, measured
+
+`gemv_col_quant_bandwidth::scales_as_operand_against_the_widening_arm`, on an M2 Pro: a decode
+step's packed projections (36 layers x 4) run three ways per round, order rotated, device-side
+`client.profile` on the raw backend. The third variant is the control — the shipping arm over
+**f32** scales pays no widening and is untouched by the change, so its own spread says whether
+the round is readable.
+
+| | widen f16 | operand f16 | control f32 | delta |
+|---|---|---|---|---|
+| control spread 0.2% | 46.68 ms | 36.83 ms | 38.23 ms | **-9.85 ms, -21.1%** |
+| control spread 3.9% | 48.82 | 36.95 | 38.38 | -11.87 ms, -24.3% |
+| control spread 12.9% | 55.43 | 39.99 | 40.72 | *invalid* |
+
+The first row is the number; the box heats across back-to-back runs and the third invalidates
+itself by its own control. All three agree on direction and rough size.
+
+**The 9.85 ms is two effects, and the control separates them.**
+
+- **~8.5 ms is the widening pass.** The f16 arm and the f32 arm run the *same* gemv kernel; the
+  only difference is the per-launch cast dispatch, and it is 46.68 against 38.23. That brackets
+  the ~7.9 ms this plan carried as an estimate, from measurement rather than from reading code.
+- **~1.4 ms is the gemv itself**, reading half the scale bytes: 36.83 against the control's
+  38.23. The scales are 434 MB of the step at f16 against 868 MB at f32, and 434 MB at this
+  box's ~180 GB/s is ~2.4 ms — the same order, so the saving sits where it should.
+
+So the open question — whether the gemv is *also* faster, or only shorter by a dispatch — is
+answered: both, and the smaller half is the one that is bandwidth.
+
+One asymmetry worth keeping. The operand arm barely drifts across the three runs (36.83, 36.95,
+39.99) where the widening arm drifts hard (46.68, 48.82, 55.43). A kernel whose extra cost is
+launch-bound is what heats up that way, which is a second reading of the same fact: the widening
+is a dispatch per projection, not bytes.
+
 ### Item 2, and what it turned out to be
 
 A contraction's shape was read off the accumulator's *last two axes*. Half of that is not a guess:
