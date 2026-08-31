@@ -13,7 +13,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_tile::{
-    Buffering, ComputeScope, Coverage, Cut, CubeAxis, Distribution, Instruction, PhysicalAxisMap,
+    Buffering, ComputeScope, Coverage, CubeAxis, Cut, Distribution, Instruction, PhysicalAxisMap,
     Projection, Spread, Tiling, WalkOrder,
 };
 
@@ -133,7 +133,10 @@ pub fn launch_ref<R: Runtime>(
                 )
                 .axis(N, Cut::sequential(problem.rows))
                 .axis(KB, unit(1, Spread::Interleaved, blueprint.block_lanes))
-                .axis(KI, unit(factor, Spread::Interleaved, blueprint.inside_lanes));
+                .axis(
+                    KI,
+                    unit(factor, Spread::Interleaved, blueprint.inside_lanes),
+                );
             },
         )
         .build();

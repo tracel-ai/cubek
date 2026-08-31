@@ -186,7 +186,11 @@ fn serving_geometry(promoted: bool) {
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
     );
-    let x_shape = if promoted { shape![d_in, n] } else { shape![n, d_in] };
+    let x_shape = if promoted {
+        shape![d_in, n]
+    } else {
+        shape![n, d_in]
+    };
     let (x_tensor, _) = TestInput::builder(client.clone(), x_shape)
         .dtype(dtype)
         .custom(x.clone())

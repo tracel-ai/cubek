@@ -18,14 +18,7 @@ use cubek_tile::{Semiring, Space, TileArg};
 /// holds a partial of its group's cell.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-pub fn quant_gemv_kernel<
-    EC: Numeric,
-    EX: Numeric,
-    ES: Numeric,
-    EO: Numeric,
-    VX: Size,
-    VO: Size,
->(
+pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
     scales: &TileArg<'_, ES, Const<1>>,
