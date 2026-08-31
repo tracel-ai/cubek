@@ -5,6 +5,7 @@ use cubecl::prelude::*;
 
 use super::direct;
 use super::gather;
+use super::scale::{check_scales_omit_rather_than_divide, scale_side};
 use super::shape::ContractShape;
 use crate::*;
 
@@ -61,65 +62,6 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
         gather::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
     } else {
         direct::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
-    }
-}
-
-/// Which factor of the term a scales operand multiplies. Read off the axes it spans, never
-/// stated: a scale over the accumulator's column axis is a fact about the rhs's columns and
-/// nothing else could fold it in; anything else scales the lhs.
-///
-/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms — the scale
-/// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
-/// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ScaleSide {
-    /// The scale spans the accumulator's rows (or the contracted axis alone): folded into the
-    /// lhs value before it forms its products.
-    Lhs,
-    /// The scale spans the accumulator's columns: folded into each rhs line.
-    Rhs,
-}
-
-/// The side a scales operand multiplies on, from the axes it spans against the accumulator's.
-///
-/// A scale over neither matrix axis (per-tensor, or one value per block of `k`) is the same
-/// number wherever it folds, so it takes the lhs side.
-pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> ScaleSide {
-    let group = |range: core::ops::Range<usize>| {
-        range
-            .filter(|&p| scales.contains(output.axis_at(p)))
-            .map(|p| output.axis_at(p))
-            .collect::<Vec<_>>()
-    };
-    let rows = group(axes.row_split..axes.col_split);
-    let cols = group(axes.col_split..output.rank());
-    assert!(
-        rows.is_empty() || cols.is_empty(),
-        "mm_scaled: a scales operand over the accumulator's rows {rows:?} and its columns \
-         {cols:?} is a scale of the output, not a factor of either operand's term"
-    );
-    match cols.is_empty() {
-        false => ScaleSide::Rhs,
-        true => ScaleSide::Lhs,
-    }
-}
-
-/// Refuse a scales operand that spells its granularity by dividing.
-///
-/// A scale covers a block because the operand has no axis to vary over inside one: the block is an
-/// axis and the scales omit it. A rational axis (`PhysicalAxisMap::of(N).over(bn)`) states the same
-/// granularity arithmetically, and then whether a contracted_per_step line straddles a block stops being a fact
-/// about the axes and becomes one about the line width, which no operand states. Split the axis
-/// instead, and the invariance is structural.
-pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
-    for pa in 0..scales.physical_rank() {
-        let divisor = scales.divisor(pa).bound();
-        assert!(
-            divisor == 1,
-            "mm_scaled: this scales operand divides a logical axis by {divisor} to reach its \
-             block. Spell the block as an axis of its own and omit the position inside it, so one \
-             scale per block is what the operand's axes say rather than what its arithmetic does"
-        );
     }
 }
 

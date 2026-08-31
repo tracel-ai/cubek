@@ -10,7 +10,8 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::block;
-use crate::instruction::registers::contract::{ScaleSide, scale_side};
+use crate::instruction::registers::contract::scale_side;
+use super::scale::{ContractEdges, ScaleLevel, ScaleSide};
 use crate::instruction::registers::lines::ScaledLines;
 use crate::*;
 
@@ -147,38 +148,32 @@ impl<T: Numeric> RegisterData<T> {
         let side = comptime!(scale_side(&scales.space, &out, acc_axes));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
-        // The scales share one edge with the values: the contraction where the lhs carries them,
-        // the accumulator's columns otherwise. `value_width` is the width that edge is served at.
+        // This block's own geometry. It walks one contracted value a step, so its accumulator
+        // width is the width whichever edge the scales share is served at.
         let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-        let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
-        let (scales_axes, edge, value_width) = comptime!(match side {
-            ScaleSide::Lhs => (
-                MatrixAxes::of(&scales.space, mr, scale_cols),
-                operands
+        let invariant = scales.invariant_over(comptime!(operands.clone()));
+        let level = comptime!(ScaleLevel::of(
+            &scales.space,
+            &ContractEdges {
+                mr,
+                kc,
+                cols,
+                reduce: operands
                     .contracting(&out)
                     .iter()
                     .map(|&axis| (axis, operands.extent(axis)))
                     .collect::<Vec<_>>(),
-                lw
-            ),
-            ScaleSide::Rhs => (
-                MatrixAxes::of(&scales.space, kc, scale_cols),
-                (acc_axes.col_split..out.rank())
+                columns: (acc_axes.col_split..out.rank())
                     .map(|p| (out.axis_at(p), out.extent_at(p)))
                     .collect::<Vec<_>>(),
-                vw
-            ),
-        });
-        // How many value lines share one scale, read off the axes rather than divided out of the
-        // extents: the scale is constant along the edge axes it does not distinguish.
-        let invariant = scales.invariant_over(comptime!(operands.clone()));
-        let lines_per_scale = comptime!(
-            edge.iter()
-                .filter(|(axis, _)| invariant.contains(axis))
-                .map(|(_, extent)| *extent)
-                .product::<usize>()
-                / value_width
-        );
+                lw,
+                aw: vw,
+                contracted_per_step: 1,
+            },
+            side,
+            &invariant,
+            sw,
+        ));
         // The block walks its columns under a constant ordinal, which a scale line wider than one
         // scale needs; the lhs's columns are the contraction, whose step is a runtime index.
         comptime!(assert!(
@@ -197,9 +192,9 @@ impl<T: Numeric> RegisterData<T> {
             ScaleSide::Lhs => {
                 let lhs_mat = ScaledLines::<EL, L, MatrixView<Vector<ES, S>>>::new(
                     lhs.matrix_packed::<L>(lhs_axes, 0usize),
-                    scales.matrix_packed::<S>(scales_axes, 0usize),
-                    lines_per_scale,
-                    sw,
+                    scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
                 let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
                 block::contract::<
@@ -228,9 +223,9 @@ impl<T: Numeric> RegisterData<T> {
                 let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
                 let rhs_mat = ScaledLines::<ER, RA, MatrixView<Vector<ES, S>>>::new(
                     rhs.matrix_packed::<RA>(rhs_axes, 0usize),
-                    scales.matrix_packed::<S>(scales_axes, 0usize),
-                    lines_per_scale,
-                    sw,
+                    scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
                 block::contract::<
                     T,

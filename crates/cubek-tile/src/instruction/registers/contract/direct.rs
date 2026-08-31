@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
-use crate::instruction::registers::contract::ScaleSide;
 use crate::instruction::registers::lines::{Lines, ScaledLines};
+use super::scale::{ContractEdges, ScaleLevel, ScaleSide};
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -345,40 +345,26 @@ fn nest_scaled<
 
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
-    // The scales share one edge with the values: the contraction where a folded step or the lhs
-    // carries them, the accumulator's columns otherwise. `value_width` is the width that edge is
-    // served at, and each axis is paired with its extent because a contracted one is not the
-    // accumulator's to size.
-    let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
-    let (scales_axes, edge, value_width) = comptime!(match (side, contracted_per_step > 1) {
-        (ScaleSide::Lhs, _) => (
-            MatrixAxes::of(&scales.space, mr, scale_cols),
-            shape.reduce_edge(),
-            lw
-        ),
-        (ScaleSide::Rhs, false) => (
-            MatrixAxes::of(&scales.space, kc, scale_cols),
-            shape.column_edge(),
-            aw
-        ),
-        (ScaleSide::Rhs, true) => (
-            MatrixAxes::of(&scales.space, cols, scale_cols),
-            shape.reduce_edge(),
-            contracted_per_step
-        ),
-    });
-    // How many value lines share one scale, read off the axes rather than divided out of the
-    // extents: the scale is constant along the edge axes it does not distinguish, so one read of
-    // it serves every position of them.
+    // This nest's own geometry, which is all a scale level needs of it; what the level *is*
+    // against those values is [`ScaleLevel`]'s to read, here and in the promoted block alike.
     let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
     let invariant = scales.invariant_over(operands);
-    let lines_per_scale = comptime!(
-        edge.iter()
-            .filter(|(axis, _)| invariant.contains(axis))
-            .map(|(_, extent)| *extent)
-            .product::<usize>()
-            / value_width
-    );
+    let level = comptime!(ScaleLevel::of(
+        &scales.space,
+        &ContractEdges {
+            mr,
+            kc,
+            cols,
+            reduce: shape.reduce_edge(),
+            columns: shape.column_edge(),
+            lw,
+            aw,
+            contracted_per_step,
+        },
+        side,
+        &invariant,
+        sw,
+    ));
     // A scale line wider than one scale needs each value line's ordinal along the shared edge as a
     // constant. The rhs's columns are walked under one at a step; the lhs's are the contraction,
     comptime!(assert!(
@@ -408,9 +394,9 @@ fn nest_scaled<
                 let unroll = comptime!(eligible && !values.check && !rhs_mat.check && !acc_check);
                 let lhs_mat = ScaledLines::<EL, L, MatrixView<Vector<ES, S>>>::new(
                     values,
-                    scales.matrix_packed::<S>(scales_axes, mat),
-                    lines_per_scale,
-                    sw,
+                    scales.matrix_packed::<S>(comptime!(level.axes), mat),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
                 body::<E, EL, L, ER, V, A, ScaledLines<EL, L, MatrixView<Vector<ES, S>>>, MatrixView<Vector<ER, V>>>(
                     &mut acc_view,
@@ -434,9 +420,9 @@ fn nest_scaled<
                 let unroll = comptime!(eligible && !lhs_mat.check && !values.check && !acc_check);
                 let rhs_mat = ScaledLines::<ER, V, MatrixView<Vector<ES, S>>>::new(
                     values,
-                    scales.matrix_packed::<S>(scales_axes, mat),
-                    lines_per_scale,
-                    sw,
+                    scales.matrix_packed::<S>(comptime!(level.axes), mat),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
                 body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, ScaledLines<ER, V, MatrixView<Vector<ES, S>>>>(
                     &mut acc_view,
