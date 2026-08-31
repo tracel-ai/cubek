@@ -442,6 +442,28 @@ impl IndirectionSpec {
         }
     }
 
+    /// A paged slice: `page_size` consecutive elements of `target` share one entry, so the table
+    /// places whole pages and a position inside a page carries through untouched. A paged KV
+    /// cache is this, with `index_axis` the batch, `target` the absolute token position, and the
+    /// table its page table.
+    ///
+    /// `page_size` is comptime, so the entry divide folds; a power of two folds to a shift. It
+    /// also bounds where the lookup may fire: [`validate`](Self::validate) refuses a level that
+    /// cuts `target` into windows that are not whole pages, and one below the fire level that
+    /// would start mid-page.
+    pub fn paged(index_axis: Axis, target: Axis, page_size: usize, policy: IndexPolicy) -> Self {
+        assert!(
+            page_size > 0,
+            "IndirectionSpec::paged: a page holds at least one element"
+        );
+        IndirectionSpec {
+            target,
+            granularity: page_size,
+            index_axes: SmallVec::from_slice(&[index_axis]),
+            policy,
+        }
+    }
+
     /// Refuse a plan whose lookup could not fire correctly. `kernel` is the whole launched space,
     /// the only one that names the index axes (an indirect operand does not span them);
     /// `operand` is its projection onto this operand's own axes, and `projection` that operand's

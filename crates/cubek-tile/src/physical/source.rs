@@ -315,7 +315,8 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// Route this operand through `table`: one `u32` entry per fire-level tile of `index_axis`,
     /// displacing `target_axis`'s window origin to the entry it reads. MoE expert selection is
     /// exactly this (`index_axis = M`, `target_axis = EXPERT`, the weights holding `EXPERT` at
-    /// [`Static(1)`](crate::Extent::Static)), and so is a `cu_seqlens` base offset.
+    /// [`Static(1)`](crate::Extent::Static)). [`paged`](Self::paged) is the same lookup over
+    /// whole pages rather than single elements.
     ///
     /// The indirection is a side-channel, not a mapping: the operand stays
     /// [`direct`](Projection::direct) and untiled, so nothing below it loses a dense, cmma or
@@ -327,20 +328,51 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// target axis's boundary directly: [`IndexPolicy::Checked`] arms it and
     /// [`IndexPolicy::Trusted`] leaves it unchecked, independently of [`checked`](Self::checked).
     pub fn indexed(
-        mut self,
+        self,
         table: TensorBinding<R>,
         index_axis: Axis,
         target_axis: Axis,
         policy: IndexPolicy,
     ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
+        let spec = IndirectionSpec::indexed(index_axis, target_axis, policy);
+        self.routed(table, spec)
+    }
+
+    /// [`indexed`](Self::indexed) over whole pages: `page_size` consecutive elements of
+    /// `target_axis` share one entry, and the position inside a page carries through untouched.
+    /// A paged KV cache is exactly this, with `index_axis` the batch and `table` the page table
+    /// shaped `[batch, max_pages]`, so a physical cache pool needs no ordering of its own.
+    ///
+    /// `target_axis`'s extent is the *logical* one the operand addresses (the sequence), not the
+    /// pool's; the table's trailing dimension enumerates its pages and
+    /// [`build`](Self::build) checks both against each other.
+    pub fn paged(
+        self,
+        table: TensorBinding<R>,
+        index_axis: Axis,
+        target_axis: Axis,
+        page_size: usize,
+        policy: IndexPolicy,
+    ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
+        let spec = IndirectionSpec::paged(index_axis, target_axis, page_size, policy);
+        self.routed(table, spec)
+    }
+
+    /// The half [`indexed`](Self::indexed) and [`paged`](Self::paged) share: only the spec they
+    /// hand over differs, and every rule below reads that spec rather than which one built it.
+    fn routed(
+        mut self,
+        table: TensorBinding<R>,
+        spec: IndirectionSpec,
+    ) -> StridedTileSource<'a, Sp, Sub, Indexed, R> {
         assert!(
             self.data.projection.is_none(),
-            "StridedTileSource::indexed: an indirection rides beside a direct mapping, so a \
-             gathered operand has no origin for it to displace"
+            "StridedTileSource: an indirection rides beside a direct mapping, so a gathered \
+             operand has no origin for it to displace"
         );
         self.data.indirection = Some(IndexTable {
             table: table.into_tensor_arg(),
-            spec: IndirectionSpec::indexed(index_axis, target_axis, policy),
+            spec,
         });
         StridedTileSource {
             data: self.data,
