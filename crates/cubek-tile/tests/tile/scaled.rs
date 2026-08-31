@@ -945,6 +945,135 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
     }
 }
 
+/// [`scaled_matmul_promoted`] with the rhs's scales served as lines: `SW` of them per read,
+/// along `N`.
+#[cube(launch)]
+fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, S, SW>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let c = c.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
+    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+}
+
+/// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
+/// [`lhs_scales_are_served_several_at_a_time`], and the case the two old asserts disagreed about:
+/// the memory nest admitted a wide scale line where its step folded one contracted value, the
+/// promoted block where the scales rode the rhs, and nothing exercised the second.
+///
+/// The block walks its columns under a constant ordinal, which is what a wide read needs — a fold
+/// is a lane of the read it arrived in, and a lane index is not addressable at runtime. So lane
+/// `j` of a scale line goes with column `j`, and the scales vary per `(block of K, column)`.
+#[test]
+fn rhs_scales_are_served_several_at_a_time() {
+    let (rows, cols, block, blocks, lanes) = (2, 4, 8, 4, 4);
+    let (per_region, inside) = (1, block);
+    let depth = block * blocks;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Distinct per (block of `K`, column), halves so the reference is exact.
+    let s: Vec<f32> = (0..blocks * cols).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let (b_t, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(b.clone())
+        .generate_with_f32_host_data();
+    let (s_t, _) = TestInput::builder(client.clone(), shape![blocks, cols])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(rows))
+                .axis(N, Cut::sequential(cols))
+                .axis(KB, Cut::sequential(per_region))
+                .axis(KI, Cut::sequential(inside))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    // One entry per level: Register at the outermost, in place below it.
+    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
+    residence[0] = Residence::Register;
+
+    wide_rhs_scaled_matmul_promoted::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        lanes,
+        TileArgLaunch::new(
+            a_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            b_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_t.binding().into_tensor_arg(),
+            // `N` innermost: the width lands on the axis the scales vary over fastest, and
+            // spanning it is what makes them the rhs's.
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N)],
+            )),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&residence),
+        ),
+        space,
+        [dtype, dtype],
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| a[m * depth + k] * b[k * cols + n] * s[(k / block) * cols + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
 /// [`scaled_matmul`] with the lhs's scales served as lines: `SW` of them per read, along `KB`.
 #[cube(launch)]
 fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(

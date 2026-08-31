@@ -11,7 +11,7 @@ use cubecl::prelude::*;
 
 use crate::instruction::registers::block;
 use crate::instruction::registers::contract::scale_side;
-use super::scale::{ContractEdges, ScaleLevel, ScaleSide};
+use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::instruction::registers::lines::ScaledLines;
 use crate::*;
 
@@ -169,18 +169,18 @@ impl<T: Numeric> RegisterData<T> {
                 lw,
                 aw: vw,
                 contracted_per_step: 1,
+                // This block walks its columns under a constant ordinal, and its rows are the
+                // contraction, whose step is a runtime index.
+                ordinal: match side {
+                    ScaleSide::Rhs => EdgeOrdinal::Constant,
+                    ScaleSide::Lhs => EdgeOrdinal::Runtime(
+                        "this block walks the contraction at runtime".to_string(),
+                    ),
+                },
             },
             side,
             &invariant,
             sw,
-        ));
-        // The block walks its columns under a constant ordinal, which a scale line wider than one
-        // scale needs; the lhs's columns are the contraction, whose step is a runtime index.
-        comptime!(assert!(
-            sw == 1 || side == ScaleSide::Rhs,
-            "mm_scaled: {sw} scales are served as one line, which needs each value line's \
-             ordinal along the shared edge as a constant, and this block walks neither edge that \
-             way; bind the scales scalar here"
         ));
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);

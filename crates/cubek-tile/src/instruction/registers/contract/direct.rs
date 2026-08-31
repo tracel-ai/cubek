@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{Lines, ScaledLines};
-use super::scale::{ContractEdges, ScaleLevel, ScaleSide};
+use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -360,18 +360,18 @@ fn nest_scaled<
             lw,
             aw,
             contracted_per_step,
+            // A step folding several contracted values takes them from one line at a runtime
+            // index; an unfolded one walks its lines under a constant ordinal.
+            ordinal: match contracted_per_step {
+                1 => EdgeOrdinal::Constant,
+                folded => EdgeOrdinal::Runtime(format!(
+                    "a step folding {folded} contracted values walks no such edge"
+                )),
+            },
         },
         side,
         &invariant,
         sw,
-    ));
-    // A scale line wider than one scale needs each value line's ordinal along the shared edge as a
-    // constant. The rhs's columns are walked under one at a step; the lhs's are the contraction,
-    comptime!(assert!(
-        sw == 1 || contracted_per_step == 1,
-        "mm_scaled: {sw} scales are served as one line, which needs each value line's ordinal \
-         along the shared edge as a constant. A step folding {contracted_per_step} contracted \
-         values walks no such edge; bind the scales scalar here"
     ));
     let eligible = comptime!(mr * nr * contracted_per_step * aw <= config.budget);
 

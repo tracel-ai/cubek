@@ -72,6 +72,23 @@ pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
     }
 }
 
+/// Whether the caller walks the edge a scales operand shares with its values under an ordinal it
+/// knows at comptime.
+///
+/// A scale line wider than one scale needs each value line's ordinal along that edge as a
+/// constant: a fold is a lane of the read it arrived in, and a lane index is not addressable at
+/// runtime. Whether the ordinal is a constant is a fact about how the caller steps, so the caller
+/// states it and the rule reads off it — once, here, rather than as an exception each caller
+/// spells for itself.
+pub(crate) enum EdgeOrdinal {
+    /// Each line's position along the shared edge is a constant, so the scales may be served
+    /// several at a time.
+    Constant,
+    /// The edge is stepped at runtime, so only a scalar read is addressable. Carries what about
+    /// this walk makes it so, for the refusal to quote.
+    Runtime(String),
+}
+
 /// A caller's contraction geometry, as a scale level needs to see it: the two edges its values can
 /// be read along, the row counts their matrices take, and the widths each edge is served at.
 ///
@@ -98,6 +115,8 @@ pub(crate) struct ContractEdges {
     /// Contracted values one step consumes. Past one, the step's own edge *is* the contraction,
     /// whichever side the scales ride.
     pub contracted_per_step: usize,
+    /// How this caller steps the edge the scales share.
+    pub ordinal: EdgeOrdinal,
 }
 
 /// One level of a scale hierarchy, against the values it covers.
@@ -138,6 +157,15 @@ impl ScaleLevel {
             (ScaleSide::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
             (ScaleSide::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
+        if lanes > 1 {
+            if let EdgeOrdinal::Runtime(why) = &edges.ordinal {
+                panic!(
+                    "mm_scaled: {lanes} scales are served as one line, which needs each value \
+                     line's ordinal along the edge they share as a constant. {why}; bind the \
+                     scales scalar here"
+                );
+            }
+        }
         let cols = scales.extent_at(scales.rank() - 1);
         let lines_per_scale = edge
             .iter()
