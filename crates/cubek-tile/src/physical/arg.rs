@@ -321,7 +321,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     }
 }
 
-/// One indirect operand as a single launch argument: the values tensor, the `u32` index tensor
+/// One indirect operand as a single launch argument: the values tensor, the `u32` routing table
 /// that routes it, and the comptime half of the indirection. [`TileArg`]'s twin, for the same
 /// reason [`QuantTileArg`] is one: an operand and the table that places it are one thing, so
 /// neither can be launched against the other's spec.
