@@ -158,7 +158,72 @@ that exists, a scheme that blocks the columns keeps the rational spelling there,
 | 4 | **two levels** | `disjoint(&[(KBO, ..), (KBI, ..), (KI, 1)])` for mxfp4's shape: one more label in the same list, since mixed radix does not care how many digits |
 | 5 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
 | 6 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
-| 7 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
+| 7 | **the metabolic gemv** | the driver. **The routine is written** (`cubek-matmul/src/tiled/quant_gemv/`) and metabolic calls it. See below |
+
+### Item 7, the routine
+
+`cubek-matmul/src/tiled/quant_gemv/`, on `Tiling::over` and the launcher. Four operands and one
+verb:
+
+```rust
+out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+```
+
+The weight's physical `[d_out, d_in]` buffer is the **lhs**, which is the orientation a decode
+step streams: the contraction runs along the buffer's contiguous direction. `K` is spelled
+`(KB, KI)`, so one scale per block is the scales operand omitting `KI` — no divisor anywhere in
+the launch, and the scales bind at whatever element the checkpoint stored them in.
+
+The plan is metabolic's measured col geometry, restated in the split spelling. A strip of output
+rows per cube, a run per plane, and an aligned lane group per row whose lanes interleave the
+contraction between them. A group is eight lanes, which is where the fold was measured; how it
+reaches eight is the block's business, and that is the one thing the split changed. q4's 32-value
+block takes four lanes of `KI`, so the group reaches eight by taking two blocks of `KB`; q8's word
+is half as wide, so eight lanes of `KI` cover the block alone and nothing splits `KB`. A cut cuts
+one axis or the other and cannot straddle two, so a group wider than a block is *stated* as two
+cuts rather than arriving as a stride that happens to cross a scale boundary.
+
+Two things fell out that were not in the plan.
+
+**The device's vector cap is not a refusal.** The routine first inherited `factor >
+max_vector_size` from `tests/tile/packed.rs`, which skips q4 on a four-lane device. It is wrong
+here for the reason metabolic already recorded on its own selector: the weight binds one `u32`
+*word* per line whatever the packing factor expands to. Removed, and q4 runs correctly on this
+Metal device — measured, not reasoned about. The activation's eight-wide `f16` line comes back as
+two adjacent `vec4<f16>` loads, which is the cap doing its job rather than refusing.
+
+**The routine serves more than one activation row.** `N` is sequential at every level, so a lane
+holds that many partials against the weight line it already read. The metabolic arm it replaces
+declines a multi-row call; this one does not.
+
+`tests/tiled/quant_gemv.rs` runs it end to end against a host reference, and
+`tests/tile/decode_gemv.rs` pins the two shapes the *engine* offers and why the routine takes the
+one it does — see the gap below.
+
+### Item 7, the metabolic side
+
+The port estimate in the previous session's notes — "~71 errors plus two `[patch]` blocks" — was
+stale. What it actually costs, against `metabolic` at `f3da4b2d`:
+
+- **Three `[patch]` blocks**, not two: cubecl, cubek, *and* burn. cubek needs a cubecl three
+  commits past burn's pin (the runtimes refactor, cubecl #1568 / cubek #581), and burn's pin does
+  not compile against it.
+- **Four lines in `burn-cubecl/src/backend.rs`.** That refactor turned `memory_report()`,
+  `memory_usage()` and `memory_persistent_allocation()` from `Result` to plain values and dropped
+  `InstallMemoryPoolsError::StreamUnavailable`. Nothing conceptual.
+- **Ten identical call sites in `metabolic-extension`.** `Launcher::vector_size` takes a
+  `&Geometry` rather than a `&TensorBinding` (cubek #571), so each is `&Geometry::from(&binding)`.
+
+That is the whole port. `cubek-resample`'s removal costs nothing, because the patched `cubek`
+umbrella no longer names it.
+
+The arm itself is `matmul/gemv/quant/launch.rs::launch_scales_as_operand`, behind a runtime
+switch so both can be measured in one process. It declines silently — a two-level scheme or a
+minifloat scale dtype keeps the old arm — and a silent decline read as a fast arm is exactly the
+failure mode a measurement invites, so the switch is paired with a launch counter and both the
+correctness test and the probe assert on it. That counter earned its place immediately: the arm
+was deriving its `QuantValue` from a bit count, which reads `Q8F` as `Q8S` — the same width, a
+different range, and no error anywhere.
 
 ### Item 2, and what it turned out to be
 
@@ -329,6 +394,26 @@ arithmetic are exactly what the second and third rows still use.
   drain on the accumulator, not on a view.
 
 ## Known gaps
+
+- **A promoted accumulator refuses a `K`-lined rhs**, and that is what keeps the decode gemv's
+  partials in memory. `RegisterData::mma_scaled` asserts two things: the block's line width
+  equals the rhs's served width, and the rhs's innermost axis is not one the lhs spans. A
+  promoted block lines its cells along the *accumulator*, and the col gemv's accumulator is
+  `[M, N]` at one activation row, so its column edge cannot be `factor` wide; the activation is
+  lined along `K` instead, which is the second refusal. Both are correct as stated — the two
+  shapes are a trade, not a ladder, and `tests/tile/decode_gemv.rs` runs each — but the
+  memory-backed one is the shape the routine ships on, and metabolic's own note puts the promoted
+  accumulator at roughly a fifth of this kernel. Closing it means a promoted block that folds a
+  `K`-lined step into one cell, which is `block::contract`'s `step_served` shape rather than a
+  new assert.
+
+- **The scales are read one at a time in this orientation**, so item 1b's win does not arrive
+  here. A lane owns `rows_per_lane` output rows and one block, and those scales sit a row apart in
+  the scales buffer — not a line. Widening them would need a lane to own consecutive *blocks*,
+  which is the opposite of the interleave the fold wants. The generated kernel confirms it: one
+  scalar `f16` load, broadcast into the weight's `vec4<f32>`. The f16 read is still the whole
+  point (half the scale bytes, and no widening pass), but "several per load" is a fact about the
+  row orientation, not about the engine.
 
 - **Three tests fail on the CPU backend and pass on wgpu-msl**, none caused by any of this:
   `register_matmul_lane_group_fold` and its promoted twin came with #559 and want a plane wider
