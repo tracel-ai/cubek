@@ -98,12 +98,13 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// [`MmaWalk`] with a scales operand riding beside the two the ring stages.
+/// [`MmaWalk`] with a scales operand in the ring beside the two it scales.
 ///
-/// It rides *beside* rather than in the ring on purpose: a scale is one value per block, so it is
-/// cache-served wherever it sits, and a stage would materialize the expansion the coarse read
-/// exists to avoid. That also keeps the ring binary, so nothing here needs a three-operand
-/// [`Staging`] payload.
+/// In the ring, not beside it: the scales are an operand, so where they live at this level is what
+/// the level said about them, the same as for the values. Most plans leave them
+/// [`InPlace`](Residence::InPlace) and then the slot holds no buffer for them — one value per block
+/// is cache-served where it lies, and staging one materializes the expansion the coarse read exists
+/// to avoid — but a plan that states otherwise is now honoured rather than filled and ignored.
 #[derive(CubeType)]
 pub(crate) struct MmaScaledWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> {
     acc: Tile<Acc>,
@@ -118,18 +119,18 @@ pub(crate) struct MmaScaledWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Num
 impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
     for MmaScaledWalk<Acc, Lhs, Rhs, S>
 {
-    type Slot = (Tile<Lhs>, Tile<Rhs>);
+    type Slot = (Tile<Lhs>, Tile<Rhs>, Tile<S>);
 
     fn ring(
         &self,
         #[comptime] op_space: Space,
         #[comptime] out: Space,
         #[comptime] depth: usize,
-    ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
-        Ring::binary(&self.lhs, &self.rhs, op_space, out, depth)
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+        Ring::ternary(&self.lhs, &self.rhs, &self.scales, op_space, out, depth)
     }
 
-    fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>)>) -> comptime_type!(bool) {
+    fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>) -> comptime_type!(bool) {
         let has_fragment_read = ring.has_fragment_read();
         stage_walk_unrolled(
             &self.acc,
@@ -138,31 +139,33 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
         )
     }
 
-    fn fill_fixed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
-        slot.fill_fixed(&self.lhs, &self.rhs, region);
+    fn fill_fixed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>, region: &Region) {
+        slot.fill_fixed(&self.lhs, &self.rhs, &self.scales, region);
     }
 
-    fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>, region: &Region) {
-        slot.fill_streamed(&self.lhs, &self.rhs, region);
+    fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>, region: &Region) {
+        slot.fill_streamed(&self.lhs, &self.rhs, &self.scales, region);
     }
 
     fn compute(
         &mut self,
-        slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>)>,
+        slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>,
         region: &Region,
         #[comptime] publish: bool,
     ) {
         let lhs_plan = slot.plan(LHS);
         let rhs_plan = slot.plan(RHS);
+        let scales_plan = slot.plan(SCALES);
         let lhs_payload = comptime!(lhs_plan.payload);
         let rhs_payload = comptime!(rhs_plan.payload);
-        let scales = self.scales.at(region);
+        let scales_payload = comptime!(scales_plan.payload);
         if comptime!(publish) {
             slot.publish();
         }
-        slot.consume(|staged_lhs, staged_rhs| {
+        slot.consume(|staged_lhs, staged_rhs, staged_scales| {
             let lhs = read_operand(staged_lhs, region, lhs_payload);
             let rhs = read_operand(staged_rhs, region, rhs_payload);
+            let scales = read_operand(staged_scales, region, scales_payload);
             self.acc
                 .at(region)
                 .mma_scaled(&lhs, &rhs, &scales, comptime!(self.semiring))

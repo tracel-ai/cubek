@@ -7,7 +7,6 @@
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
-use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
@@ -223,8 +222,10 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::Some(plan.operand_plan(RHS, slot))),
+                comptime!(vec![
+                    plan.operand_plan(LHS, slot),
+                    plan.operand_plan(RHS, slot)
+                ]),
             );
             slots.push(staging);
         }
@@ -315,6 +316,158 @@ impl<Lhs: Numeric, Rhs: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>)> {
 }
 
 #[cube]
+impl<Lhs: Numeric, Rhs: Numeric, S: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+    /// [`binary`](Ring::binary) with a scales operand in the ring beside the two it scales.
+    ///
+    /// The scales take a slot because they are an operand: what a level states about where they
+    /// live is a plan decision, and a ring that carried only two would leave it unread. Their
+    /// residence is usually [`InPlace`](Residence::InPlace) and then this costs nothing — one
+    /// value per block is cache-served where it lies, and staging one materializes the expansion
+    /// the coarse read exists to avoid — but that is the plan's answer to give, not the ring's.
+    pub fn ternary(
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        #[comptime] op_space: Space,
+        #[comptime] out: Space,
+        #[comptime] depth: usize,
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+        let lhs_residence = lhs.residence(comptime!(&out));
+        let rhs_residence = rhs.residence(comptime!(&out));
+        let scales_residence = scales.residence(comptime!(&out));
+        let lhs_source = lhs.stage_source();
+        let rhs_source = rhs.stage_source();
+        let scales_source = scales.stage_source();
+        let plan = comptime!(SlotPlan::new(
+            &[
+                SlotOperand::new(lhs_residence, lhs_source, &lhs.space),
+                SlotOperand::new(rhs_residence, rhs_source, &rhs.space),
+                SlotOperand::new(scales_residence, scales_source, &scales.space),
+            ],
+            &op_space,
+        ));
+
+        let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>>::new();
+        #[unroll]
+        for slot in 0..depth {
+            let staged_lhs = if comptime!(plan.reuses_first_buffer(LHS, slot)) {
+                slots.index(FIRST_SLOT).data.0.clone()
+            } else {
+                stage_operand(lhs, comptime!(out.clone()), lhs_residence)
+            };
+            let staged_rhs = if comptime!(plan.reuses_first_buffer(RHS, slot)) {
+                slots.index(FIRST_SLOT).data.1.clone()
+            } else {
+                stage_operand(rhs, comptime!(out.clone()), rhs_residence)
+            };
+            let staged_scales = if comptime!(plan.reuses_first_buffer(SCALES, slot)) {
+                slots.index(FIRST_SLOT).data.2.clone()
+            } else {
+                stage_operand(scales, comptime!(out.clone()), scales_residence)
+            };
+            let staging = Staging::wrap(
+                (staged_lhs, staged_rhs, staged_scales),
+                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                comptime!(vec![
+                    plan.operand_plan(LHS, slot),
+                    plan.operand_plan(RHS, slot),
+                    plan.operand_plan(SCALES, slot)
+                ]),
+            );
+            slots.push(staging);
+        }
+        Ring::wrap(slots, depth)
+    }
+}
+
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric, S: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+    /// [`fill_fixed`](Staging::fill_fixed) over the three.
+    pub fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, scales: &Tile<S>, region: &Region) {
+        let lhs_plan = self.plan(LHS);
+        let rhs_plan = self.plan(RHS);
+        let scales_plan = self.plan(SCALES);
+        let fixed_lhs = comptime!(lhs_plan.payload.is_fixed());
+        let fixed_rhs = comptime!(rhs_plan.payload.is_fixed());
+        let fixed_scales = comptime!(scales_plan.payload.is_fixed());
+        if comptime!(fixed_lhs || fixed_rhs || fixed_scales) {
+            self.fill(|staged_operands, pipe| {
+                if comptime!(fixed_lhs) {
+                    pipe.fill(&mut staged_operands.0, &lhs.at(region));
+                }
+                if comptime!(fixed_rhs) {
+                    pipe.fill(&mut staged_operands.1, &rhs.at(region));
+                }
+                if comptime!(fixed_scales) {
+                    pipe.fill(&mut staged_operands.2, &scales.at(region));
+                }
+            });
+        }
+    }
+
+    /// [`fill_streamed`](Staging::fill_streamed) over the three.
+    pub fn fill_streamed(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Tile<S>,
+        region: &Region,
+    ) {
+        let lhs_plan = self.plan(LHS);
+        let rhs_plan = self.plan(RHS);
+        let scales_plan = self.plan(SCALES);
+        let stream_lhs = comptime!(lhs_plan.payload.is_streamed());
+        let stream_rhs = comptime!(rhs_plan.payload.is_streamed());
+        let stream_scales = comptime!(scales_plan.payload.is_streamed());
+        self.fill(|staged_operands, pipe| {
+            if comptime!(stream_lhs) {
+                pipe.fill(&mut staged_operands.0, &lhs.at(region));
+            }
+            if comptime!(stream_rhs) {
+                pipe.fill(&mut staged_operands.1, &rhs.at(region));
+            }
+            if comptime!(stream_scales) {
+                pipe.fill(&mut staged_operands.2, &scales.at(region));
+            }
+        });
+    }
+}
+
+// As for the pair: the closures stay caller-defined, and the projection through a generic `T`
+// cannot be inferred, so the triple gets its own concrete pair of entries.
+impl<Lhs: Numeric, Rhs: Numeric, S: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+    /// Producer: see [`Staging::fill`] on the pair.
+    pub fn fill(&mut self, _fill: impl FnOnce(&mut (Tile<Lhs>, Tile<Rhs>, Tile<S>), &Pipeline)) {
+        unexpanded!()
+    }
+
+    /// Consumer: see [`Staging::consume`] on the pair.
+    pub fn consume(&mut self, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>, &Tile<S>)) {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric, S: Numeric> StagingExpand<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
+    pub fn __expand_fill_method<F>(&mut self, scope: &Scope, fill: F)
+    where
+        F: FnOnce(&Scope, &mut (TileExpand<Lhs>, TileExpand<Rhs>, TileExpand<S>), &PipelineExpand),
+    {
+        self.__expand_acquire_write_method(scope);
+        fill(scope, &mut self.data, &self.pipeline);
+        self.__expand_release_write_method(scope);
+    }
+
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>, &TileExpand<S>),
+    {
+        self.__expand_acquire_read_method(scope);
+        compute(scope, &self.data.0, &self.data.1, &self.data.2);
+        self.__expand_release_read_method(scope);
+    }
+}
+
+#[cube]
 impl<T: Numeric> Ring<Tile<T>> {
     /// Build the `depth` slots staging the sole operand `input`. See [`Ring::binary`] for how a
     /// later slot reuses the first slot's buffer.
@@ -342,8 +495,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::None),
+                comptime!(vec![plan.operand_plan(LHS, slot)]),
             );
             slots.push(staging);
         }
