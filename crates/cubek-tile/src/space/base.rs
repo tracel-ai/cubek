@@ -566,7 +566,7 @@ impl Space {
     /// rather than cells that must stay apart. Skipping the test merges cells that must stay
     /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
     /// walk needs no masked tail.
-    pub fn served(&self, contracted: &[Axis], width: usize) -> usize {
+    pub fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
         let lined = self.axis_at(self.rank() - 1);
         let folds = width > 1
             && contracted.last() == Some(&lined)

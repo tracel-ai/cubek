@@ -11,6 +11,9 @@ use crate::*;
 pub(super) struct ContractShape {
     /// The accumulator's space: the batch axes, then the row, then the column.
     pub space: Space,
+    /// The accumulator's own matrix ([`MatrixAxes::accumulator`]), so the one place that decides
+    /// its edges is the one place every reader asks.
+    pub acc_axes: MatrixAxes,
     /// The axes the operands contract against the accumulator.
     pub reduce: Vec<Axis>,
     /// Their extents, taken off the operands' merged space rather than the accumulator's: a
@@ -25,8 +28,8 @@ pub(super) struct ContractShape {
     pub nr: usize,
     /// The accumulator's innermost (column) extent in scalars.
     pub cols: usize,
-    /// Contracted values one step consumes ([`Space::served`]).
-    pub served: usize,
+    /// Contracted values one step consumes ([`Space::contracted_per_step`]).
+    pub contracted_per_step: usize,
     /// How many sink cells one block column's vector lanes spread across.
     pub spread: usize,
     /// The lhs's line width.
@@ -43,37 +46,40 @@ impl ContractShape {
         lhs: &Space,
         rhs: &Space,
         space: Space,
-        served: usize,
+        contracted_per_step: usize,
         lw: usize,
         vw: usize,
         aw: usize,
     ) -> Self {
-        let rank = space.rank();
         let merged = Space::merge(&[lhs, rhs]);
+        let acc_axes = MatrixAxes::accumulator(&space, lhs);
         let reduce = Space::contracted(&[lhs, rhs], &space).to_vec();
         let reduce_extents = reduce
             .iter()
             .map(|&axis| merged.extent(axis))
             .collect::<Vec<_>>();
-        let cols = space.extent_at(rank - 1);
-        let spread = if served > 1 { 1 } else { vw / aw };
+        let cols = acc_axes.cols(&space);
+        let spread = if contracted_per_step > 1 { 1 } else { vw / aw };
         // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
         // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
         let nr = if spread > 1 {
             cols.div_ceil(spread)
         } else {
-            cols / (if served > 1 { 1 } else { vw })
+            cols / (if contracted_per_step > 1 { 1 } else { vw })
         };
+
+        let mr = acc_axes.rows(&space);
 
         Self {
             kc: reduce_extents.iter().product(),
-            mr: space.extent_at(rank - 2),
+            mr,
             nr,
             cols,
             space,
+            acc_axes,
             reduce,
             reduce_extents,
-            served,
+            contracted_per_step,
             spread,
             lw,
             vw,
@@ -88,7 +94,7 @@ impl ContractShape {
     /// — and reads as a matrix. One it does not is read a cell at a time.
     pub fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
         let lhs_axes = MatrixAxes::find(lhs, self.mr, self.kc)?;
-        let rhs_axes = match self.served > 1 {
+        let rhs_axes = match self.contracted_per_step > 1 {
             true => MatrixAxes::find(rhs, self.cols, self.kc)?,
             false => MatrixAxes::find(rhs, self.kc, self.cols)?,
         };
@@ -105,17 +111,34 @@ impl ContractShape {
     }
 
     /// The rhs's twin. A folded step lines it along the contraction, so its matrix is `(col, k)`;
-    /// at one served value it lines along the accumulator and reads `(k, col)`.
+    /// at one contracted value per step it lines along the accumulator and reads `(k, col)`.
     pub fn rhs_axes(&self, rhs: &Space) -> MatrixAxes {
-        match self.served > 1 {
+        match self.contracted_per_step > 1 {
             true => MatrixAxes::of(rhs, self.cols, self.kc),
             false => MatrixAxes::of(rhs, self.kc, self.cols),
         }
     }
 
-    /// The accumulator's batch axes: everything above the row and the column.
+    /// The accumulator's column axes with their extents.
+    pub fn column_edge(&self) -> Vec<(Axis, usize)> {
+        (self.acc_axes.col_split..self.space.rank())
+            .map(|p| (self.space.axis_at(p), self.space.extent_at(p)))
+            .collect()
+    }
+
+    /// The contracted axes with theirs, which the accumulator cannot size: a contracted axis is by
+    /// definition absent from it, so the extents come off the operands' merged space.
+    pub fn reduce_edge(&self) -> Vec<(Axis, usize)> {
+        self.reduce
+            .iter()
+            .copied()
+            .zip(self.reduce_extents.iter().copied())
+            .collect()
+    }
+
+    /// The accumulator's batch axes: everything above the row edge.
     pub fn batch_extents(&self) -> Vec<usize> {
-        (0..self.space.rank() - 2)
+        (0..self.acc_axes.row_split)
             .map(|p| self.space.extent_at(p))
             .collect()
     }
@@ -126,10 +149,10 @@ impl ContractShape {
     }
 
     /// The block's size in scalars, which is what [`RegisterBlock::budget`] counts: `mr * nr`
-    /// lines of `served * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
+    /// lines of `contracted_per_step * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
     /// the budget a schedule rolls its loops rather than keeping the block in registers.
     pub fn scalars(&self) -> usize {
-        self.mr * self.nr * self.served * self.aw * self.spread
+        self.mr * self.nr * self.contracted_per_step * self.aw * self.spread
     }
 
     /// Whether the lane fan-out's fixed extracts stay in step with the coordinate

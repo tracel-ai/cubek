@@ -147,7 +147,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
 /// The per-element inner reduction shared by both accumulator backings: fold `in_view` across the
 /// contracted axes into `seed`, for the single accumulator cell at `acc_coords`.
 ///
-/// A step consumes [`Space::served`] values: past one the input's line runs along the fastest
+/// A step consumes [`Space::contracted_per_step`] values: past one the input's line runs along the fastest
 /// contracted axis, so the whole line folds into this one cell ([`element_lines`]) instead of one
 /// scalar at a time ([`element_scalars`]).
 #[cube]
@@ -161,15 +161,15 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     seed: Acc,
     #[comptime] monoid: Monoid,
 ) -> Acc {
-    let served = comptime!(in_space.served(&layout.reduce_axes, vw));
-    if comptime!(served > 1) {
+    let contracted_per_step = comptime!(in_space.contracted_per_step(&layout.reduce_axes, vw));
+    if comptime!(contracted_per_step > 1) {
         element_lines::<Acc, In, V>(
             in_view,
             comptime!(in_space.clone()),
             comptime!(acc_space.clone()),
             comptime!(layout.clone()),
             acc_coords,
-            served,
+            contracted_per_step,
             seed,
             monoid,
         )
@@ -187,8 +187,8 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     }
 }
 
-/// [`element`]'s line path: the flat reduce index steps by `served`, so each step lands on a line
-/// start and one read serves `served` folds. The lanes accumulate in parallel and collapse
+/// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step lands on a line
+/// start and one read serves `contracted_per_step` folds. The lanes accumulate in parallel and collapse
 /// through [`horizontal::vector`] once, after the walk.
 #[cube]
 #[allow(clippy::too_many_arguments)]
@@ -198,15 +198,15 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
     acc_coords: &Coords<u32>,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     seed: Acc,
     #[comptime] monoid: Monoid,
 ) -> Acc {
     let mut acc_vec = Vector::<Acc, V>::cast_from(Monoid::identity::<Acc>(monoid));
-    for p in 0..comptime!(layout.kc / served) {
+    for p in 0..comptime!(layout.kc / contracted_per_step) {
         let reduce_coords = unravel(
             &const_coords(comptime!(layout.reduce_extents.clone())),
-            (p * comptime!(served)).fcast::<u32>(),
+            (p * comptime!(contracted_per_step)).fcast::<u32>(),
         );
 
         let in_coords = resolve_nd_coords(
@@ -215,7 +215,7 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
             comptime!(layout.reduce_axes.clone()),
             acc_coords,
             &reduce_coords,
-            served,
+            contracted_per_step,
             true,
         );
 
@@ -233,7 +233,10 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
         };
         acc_vec = monoid.fold::<Vector<Acc, V>>(acc_vec, Vector::<Acc, V>::cast_from(in_vec));
     }
-    monoid.fold::<Acc>(seed, horizontal::vector::<Acc, V>(acc_vec, served, monoid))
+    monoid.fold::<Acc>(
+        seed,
+        horizontal::vector::<Acc, V>(acc_vec, contracted_per_step, monoid),
+    )
 }
 
 /// [`element`]'s scalar path: one extract per contracted element.

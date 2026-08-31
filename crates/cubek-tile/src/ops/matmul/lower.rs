@@ -81,12 +81,13 @@ impl<Acc: Numeric> Tile<Acc> {
     /// folding once per `(row, k)` or once per `(col, k)`, whichever the operand asks for.
     ///
     /// `s` resolves at whatever granularity its own axes give it, and an axis it does not address
-    /// it cannot vary over. Where the block is an axis of the problem — `(KB, KI)`, spelled with
-    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values — the scales
-    /// leave `KI` unmapped and one scale per block follows, with nothing dividing anything. Where
-    /// it is not, a [rational](crate::Projection) axis (`PhysicalAxisMap::of(K).over(block)`)
-    /// spells the same granularity arithmetically, and then a served line may not straddle a
-    /// block: state the cut that holds it.
+    /// it cannot vary over. The block is an axis of the problem — `(KB, KI)` for a contracted one,
+    /// `(NB, NI)` for a column, spelled with
+    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values — and the
+    /// scales leave the position inside it unmapped. One scale per block then follows from which
+    /// axes the operand spans, with nothing dividing anything, which is why no line can straddle a
+    /// block here whatever width it is served at. A scales operand that divides instead is
+    /// refused.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -341,10 +342,10 @@ fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compti
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
-        let rank = out.rank();
         let kc = Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out);
-        MatrixAxes::find(&lhs.space, out.extent_at(rank - 2), kc).is_some()
-            && MatrixAxes::find(&rhs.space, kc, out.extent_at(rank - 1)).is_some()
+        let axes = MatrixAxes::accumulator(&out, &lhs.space);
+        MatrixAxes::find(&lhs.space, axes.rows(&out), kc).is_some()
+            && MatrixAxes::find(&rhs.space, kc, axes.cols(&out)).is_some()
     });
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered && flat,

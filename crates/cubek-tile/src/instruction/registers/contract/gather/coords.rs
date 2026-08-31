@@ -90,7 +90,7 @@ fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
 /// What the separable schedule assumes on top of [`assert_operand_shapes`], where it steps one
 /// resolved coordinate along the accumulator's columns by hand instead of resolving each cell.
 ///
-/// [`Projection::validate`] already states this for an operand served in lines, but it skips the
+/// [`Projection::validate`] already states this for an operand contracted_per_step in lines, but it skips the
 /// rule at width `1`, where there are no lines to address and a scalar operand is free to gather
 /// on its innermost axis. The step below is not free of it either way, so it is asked for here at
 /// every width. Host-side, so a violation is a comptime message.

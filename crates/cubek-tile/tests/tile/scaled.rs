@@ -131,7 +131,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             s_t.binding().into_tensor_arg(),
             // `KI` carried and addressing nothing: the scale cannot vary inside a block.
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -226,7 +226,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -322,7 +322,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -421,7 +421,7 @@ fn f16_scales_are_read_as_f16() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -810,7 +810,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
-                &[M, KB, KI],
+                &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
             )),
         ),
@@ -834,5 +834,123 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
                 "at ({m}, {n}): got {have}, want {want}"
             );
         }
+    }
+}
+
+/// [`scaled_matmul`] with the lhs's scales served as lines: `SW` of them per read, along `KB`.
+#[cube(launch)]
+fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
+    a: &TileArg<'_, E, Const<4>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scales: &TileArg<'_, S, SW>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+}
+
+/// **Scales served as lines along the contraction.** The lhs's scales vary over `KB` and nothing
+/// else, so `KB` is their innermost axis and a read serves several blocks of `K` at once.
+///
+/// The block walks its contraction in runs of one scale line for this: the folds are unrolled so
+/// each one's lane is a constant, and the lines under one fold stay rolled, since they all take
+/// the same scale. One row here, so the scales are per block of `K` alone.
+#[test]
+fn lhs_scales_are_served_several_at_a_time() {
+    let (cols, block, blocks, lanes) = (4, 4, 4, 4);
+    let depth = block * blocks;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+    let a: Vec<f32> = (0..depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Distinct per block of `K`, halves so the reference is exact.
+    let s: Vec<f32> = (0..blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![1, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let (b_t, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(b.clone())
+        .generate_with_f32_host_data();
+    let (s_t, _) = TestInput::builder(client.clone(), shape![blocks])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![1, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(1))
+                .axis(N, Cut::sequential(cols))
+                .axis(KB, Cut::sequential(blocks))
+                .axis(KI, Cut::sequential(block))
+        })
+        .build()
+        // The fold rides the lane walk, which reads one line per `lw` steps and takes a fixed
+        // component of it; the scalar walk has no line ordinal to fold under.
+        .with_instruction(Instruction::Registers {
+            config: RegisterBlock::new(64).lane_fanout(),
+        });
+
+    wide_lhs_scaled_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        lanes,
+        TileArgLaunch::new(
+            a_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            b_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_t.binding().into_tensor_arg(),
+            // `KB` innermost and alone: the width lands on the axis the scales vary over.
+            TileSpec::new(Projection::new(&[M, KB], &[PhysicalAxisMap::of(KB)])),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        [dtype, dtype],
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for n in 0..cols {
+        let want: f32 = (0..depth)
+            .map(|k| a[k] * s[k / block] * b[k * cols + n])
+            .sum();
+        let have = got.get_f32(&[0, n]);
+        assert!(
+            (have - want).abs() < 1e-3,
+            "at {n}: got {have}, want {want}"
+        );
     }
 }

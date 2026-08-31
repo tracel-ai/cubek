@@ -73,6 +73,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
+            comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),
             comptime!(semiring.add()),
         );
@@ -186,7 +187,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
     let cols = comptime!(problem.block.cols);
-    let served = comptime!(problem.block.served);
+    let contracted_per_step = comptime!(problem.block.contracted_per_step);
     let spread = comptime!(problem.block.spread);
     let aw = comptime!(problem.block.aw);
     let lw = comptime!(problem.block.lw);
@@ -207,7 +208,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
     let mut c = block::seed::<E, V, A>(
         acc,
-        served,
+        contracted_per_step,
         spread,
         aw,
         comptime!(mr),
@@ -222,15 +223,15 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     // such per-column value, and leaves this unwritten for the trace to fold away.
     let mut b = Array::<Vector<E, V>>::new(comptime!(nr));
 
-    if comptime!(served > 1) {
-        for step in 0..comptime!(kc / served) {
+    if comptime!(contracted_per_step > 1) {
+        for step in 0..comptime!(kc / contracted_per_step) {
             rank1_update::<E, EL, L, ER, V>(
                 lhs_view,
                 rhs_view,
                 &mut c,
                 &mut b,
                 batch,
-                step * comptime!(served),
+                step * comptime!(contracted_per_step),
                 comptime!(None),
                 unroll,
                 comptime!(problem.clone()),
@@ -294,7 +295,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     block::commit::<E, V, A>(
         acc,
         c,
-        served,
+        contracted_per_step,
         spread,
         aw,
         comptime!(mr),
@@ -327,7 +328,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
 ) {
     let mr = comptime!(problem.block.mr);
     let nr = comptime!(problem.block.nr);
-    let served = comptime!(problem.block.served);
+    let contracted_per_step = comptime!(problem.block.contracted_per_step);
     let lw = comptime!(problem.block.lw);
     let reduce_coords = unravel_const(
         comptime!(problem.block.reduce_extents.clone()),
@@ -370,8 +371,14 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                 comptime!(problem.clone()),
                 lw,
             );
-            a_row =
-                lane_component::<E, EL, L, V>(line, &reduce_coords, lane, served, lw, k_axis_idx);
+            a_row = lane_component::<E, EL, L, V>(
+                line,
+                &reduce_coords,
+                lane,
+                contracted_per_step,
+                lw,
+                k_axis_idx,
+            );
         }
         let mut b_row = Vector::<E, V>::cast_from(E::from_int(0));
         if comptime!(problem.rhs == RhsRole::PerRow) {
@@ -409,7 +416,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                         line,
                         &reduce_coords,
                         lane,
-                        served,
+                        contracted_per_step,
                         lw,
                         k_axis_idx,
                     )
@@ -447,11 +454,11 @@ fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     line: Vector<EL, L>,
     reduce_coords: &Coords<u32>,
     #[comptime] lane: Option<usize>,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] lw: usize,
     #[comptime] k_axis_idx: usize,
 ) -> Vector<E, V> {
-    if comptime!(served > 1) {
+    if comptime!(contracted_per_step > 1) {
         Vector::<E, V>::cast_from(line)
     } else if comptime!(lane.is_some()) {
         Vector::<E, V>::cast_from(line.extract(comptime!(lane.unwrap())))

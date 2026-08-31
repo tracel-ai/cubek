@@ -6,13 +6,13 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use cubecl::quant::scheme::QuantScheme;
+use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Instruction, LoadMethod, PhysicalAxis,
-    Projection, QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling, TileArgLaunch,
-    TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Instruction, LoadMethod, Packing,
+    PhysicalAxis, Projection, QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling,
+    TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -49,6 +49,8 @@ struct TileSourceData<'a, R: Runtime> {
     residence: Vec<Residence>,
     /// The width the operand's next Smem stage is served at; `None` serves it at `v`.
     stage_width: Option<usize>,
+    /// How this operand's values sit in its binding: several to a stored word, or as they are.
+    packing: Packing,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -96,6 +98,7 @@ impl<'a, R: Runtime> StridedTileSource<'a, Unset, Unset, Unset, R> {
                 storage: None,
                 residence: Vec::new(),
                 stage_width: None,
+                packing: Packing::Plain,
                 units: 0,
                 quant: None,
             },
@@ -236,6 +239,16 @@ impl<'a, Sp, Sub, Q, R: Runtime> StridedTileSource<'a, Sp, Sub, Q, R> {
     /// innermost axis out to whole lines.
     pub fn stage_width(mut self, width: usize) -> Self {
         self.data.stage_width = Some(width);
+        self
+    }
+
+    /// This operand's values are fields of a stored word, `field` wide each.
+    ///
+    /// A fact of the values alone: the binding's shape and strides count *values*, and this says
+    /// how many share a word. Scales, where the operand has any, are a second tensor and a second
+    /// operand; nothing here decodes behind a read.
+    pub fn packed(mut self, field: QuantValue) -> Self {
+        self.data.packing = Packing::Packed { field };
         self
     }
 
@@ -488,6 +501,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
             storage,
             residence,
             stage_width,
+            packing,
             units,
             quant,
         } = self.data;
@@ -585,6 +599,7 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         if let Some(width) = stage_width {
             spec = spec.stage_width(width);
         }
+        spec = spec.packing(packing);
         // At launch rather than at trace time, so the failure carries a host backtrace; the same
         // check runs again in `Tile::of` for specs that never pass through this builder.
         spec.validate_stage_width(v, quant.is_some());

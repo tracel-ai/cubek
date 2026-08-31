@@ -29,10 +29,12 @@ pub enum PlaneTile<T: Numeric> {
 impl<T: Numeric> PlaneTile<T> {
     /// An accumulator tile over the whole `m × n` MMA tile, uninitialized, in the `form` the
     /// instruction contracts through.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
         #[comptime] form: Instruction,
         #[comptime] m: usize,
         #[comptime] n: usize,
+        #[comptime] axes: MatrixAxes,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
@@ -50,6 +52,7 @@ impl<T: Numeric> PlaneTile<T> {
             Instruction::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
+                axes,
                 vector_size,
                 lane_share,
                 config,
@@ -200,6 +203,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
     pub(crate) fn mirror(
         #[comptime] space: Space,
+        #[comptime] axes: MatrixAxes,
         #[comptime] form: Instruction,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
@@ -208,8 +212,10 @@ impl<T: Numeric> PlanePartition<T> {
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
         let fin = comptime!(space.final_space());
-        let m = comptime!(fin.extent_at(fin.rank() - 2));
-        let n = comptime!(fin.extent_at(fin.rank() - 1));
+        // The edges the accumulator's own axes give, not its last two: a split column group is
+        // one edge, and sizing the block off the innermost axis alone would cut it in half.
+        let m = comptime!(axes.rows(&fin));
+        let n = comptime!(axes.cols(&fin));
 
         let mut frags = Sequence::<PlaneTile<T>>::new();
         #[unroll]
@@ -220,6 +226,7 @@ impl<T: Numeric> PlanePartition<T> {
                     form,
                     m,
                     n,
+                    axes,
                     k,
                     vector_size,
                     lane_share,

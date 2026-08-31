@@ -42,6 +42,12 @@ pub(super) enum RhsRole {
 }
 
 /// The accumulator scope at which one factor's complete tap walk is computed and cached.
+///
+/// The same question a memory-backed operand answers through
+/// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones a
+/// single read of it serves, and so how far out of the nest that read lifts. A factor answers it
+/// through its recipe rather than a projection, because it reads its axes instead of addressing
+/// them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum FactorReuse {
     /// Once for the entire accumulator block.
@@ -52,6 +58,18 @@ pub(super) enum FactorReuse {
     Column,
     /// Once for each accumulator cell.
     Cell,
+}
+
+impl FactorReuse {
+    /// The scope a factor varying over these two axes can be cached at.
+    pub(super) fn of(varies_row: bool, varies_col: bool) -> Self {
+        match (varies_row, varies_col) {
+            (false, false) => FactorReuse::Block,
+            (true, false) => FactorReuse::Row,
+            (false, true) => FactorReuse::Column,
+            (true, true) => FactorReuse::Cell,
+        }
+    }
 }
 
 /// The gather-specific half of a contraction's comptime geometry, over the
@@ -164,12 +182,7 @@ impl GatherProblem {
                             varies_col |=
                                 masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, col);
                         }
-                        match (varies_row, varies_col) {
-                            (false, false) => FactorReuse::Block,
-                            (true, false) => FactorReuse::Row,
-                            (false, true) => FactorReuse::Column,
-                            (true, true) => FactorReuse::Cell,
-                        }
+                        FactorReuse::of(varies_row, varies_col)
                     })
                     .collect()
             }
@@ -264,7 +277,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
@@ -293,7 +306,15 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         &lhs.space,
         &rhs.space,
         &rhs_projection,
-        ContractShape::new(&lhs.space, &rhs.space, space, served, lw, rw, aw),
+        ContractShape::new(
+            &lhs.space,
+            &rhs.space,
+            space,
+            contracted_per_step,
+            lw,
+            rw,
+            aw
+        ),
         factors,
         factor_dependencies,
         normalization,
@@ -304,16 +325,16 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         // A separable lhs is a scalar procedural weight, so it never lines along the contracted
         // axis and its step serves one value. The block is then the accumulator's own width.
         comptime!(assert!(
-            served == 1 && lw == 1,
-            "contract gather: a separable lhs needs scalar weights served one value a step"
+            contracted_per_step == 1 && lw == 1,
+            "contract gather: a separable lhs needs scalar weights contracted_per_step one value a step"
         ));
         let size!(V) = rw;
         let size!(A) = aw;
         separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
-    } else if comptime!(served > 1) {
-        // The block's lines are the rhs's: `served`-wide K-partials of one cell at a folded step,
+    } else if comptime!(contracted_per_step > 1) {
+        // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.
-        let size!(W) = served;
+        let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
         nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);
     } else {
@@ -369,7 +390,7 @@ mod tests {
         assert_eq!((block.mr, block.nr), (4, 2));
         assert_eq!(block.batch_extents(), Vec::<usize>::new());
         assert_eq!(block.matrices(), 1);
-        // `mr * nr` lines of `served * aw`.
+        // `mr * nr` lines of `contracted_per_step * aw`.
         assert_eq!(block.scalars(), 32);
     }
 

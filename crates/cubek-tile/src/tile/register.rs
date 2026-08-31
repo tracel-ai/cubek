@@ -36,6 +36,11 @@ pub struct RegisterData<T: Numeric> {
     /// Lines per row: the `n` extent divided by [`vector_size`](Self::vector_size).
     #[cube(comptime)]
     pub(crate) nr: usize,
+    /// The sink's matrix, the one this block was sized against. Carried rather than re-derived:
+    /// a block that drains through a different grouping than it was allocated for writes its
+    /// lines at coordinates the sink reads as something else.
+    #[cube(comptime)]
+    pub(crate) axes: MatrixAxes,
     /// Whether each lane holds whole cells or a partial of them. Inherited from the memory this
     /// was promoted from, and only read on drain: the contraction is per-lane either way, but a
     /// partial is not the answer until the plane's lanes are summed.
@@ -67,6 +72,7 @@ impl<T: Numeric> RegisterData<T> {
     pub(crate) fn alloc(
         #[comptime] m: usize,
         #[comptime] n: usize,
+        #[comptime] axes: MatrixAxes,
         #[comptime] vector_size: usize,
         #[comptime] lane_share: LaneShare,
         #[comptime] config: RegisterBlock,
@@ -83,6 +89,7 @@ impl<T: Numeric> RegisterData<T> {
             vector_size,
             mr: m,
             nr,
+            axes,
             lane_share,
             config,
             monoid,
@@ -120,7 +127,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] space: Space,
     ) {
         // Addressed in lines at the width the block was promoted at, bounded by the window extent.
-        let mut sink = mem.matrix_mut::<RA>(0usize, space);
+        let mut sink = mem.matrix_mut::<RA>(0usize, comptime!(self.axes), space);
 
         // Split comptime rather than branching per line: a value-producing `match` plus a
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been

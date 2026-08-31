@@ -9,12 +9,12 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
-use crate::instruction::registers::lines::{Lines, LinesExpand};
+use crate::instruction::registers::lines::{FoldRun, Lines, LinesExpand};
 use crate::*;
 
-/// `c += lhs · rhs` over the block: `kc / served` steps into the `mr × nr` lines of `c`.
+/// `c += lhs · rhs` over the block: `kc / contracted_per_step` steps into the `mr × nr` lines of `c`.
 ///
-/// A step consumes `served` contracted values ([`Space::served`]). Past one, both operands line
+/// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line
 /// along the contracted axis and the block's lanes are partials of one cell that [`commit`] folds.
 /// At one, the rhs lines along the accumulator and the lhs's line is taken a lane at a time: as
 /// (line, lane) with fixed comptime extracts when `lane_fanout` (GPU), else as a flat scalar loop.
@@ -33,7 +33,7 @@ pub(crate) fn contract<
     rhs: &Rhs,
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] kc: usize,
@@ -43,8 +43,8 @@ pub(crate) fn contract<
 ) {
     let mut b = Array::<Vector<E, V>>::new(nr);
 
-    if comptime!(served > 1) {
-        for line in 0..comptime!(kc / served) {
+    if comptime!(contracted_per_step > 1) {
+        for line in 0..comptime!(kc / contracted_per_step) {
             rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
@@ -53,7 +53,8 @@ pub(crate) fn contract<
                 0usize,
                 line as u32,
                 comptime!(None),
-                served,
+                0usize,
+                contracted_per_step,
                 lw,
                 mr,
                 nr,
@@ -62,51 +63,46 @@ pub(crate) fn contract<
             );
         }
     } else if comptime!(lane_fanout && lw > 1) {
-        let k_lines = comptime!(kc / lw);
-        let k_tail = comptime!(kc % lw);
-
-        for line in 0..k_lines {
-            #[unroll]
-            for lane in 0..lw {
-                rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
-                    lhs,
-                    rhs,
-                    c,
-                    &mut b,
-                    line * lw + lane,
-                    line as u32,
-                    comptime!(Some(lane)),
-                    served,
-                    lw,
-                    mr,
-                    nr,
-                    unroll,
-                    semiring,
-                );
-            }
-        }
-
-        // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
-        // too, so the tail is straight-line code rather than a second, dynamic walk.
-        #[unroll]
-        for lane in 0..k_tail {
-            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+        // The lhs's fold repeats over a run of its lines. An operand with nothing to fold in walks
+        // line by line; one whose fold picks a lane of a wide read needs each fold's ordinal as a
+        // constant, so the run is unrolled around a rolled walk of the lines it covers.
+        let fold = lhs.fold_run();
+        match comptime!(fold == FoldRun::ONE) {
+            true => lane_walk::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
                 c,
                 &mut b,
-                comptime!(k_lines * lw + lane),
-                comptime!(k_lines) as u32,
-                comptime!(Some(lane)),
-                served,
+                contracted_per_step,
                 lw,
                 mr,
                 nr,
+                kc,
                 unroll,
                 semiring,
-            );
+            ),
+            false => folded_lane_walk::<E, EL, L, ER, V, Lhs, Rhs>(
+                lhs,
+                rhs,
+                c,
+                &mut b,
+                fold,
+                contracted_per_step,
+                lw,
+                mr,
+                nr,
+                kc,
+                unroll,
+                semiring,
+            ),
         }
     } else {
+        let flat_fold = lhs.fold_run();
+        comptime!(assert!(
+            flat_fold.folds == 1,
+            "block::contract: a scalar walk reads one contracted value at a time and has no line \
+             ordinal to fold under; an operand folding several per read needs lines to walk"
+        ));
         // Flat scalar walk (CPU or scalar lines)
         for p in 0..kc {
             rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
@@ -117,7 +113,8 @@ pub(crate) fn contract<
                 p,
                 (p / lw) as u32,
                 comptime!(None),
-                served,
+                0usize,
+                contracted_per_step,
                 lw,
                 mr,
                 nr,
@@ -128,10 +125,153 @@ pub(crate) fn contract<
     }
 }
 
+/// Walk `K` as (line, lane): one line read per `lw` steps, each step taking a fixed component of
+/// it, which is what lets the backend fold an `mr`-row fan-out's repeated line reads into one.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn lane_walk<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] lw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let k_lines = comptime!(kc / lw);
+    let k_tail = comptime!(kc % lw);
+
+    for line in 0..k_lines {
+        #[unroll]
+        for lane in 0..lw {
+            rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+                lhs,
+                rhs,
+                c,
+                b,
+                line * lw + lane,
+                line as u32,
+                comptime!(Some(lane)),
+                0usize,
+                contracted_per_step,
+                lw,
+                mr,
+                nr,
+                unroll,
+                semiring,
+            );
+        }
+    }
+
+    // A line width that does not divide `kc` leaves a partial last line. Its lane count is comptime
+    // too, so the tail is straight-line code rather than a second, dynamic walk.
+    #[unroll]
+    for lane in 0..k_tail {
+        rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+            lhs,
+            rhs,
+            c,
+            b,
+            comptime!(k_lines * lw + lane),
+            comptime!(k_lines) as u32,
+            comptime!(Some(lane)),
+            0usize,
+            contracted_per_step,
+            lw,
+            mr,
+            nr,
+            unroll,
+            semiring,
+        );
+    }
+}
+
+/// [`lane_walk`] where the lhs folds something in that arrives several to a read.
+///
+/// The folds are unrolled and the lines each covers are not: a fold is a lane of the read it came
+/// in, so its ordinal has to be a constant, while every line under one fold takes the same lane
+/// and can be walked at runtime. The unrolled factor is therefore the *fold count*, not the run,
+/// which is what keeps this off the block's budget cliff.
+///
+/// Costs one `lw`-wide body per fold. `kc` that the run does not divide keeps its lines on
+/// [`lane_walk`]'s tail, which folds nothing and needs no constant.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn folded_lane_walk<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    ER: Numeric,
+    V: Size,
+    Lhs: Lines<EL, L>,
+    Rhs: Lines<ER, V>,
+>(
+    lhs: &Lhs,
+    rhs: &Rhs,
+    c: &mut Array<Vector<E, V>>,
+    b: &mut Array<Vector<E, V>>,
+    #[comptime] fold: FoldRun,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] lw: usize,
+    #[comptime] mr: usize,
+    #[comptime] nr: usize,
+    #[comptime] kc: usize,
+    #[comptime] unroll: bool,
+    #[comptime] semiring: Semiring,
+) {
+    let k_lines = comptime!(kc / lw);
+    let span = comptime!(fold.span());
+    comptime!(assert!(
+        k_lines.is_multiple_of(span),
+        "block::contract: {k_lines} lines of a contraction do not divide into runs of {span}, so \
+         one run would fold a lane that is not there; cut the contraction at a whole run"
+    ));
+
+    for run in 0..comptime!(k_lines / span) {
+        #[unroll]
+        for f in 0..comptime!(fold.folds) {
+            for j in 0..comptime!(fold.lines) {
+                let line = run * comptime!(span) + comptime!(f * fold.lines) + j;
+                #[unroll]
+                for lane in 0..lw {
+                    rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
+                        lhs,
+                        rhs,
+                        c,
+                        b,
+                        line * lw + lane,
+                        line as u32,
+                        comptime!(Some(lane)),
+                        comptime!(f * fold.lines),
+                        contracted_per_step,
+                        lw,
+                        mr,
+                        nr,
+                        unroll,
+                        semiring,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// One step `c += outer(A[:, k], B[k, :])`, at scalar contraction step `k` off the `k_line`-th
 /// K-line of each lhs row. Reads past the operands' logical bound contribute `0`.
 ///
-/// At `served > 1` both reads are whole lines off the contracted axis, which is why the rhs is
+/// At `contracted_per_step > 1` both reads are whole lines off the contracted axis, which is why the rhs is
 /// addressed `(n, k_line)` there and `(k, n)` otherwise.
 ///
 /// `lane` names the component to take when the caller walks `K` as (line, lane), so `extract`
@@ -156,25 +296,38 @@ fn rank1_update<
     k: usize,
     k_line: u32,
     #[comptime] lane: Option<usize>,
-    #[comptime] served: usize,
+    #[comptime] lhs_run: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] lw: usize,
     #[comptime] mr: usize,
     #[comptime] nr: usize,
     #[comptime] unroll: bool,
     #[comptime] semiring: Semiring,
 ) {
-    #[unroll(unroll)]
-    for n in 0..nr {
-        if comptime!(served > 1) {
-            b[n] = Vector::<E, V>::cast_from(rhs.line((n as u32, k_line), 0usize));
-        } else {
-            b[n] = Vector::<E, V>::cast_from(rhs.line((k as u32, n as u32), 0usize));
+    // A rhs whose fold is indexed per column needs each line's real ordinal, which only an
+    // unconditionally unrolled walk gives; one fold per read does not care, and keeps the walk the
+    // block's own budget decided.
+    let fold = rhs.fold_run();
+    if comptime!(fold.folds > 1) {
+        #[unroll]
+        for n in 0..nr {
+            b[n] =
+                Vector::<E, V>::cast_from(rhs.line((k as u32, comptime!(n as u32).runtime()), n));
+        }
+    } else {
+        #[unroll(unroll)]
+        for n in 0..nr {
+            if comptime!(contracted_per_step > 1) {
+                b[n] = Vector::<E, V>::cast_from(rhs.line((n as u32, k_line), 0usize));
+            } else {
+                b[n] = Vector::<E, V>::cast_from(rhs.line((k as u32, n as u32), 0usize));
+            }
         }
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let lhs_line = lhs.line((i as u32, k_line), 0usize);
-        let a = if comptime!(served > 1) {
+        let lhs_line = lhs.line((i as u32, k_line), lhs_run);
+        let a = if comptime!(contracted_per_step > 1) {
             Vector::<E, V>::cast_from(lhs_line)
         } else if comptime!(lane.is_some()) {
             Vector::<E, V>::cast_from(lhs_line.extract(comptime!(lane.unwrap())))
@@ -197,16 +350,16 @@ fn rank1_update<
 /// What [`seed`] and [`commit`] both need to hold before they spread a block column's lanes across
 /// several sink cells: the lanes mean one thing at a time, and a spread one addresses cells the
 /// accumulator serves singly.
-fn assert_spread(served: usize, spread: usize, accumulator_width: usize, who: &str) {
+fn assert_spread(contracted_per_step: usize, spread: usize, accumulator_width: usize, who: &str) {
     assert!(
-        served == 1 || spread == 1,
-        "{who}: lanes cannot hold contracted partials (served {served}) and neighbouring \
+        contracted_per_step == 1 || spread == 1,
+        "{who}: lanes cannot hold contracted partials (contracted_per_step {contracted_per_step}) and neighbouring \
          sink cells (spread {spread}) at once"
     );
     assert!(
         spread == 1 || accumulator_width == 1,
         "{who}: a spread block scatters one lane per sink cell, so the accumulator must be \
-         served scalar (it is {accumulator_width} wide)"
+         contracted_per_step scalar (it is {accumulator_width} wide)"
     );
 }
 
@@ -224,7 +377,7 @@ pub(crate) fn spread_guard(spread: usize, cols: usize) -> bool {
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
 /// never touch memory. The algebra is the view's, stated where it was built.
 ///
-/// At `served > 1` the block's lanes are partials of one cell, so the accumulator's value seeds
+/// Where a step consumes more than one, the block's lanes are partials of one cell, so its value seeds
 /// lane 0 alone and the rest start at the identity.
 ///
 /// At `spread > 1` they instead hold neighbouring cells of a scalar sink. A padded shared-memory
@@ -235,7 +388,7 @@ pub(crate) fn spread_guard(spread: usize, cols: usize) -> bool {
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] spread: usize,
     #[comptime] accumulator_width: usize,
     #[comptime] mr: usize,
@@ -244,7 +397,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     #[comptime] unroll: bool,
 ) -> Array<Vector<E, V>> {
     comptime!(assert_spread(
-        served,
+        contracted_per_step,
         spread,
         accumulator_width,
         "block::seed"
@@ -276,7 +429,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
                 c[i * nr + n] = lanes;
             } else {
                 let cell = acc.seed((i as u32, n as u32));
-                if comptime!(served > 1) {
+                if comptime!(contracted_per_step > 1) {
                     let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(monoid));
                     lanes.insert(0usize, cell.extract(0usize));
                     c[i * nr + n] = lanes;
@@ -290,7 +443,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
 }
 
 /// The twin of [`seed`]: commit the block back once the whole contraction is folded into it,
-/// collapsing the block's lanes first where they hold partials of one cell (`served > 1`), or
+/// collapsing the block's lanes first where they hold partials of one cell (`contracted_per_step > 1`), or
 /// scattering them across scalar sink cells where they hold neighbours (`spread > 1`).
 /// Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
 /// rather than the leaf knowing it was split.
@@ -298,7 +451,7 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
 pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     c: Array<Vector<E, V>>,
-    #[comptime] served: usize,
+    #[comptime] contracted_per_step: usize,
     #[comptime] spread: usize,
     #[comptime] accumulator_width: usize,
     #[comptime] mr: usize,
@@ -307,7 +460,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     #[comptime] unroll: bool,
 ) {
     comptime!(assert_spread(
-        served,
+        contracted_per_step,
         spread,
         accumulator_width,
         "block::commit"
@@ -342,8 +495,8 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
                         acc.commit((i as u32, col), Vector::<E, A>::cast_from(cell.extract(l)));
                     }
                 }
-            } else if comptime!(served > 1) {
-                let total = horizontal::vector::<E, V>(cell, served, monoid);
+            } else if comptime!(contracted_per_step > 1) {
+                let total = horizontal::vector::<E, V>(cell, contracted_per_step, monoid);
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));

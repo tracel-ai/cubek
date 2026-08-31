@@ -195,12 +195,15 @@ pub fn test_algo(
     problem_for_check.rhs_strides = rhs.strides().clone();
 
     let dtypes_for_launch = dtypes.clone();
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        match cubek_convolution::launch_ref(&strategy, c, inputs, args, dtypes_for_launch) {
-            Ok(()) => ExecutionOutcome::Executed,
-            Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
-        }
-    });
+    let outcome =
+        launch_and_capture_outcome(
+            &client,
+            &[&out.handle],
+            |c| match cubek_convolution::launch_ref(&strategy, c, inputs, args, dtypes_for_launch) {
+                Ok(()) => ExecutionOutcome::Executed,
+                Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
+            },
+        );
 
     let outcome = match outcome {
         ExecutionOutcome::Executed => TestOutcome::Validated(assert_result(

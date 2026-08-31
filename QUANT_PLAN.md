@@ -158,55 +158,229 @@ that exists, a scheme that blocks the columns keeps the rational spelling there,
 | 4 | **two levels** | `disjoint(&[(KBO, ..), (KBI, ..), (KI, 1)])` for mxfp4's shape: one more label in the same list, since mixed radix does not care how many digits |
 | 5 | **port the quant tests, then delete** | `QuantTileArg`, `Quantization`, `DequantAt`, `validate_dequant_at`, `QuantInfo`'s block bookkeeping, `flat()`'s dequantizing read, `copy_from`'s arithmetic. Acceptance: identical numbers on every existing quant test. **Not a mechanical port** — see the survey below |
 | 6 | **the N-D nest, if anything asks** | a genuinely gathered operand still has no matrix, so a scaled contraction over one is refused. It was built once (read the scale at the cell through `cell_read`, no side needed) and dropped in the port when `gather.rs` split into `gather/` upstream; under the split, the values operand stays on the direct path, so this is now only for real gathers. Preserved on `quant-work-backup` |
-| 7 | **the metabolic gemv** | the driver. Its per-token scale-widening pass (~7.9 ms/step of a 75 ms Qwen3-8B decode step) exists only because the engine reads scales at f32; it deletes itself once the gemv is written in this spelling. **Nothing in the engine blocks it any more** — `a_packed_decode_gemv_runs_in_this_spelling` (`tests/tile/packed.rs`) is the whole shape: packed weights read in place, scales as their own operand, `N` across cubes, partials in registers for the whole `K` walk. What is left is the routine and the metabolic side |
+| 7 | **the metabolic gemv** | the driver. **The routine is written** (`cubek-matmul/src/tiled/quant_gemv/`) and metabolic calls it. See below |
 
-### Item 2, planned
+### Item 7, the routine
 
-A contraction's shape is read off the accumulator's *last two axes* and off matching extent
-products. Both are guesses that happen to be right while every problem is `[batch…, M, N]`. A
-matmul's shape is not a numeric coincidence, it is which space names which axis:
+`cubek-matmul/src/tiled/quant_gemv/`, on `Tiling::over` and the launcher. Four operands and one
+verb:
 
-| group | rule |
-|---|---|
-| `reduce` | in `lhs ∪ rhs`, absent from the accumulator (already [`Space::contracted`]) |
-| `rows` | the accumulator's axes the lhs spans |
-| `cols` | the accumulator's axes the rhs spans |
-| `batch` | the accumulator's axes both span |
+```rust
+out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+```
 
-Four groups, one rule, nothing stated and nothing searched for. An accumulator axis neither
-operand spans is already refused in `Tile::op_space`.
+The weight's physical `[d_out, d_in]` buffer is the **lhs**, which is the orientation a decode
+step streams: the contraction runs along the buffer's contiguous direction. `K` is spelled
+`(KB, KI)`, so one scale per block is the scales operand omitting `KI` — no divisor anywhere in
+the launch, and the scales bind at whatever element the checkpoint stored them in.
 
-**What it unblocks.** A `[bm, bn]` scheme splits `N` into `(NB, NI)`, which today breaks
-`ContractShape` (`NB` and `NI` become the row and the column). With the split, `PhysicalAxisMap::of(N).over(bn)`
-goes, `check_lines_hold_one_scale` goes with it (a served line inside one block stops being an
-arithmetic check and becomes the shape of the axes), and a scales operand's innermost axis is a
-*block* axis — which is the only way a scales line can be wider than one value, because a line's
-width applies to the innermost axis of the operand's space and today that is the axis the scales
-omit.
+The plan is metabolic's measured col geometry, restated in the split spelling. A strip of output
+rows per cube, a run per plane, and an aligned lane group per row whose lanes interleave the
+contraction between them. A group is eight lanes, which is where the fold was measured; how it
+reaches eight is the block's business, and that is the one thing the split changed. q4's 32-value
+block takes four lanes of `KI`, so the group reaches eight by taking two blocks of `KB`; q8's word
+is half as wide, so eight lanes of `KI` cover the block alone and nothing splits `KB`. A cut cuts
+one axis or the other and cannot straddle two, so a group wider than a block is *stated* as two
+cuts rather than arriving as a stride that happens to cross a scale boundary.
 
-**Phases.**
+Two things fell out that were not in the plan.
 
-1. **Name the partition.** `ContractAxes { batch, rows, cols, reduce }` from the three spaces, and
-   a `MatrixAxes` built from membership in an operand's own axis order rather than from a product.
-   Groups must be contiguous and in order; anything else is refused where it is built. Behaviour
-   unchanged, and the new partition is asserted to agree with the old numbers.
-2. **`ContractShape` derives from it.** `mr`, `cols`, `kc` and `batch_extents` become products over
-   the groups; `lhs_axes` / `rhs_axes` / `matrix_axes` become lookups. `MatrixAxes::of` and `find`
-   lose their contraction callers.
-3. **The accumulator's own view.** `MemData::matrix_mut` takes its `MatrixAxes` from the caller
-   instead of assuming `trailing_pair`. This is the line that actually refuses a split `N`.
-4. **Split `N` in a test**, scales addressing `NB` alone, end to end.
-5. **The divisors go**: `over(bn)` out of the specs, `check_lines_hold_one_scale` deleted.
-6. **Vectorized scales.** The `Lines` impl that folds them, `run` non-zero, and the two lines that
-   nail the width shut (`direct.rs`'s `size!(S) = 1`, `scale_line`'s `extract(0)`) deleted.
+**The device's vector cap is not a refusal.** The routine first inherited `factor >
+max_vector_size` from `tests/tile/packed.rs`, which skips q4 on a four-lane device. It is wrong
+here for the reason metabolic already recorded on its own selector: the weight binds one `u32`
+*word* per line whatever the packing factor expands to. Removed, and q4 runs correctly on this
+Metal device — measured, not reasoned about. The activation's eight-wide `f16` line comes back as
+two adjacent `vec4<f16>` loads, which is the cap doing its job rather than refusing.
 
-**Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16`
-is a hardware number, so grouping it by extent is right there and stays.
+**The routine serves more than one activation row.** `N` is sequential at every level, so a lane
+holds that many partials against the weight line it already read. The metabolic arm it replaces
+declines a multi-row call; this one does not.
 
-**Risks.** Interleaved accumulator axes give non-contiguous groups, which the two-split
-`MatrixAxes` cannot express: refused rather than supported. An operand spanning an accumulator axis
-it does not own classifies wrong, but the numeric search misreads it today too. `spread`, `nr` and
-`served` all read `cols`, and take the group's product instead.
+`tests/tiled/quant_gemv.rs` runs it end to end against a host reference, and
+`tests/tile/decode_gemv.rs` pins the two shapes the *engine* offers and why the routine takes the
+one it does — see the gap below.
+
+### Item 7, the metabolic side
+
+The port estimate in the previous session's notes — "~71 errors plus two `[patch]` blocks" — was
+stale. What it actually costs, against `metabolic` at `f3da4b2d`:
+
+- **Three `[patch]` blocks**, not two: cubecl, cubek, *and* burn. cubek needs a cubecl three
+  commits past burn's pin (the runtimes refactor, cubecl #1568 / cubek #581), and burn's pin does
+  not compile against it.
+- **Four lines in `burn-cubecl/src/backend.rs`.** That refactor turned `memory_report()`,
+  `memory_usage()` and `memory_persistent_allocation()` from `Result` to plain values and dropped
+  `InstallMemoryPoolsError::StreamUnavailable`. Nothing conceptual.
+- **Ten identical call sites in `metabolic-extension`.** `Launcher::vector_size` takes a
+  `&Geometry` rather than a `&TensorBinding` (cubek #571), so each is `&Geometry::from(&binding)`.
+
+That is the whole port. `cubek-resample`'s removal costs nothing, because the patched `cubek`
+umbrella no longer names it.
+
+The arm itself is `matmul/gemv/quant/launch.rs::launch_scales_as_operand`, behind a runtime
+switch so both can be measured in one process. It declines silently — a two-level scheme or a
+minifloat scale dtype keeps the old arm — and a silent decline read as a fast arm is exactly the
+failure mode a measurement invites, so the switch is paired with a launch counter and both the
+correctness test and the probe assert on it. That counter earned its place immediately: the arm
+was deriving its `QuantValue` from a bit count, which reads `Q8F` as `Q8S` — the same width, a
+different range, and no error anywhere.
+
+### Item 7, measured
+
+`gemv_col_quant_bandwidth::scales_as_operand_against_the_widening_arm`, on an M2 Pro: a decode
+step's packed projections (36 layers x 4) run three ways per round, order rotated, device-side
+`client.profile` on the raw backend. The third variant is the control — the shipping arm over
+**f32** scales pays no widening and is untouched by the change, so its own spread says whether
+the round is readable.
+
+| | widen f16 | operand f16 | control f32 | delta |
+|---|---|---|---|---|
+| control spread 0.2% | 46.68 ms | 36.83 ms | 38.23 ms | **-9.85 ms, -21.1%** |
+| control spread 3.9% | 48.82 | 36.95 | 38.38 | -11.87 ms, -24.3% |
+| control spread 12.9% | 55.43 | 39.99 | 40.72 | *invalid* |
+
+The first row is the number; the box heats across back-to-back runs and the third invalidates
+itself by its own control. All three agree on direction and rough size.
+
+**The 9.85 ms is two effects, and the control separates them.**
+
+- **~8.5 ms is the widening pass.** The f16 arm and the f32 arm run the *same* gemv kernel; the
+  only difference is the per-launch cast dispatch, and it is 46.68 against 38.23. That brackets
+  the ~7.9 ms this plan carried as an estimate, from measurement rather than from reading code.
+- **~1.4 ms is the gemv itself**, reading half the scale bytes: 36.83 against the control's
+  38.23. The scales are 434 MB of the step at f16 against 868 MB at f32, and 434 MB at this
+  box's ~180 GB/s is ~2.4 ms — the same order, so the saving sits where it should.
+
+So the open question — whether the gemv is *also* faster, or only shorter by a dispatch — is
+answered: both, and the smaller half is the one that is bandwidth.
+
+One asymmetry worth keeping. The operand arm barely drifts across the three runs (36.83, 36.95,
+39.99) where the widening arm drifts hard (46.68, 48.82, 55.43). A kernel whose extra cost is
+launch-bound is what heats up that way, which is a second reading of the same fact: the widening
+is a dispatch per projection, not bytes.
+
+### Item 2, and what it turned out to be
+
+A contraction's shape was read off the accumulator's *last two axes*. Half of that is not a guess:
+the innermost axis is a column edge by construction, because it is the axis the sink lines along.
+The other half is, and it was the half refusing a split `N` — `(M, NB, NI)` takes the block index
+for a row and leaves the contraction reading a matrix that is not there.
+
+So the column group *reaches*, and how far is read off the operands:
+
+```rust
+fn col_split(acc: &Space, lhs: &Space) -> usize {
+    let mut split = acc.rank() - 1;
+    while split > 1 && !lhs.contains(acc.axis_at(split - 1)) {
+        split -= 1;
+    }
+    split
+}
+```
+
+An axis the lhs spans stops the run, because an axis the lhs varies over has to be walked against
+the lhs rather than folded into a column. `mr`, `cols` and `batch_extents` all read off that one
+number. **Landed**, suite unchanged.
+
+The rule this replaced — rows are the accumulator's axes the lhs spans, columns the ones the rhs
+does, batch the ones both do — is wrong, and two shapes say so. A conv accumulator shares `N`, `OH`
+and `OW` with its image, so every lhs-spanned axis becoming a row would make one `N*OH*OW` matrix
+out of a window that is not contiguous; today `N` and `OH` are batch and only `OW` is the row edge,
+and which of the two it is is a *tiling choice*, not a fact about membership. And a resampling lhs
+can span `COL` (`tests/tile/separable.rs`, an lhs spelled `[ROW, TAP, COL]`), which would take the
+accumulator's own column for a row. Membership answers how far the column group reaches. It does
+not answer where the rows stop and the batch begins, and nothing needs it to.
+
+**Done.** Every step of it, and the scales are served as lines.
+
+1. **The accumulator's own view** takes its `MatrixAxes` instead of assuming the trailing pair.
+2. **Split `N` end to end** (`tests/tile/blocked.rs`), which turned up three refusals: both
+   `matrix_mut`s asked whether a projection was *direct* where the read side had already been
+   relaxed to ask whether it *overlaps*; `MemData::matrix_mut` built a plain matrix layout where
+   its read twin built a projected one; and `scale_side` read the accumulator's columns off its
+   last axis. It also turned up an engine bug with nothing to do with quantization:
+   `AxisProjection` multiplied line-addressed axes by scalar coefficients, which no single-axis
+   column group could show.
+3. **The divisors are gone.** `over(bn)` is out of every scales spec and
+   `check_lines_hold_one_scale` with it; a scales operand that divides is refused outright.
+4. **The scales are served as lines.** Their matrix counts its columns in *blocks* where the
+   values' counts lines, which frees them to span only what they vary over and so leaves their
+   innermost axis one they do. `ScaledLines` folds them at the leaf rather than under a view,
+   because which lane of a scale line a value line takes is a constant only the caller knows:
+   `run` is that line's ordinal, and `Lines::lanes` is how the block knows to walk its columns
+   under one. A wide scale is refused where the ordinal is not constant — the lhs's columns are the
+   contraction, whose step is a runtime index.
+
+`tests/tile/blocked.rs::scales_are_served_several_at_a_time` pins it, and the generated kernel
+shows what it is for: one `vec4<f32>` load at one address, four constant lane extracts, where there
+were eight scalar loads.
+
+**The register accumulator serves them too.** A promoted block is sized by the accumulator's own
+edges and drained through them, and the drain was still taking the trailing pair: with `N` split
+the block was `4x8` while the sink view it wrote through was `NB x NI`, so everything past the
+first column block was masked away and half the answer landed. `RegisterData` carries the matrix it
+was allocated against rather than re-deriving one, since a block that drains through a different
+grouping writes its lines where the sink reads something else.
+`a_promoted_accumulator_spans_a_split_output_axis` pins the shape with no scales at all, and
+`a_promoted_accumulator_takes_scales_by_the_line` pins the whole thing.
+
+`partition_grid` still reads the trailing pair. Nothing reaches it yet: a level that cuts nothing
+is dropped, so an unpartitioned promoted walk never asks. A promoted accumulator whose *levels*
+cut a split column group would, and that is where to look next.
+
+### Measured
+
+`tests/tile/dequant.rs`'s kernel, timed back to back in one process against a plain `f32` copy of
+the same output size (an ad-hoc harness, since a permanent one belongs in an `eval` category and
+`cubek-tile` has none):
+
+| | ms/pass | GB/s |
+|---|---|---|
+| dequant 4096x4096 q4 -> f32 | 0.61 – 1.11 | 70 – 128 |
+| copy 4096x4096 f32 | 0.92 – 1.52 | 88 – 146 |
+
+The spread is the machine, not the kernels: four back-to-back runs moved the copy's own number by
+40%, which is the thermal variance this box is known for. Only the within-run pairing says
+anything, and there the decode tracks the copy across every run while moving an eighth of the read
+traffic and taking less wall time for it.
+
+**So the decode is bandwidth-bound, and its arithmetic is not what limits it.** That retires a
+suspicion rather than confirming one: `unpack_line` builds its output vector a lane at a time and
+the emitted WGSL rebuilds the whole vector per lane, which reads like waste — ten rebuilds per
+eight values. It is not worth attacking. `Vector::insert` lowers to a `CompositeInsertOp` with no
+assemble-from-components alternative to reach for, the rebuild is a register shuffle a downstream
+compiler is free to remove, and the effect being hunted is smaller than the noise floor.
+
+**Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
+a hardware number, so grouping it by extent is right there and stays.
+
+### The staged spelling, probed
+
+The count a scale line covers is a *binding width* today, reconciled against the walk at the leaf
+(`FoldRun`, `lines_per_scale`, a divisibility assert). It should be a **cut**, stated where the
+level is:
+
+```rust
+Tiling::over((values, scales, rhs, out), &[(M, m), (NB, blocks), (NI, bn), (K, k)])
+    .level(order, buffering, |cuts, o| {
+        cuts.axis(NB, Cut::sequential(8));   // this unit takes 8 column blocks
+        o.1.stage(Residence::Register);      // and reads its 8 scales here, once
+    })
+```
+
+**The DSL already accepts that.** A four-operand `Tiling::over` with the scales spanning `[M, KB]`,
+the axis cut, and the residence stated builds, launches, and computes correct numbers;
+`OperandSet` already goes to four and no ternary ring is needed, because an operand stages through
+its own stage plan rather than the walk's ring.
+
+**What it does not do is honour it.** Stating the residence emits a fill (the kernel grows from 450
+to 490 lines and gains a loop), and the contraction reads the scales from global memory anyway —
+byte for byte the same four reads at the same loop depth as without it. The staged copy is filled
+and never read.
+
+So the whole remaining job is one thing: **the contraction reads the scales from the tile the level
+staged.** Everything upstream of that already works, and `FoldRun`, `folded_lane_walk`,
+`lines_per_scale` and the divisibility assert all come out when it lands.
 
 ### Item 4, surveyed
 
@@ -254,6 +428,26 @@ arithmetic are exactly what the second and third rows still use.
   drain on the accumulator, not on a view.
 
 ## Known gaps
+
+- **A promoted accumulator refuses a `K`-lined rhs**, and that is what keeps the decode gemv's
+  partials in memory. `RegisterData::mma_scaled` asserts two things: the block's line width
+  equals the rhs's served width, and the rhs's innermost axis is not one the lhs spans. A
+  promoted block lines its cells along the *accumulator*, and the col gemv's accumulator is
+  `[M, N]` at one activation row, so its column edge cannot be `factor` wide; the activation is
+  lined along `K` instead, which is the second refusal. Both are correct as stated — the two
+  shapes are a trade, not a ladder, and `tests/tile/decode_gemv.rs` runs each — but the
+  memory-backed one is the shape the routine ships on, and metabolic's own note puts the promoted
+  accumulator at roughly a fifth of this kernel. Closing it means a promoted block that folds a
+  `K`-lined step into one cell, which is `block::contract`'s `step_served` shape rather than a
+  new assert.
+
+- **The scales are read one at a time in this orientation**, so item 1b's win does not arrive
+  here. A lane owns `rows_per_lane` output rows and one block, and those scales sit a row apart in
+  the scales buffer — not a line. Widening them would need a lane to own consecutive *blocks*,
+  which is the opposite of the interleave the fold wants. The generated kernel confirms it: one
+  scalar `f16` load, broadcast into the weight's `vec4<f32>`. The f16 read is still the whole
+  point (half the scale bytes, and no widening pass), but "several per load" is a fact about the
+  row orientation, not about the engine.
 
 - **Three tests fail on the CPU backend and pass on wgpu-msl**, none caused by any of this:
   `register_matmul_lane_group_fold` and its promoted twin came with #559 and want a plane wider

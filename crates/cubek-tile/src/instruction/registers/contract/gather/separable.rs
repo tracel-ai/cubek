@@ -72,6 +72,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
             mat,
+            comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),
             comptime!(semiring.add()),
         );

@@ -115,6 +115,42 @@ impl MatrixAxes {
         }
     }
 
+    /// An accumulator's matrix, against the lhs it is contracted with.
+    ///
+    /// The innermost axis is a column edge by construction: it is what the sink lines along. How
+    /// far the group reaches is not, and is read off the lhs — an axis the lhs spans stops it,
+    /// because an axis the lhs varies over has to be walked against the lhs rather than folded
+    /// into a column. The row edge is the axis before the group, and anything above it is batch.
+    ///
+    /// This is what lets a `[bm, bn]` scheme split `N` into a block index and a position inside
+    /// it: both are the rhs's alone, so both are columns, where taking the last axis alone would
+    /// have made the block index a row.
+    pub fn accumulator(acc: &Space, lhs: &Space) -> Self {
+        let mut col_split = acc.rank() - 1;
+        while col_split > 1 && !lhs.contains(acc.axis_at(col_split - 1)) {
+            col_split -= 1;
+        }
+        MatrixAxes {
+            row_split: col_split - 1,
+            col_split,
+        }
+    }
+
+    /// The row edge these axes give in `space`: the group between the batch prefix and the
+    /// columns, multiplied out.
+    pub fn rows(&self, space: &Space) -> usize {
+        (self.row_split..self.col_split)
+            .map(|p| space.extent_at(p))
+            .product()
+    }
+
+    /// The column edge, in scalars.
+    pub fn cols(&self, space: &Space) -> usize {
+        (self.col_split..space.rank())
+            .map(|p| space.extent_at(p))
+            .product()
+    }
+
     /// The axes giving a `rows x cols` matrix, both scalar, found from the innermost axis
     /// outwards. An empty row group is legal exactly when `rows` is `1`: the row coordinate is
     /// then always `0` and the axes above sit in the batch prefix, which pins them the same way.
@@ -356,14 +392,15 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Mutable version of [`matrix`](Tile::matrix). Only supported for direct projections.
+    /// Mutable version of [`matrix`](Tile::matrix). Refused where two logical positions can share
+    /// a cell, which is the only way a write aliases.
     pub fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
         let vector_size = self.vector_size();
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 comptime!(assert!(
-                    g.projection.is_direct(),
-                    "Tile::matrix_mut: a gathered operand aliases under a write"
+                    g.projection.composition() != Composition::Overlapping,
+                    "Tile::matrix_mut: an overlapping operand aliases under a write"
                 ));
                 let bound = g.extent();
                 let layout = projected_batch_matrix(
@@ -413,30 +450,6 @@ impl<T: Numeric> Tile<T> {
                 self.matrix_transparent::<u32, WP, W>(axes, i)
             }
         }
-    }
-
-    /// [`matrix_packed`](Tile::matrix_packed) with a scales operand folded into every read.
-    ///
-    /// The scales are read at the same matrix coordinate, through their own axes, so the caller
-    /// states each matrix once and the multiply happens under the view. Whatever consumes this
-    /// consumes an ordinary [`MatrixView`]: a contraction over a scaled operand *is* the plain
-    /// contraction.
-    pub fn matrix_scaled<'a, W: Size, S: Numeric, SW: Size>(
-        &'a self,
-        #[comptime] axes: MatrixAxes,
-        scales: &'a Tile<S>,
-        #[comptime] scale_axes: MatrixAxes,
-        i: usize,
-    ) -> MatrixView<'a, Vector<T, W>> {
-        let width = self.vector_size();
-        let values = self.matrix_packed::<W>(axes, i);
-        let scale_lines = scales.matrix_packed::<SW>(scale_axes, i);
-        // A scale read past the values' bound is never used: the values mask first, and a masked
-        // value is zero whatever it is multiplied by.
-        let check = comptime!(values.check);
-        let scaled =
-            ScaledView::<T, W, S, SW>::new(values.into_view(), scale_lines.into_view(), width);
-        MaskedView::new(scaled.view(), check)
     }
 
     /// [`matrix_packed`](Tile::matrix_packed) at a stated storage element `I` and physical line

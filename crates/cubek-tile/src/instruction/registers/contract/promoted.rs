@@ -11,6 +11,7 @@ use cubecl::prelude::*;
 
 use crate::instruction::registers::block;
 use crate::instruction::registers::contract::{ScaleSide, scale_side};
+use crate::instruction::registers::lines::ScaledLines;
 use crate::*;
 
 #[cube]
@@ -72,7 +73,9 @@ impl<T: Numeric> RegisterData<T> {
         let kc = comptime!(Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
-        let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
+        // The accumulator's column edge, which is the rhs's too: read off the operands rather
+        // than off the last axis, so a split column group stays one edge.
+        let cols = comptime!(MatrixAxes::accumulator(&out, &lhs.space).cols(&out));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
@@ -120,10 +123,6 @@ impl<T: Numeric> RegisterData<T> {
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
         let sw = scales.vector_size();
-        comptime!(assert!(
-            sw == 1,
-            "mm_scaled: the scales are read one value at a time, so their operand is scalar (it              is {sw} wide)"
-        ));
         // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
         // packing factor, so this is the assert that asks the accumulator to be that wide.
         comptime!(assert!(
@@ -139,47 +138,122 @@ impl<T: Numeric> RegisterData<T> {
         ));
 
         let size!(L) = lw;
-        let size!(S) = 1usize;
+        let size!(S) = sw;
         let kc = comptime!(Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
-        let cols = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
-        let side = comptime!(scale_side(&scales.space, &out));
+        let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs.space));
+        let cols = comptime!(acc_axes.cols(&out));
+        let side = comptime!(scale_side(&scales.space, &out, acc_axes));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
-        // The scales carry the values' own axes and address only the ones they span, so their
-        // matrix is the same face read through their own projection.
-        let scales_axes = comptime!(match side {
-            ScaleSide::Lhs => MatrixAxes::of(&scales.space, mr, kc),
-            ScaleSide::Rhs => MatrixAxes::of(&scales.space, kc, cols),
+        // The scales share one edge with the values: the contraction where the lhs carries them,
+        // the accumulator's columns otherwise. `value_width` is the width that edge is served at.
+        let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+        let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
+        let (scales_axes, edge, value_width) = comptime!(match side {
+            ScaleSide::Lhs => (
+                MatrixAxes::of(&scales.space, mr, scale_cols),
+                operands
+                    .contracting(&out)
+                    .iter()
+                    .map(|&axis| (axis, operands.extent(axis)))
+                    .collect::<Vec<_>>(),
+                lw
+            ),
+            ScaleSide::Rhs => (
+                MatrixAxes::of(&scales.space, kc, scale_cols),
+                (acc_axes.col_split..out.rank())
+                    .map(|p| (out.axis_at(p), out.extent_at(p)))
+                    .collect::<Vec<_>>(),
+                vw
+            ),
         });
-        // The scale folds in under the operand's view, so the block below runs the plain
-        // contraction.
-        let lhs_mat = match comptime!(side) {
-            ScaleSide::Lhs => lhs.matrix_scaled::<L, ES, S>(lhs_axes, scales, scales_axes, 0),
-            ScaleSide::Rhs => lhs.matrix_packed::<L>(lhs_axes, 0usize),
-        };
-        let rhs_mat = match comptime!(side) {
-            ScaleSide::Lhs => rhs.matrix_packed::<RA>(rhs_axes, 0usize),
-            ScaleSide::Rhs => rhs.matrix_scaled::<RA, ES, S>(rhs_axes, scales, scales_axes, 0),
-        };
-
+        // How many value lines share one scale, read off the axes rather than divided out of the
+        // extents: the scale is constant along the edge axes it does not distinguish.
+        let invariant = scales.invariant_over(comptime!(operands.clone()));
+        let lines_per_scale = comptime!(
+            edge.iter()
+                .filter(|(axis, _)| invariant.contains(axis))
+                .map(|(_, extent)| *extent)
+                .product::<usize>()
+                / value_width
+        );
+        // The block walks its columns under a constant ordinal, which a scale line wider than one
+        // scale needs; the lhs's columns are the contraction, whose step is a runtime index.
+        comptime!(assert!(
+            sw == 1 || side == ScaleSide::Rhs,
+            "mm_scaled: {sw} scales are served as one line, which needs each value line's \
+             ordinal along the shared edge as a constant, and this block walks neither edge that \
+             way; bind the scales scalar here"
+        ));
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        block::contract::<T, EL, L, ER, RA, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, RA>>>(
-            &lhs_mat,
-            &rhs_mat,
-            &mut self.data,
-            lw,
-            1usize,
-            mr,
-            nr,
-            kc,
-            unroll,
-            lane_fanout,
-            semiring,
-        );
+        // The scale folds into the operand that carries it, so the block contracts one scaled line
+        // source against one plain one. Which operand that is decides two types, so two calls.
+        match comptime!(side) {
+            ScaleSide::Lhs => {
+                let lhs_mat = ScaledLines::<EL, L, ES, S>::new(
+                    lhs.matrix_packed::<L>(lhs_axes, 0usize),
+                    scales.matrix_packed::<S>(scales_axes, 0usize),
+                    lines_per_scale,
+                    sw,
+                );
+                let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
+                block::contract::<
+                    T,
+                    EL,
+                    L,
+                    ER,
+                    RA,
+                    ScaledLines<EL, L, ES, S>,
+                    MatrixView<Vector<ER, RA>>,
+                >(
+                    &lhs_mat,
+                    &rhs_mat,
+                    &mut self.data,
+                    lw,
+                    1usize,
+                    mr,
+                    nr,
+                    kc,
+                    unroll,
+                    lane_fanout,
+                    semiring,
+                );
+            }
+            ScaleSide::Rhs => {
+                let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
+                let rhs_mat = ScaledLines::<ER, RA, ES, S>::new(
+                    rhs.matrix_packed::<RA>(rhs_axes, 0usize),
+                    scales.matrix_packed::<S>(scales_axes, 0usize),
+                    lines_per_scale,
+                    sw,
+                );
+                block::contract::<
+                    T,
+                    EL,
+                    L,
+                    ER,
+                    RA,
+                    MatrixView<Vector<EL, L>>,
+                    ScaledLines<ER, RA, ES, S>,
+                >(
+                    &lhs_mat,
+                    &rhs_mat,
+                    &mut self.data,
+                    lw,
+                    1usize,
+                    mr,
+                    nr,
+                    kc,
+                    unroll,
+                    lane_fanout,
+                    semiring,
+                );
+            }
+        }
     }
 }

@@ -77,7 +77,7 @@ pub fn strategy_result(
         accumulation: accumulation_dtype,
     };
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
         reduce::<TestRuntime>(
             c,
             input_handle.clone().binding(),
@@ -140,19 +140,23 @@ pub fn strategy_result_with_indices(
         accumulation: accumulation_dtype,
     };
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
-        reduce_with_indices::<TestRuntime>(
-            c,
-            input_handle.clone().binding(),
-            values_handle.clone().binding(),
-            indices_handle.clone().binding(),
-            axis,
-            strategy.clone(),
-            config,
-            dtypes,
-        )
-        .into()
-    });
+    let outcome = launch_and_capture_outcome(
+        &client,
+        &[&values_handle.handle, &indices_handle.handle],
+        |c| {
+            reduce_with_indices::<TestRuntime>(
+                c,
+                input_handle.clone().binding(),
+                values_handle.clone().binding(),
+                indices_handle.clone().binding(),
+                axis,
+                strategy.clone(),
+                config,
+                dtypes,
+            )
+            .into()
+        },
+    );
 
     match outcome {
         ExecutionOutcome::CompileError(e) => Err(format!("compile error: {e}")),

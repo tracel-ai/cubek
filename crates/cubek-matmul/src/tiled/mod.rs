@@ -2,6 +2,7 @@
 
 pub mod cmma;
 pub mod cpu_gemm;
+pub mod quant_gemv;
 
 mod operands;
 #[allow(clippy::module_inception)]

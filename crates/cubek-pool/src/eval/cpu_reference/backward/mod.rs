@@ -47,17 +47,21 @@ pub fn strategy_result(
         let output_handle = make_zero_handle(&client, out_grad_shape.clone(), dtype);
         let indices_handle = make_zero_handle(&client, out_grad_shape.clone(), indices_dtype);
 
-        let forward_outcome = launch_and_capture_outcome(&client, |c| {
-            pool2d_with_indices::<TestRuntime>(
-                c,
-                input_handle.clone().binding(),
-                output_handle.clone().binding(),
-                indices_handle.clone().binding(),
-                problem.mode.clone(),
-                dtype,
-            )
-            .into()
-        });
+        let forward_outcome = launch_and_capture_outcome(
+            &client,
+            &[&output_handle.handle, &indices_handle.handle],
+            |c| {
+                pool2d_with_indices::<TestRuntime>(
+                    c,
+                    input_handle.clone().binding(),
+                    output_handle.clone().binding(),
+                    indices_handle.clone().binding(),
+                    problem.mode.clone(),
+                    dtype,
+                )
+                .into()
+            },
+        );
 
         match forward_outcome {
             ExecutionOutcome::CompileError(e) => return Err(format!("compile error: {e}")),
@@ -67,7 +71,7 @@ pub fn strategy_result(
         None
     };
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&input_grad_handle.handle], |c| {
         if let Some(indices) = &indices_handle {
             pool2d_with_indices_backward::<TestRuntime>(
                 c,

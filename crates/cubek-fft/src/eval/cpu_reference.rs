@@ -49,7 +49,7 @@ pub fn kernel_result(
                 .zeros()
                 .generate_without_host_data();
 
-            let outcome = launch_and_capture_outcome(&client, |c| {
+            let outcome = launch_and_capture_outcome(&client, &[&re.handle, &im.handle], |c| {
                 rfft_launch::<TestRuntime>(
                     c,
                     signal.clone().binding(),
@@ -88,7 +88,7 @@ pub fn kernel_result(
                 .zeros()
                 .generate_without_host_data();
 
-            let outcome = launch_and_capture_outcome(&client, |c| {
+            let outcome = launch_and_capture_outcome(&client, &[&signal.handle], |c| {
                 irfft_launch::<TestRuntime>(
                     c,
                     re.binding(),

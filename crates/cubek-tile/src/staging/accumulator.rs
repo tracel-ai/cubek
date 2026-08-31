@@ -275,6 +275,10 @@ impl<Acc: Numeric> Tile<Acc> {
         let lane_share = comptime!(self.space.leaf_lane_share());
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
+            comptime!(MatrixAxes::accumulator(
+                &self.space.final_space(),
+                &lhs.space.final_space()
+            )),
             comptime!(form),
             comptime!(k),
             vector_size,

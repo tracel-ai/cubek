@@ -118,7 +118,7 @@ fn test_launch_with_layouts(
     let value_binding = value_handle.binding();
     let mask_binding = mask_handle.map(|m| m.binding());
 
-    let outcome = launch_and_capture_outcome(&client, |c| {
+    let outcome = launch_and_capture_outcome(&client, &[&out_handle.handle], |c| {
         launch_ref(
             strategy,
             c,

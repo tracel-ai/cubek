@@ -115,6 +115,9 @@ pub struct AxisProjection {
     space: Space,
     #[cube(comptime)]
     projection: Projection,
+    /// The line width the innermost physical axis is addressed in.
+    #[cube(comptime)]
+    width: usize,
 }
 
 #[cube]
@@ -124,6 +127,7 @@ impl AxisProjection {
         map: RuntimeMap,
         #[comptime] space: Space,
         #[comptime] projection: Projection,
+        #[comptime] width: usize,
     ) -> Self {
         let rank = shape.len();
         comptime!(assert!(
@@ -149,8 +153,40 @@ impl AxisProjection {
             map,
             space,
             projection,
+            width,
         }
     }
+}
+
+/// A term's coefficient in the units its physical axis is addressed in.
+///
+/// Every physical axis but the innermost is addressed in scalars, and so are the coefficients.
+/// The innermost is addressed in *lines*: the coordinate of the space's own innermost axis
+/// arrives already divided by the width, and every coarser axis of the same physical dim steps
+/// whole lines of it, so their coefficients divide too.
+///
+/// This is where a line that would straddle a coarser axis is refused. A coefficient the width
+/// does not divide says the axes above the line change within one, which no single read can
+/// serve.
+fn line_scale(
+    space: &Space,
+    projection: &Projection,
+    width: usize,
+    pa: usize,
+    axis: Axis,
+    scale: usize,
+) -> usize {
+    let innermost = space.axis_at(space.rank() - 1);
+    if pa != projection.physical_rank() - 1 || width == 1 || axis == innermost {
+        return scale;
+    }
+    assert!(
+        scale.is_multiple_of(width),
+        "AxisProjection: {axis:?} steps {scale} values of a physical axis read {width} at a time, \
+         so one line spans more than one {axis:?}; serve narrower lines, or give {axis:?} a \
+         physical axis of its own"
+    );
+    scale / width
 }
 
 /// The static physical step a term contributes once it is taken out of its axis's evaluation:
@@ -225,7 +261,15 @@ impl AxisProjection {
                 match comptime!(axis_map.static_offset_step(t)) {
                     Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
                     None => match comptime!(term.scale) {
-                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(s as u32))),
+                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(line_scale(
+                            &self.space,
+                            &self.projection,
+                            self.width,
+                            pa,
+                            term.axis,
+                            s
+                        )
+                            as u32))),
                         Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
                             comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
                         ))),
@@ -282,7 +326,17 @@ impl AxisProjection {
                 if comptime!(moving.contains(&term.axis)) {
                     let p = comptime!(self.space.position(term.axis));
                     match comptime!(split_step(axis_map, t)) {
-                        Some(step) => steps.push(pos[p].fmul(comptime!(step as u32))),
+                        // In the units this physical axis is read at, like the fold `anchor` did:
+                        // the two are added together, so they cannot be counted differently.
+                        Some(step) => steps.push(pos[p].fmul(comptime!(line_scale(
+                            &self.space,
+                            &self.projection,
+                            self.width,
+                            pa,
+                            term.axis,
+                            step
+                        )
+                            as u32))),
                         None => steps.push(pos[p].fmul(self.map.coefficients.at(comptime!(
                             self.projection.dynamic_scale_index(pa, t).unwrap()
                         )))),
@@ -384,6 +438,37 @@ impl Layout for StepUp {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
+    /// The whole logical box as a *writable* N-D view: the mutable twin of [`nd`](Tile::nd), for
+    /// a caller that writes one cell at a time at its logical coordinate.
+    ///
+    /// Refused where two logical positions can share a cell, which is the only way a write
+    /// aliases. A [partition](Composition::Disjoint) cannot: its windows tile, so each cell is
+    /// written once.
+    pub fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
+        let space = comptime!(self.space.clone());
+        let vector_size = self.vector_size();
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                comptime!(assert!(
+                    g.projection.composition() != Composition::Overlapping,
+                    "Tile::nd_mut: an overlapping operand aliases under a write"
+                ));
+                let layout = axis_projection(
+                    space,
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    vector_size,
+                );
+                g.masked_mut::<W, CoordsDyn, AxisProjection>(layout)
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::nd_mut: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::nd_mut: a tma source is not written"),
+            TileKind::Procedural(_) => panic!("Tile::nd_mut: a procedural tile is not writable"),
+        }
+    }
+
     /// The whole logical box, read through whatever [`Packing`] this tile carries, under the
     /// guard the reader states. The N-D twin of [`matrix_packed`](Tile::matrix_packed).
     pub fn nd_packed<W: Size>(
@@ -562,7 +647,7 @@ pub(crate) fn axis_projection(
     let rank = comptime!(space.rank());
     let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
 
-    AxisProjection::new(shape, map, space, projection)
+    AxisProjection::new(shape, map, space, projection, vector_size)
 }
 
 /// Returns the extents of `space` in the range `from..to`, with the innermost axis

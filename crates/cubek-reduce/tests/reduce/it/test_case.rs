@@ -276,19 +276,23 @@ impl TestCase {
         let values_binding = values_handle.clone().binding();
         let indices_binding = indices_handle.clone().binding();
 
-        let outcome = launch_and_capture_outcome(&client, |c| {
-            reduce_with_indices::<TestRuntime>(
-                c,
-                input_binding,
-                values_binding,
-                indices_binding,
-                axis,
-                strategy,
-                config,
-                dtypes,
-            )
-            .into()
-        });
+        let outcome = launch_and_capture_outcome(
+            &client,
+            &[&values_handle.handle, &indices_handle.handle],
+            |c| {
+                reduce_with_indices::<TestRuntime>(
+                    c,
+                    input_binding,
+                    values_binding,
+                    indices_binding,
+                    axis,
+                    strategy,
+                    config,
+                    dtypes,
+                )
+                .into()
+            },
+        );
 
         let outcome = match outcome {
             ExecutionOutcome::Executed => {
@@ -363,7 +367,7 @@ impl TestCase {
         };
         let input_binding = input_handle.binding();
         let output_binding = output_handle.clone().binding();
-        let outcome = launch_and_capture_outcome(&client, |c| {
+        let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
             reduce::<TestRuntime>(
                 c,
                 input_binding,
