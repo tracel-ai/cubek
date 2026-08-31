@@ -663,8 +663,20 @@ So phase 3's order is:
    nothing, and it is still a buffer axis, so dropping it lost a dimension the layout had to
    describe. That was the second panic; the first was reading a group's identity off an empty term
    list.
-2. Then the surface, as written above. The leaf picks between the base case and the step by
-   [`ChainShape`], which is a recursion's two cases and not a count.
+2. Then the surface — **and it does not work as written above.** The chain threads through every
+   scaled signature and the library compiles (`wip/scale-chain-threaded`), but kernels do not:
+   cubecl's `CubeType::ExpandType` has no inverse, so from a `&TileExpand<S>` argument nothing can
+   solve `Ch = Tile<S>` and every call site has to name the chain itself.
+
+   ```rust
+   c.mm_scaled::<E, E, Scaled<S, Tile<G>>>(&a, &b, &blocks.scale(&global), ..)
+   ```
+
+   That states the depth twice — once in the type, once in the value — and reads worse than the
+   arity it replaces. **Type-carried depth is right for the leaf and wrong for the surface.** The
+   way out worth trying first: let the *kernel* name the chain once, as a type parameter of its
+   own, and have the launch pick it, so the turbofish sits where types are already spelled rather
+   than at every verb. Decide this before threading anything further.
 3. Then each level's coverage in the units its consumer reads — `ScaleLevel::of` measures in value
    lines, and a level above the first is read in the level below's *scale* lines. This is the piece
    with real subtlety left in it, and it is why the surface was not landed blind.
