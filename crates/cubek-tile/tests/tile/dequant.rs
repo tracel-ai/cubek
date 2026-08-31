@@ -25,9 +25,9 @@ const CI: Axis = Axis(2);
 /// `out = weights ⊗ scales`. The weights arrive packed and unpack at the read; the scales
 /// broadcast over the axis they omit. Neither fact is stated here — both are the operands'.
 #[cube(launch)]
-fn dequantize<E: Numeric, S: Numeric, W: Size>(
+fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     weights: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, S, Const<1>>,
+    scales: &TileArg<'_, S, F>,
     out: &TileArg<'_, E, W>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
@@ -40,7 +40,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size>(
 
 #[test]
 fn a_packed_tensor_decodes_against_its_scales() {
-    let (rows, blocks, inside) = (4, 4, 8);
+    let (rows, blocks, inside, scale_lanes) = (4, 4, 8, 4);
     let cols = blocks * inside;
     let field = QuantValue::Q4S;
     let bits = field.size_bits();
@@ -116,7 +116,12 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .packed(field)
         .vectorize(factor)
         .build();
-    let s_op = launcher.bind(&operands.1, s_tensor.binding()).build();
+    // Four scales per read: one read covers four blocks of columns, and each of its lanes is
+    // taken by the run of values that block holds.
+    let s_op = launcher
+        .bind(&operands.1, s_tensor.binding())
+        .vectorize(scale_lanes)
+        .build();
     let out_op = launcher
         .arg(out.clone().binding())
         .gathered(split())
@@ -129,6 +134,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         launcher.cube_count(),
         launcher.cube_dim(),
         factor,
+        scale_lanes,
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),

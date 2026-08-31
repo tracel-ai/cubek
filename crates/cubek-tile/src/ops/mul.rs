@@ -53,60 +53,91 @@ impl<T: Numeric> Tile<T> {
     /// stored word per line, which is why the walk moves in lines at all: there is no cell-at-a-time
     /// reading of a tensor whose values share a word.
     ///
-    /// The scale of a line is one value, because an operand that varies inside the line would have
-    /// to span the line's own axis, and then it would not be a scale.
+    /// `b` is read at its binding's width, so one read of it serves several of the destination's
+    /// runs. Which lane of that read a run takes has to be a constant — a lane index is not
+    /// addressable at runtime — so the fold is the unrolled dimension of the walk and the runs
+    /// under one fold are not.
     fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         let space = comptime!(self.space.clone());
         let width = self.vector_size();
+        let folds = b.vector_size();
         let size!(W) = width;
+        let size!(F) = folds;
         let a_view = a.nd_packed::<W>(Guard::Checked);
-        let b_view = b.nd_packed::<Const<1>>(Guard::Checked);
+        let b_view = b.nd_packed::<F>(Guard::Checked);
 
-        // The destination's box in lines: its innermost axis alone counts them.
-        let extents = const_coords(comptime!(line_extents(&space, width, 0, space.rank())));
-        let total = comptime!(
-            line_extents(&space, width, 0, space.rank())
-                .iter()
-                .product::<usize>()
-        );
+        let rank = comptime!(space.rank());
+        // The axis `b`'s own lines run along, as a position in the destination's box.
+        let fold_axis = comptime!(b.space.axis_at(b.space.rank() - 1));
+        let fold_at = comptime!(space.position(fold_axis));
+        comptime!(assert!(
+            folds == 1 || fold_at != rank - 1,
+            "Tile::mul: {folds} of `b` arrive per read along {fold_axis:?}, which is also the axis \
+             the destination's own lines run along, so one line would straddle two of them"
+        ));
+
+        // The destination's box in lines, its innermost axis alone counting them, and then split
+        // once more at `fold_at`: a group holds one read of `b`, and the folds inside it are
+        // walked under a constant.
+        let mut group = comptime!(line_extents(&space, width, 0, rank));
+        comptime!(assert!(
+            group[fold_at].is_multiple_of(folds),
+            "Tile::mul: {} positions of {fold_axis:?} do not divide into reads of {folds}",
+            group[fold_at]
+        ));
+        comptime!({
+            group[fold_at] /= folds;
+        });
+        let total = comptime!(group.iter().product::<usize>());
+        let extents = const_coords(comptime!(group.clone()));
+
         let mut dst = self.nd_mut::<W>();
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let line = unravel(&extents, i.fcast::<u32>());
-            // The line index back in values, which is what each operand's own resolution divides
-            // by its own width.
-            let mut cells = Coords::<u32>::new();
+            let at = unravel(&extents, i.fcast::<u32>());
             #[unroll]
-            for p in 0..comptime!(space.rank()) {
-                let scale = comptime!(match p == space.rank() - 1 {
-                    true => width as u32,
-                    false => 1u32,
-                });
-                cells.push(line.at(p).fmul(scale));
+            for f in 0..folds {
+                // This run's line, and the same coordinate back in values, which is what each
+                // operand's own resolution divides by its own width.
+                let mut line = Coords::<u32>::new();
+                let mut cells = Coords::<u32>::new();
+                #[unroll]
+                for p in 0..rank {
+                    let coord = match comptime!(p == fold_at) {
+                        true => at.at(p).fmul(comptime!(folds as u32)) + comptime!(f as u32),
+                        false => at.at(p),
+                    };
+                    line.push(coord);
+                    let scale = comptime!(match p == rank - 1 {
+                        true => width as u32,
+                        false => 1u32,
+                    });
+                    cells.push(coord.fmul(scale));
+                }
+                let empty = Coords::<u32>::new();
+                let a_pos = resolve_nd_coords(
+                    comptime!(a.space.clone()),
+                    comptime!(space.clone()),
+                    comptime!(Vec::new()),
+                    &cells,
+                    &empty,
+                    width,
+                    true,
+                );
+                let b_pos = resolve_nd_coords(
+                    comptime!(b.space.clone()),
+                    comptime!(space.clone()),
+                    comptime!(Vec::new()),
+                    &cells,
+                    &empty,
+                    folds,
+                    true,
+                );
+                let left = Vector::<T, W>::cast_from(a_view.read(a_pos));
+                let right = Vector::<T, W>::cast_from(b_view.read(b_pos).extract(f));
+                dst.write(line.to_dyn(), left * right);
             }
-            let empty = Coords::<u32>::new();
-            let a_pos = resolve_nd_coords(
-                comptime!(a.space.clone()),
-                comptime!(space.clone()),
-                comptime!(Vec::new()),
-                &cells,
-                &empty,
-                width,
-                true,
-            );
-            let b_pos = resolve_nd_coords(
-                comptime!(b.space.clone()),
-                comptime!(space.clone()),
-                comptime!(Vec::new()),
-                &cells,
-                &empty,
-                1usize,
-                true,
-            );
-            let left = Vector::<T, W>::cast_from(a_view.read(a_pos));
-            let right = Vector::<T, W>::cast_from(b_view.read(b_pos).extract(0usize));
-            dst.write(line.to_dyn(), left * right);
             i += workers;
         }
     }
