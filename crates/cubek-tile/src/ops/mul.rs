@@ -10,7 +10,7 @@
 //! [`Projection`](crate::Projection), so an axis an operand does not address costs it nothing and
 //! spreads its value across every position of that axis. That is the whole of the broadcast.
 
-use cubecl::prelude::*;
+use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
 use crate::*;
 
@@ -63,13 +63,16 @@ impl<T: Numeric> Tile<T> {
         let folds = b.vector_size();
         let size!(W) = width;
         let size!(F) = folds;
-        let a_view = a.nd_packed::<W>(Guard::Checked);
-        let b_view = b.nd_packed::<F>(Guard::Checked);
+        let a_reader = a.nd_split_packed::<W>();
+        let b_reader = b.nd_split_packed::<F>();
 
         let rank = comptime!(space.rank());
-        // The axis `b`'s own lines run along, as a position in the destination's box.
+        // The axis `b`'s own lines run along: the one the fold steps, and so the one the walk
+        // moves over between the anchor it folds once and the reads it takes.
         let fold_axis = comptime!(b.space.axis_at(b.space.rank() - 1));
         let fold_at = comptime!(space.position(fold_axis));
+        let moving = comptime!(vec![fold_axis]);
+        let a_fold_at = comptime!(a.space.position(fold_axis));
         comptime!(assert!(
             folds == 1 || fold_at != rank - 1,
             "Tile::mul: {folds} of `b` arrive per read along {fold_axis:?}, which is also the axis \
@@ -98,38 +101,66 @@ impl<T: Numeric> Tile<T> {
             let at = unravel(&extents, i.fcast::<u32>());
             let empty = Coords::<u32>::new();
 
-            // The fold is a *lane* of `b`'s read, not a step of it: every run in this group reads
-            // the same vector and differs only in which lane it takes. So the read happens here,
-            // once, above the loop that takes them — rather than four identical reads left for a
-            // compiler to notice are one.
-            let mut group = Coords::<u32>::new();
+            // The group's base coordinate, in values, which is what each operand's own resolution
+            // divides by its own width.
+            let mut cells = Coords::<u32>::new();
             #[unroll]
             for p in 0..rank {
                 let coord = match comptime!(p == fold_at) {
                     true => at.at(p).fmul(comptime!(folds as u32)),
                     false => at.at(p),
                 };
-                group.push(coord.fmul(comptime!(match p == rank - 1 {
+                cells.push(coord.fmul(comptime!(match p == rank - 1 {
                     true => width as u32,
                     false => 1u32,
                 })));
             }
-            let scales = b_view.read(resolve_nd_coords(
+            let a_base = resolve_nd_coords(
+                comptime!(a.space.clone()),
+                comptime!(space.clone()),
+                comptime!(Vec::new()),
+                &cells,
+                &empty,
+                width,
+                true,
+            );
+            let b_base = resolve_nd_coords(
                 comptime!(b.space.clone()),
                 comptime!(space.clone()),
                 comptime!(Vec::new()),
-                &group,
+                &cells,
                 &empty,
                 folds,
                 true,
-            ));
+            );
+
+            // The fold is a *lane* of `b`'s read, not a step of it, so its address is the group's
+            // and the read happens here rather than once per lane.
+            let scales = b_reader
+                .view
+                .read(b_reader.map.anchor(b_base, comptime!(Vec::new())));
+            // `a`'s address does step with the fold, so its map folds once here and each step is
+            // the addition [`advance`](crate::AxisProjection::advance) puts back.
+            let a_anchor = a_reader
+                .map
+                .anchor(a_base.clone(), comptime!(moving.clone()));
 
             #[unroll]
             for f in 0..folds {
-                // This run's line, and the same coordinate back in values, which is what `a`'s own
-                // resolution divides by its own width.
-                let mut line = Coords::<u32>::new();
-                let mut cells = Coords::<u32>::new();
+                // Only the fold axis moves; every other component is the group's.
+                let mut a_pos = CoordsDyn::new();
+                #[unroll]
+                for p in 0..comptime!(a.space.rank()) {
+                    let coord = match comptime!(p == a_fold_at) {
+                        true => {
+                            at.at(comptime!(fold_at)).fmul(comptime!(folds as u32))
+                                + comptime!(f as u32)
+                        }
+                        false => a_base[p],
+                    };
+                    a_pos.push(coord);
+                }
+                let mut line = CoordsDyn::new();
                 #[unroll]
                 for p in 0..rank {
                     let coord = match comptime!(p == fold_at) {
@@ -137,22 +168,15 @@ impl<T: Numeric> Tile<T> {
                         false => at.at(p),
                     };
                     line.push(coord);
-                    cells.push(coord.fmul(comptime!(match p == rank - 1 {
-                        true => width as u32,
-                        false => 1u32,
-                    })));
                 }
-                let left = Vector::<T, W>::cast_from(a_view.read(resolve_nd_coords(
-                    comptime!(a.space.clone()),
-                    comptime!(space.clone()),
-                    comptime!(Vec::new()),
-                    &cells,
-                    &empty,
-                    width,
-                    true,
-                )));
+                let value = a_reader.view.read(a_reader.map.advance(
+                    &a_anchor,
+                    a_pos,
+                    comptime!(moving.clone()),
+                ));
+                let left = Vector::<T, W>::cast_from(value);
                 let right = Vector::<T, W>::cast_from(scales.extract(f));
-                dst.write(line.to_dyn(), left * right);
+                dst.write(line, left * right);
             }
             i += workers;
         }

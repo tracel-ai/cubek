@@ -326,7 +326,17 @@ impl AxisProjection {
                 if comptime!(moving.contains(&term.axis)) {
                     let p = comptime!(self.space.position(term.axis));
                     match comptime!(split_step(axis_map, t)) {
-                        Some(step) => steps.push(pos[p].fmul(comptime!(step as u32))),
+                        // In the units this physical axis is read at, like the fold `anchor` did:
+                        // the two are added together, so they cannot be counted differently.
+                        Some(step) => steps.push(pos[p].fmul(comptime!(line_scale(
+                            &self.space,
+                            &self.projection,
+                            self.width,
+                            pa,
+                            term.axis,
+                            step
+                        )
+                            as u32))),
                         None => steps.push(pos[p].fmul(self.map.coefficients.at(comptime!(
                             self.projection.dynamic_scale_index(pa, t).unwrap()
                         )))),
