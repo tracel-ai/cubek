@@ -57,7 +57,7 @@ impl QuantGemvProblem {
 /// The lanes that split `K` hold partials of the same cell and fold inside the plane, which is
 /// what the two `Unit` cuts on `(KB, KI)` state. Their instance product with the row groups is
 /// exactly the plane width — the engine's geometry contract, satisfied by construction in
-/// [`select`](QuantGemvRoutine::select).
+/// [`QuantGemvRoutine::blueprint`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QuantGemvBlueprint {
     /// Output rows one cube covers.
