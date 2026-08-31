@@ -428,6 +428,37 @@ impl Layout for StepUp {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
+    /// The whole logical box as a *writable* N-D view: the mutable twin of [`nd`](Tile::nd), for
+    /// a caller that writes one cell at a time at its logical coordinate.
+    ///
+    /// Refused where two logical positions can share a cell, which is the only way a write
+    /// aliases. A [partition](Composition::Disjoint) cannot: its windows tile, so each cell is
+    /// written once.
+    pub fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
+        let space = comptime!(self.space.clone());
+        let vector_size = self.vector_size();
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                comptime!(assert!(
+                    g.projection.composition() != Composition::Overlapping,
+                    "Tile::nd_mut: an overlapping operand aliases under a write"
+                ));
+                let layout = axis_projection(
+                    space,
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    vector_size,
+                );
+                g.masked_mut::<W, CoordsDyn, AxisProjection>(layout)
+            }
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                panic!("Tile::nd_mut: a plane tile has no memory view")
+            }
+            TileKind::TmaGmem(_) => panic!("Tile::nd_mut: a tma source is not written"),
+            TileKind::Procedural(_) => panic!("Tile::nd_mut: a procedural tile is not writable"),
+        }
+    }
+
     /// The whole logical box, read through whatever [`Packing`] this tile carries, under the
     /// guard the reader states. The N-D twin of [`matrix_packed`](Tile::matrix_packed).
     pub fn nd_packed<W: Size>(
