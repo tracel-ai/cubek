@@ -1,168 +1,168 @@
 # Stream-K in the tile DSL
 
 Cutting the contraction so a cube does not do the whole of it. The `Tiling::over` half already
-works; the whole feature is one missing concept on the drain, and that concept is one the DSL
-already has at a finer scope.
+worked; the feature was one missing concept on the drain, and that concept was one the DSL already
+had at a finer scope.
 
-## The claim, and what it rests on
+Status: phases 0 to 3 landed and measured. Phase 4 (the linear assignment, which is what makes it
+stream-K rather than split-K) is not started, and section "Phase 4" below says what it now looks
+like it costs, which is more than the original plan assumed.
 
-`.axis(K, Cut::cube(CubeAxis::Z, k / splits))` compiles today and already multiplies the launch
-grid (`space/partition/geometry.rs:37`). It also silently gives a wrong answer, two ways:
+## What a caller writes
 
-- `Residence::Register`: each cube accumulates its K slice in registers and `drain_cast_into`
-  (`tile/plane.rs:359`) plain-stores over the same cells. Last cube wins, other partials lost.
-- `InPlace`: `spans_contracted_at_leaf` is false, so `InitFrom::Cell`, so `AccumulateView::seed`
-  reads the cell and `commit` writes it back. Lost-update race across cubes.
+Split the contraction across cubes by cutting a contracted axis at cube scope, and drain into a
+destination that folds:
 
-So nothing is missing from the tiling API. What is missing is the combine.
+```rust
+let space = Tiling::new()
+    .extents(&[(M, m), (N, n), (K, k)])
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        l.axis(M, Cut::sequential(m))
+            .axis(N, Cut::cube(CubeAxis::X, cols))
+            .axis(K, Cut::cube(CubeAxis::Z, k / splits))   // the whole feature
+    })
+    .build()
+    .with_instruction(Instruction::registers(64));
+```
+
+```rust
+let c = Tile::<E>::of_atomic_sink::<Const<1>>(out, space, out_spec);   // `out: &Tensor<Atomic<E>>`
+let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);                   // out_spec states Register
+acc.mm(&a, &b, Semiring::SUM_PROD);
+```
+
+The output buffer holds the fold's identity before the launch: the first cube to arrive folds onto
+what is there. Nothing can check that, since the destination cannot read.
+
+The deterministic alternative needs no atomics and no new engine: spell `K` as two axes and let the
+output span the split, then fold it away in a second pass. `tests/tile/split_k.rs` has both.
 
 ## The concept
 
-`LaneShare` (`space/partition/distribution.rs:14`) already says the right sentence for `Unit`: an
-axis my space does not span is folded across the instances, so each holds a partial, and the
-drain is that scope's reduction. Swap the scope and the same sentence covers everything:
+`LaneShare` already said the right sentence for `Unit`: an axis my space does not span is folded
+across the instances, so each holds a partial, and the drain is that scope's reduction. The rest is
+the same sentence at the scopes whose instances cannot meet in registers.
 
 | scope of the omitted contracted axis | who holds a partial | drain | status |
 |---|---|---|---|
-| `Unit` | a lane | `plane_sum`, lane 0 writes | shipped |
-| `Plane` | a plane | smem + `sync_cube`, plane 0 writes | missing, silently wrong |
-| `Cube` | a cube | atomic add, or a workspace | missing, this is stream-K |
+| `Unit` | a lane | `plane_sum`, one lane writes | was already there |
+| `Plane` | a plane | fold into the destination | landed |
+| `Cube` | a cube | fold into the destination | landed |
 
-This is a unify-don't-add-vocabulary move: no new user-facing concept, the existing one grows a
-scope. `Space::lane_share()` (`space/base.rs:496`) is already a mixed-radix digit question about
-the instance index, filtered to `ComputeScope::Unit`. Filtering on a parameter instead is the
-whole generalization.
+`SplitShare` is `Plane` and `Cube` together, because they combine in the same place and by the same
+means: each folds its own contribution into the destination and never learns that the others exist.
+`Unit` stays with `LaneShare`, which needs a mask because lanes elect one of their own to write.
 
-## Split-K and stream-K are the same machinery
+## Landed
 
-Flatten `(m_tiles x n_tiles x k_blocks)` with K innermost into a range of length `T`, give cube
-`c` the run `[c*T/C, (c+1)*T/C)`. At `C = m_tiles*n_tiles*splits` every run lands inside one tile
-and covers `k_blocks/splits` consecutive blocks: that is exactly split-K. So split-K is stream-K
-whose runs never straddle a tile boundary, and the drain built for one is the drain the other
-needs. Only the assignment differs: a product of per-axis runs versus a contiguous run of the
-flattened grid.
+**Phase 0, `e8cdc75c`.** `SplitShare`, `Space::split_share_of`, and the refusal. Three
+configurations were silently wrong before it: a contracted axis at cube scope, the same at plane
+scope, and the known cmma-plus-`Cut::unit`-on-K gap. A register-resident accumulator drains by
+storing, so the last instance to arrive erased every other one's slice; one accumulating in place
+read the cell, folded, and wrote it back, which is a lost update. Neither showed up as anything but
+a wrong number.
 
-Two consequences that shape the phases below:
+**Phase 1, `66e90db2`.** Split-K spelled as an axis: `K` as `(KB, KI)` through
+`PhysicalAxisMap::disjoint`, the output bound over `[KB, M, N]` so it spans the split, a second pass
+folding `KB` away. Needed nothing new, and is the reference the in-kernel combine is diffed against.
 
-1. The workspace design (bind the output over a real split axis, so no partial ever exists) is
-   **rectangular-only**. It exploits every tile having the same fixed contributor count with a
-   clean index. Stream-K has neither. The workspace trick does not survive the move; the atomic
-   drain does.
-2. Stream-K drags runtime-ness into a comptime design: run lengths vary, and tile ownership is a
-   boundary comparison. Most of that is bought back by making the drain **unconditional** (every
-   contribution goes through the combine, including wholly owned tiles). Then the only novelty
-   left is the assignment.
+**Phase 2, `bb8078a8`.** The atomic drain, through `Backing::WriteCall`. `AtomicAccumulate` is an
+`ErasedTensor` backing whose `write_line` is `fetch_add`, so the walk, the layout, the masking and
+the drain are the ones a plain store gets and only the last step differs. `Write` states what a
+write means, since a backing cannot be asked: a folding sink and a fused epilogue are both calls
+through a layout, and only the caller knows which it built.
 
-## Phase 0: fail loud
+**Phase 3, `0ed26312`.** The same at plane scope, which needed no new drain: the election is per
+plane, so one lane of every plane of every cube folds its own contribution.
 
-Ship before any combine exists. Today three configurations are silently wrong: a contracted axis
-at `Cube` scope, the same at `Plane` scope, and the known cmma-accumulator-plus-`Cut::unit`-on-K
-gap where the combine cannot be seen from `CmmaData`.
+**Phase 5, `2c9b545f`.** `cargo bench -p benchmarks --bench split_cubes --features cubecl/metal`.
 
-- `Share` (`LaneShare` renamed scope-neutrally: `Whole` / `All` / `Group { fold_mask }`) and
-  `Space::share(scope)`, the current body with the scope as a parameter.
-- `MemData.lane_share` becomes one `Share` per scope, joined on `at()` exactly as now.
-- `Tile::accumulate` panics when any scope's share is not `Whole` and no combine is declared on
-  the operand, naming the scope and the axis.
+## What the numbers say
 
-Test: each of the three configurations panics with its own message. No behavior change otherwise;
-`Unit` keeps its current path byte for byte, which the golden kernel-source diff proves.
+Medians, metal, two runs. Every mapping verifies against a reference before it is timed.
 
-## Phase 1: the split-K oracle, zero engine change
+| shape | unsplit | workspace | atomic |
+|---|---|---|---|
+| m=1 n=32 k=8192 | 856us | 128us (/16) | **97us (/16)** |
+| m=1 n=128 k=8192 | 465us | 186us (/4) | **164us (/4)** |
+| m=1 n=512 k=8192 | 636us to 1.03ms | 456us to 1.09ms | 522us to 625us |
+| m=8 n=128 k=4096 | 741us | 322us (/4) | **267us (/4)** |
 
-Cut K into `(KB, KI)` with `Map::disjoint` (`physical/projection/map.rs:210`), exactly as the
-quant block axis does. Bind the output to a `[splits, M, N]` workspace that **spans KB**, with
-`KB` on `Cut::cube(Z, 1)`. Now no operand omits a distributed axis, so there are no partials at
-all: the drain is the plain vectorized store it is today. A second `Space` reduces over `KB` with
-`reduce_axis`.
+The win is where it was predicted: too few output tiles to fill the device. `n = 32` at `COLS = 1`
+is 32 cubes however deep `K` is, and splitting 16 ways is 8.8x. It fades as the output widens, and
+`n = 512` is ambiguous. Atomic beats the workspace consistently but not hugely (1.1x to 1.3x), so
+the second pass is cheap while the workspace is small; the case for atomics is that it is the drain
+stream-K will also need, not that it is much faster here.
 
-Needs nothing new. Its value is that it is the differential oracle every later phase is diffed
-against, and the perf baseline the atomic drain has to beat.
+A split of one tracks the unsplit baseline, which is the control working. Wide shapes vary run to
+run by up to 60%, the narrow rows repeat to the microsecond: compare within a run.
 
-Test: `split_k_workspace` in `tests/tile/matmul.rs`, arange reference, both the partial buffer and
-the reduced result checked. Runs on CPU and Metal.
+## What was learned that the plan did not predict
 
-## Phase 2: the cube combine, through `Backing::WriteCall`
+**A fold has to elect a writer even when nothing is folded across the lanes.** A space that rides no
+`Unit` axis still launches a full plane, and its lanes all run the same work over the same cells.
+Identical stores are idempotent, so nothing had to know; identical folds land `plane_size` times,
+and the first atomic drain read exactly 32x. `LaneWork` is that fact, `Lanes` pairs it with the
+share it is useless without, and `Drain` names the four elections once rather than nesting a lane
+guard inside a share. The control is a case with `N` on the lanes and `K` on the cubes: a blanket
+"lane zero writes" passes every other test and silently drops that one.
 
-The seam already exists. `Backing::WriteCall(ErasedTensor<T, WriteOnly>)` (`tile/mem.rs:100`) is a
-destination that is written through a call and never read, built for fused epilogues.
-`ErasedTensorExpand::new<S: ErasedBacking<E, IO>>` is public and
-`ErasedTensorOperationsExpand<E>::__expand_write_line_method` is the one method a backing must
-serve. An atomic accumulate is precisely such a destination.
+**A share cannot be derived from the operand's own projection.** The projection is exactly what
+drops the contracted axis, so a projected space cannot tell a split from a cut whose edge happens to
+be the whole axis, and the guard refused `Cut::cube(Z, k)` at `splits = 1`. Asked of the whole space
+once, where the tile is built, and carried down unchanged the way `Write` is. Still conservative on a
+`Dynamic` extent, where only the shape knows the tile count; refining that means stamping the share
+host-side off the concrete space, the way bounds checks are already derived.
 
-- `AtomicAccumulate<E, N>` in cubek-tile: a backing over an `Atomic<E>` binding whose `write_line`
-  is `N` scalar `fetch_add`s. Implements `WritesLines<E>` and not `ReadsLines<E>`, so the type
-  states that a partial is never read back. Entirely in cubek; no cubecl change.
-- `AtomicTileArg<'a, E: Numeric, V: Size> { tensor: &'a Tensor<Atomic<E>>, spec }` with
-  `.tile_accumulating(space) -> Tile<E>`, built on `Tile::of_sink`. Stored element and served
-  element differ, which is the pattern `tile_packed` already establishes.
-- The line width is unaffected at the tile level: the sink takes the stated width and decomposes
-  inside the backing.
+**Comptime panics land on a worker thread**, where `#[should_panic]` never sees them and the launch
+returns zeros. Every refusal here is tested host-side instead, and `tests/tile/matmul.rs` carries the
+note.
 
-Gates, stated in the routine and refused rather than adapted to:
+## Phase 4: the linear assignment, and what it costs
 
-- `atomic_type_usage(Type::atomic(elem)).contains(AtomicUsage::Add)`. Verified present: metal
-  native, wgpu MSL, CUDA sm60+, CPU, WGSL only under `SHADER_FLOAT32_ATOMIC`.
-- accumulate type equals output type. f16 and bf16 atomic add exist only on CUDA, so an f16
-  output takes phase 1's path.
-- the output residence is `Register`. `WriteOnly` already makes `InPlace` a type error; this is
-  the readable message rather than the confusing one.
-- the launch owns zeroing the output, inside the routine, so `out = A*B` still holds at the
-  routine boundary.
-- reproducibility is a stated launch property, not a silent one. The strategy carries it and the
-  atomic drain requires the value that permits reordering.
+Split-K is stream-K whose runs never straddle a tile boundary, so the drain built above is the drain
+stream-K needs and none of it is throwaway. Two things remain, and the second is larger than the
+plan assumed.
 
-Test: same shapes as phase 1, diffed against phase 1's result within tolerance; a negative control
-that forcing the cube share to `Whole` makes it fail. Metal first, since that is where the float
-atomic needs proving.
+**The assignment stops factoring per axis.** `Coverage`/`Spread` are per-axis today and
+`Walk::from_counts` gives each cube a product of per-axis runs, which is a rectangular block. A
+contiguous run of the flattened grid is not one. `Coverage` has to move from the axis to the level,
+and `Walk` needs to decode from a linear cursor rather than an odometer, which is a variant of the
+mixed-radix decode it already does. Settle the surface before writing it: a `Distribution::Streamed`
+per axis plus an all-or-none assert reads as a bool in a trench coat.
 
-## Phase 3: the plane combine
+**The accumulator's scope stops being lexical.** This is the real cost, and it is not in the
+original plan. A `Residence` is a lexical scope: stated at a level, materialized when the region
+opens, released when it closes, and `AccumulatorScope` drains on the op that exhausts it. Under a
+streamed level one cube's run spans several output regions, so the accumulator has to be drained and
+re-seeded *inside* the loop, when the output tile changes. That is a runtime condition in a design
+where every drain decision so far is comptime.
 
-smem plus one `sync_cube`, plane 0 writes. Same `Share`, a different reduction. Independent of the
-stream-K line and cheap, but it closes a real hole and it is the deterministic rehearsal for the
-drain shape. Can land in parallel with phase 2.
+Three ways out, in the order they should be considered:
 
-## Phase 4: the linear assignment
+1. **Drain every step.** No accumulator lifetime problem at all: each step folds one k-block's
+   contribution atomically. Costs one atomic per output cell per k-block instead of per cube-run,
+   which is the output traffic multiplied by the k-block count. Almost certainly too expensive at
+   real tile sizes, but it is a two-day version that would work and would give a number.
+2. **Drain on the tile boundary.** Order the flattening with `K` innermost, so the condition is
+   "the K digit wrapped", and seed/drain under it. Needs `AccumulatorScope` to admit a dynamic
+   scope, which is the design question worth Louis's input.
+3. **Two-tier**: a stream-K first wave for the ragged part and a plain data-parallel launch for the
+   rest, which is what CUTLASS ships. Sidesteps the dynamic scope by keeping every cube's run inside
+   one tile in the common case, and confines the ragged handling to a separate, smaller kernel.
 
-- The assignment moves from the axis to the level. `LevelSpec` learns an `Assignment`, either the
-  current per-axis one or a streamed one carrying the cube count; a streamed level's `LevelCuts`
-  states edges only, since the distribution is no longer an axis's to state. Settle the surface
-  before writing it: the alternative of a `Distribution::Streamed` per axis plus an all-or-none
-  assert reads as a bool in a trench coat.
-- `Walk::over_run(space, start, len)`: `from_counts` is already a mixed-radix decode, so this is a
-  variant of the same body reading a linear cursor rather than a per-axis odometer.
-- The drain stays unconditional. A fast path for wholly owned tiles is a measured optimization
-  later, never a design requirement.
-- The cube count is pinned with `Coverage::Instances(C)`, which already means what is needed, with
-  `C` from `num_streaming_multiprocessors`.
+The numbers above are what says whether this is worth it: split-K already takes the narrow shapes
+from 856us to 97us, and stream-K's remaining win over split-K is the wave-quantization tail, not the
+underutilization. That tail is largest exactly where the tile grid is an awkward multiple of the
+core count, which none of the shapes above are.
 
-Test: a run length that deliberately straddles tile boundaries, against the phase 1 oracle.
+## Still open
 
-## Phase 5: selection and measurement
-
-An eval category beside `tiled/eval/split_k/`, same shape, and the same rule: every mapping
-verifies against a reference before it is timed, since a misconfigured mapping times fast and
-means nothing.
-
-Mappings: `DataParallel` (today), `SplitKWorkspace`, `SplitKAtomic { splits }`,
-`StreamK { cubes }`. Heuristic to fit from the numbers: split only when
-`m_tiles * n_tiles < waves * sms`, then `splits = clamp(target / tiles, 1, k_blocks)`. Expect to
-keep both mappings and choose between them; they differ only in the `Cut`.
-
-## What none of this touches
-
-`mma`, the schedule, the leaf, the instruction, and the shape of `Tiling::over` for split-K. That
-is how the lane-scope split landed and it is the test that this one is cut the same way.
-
-## Risks
-
-- Metal float atomic add at scale is the whole of phase 2. Probe it with a minimal kernel before
-  building on it.
-- The kernel cache hides comptime panics. Run the new configurations under `CUBECL_DEBUG_LOG` so
-  they really compile.
-- Non-determinism under atomics will move test tolerances. Decide the tolerance story in phase 2
-  rather than discovering it in CI.
-- Phase 1's workspace is `splits * m * n * 4` bytes. Bound `splits` or the path is unusable at
-  large output.
-- `of_sink` refuses staging, `dense_mut`, quantization and tensor-map fills. Confirm no planned
-  output operand wants one of those before phase 2 commits to it.
+- Reproducibility is not yet a stated launch property. The atomic drain reorders, so its result is
+  not bit-identical run to run, and nothing says so at the call site.
+- `f16`/`bf16` outputs take the workspace path: their atomic add exists only on CUDA. Unenforced;
+  binding a non-`AtomicUsage::Add` element will fail in the backend rather than at the launch.
+- The share stays conservative on a `Dynamic` extent, so a launcher-built space always folds. Fix is
+  host-side stamping off the concrete space.
+- `an_i8_operand_contracts_against_its_scales` fails on metal, and did before any of this. Unrelated
+  (quantized i8 against scales), untouched.
