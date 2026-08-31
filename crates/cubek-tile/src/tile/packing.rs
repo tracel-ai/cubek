@@ -25,6 +25,40 @@ pub enum Packing {
     },
 }
 
+/// How a stored field reads back.
+///
+/// Named rather than asked, because two callers need it for different reasons: the view matches it
+/// to pick a read, and a launch matches it to refuse a field before it compiles a kernel around
+/// one. Deriving it twice is how the two drift.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum FieldDecode {
+    /// An integer slot: the top bit is its sign, so the value sign-extends out of its bits.
+    SignExtended,
+    /// A float code: the bits are an index into the format's values, read back by reinterpreting
+    /// the byte that [`QuantValue::native_packing`] of them share.
+    Reinterpreted,
+    /// A field no packed view here serves.
+    Unserved,
+}
+
+/// How the packed view reads `field` back.
+///
+/// The 8-bit minifloats are [`Unserved`](FieldDecode::Unserved): they reinterpret like `e2m1` does,
+/// but a byte holds one rather than a pair, so the read is a third shape and nothing asks for it.
+/// Bind such a tensor at its own element and let the contraction cast it.
+pub fn field_decode(field: QuantValue) -> FieldDecode {
+    match field {
+        QuantValue::Q8F
+        | QuantValue::Q8S
+        | QuantValue::Q4F
+        | QuantValue::Q4S
+        | QuantValue::Q2F
+        | QuantValue::Q2S => FieldDecode::SignExtended,
+        QuantValue::E2M1 => FieldDecode::Reinterpreted,
+        QuantValue::E4M3 | QuantValue::E5M2 => FieldDecode::Unserved,
+    }
+}
+
 impl Packing {
     /// Values per stored element: one, unless a `u32` holds several fields.
     pub fn factor(&self) -> usize {

@@ -18,6 +18,7 @@ use cubecl::{
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
+use cubecl_common::e2m1;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -259,6 +260,81 @@ fn four_bit_fields_unpack_on_read() {
     for m in 0..rows {
         for n in 0..cols {
             let want = values[m * cols + n] as f32;
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-6,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// Eight `e2m1` codes per word, reinterpreted rather than sign-extended.
+///
+/// The field of `nvfp4` and `mxfp4`. Its bits are an index into the format's sixteen values, not a
+/// small integer, so reading it as one would answer plausible nonsense — `0b0111` is `6.0`, and as
+/// a signed nibble it is `7`. Nothing here states a scheme: the packing names the field, and the
+/// values a word holds are whatever that field decodes to.
+#[test]
+fn fp4_codes_unpack_on_read() {
+    let (field, rows, cols) = (QuantValue::E2M1, 4, 32);
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    // Every code, cycled, so both signs and the whole value ladder are read back.
+    let codes: Vec<u32> = (0..rows * cols).map(|i| (i % 16) as u32).collect();
+    let words: Vec<u32> = codes
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &c)| acc | (c << (j * bits)))
+        })
+        .collect();
+    let input = TensorHandle::<TestRuntime>::new_contiguous(
+        vec![rows, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, rows), (N, cols)]);
+    packed_copy::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        factor,
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).packed(field),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want = e2m1::from_bits(codes[m * cols + n] as u8).to_f32();
             let have = got.get_f32(&[m, n]);
             assert!(
                 (have - want).abs() < 1e-6,

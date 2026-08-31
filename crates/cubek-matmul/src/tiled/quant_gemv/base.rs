@@ -6,7 +6,8 @@
 //! - A weight packed into `u32` words along the contraction (`d_in`), its scales blocking the
 //!   same axis: one scale per `(output row, block of K)`. That is the serving form a decode
 //!   step streams — the buffer's contiguous direction is the walk.
-//! - Any field [`QuantValue`] names. The device's reported vector cap is not among the
+//! - Any field the packed view reads back: the integer slots (`q8`/`q4`/`q2`, full or symmetric)
+//!   and the `e2m1` codes that `nvfp4` and `mxfp4` store. The device's reported vector cap is not among the
 //!   questions: the weight binds one `u32` *word* per line whatever the packing factor expands
 //!   to, and the activation's line is bytes, not lanes of a binding the cap governs.
 //! - Activation, scale and output element types stated independently; the contraction runs in
@@ -14,12 +15,15 @@
 //!
 //! # Rejected (returns [`MatmulSetupError`])
 //!
+//! - A field the packed view does not serve, refused here rather than inside the kernel, where a
+//!   comptime panic lands on a worker thread and the launch returns zeros beside it.
 //! - A scale block that does not cover whole words, or a `d_in` the blocks do not tile.
 //! - A `d_out` no plan's row strip tiles.
 
 use std::fmt::Display;
 
 use cubecl::quant::scheme::QuantValue;
+use cubek_tile::{FieldDecode, field_decode};
 
 use crate::definition::MatmulSetupError;
 
@@ -198,6 +202,14 @@ impl QuantGemvRoutine {
         plane_dim: usize,
     ) -> Result<(), MatmulSetupError> {
         let refuse = |what: String| Err(MatmulSetupError::InvalidConfig(Box::new(what)));
+        // Asked first: the kernel's own refusal is a comptime panic on a worker thread, which
+        // surfaces as a zeroed output rather than as an error.
+        if field_decode(problem.field) == FieldDecode::Unserved {
+            return refuse(format!(
+                "QuantGemv: the packed view does not serve a {:?} field",
+                problem.field
+            ));
+        }
         let factor = problem.factor();
         if !problem.block.is_multiple_of(factor) {
             return refuse(format!(
