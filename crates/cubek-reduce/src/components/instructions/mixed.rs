@@ -158,6 +158,7 @@ impl ReduceOperationConfig {
                 accumulation: ElemType::Index,
             },
             ElemType::Bool => panic!("Can't reduce on booleans"),
+            ElemType::Complex(_) => panic!("Can't reduce on complex numbers"),
         }
     }
 }
