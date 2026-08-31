@@ -467,3 +467,150 @@ arithmetic are exactly what the second and third rows still use.
   a scheme, which is the only thing that mints it.
 - The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
   until item 4.
+
+## The scale chain: making depth sayable, and clean
+
+The leaf recursion landed (`4342c6f4`): the scales are read through `Lines`, the same trait the
+values are, so a scaled operand's scales may carry scales of their own. What did not land is a way
+to *say* so, and three debts came with it.
+
+- `FoldRun::compose` states the rule for two levels and nothing can reach its second branch. Every
+  call site still builds `ScaledLines<.., MatrixView<..>>`, so `above` is always `FoldRun::ONE`.
+- What a level *is* — the scales' matrix axes, the edge they share with the values, the width that
+  edge is served at, the lines one scale covers — is derived twice, in `direct.rs` and in
+  `promoted.rs`. The two have already drifted: one takes the edge from `shape.reduce_edge()`, the
+  other from `operands.contracting(&out)`.
+- What a level may be *served at* is two asserts in two files: `sw == 1 || contracted_per_step == 1`
+  in the memory nest, `sw == 1 || side == ScaleSide::Rhs` in the promoted block. One rule, two
+  exceptions, and neither says what the rule is.
+- One test covers a wide scale line, on one of the two accumulators.
+
+### The rule this follows
+
+A scale is a tile that spans fewer axes than the values it multiplies. That sentence is recursive:
+the scales are a tile, so they take scales the same way, and one scale for a tile of values makes a
+tile of scales for a tile of tiles of values. Two things follow, and the phases below are only these
+two applied.
+
+**Nothing in the engine counts levels.** How many there are is a fact about the type the kernel
+wrote, never a number the engine holds.
+
+**No call site re-derives what a level is.** A duplicated decision is the bug, whatever the copies
+currently agree on.
+
+### Phase 1: one owner for what a level is
+
+`ScaleLevel` — one level of the hierarchy, against the tile below it.
+
+```rust
+/// One level of a scale hierarchy, against the values it covers.
+pub(crate) struct ScaleLevel {
+    /// The scales' own matrix, as the level below reads it.
+    axes: MatrixAxes,
+    /// Lines of the level below that one scale covers, along the edge they share.
+    lines_per_scale: usize,
+    /// Scales one read of them serves.
+    lanes: usize,
+}
+```
+
+Built by one function, which reads the count off the axes the way both copies already do: the scale
+is constant along every edge axis it does not distinguish, so one read serves every position of
+them, and nothing divides an extent.
+
+What stays with each accumulator is what genuinely differs: which edge it walks, and the
+`ScaleSide` it reads off the axes. What a level *is* stops being two derivations.
+
+*Proves it:* the ten `scaled` tests, unchanged. Any drift between the two derivations surfaces as a
+failure rather than as a difference nobody compares.
+
+### Phase 2: one statement of the servable width
+
+The rule the two asserts are both circling: *a scale line wider than one scale needs each value
+line's ordinal along the shared edge to be a constant.* Whether it is, is a fact about how the
+caller walks — so the caller states it, and the rule lives once.
+
+```rust
+/// Whether the caller walks the shared edge under an ordinal it knows at comptime.
+pub(crate) enum EdgeOrdinal {
+    /// Each line's position along the edge is a constant, so a lane of a wide scale read is
+    /// addressable and the scales may be served several at a time.
+    Constant,
+    /// The edge is stepped at runtime, so only a scalar read is addressable.
+    Runtime,
+}
+```
+
+Each accumulator answers for itself, once: the memory nest is `Constant` where a step folds one
+contracted value, the promoted block where the scales ride the rhs. `ScaleLevel` takes the answer
+and refuses a wide binding under `Runtime`. No predicate anywhere — the enum is the state, and the
+refusal reads off it rather than off a `bool` each site reconstructs.
+
+*Proves it:* `rhs_scales_are_served_several_at_a_time` on the promoted accumulator, which today's
+assert permits and nothing exercises.
+
+### Phase 3: depth becomes sayable
+
+```rust
+out.mm_scaled(&w, &x, &blocks.scale(&global), Semiring::SUM_PROD);
+```
+
+```rust
+/// A scales tile that itself carries scales. Its own `.scale()` returns another, so depth is
+/// however many times the kernel said it.
+pub struct Scaled<'a, S: Numeric, Above: ScaleOperand> { tile: &'a Tile<S>, above: Above }
+
+/// What the leaf asks of a scales operand: its space, and the reader for everything above it.
+#[cube]
+pub trait ScaleOperand: CubeType {
+    type Above: Lines;
+    fn space(&self) -> comptime_type!(Space);
+    fn above(&self, #[comptime] levels: Vec<ScaleLevel>) -> Self::Above;
+}
+```
+
+`Tile<S>` implements it with nothing above; `Scaled` implements it by wrapping one. `mm_scaled`
+becomes generic over `ScaleOperand`. The leaf builds level 0 exactly as it does now, with `size!`
+minting the binding's width locally, and asks the operand for the rest.
+
+**Levels above the first are served scalar, and that is a property of the hierarchy rather than a
+concession.** One line of a level-1 scale already covers `lines_per_scale × lanes` lines of level 0;
+a wide read of it fetches scales that will not be wanted for many iterations, buys no bandwidth, and
+costs the caller a longer constant-ordinal run to unroll. It is also what makes the reader type
+nameable outside the leaf, where `size!` does not reach. The constraint and the right answer are the
+same answer.
+
+This is what gives `FoldRun::compose` a caller that reaches its second branch. If the phase slips,
+the branch comes out rather than waiting for one.
+
+*Proves it:* `a_scale_of_scales_folds_both_levels_in` — block scales under a per-tensor factor,
+`nvfp4`'s own shape, against a reference that multiplies both. And the per-tensor level, spanning no
+axis, must leave the walk untouched: the golden is the one-level kernel plus one multiply.
+
+### Phase 4: `mm_scaled` disappears
+
+```rust
+out.mm(&w.scale(&blocks.scale(&global)), &x, Semiring::SUM_PROD);
+```
+
+One verb again. Reachable now and not before: the ring already carries three operands
+(`ed9f9f9e`), so a scaled lhs unwraps to values-plus-chain and takes a slot that exists.
+`mma_scaled`, `mma_leaf_scaled` and `MmaScaledWalk` fold back into their plain twins, and
+`contract_scaled` becomes `contract` reading a `Lines` that happens to scale.
+
+Stated rather than assumed: `mm`'s walk touches its operands for regions, staging and the op space,
+so the operand trait has to carry those too. This is the phase to stop at if it grows. Phases 1-3
+stand alone and leave nothing speculative behind.
+
+### Out of scope, deliberately
+
+- The fragment accumulator. A scaled contraction there is a different instruction, not this one
+  under a flag; see **Deferred**.
+- The N-D gather nest, whose step has no single scalar `k` to address a scale with.
+- The decode gemv reading its scales one at a time. That is a fact about the row orientation's
+  layout, not about the engine; see **Known gaps**.
+
+### The rule for reviewing this
+
+**No phase may add a number.** If a phase lands and something in the engine says `2`, or asks how
+many levels there are, or derives what a level is at more than one call site, it is not done.
