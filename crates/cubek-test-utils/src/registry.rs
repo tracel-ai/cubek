@@ -15,6 +15,7 @@ use cubecl::prelude::*;
 use cubecl::std::throughput::measure_peak_throughput;
 use cubecl::throughput::{
     self, MemoryAccess, MemorySpec, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
+    sweep_size,
 };
 use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
@@ -35,17 +36,22 @@ pub fn client() -> ComputeClient<TestRuntime> {
 static PEAKS: LazyLock<Mutex<HashMap<ThroughputKey, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Looks up `key`'s peak rate for `kind` in [`PEAKS`], measuring and caching
-/// it on a miss. Never re-enters itself, so holding the lock across the
-/// measurement cannot deadlock.
-fn peak_per_s(kind: ResourceKind, key: ThroughputKey) -> f64 {
+/// Looks up `key`'s peak rate in [`PEAKS`], measuring and caching it on a
+/// miss. Never re-enters itself, so holding the lock across the measurement
+/// cannot deadlock.
+///
+/// The unit comes from the key's own mode rather than from the caller, so a
+/// memo keyed on the key alone cannot serve one resource's rate to another.
+fn peak_per_s(key: ThroughputKey) -> f64 {
     let mut peaks = PEAKS.lock().expect("peaks mutex is not poisoned");
     *peaks.entry(key).or_insert_with(|| {
         let value = measure_peak_throughput(&client(), key);
-        match kind {
-            ResourceKind::Compute => value.ops_per_s(),
-            ResourceKind::Read | ResourceKind::Write => value.bytes_per_s(&key),
-            ResourceKind::Launch => 1.0 / value.duration_per_op().as_secs_f64(),
+        match key.mode {
+            ThroughputMode::ComputeDirect { .. } | ThroughputMode::ComputeCmma { .. } => {
+                value.ops_per_s()
+            }
+            ThroughputMode::Memory(_) => value.bytes_per_s(&key),
+            ThroughputMode::Launch => 1.0 / value.duration_per_op().as_secs_f64(),
         }
     })
 }
@@ -193,6 +199,11 @@ impl CategoryWork {
     /// Launch joins the declared resources only under [`TimingMethod::System`];
     /// a device-timed row's timestamps begin once the dispatch is already paid
     /// for. It counts one, so a strategy launching several leaves it a floor.
+    ///
+    /// A memory probe is asked for the octave at or below the traffic, not the
+    /// traffic itself: that is the grid [`MemoryCurve`] is measured on, so rows
+    /// of neighbouring sizes share one probe instead of each paying for their
+    /// own. The amount stays exact, since that is what the kernel moves.
     fn declared_resources(
         &self,
         timing: TimingMethod,
@@ -206,7 +217,7 @@ impl CategoryWork {
             let key = ThroughputKey {
                 mode: ThroughputMode::Memory(MemorySpec::new(
                     MemoryAccess::Read,
-                    self.bytes_read as u64,
+                    sweep_size(self.bytes_read as u64),
                 )),
             };
             out.push((ResourceKind::Read, self.bytes_read, key));
@@ -215,7 +226,7 @@ impl CategoryWork {
             let key = ThroughputKey {
                 mode: ThroughputMode::Memory(MemorySpec::new(
                     MemoryAccess::Write,
-                    self.bytes_written as u64,
+                    sweep_size(self.bytes_written as u64),
                 )),
             };
             out.push((ResourceKind::Write, self.bytes_written, key));
@@ -240,7 +251,7 @@ impl CategoryWork {
                     kind,
                     ResourceBound {
                         amount,
-                        peak_per_s: peak_per_s(kind, key),
+                        peak_per_s: peak_per_s(key),
                     },
                 )
             })
@@ -460,9 +471,9 @@ impl<C: Category> BenchmarkCategory for C {
             let Some(work) = Category::work(self, &problem.value) else {
                 continue;
             };
-            for (kind, _, key) in work.declared_resources(Category::timing_method(self)) {
+            for (_, _, key) in work.declared_resources(Category::timing_method(self)) {
                 if seen.insert(key) {
-                    peak_per_s(kind, key);
+                    peak_per_s(key);
                 }
             }
         }
@@ -598,12 +609,13 @@ mod tests {
         assert_eq!(resources[2].1.amount, 1024);
     }
 
-    /// Same-shaped work keys to the same `ThroughputKey`; a different shape does not.
+    /// Same-shaped work keys to the same `ThroughputKey`; a shape an octave
+    /// away does not.
     #[test]
     fn declared_resources_key_on_shape_not_identity() {
-        let a = work(0, 4096, 0).declared_resources(NO_LAUNCH);
-        let b = work(0, 4096, 0).declared_resources(NO_LAUNCH);
-        let c = work(0, 8192, 0).declared_resources(NO_LAUNCH);
+        let a = work(0, 16384, 0).declared_resources(NO_LAUNCH);
+        let b = work(0, 16384, 0).declared_resources(NO_LAUNCH);
+        let c = work(0, 32768, 0).declared_resources(NO_LAUNCH);
 
         assert_eq!(a[0].2, b[0].2);
         assert_ne!(a[0].2, c[0].2);
@@ -613,6 +625,22 @@ mod tests {
         seen.insert(b[0].2);
         seen.insert(c[0].2);
         assert_eq!(seen.len(), 2);
+    }
+
+    /// Sizes inside one octave share a probe. A key taken from the exact byte
+    /// count would measure the device once per distinct problem shape, and
+    /// land on no size the curve is measured at.
+    #[test]
+    fn sizes_within_an_octave_share_one_probe() {
+        let exact = work(0, 16384, 0).declared_resources(NO_LAUNCH);
+        let above = work(0, 16385, 0).declared_resources(NO_LAUNCH);
+        let below = work(0, 32767, 0).declared_resources(NO_LAUNCH);
+
+        assert_eq!(exact[0].2, above[0].2);
+        assert_eq!(exact[0].2, below[0].2);
+
+        // The amount is still what the kernel moves, only the probe rounds.
+        assert_eq!(above[0].1, 16385);
     }
 
     /// No resources to score: `score_bounds` leaves both `tflops` and `binding`

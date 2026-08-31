@@ -91,14 +91,14 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
     let problem_filter = id_filter("CUBEK_BENCH_PROBLEMS");
     let strategy_filter = id_filter("CUBEK_BENCH_STRATEGIES");
 
-    let problems: Vec<_> = category
-        .problems()
-        .into_iter()
+    let all_problems = category.problems();
+    let all_strategies = category.strategies();
+    let problems: Vec<_> = all_problems
+        .iter()
         .filter(|p| selects(&problem_filter, &p.id))
         .collect();
-    let strategies: Vec<_> = category
-        .strategies()
-        .into_iter()
+    let strategies: Vec<_> = all_strategies
+        .iter()
         .filter(|s| selects(&strategy_filter, &s.id))
         .collect();
 
@@ -114,9 +114,9 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
         println!(
             "running {} of {} problem(s) against {} of {} strategy(ies)",
             problems.len(),
-            category.problems().len(),
+            all_problems.len(),
             strategies.len(),
-            category.strategies().len()
+            all_strategies.len()
         );
     }
 

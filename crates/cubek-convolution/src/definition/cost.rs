@@ -80,7 +80,9 @@ impl Conv2dCost {
         (
             input * self.elems.lhs.size()
                 + filter * self.elems.rhs.size()
-                + self.bias_elems * self.elems.rhs.size(),
+                // A bias is added to the accumulator, so it is stored in the
+                // output's type rather than the filter's.
+                + self.bias_elems * self.elems.out.size(),
             output * self.elems.out.size(),
         )
     }
