@@ -124,7 +124,7 @@ pub(crate) struct ContractEdges {
 /// The level below is whatever this one scales: the operand's values at the first level, and the
 /// level beneath it at any level above. Nothing here knows which, or how many there are.
 #[derive(Clone, Copy)]
-pub struct ScaleLevel {
+pub(crate) struct ScaleLevel {
     /// The scales' own matrix, as the level below reads it.
     pub axes: MatrixAxes,
     /// Lines of the level below that one scale covers, along the edge they share.
@@ -145,7 +145,7 @@ impl ScaleLevel {
     /// distinguish — rather than out of dividing one extent by another. The scale is constant
     /// along every axis it does not address, so one read of it serves every position of them, and
     /// no line can straddle a block whatever width it is served at.
-    pub fn of(
+    pub(crate) fn of(
         scales: &Space,
         edges: &ContractEdges,
         side: ScaleSide,
@@ -158,14 +158,15 @@ impl ScaleLevel {
             (ScaleSide::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
             (ScaleSide::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
-        if lanes > 1 {
-            if let EdgeOrdinal::Runtime(why) = &edges.ordinal {
-                panic!(
-                    "mm_scaled: {lanes} scales are served as one line, which needs each value \
-                     line's ordinal along the edge they share as a constant. {why}; bind the \
-                     scales scalar here"
-                );
-            }
+        match &edges.ordinal {
+            EdgeOrdinal::Constant => {}
+            // One scale a read needs no ordinal at all: every line takes the same lane.
+            EdgeOrdinal::Runtime(_) if lanes == 1 => {}
+            EdgeOrdinal::Runtime(why) => panic!(
+                "mm_scaled: {lanes} scales are served as one line, which needs each value line's \
+                 ordinal along the edge they share as a constant. {why}; bind the scales scalar \
+                 here"
+            ),
         }
         let cols = scales.extent_at(scales.rank() - 1);
         let lines_per_scale = edge
