@@ -238,7 +238,7 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] monoid: Monoid,
     ) -> AccumulatorScope<EA, Acc> {
         let write = self.write();
-        comptime!(self.space.leaf_cube_share().validate(write, "Tile::accumulate"));
+        comptime!(self.space.leaf_split_share().validate(write, "Tile::accumulate"));
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
@@ -320,7 +320,7 @@ mod tests {
     /// `packed.rs` say the same of theirs). The guard runs before the accumulator's kind is
     /// looked at, so any tile carries the test.
     #[test]
-    #[should_panic(expected = "split across cubes")]
+    #[should_panic(expected = "split across planes or cubes")]
     fn opening_an_accumulator_split_across_cubes_is_refused() {
         let scope = test_scope();
         let space = Tiling::new()

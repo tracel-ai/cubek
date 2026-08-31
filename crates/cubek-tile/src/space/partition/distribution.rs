@@ -68,52 +68,57 @@ pub struct Lanes {
     pub work: LaneWork,
 }
 
-/// What one cube holds of a tile's cells, once a `Cube` split is dealt out.
+/// What one instance holds of a tile's cells, across the scopes whose instances can only meet in
+/// the destination: `Plane` and `Cube`.
 ///
-/// The cube twin of [`LaneShare`], and deliberately a coarser answer. Lanes elect one of their
-/// own to write, so they have to know which lanes share a cell and a mask says it; cubes each
-/// fold their own contribution through memory, so there is nothing to elect and no mask to read.
+/// [`LaneShare`]'s counterpart, and deliberately a coarser answer, because the two combine in
+/// different places. A plane's lanes share registers, so they combine there, and to elect one of
+/// their own to write they have to know which lanes hold a cell: hence a mask. Planes and cubes
+/// share no registers. Each folds its own contribution into the destination and never learns that
+/// the others exist, so there is nothing to elect between them and no mask to read.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum CubeShare {
-    /// Every cell this cube writes is its own outright, so the drain is a store.
+pub enum SplitShare {
+    /// Every cell this instance writes is its own outright, so the drain is a store.
     Whole,
-    /// Several cubes hold partials of the same cell, so the drain has to fold across cubes
-    /// rather than store. A contraction cut at cube scope is the way to get here.
+    /// Several instances hold partials of the same cell, so the drain has to fold rather than
+    /// store. A contraction cut at plane or cube scope is the way to get here.
     Partial,
 }
 
-impl CubeShare {
+impl SplitShare {
     /// Refuse an accumulation this share leaves in pieces, unless the destination folds them
     /// together. Called where an accumulator is opened and where one is written, which are the two
     /// places a partial can escape.
     ///
     /// A destination that replaces is wrong twice over under a split, and silently: a
-    /// register-resident accumulator drains by storing, so the last cube to arrive erases every
-    /// other cube's slice, and one accumulating in place reads the cell, folds, and writes it
-    /// back, which is a lost update between cubes. Neither shows up as anything but a wrong
-    /// number, so it is refused here instead. A destination that folds
-    /// ([`Write::Fold`](crate::Write)) is the case this exists to let through.
+    /// register-resident accumulator drains by storing, so the last instance to arrive erases
+    /// every other one's slice, and one accumulating in place reads the cell, folds, and writes
+    /// it back, which is a lost update. Neither shows up as anything but a wrong number, so it is
+    /// refused here instead. A destination that folds ([`Write::Fold`](crate::Write)) is the case
+    /// this exists to let through, and it serves both scopes alike: the drain's election is per
+    /// plane (`UNIT_POS_X == 0`), so one lane of every plane of every cube folds its own.
     pub(crate) fn validate(self, write: crate::Write, site: &str) {
         match (self, write) {
-            (CubeShare::Whole, _) | (CubeShare::Partial, crate::Write::Fold) => {}
-            (CubeShare::Partial, crate::Write::Replace) => panic!(
-                "{site}: this accumulator's cells are split across cubes and its destination \
-                 replaces rather than folds, so every partial but one would be lost. A contracted \
-                 axis cut at cube scope (`Cut::cube`) gives each cube a slice of the contraction, \
-                 and no cube holds a whole cell. Drain into a folding destination \
-                 (`Tile::of_atomic_sink`), cut the contraction at unit scope (`Cut::unit`, \
-                 combined by the plane), or give the output an axis of its own for the split."
+            (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Fold) => {}
+            (SplitShare::Partial, crate::Write::Replace) => panic!(
+                "{site}: this accumulator's cells are split across planes or cubes and its \
+                 destination replaces rather than folds, so every partial but one would be lost. \
+                 A contracted axis cut at plane or cube scope (`Cut::plane`, `Cut::cube`) gives \
+                 each instance a slice of the contraction, and none of them holds a whole cell. \
+                 Drain into a folding destination (`Tile::of_atomic_sink`), cut the contraction \
+                 at unit scope (`Cut::unit`, combined in the plane's registers), or give the \
+                 output an axis of its own for the split."
             ),
         }
     }
 }
 
 /// A descent's share, given the parent's and the level's: once partial, always partial, since a
-/// level below cannot put back a slice a level above gave to another cube.
-pub(crate) fn join_cube_share(parent: CubeShare, level: CubeShare) -> CubeShare {
+/// level below cannot put back a slice a level above gave to another instance.
+pub(crate) fn join_split_share(parent: SplitShare, level: SplitShare) -> SplitShare {
     match (parent, level) {
-        (CubeShare::Whole, CubeShare::Whole) => CubeShare::Whole,
-        (CubeShare::Partial, _) | (_, CubeShare::Partial) => CubeShare::Partial,
+        (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
+        (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
     }
 }
 

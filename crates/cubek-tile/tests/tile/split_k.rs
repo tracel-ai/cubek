@@ -517,3 +517,83 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         }
     }
 }
+
+/// The same fold one scope down: `K` cut across the *planes* of a single cube. Planes share no
+/// registers either, so each holds a slice of every cell and the drain folds them in, and the
+/// election is per plane, so one lane of each folds its own plane's contribution.
+///
+/// One cube, so nothing here is a cube split at all: what is being checked is that the combine is
+/// about instances that cannot meet in registers, not about cubes in particular.
+#[test]
+fn an_atomic_drain_folds_across_planes() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let (m, n, k, planes) = (4usize, 4usize, 16usize, 4usize);
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::plane(k / planes))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    atomic_split_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        out.clone().binding().into_tensor_arg(),
+        space,
+        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let want = reference(m, n, k, 0..k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}

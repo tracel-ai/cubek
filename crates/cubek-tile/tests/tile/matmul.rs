@@ -1329,7 +1329,7 @@ fn register_matmul_unit_spread_n() {
 // A contraction cut at cube scope leaves each cube holding a slice of every output cell, and
 // nothing combines them: a register-resident accumulator drains by storing, so the last cube to
 // arrive erases the others, and one accumulating in place reads the cell, folds, and writes it
-// back, which is a lost update between cubes. Both are refused (`CubeShare::validate`), and both
+// back, which is a lost update between cubes. Both are refused (`SplitShare::validate`), and both
 // refusals are unit-tested where they can be observed: `staging::accumulator` expands the
 // accumulator's opening, `space::base` checks the share the two of them read. Not here, for the
 // reason `blocked.rs` gives: this one fires inside the kernel, on a worker thread, where

@@ -69,13 +69,13 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
         #[comptime] lane_share: LaneShare,
-        #[comptime] cube_share: CubeShare,
+        #[comptime] split_share: SplitShare,
         #[comptime] write: Write,
         #[comptime] monoid: Monoid,
         #[comptime] init_from: InitFrom,
     ) -> Self {
         comptime!(write.validate_in_place("AccumulateView"));
-        comptime!(cube_share.validate(write, "AccumulateView"));
+        comptime!(split_share.validate(write, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
             lane_share,
