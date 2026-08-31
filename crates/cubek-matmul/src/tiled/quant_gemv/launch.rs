@@ -3,8 +3,13 @@
 //!
 //! Every binding is stated in **values**: the weight's shape and strides count the values its
 //! words hold, and `.packed(field)` says how many share one word. Nothing here widens a scale,
-//! and nothing carries a quantization scheme — the scales bind at their own element type,
-//! several per read, because they are an ordinary operand.
+//! and nothing carries a quantization scheme — the scales bind at their own element type
+//! because they are an ordinary operand.
+//!
+//! Scalar, though, and that is the orientation rather than a default worth tuning: a lane owns
+//! `rows_per_lane` output rows against one block, and those scales sit a row apart in the scales
+//! buffer. A wide read wants a lane owning consecutive blocks, which is the opposite of the
+//! interleave the fold is built on.
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_tile::{
