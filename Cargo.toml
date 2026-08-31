@@ -20,9 +20,9 @@ version = "0.3.0-pre.3"
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "45c2777584defbb0087b1e8efacace7be52ac01a", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "45c2777584defbb0087b1e8efacace7be52ac01a", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "45c2777584defbb0087b1e8efacace7be52ac01a", default-features = false }
+cubecl = { git = "https://github.com/tensor4all/cubecl", rev = "e48ede43d0c03e361f54ec895c7bfe395474fb72", default-features = false }
+cubecl-common = { git = "https://github.com/tensor4all/cubecl", rev = "e48ede43d0c03e361f54ec895c7bfe395474fb72", default-features = false }
+cubecl-environment = { git = "https://github.com/tensor4all/cubecl", rev = "e48ede43d0c03e361f54ec895c7bfe395474fb72", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.11.0-pre.3", default-features = false }
 # cubecl-common = { version = "=0.11.0-pre.3", default-features = false }
