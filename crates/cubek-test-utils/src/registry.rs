@@ -12,10 +12,9 @@ use std::time::Duration;
 
 use cubecl::benchmark::TimingMethod;
 use cubecl::prelude::*;
-use cubecl::std::throughput::measure_peak_throughput;
+use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
-    self, MemoryAccess, MemorySpec, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
-    sweep_size,
+    self, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
 };
 use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
@@ -35,6 +34,27 @@ pub fn client() -> ComputeClient<TestRuntime> {
 /// cache, so calling it between two timed rows moves real memory regardless.
 static PEAKS: LazyLock<Mutex<HashMap<ThroughputKey, f64>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Process-wide memo of measured memory curves, one per access.
+///
+/// A curve answers every working set from one sweep, so a run asks the device
+/// once per access rather than once per distinct size a problem declares.
+static CURVES: LazyLock<Mutex<HashMap<MemoryAccess, MemoryCurve>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The rate a kernel moving `bytes` in the direction `access` names can reach,
+/// read off [`CURVES`] and measuring the curve on a miss.
+///
+/// Zero when the sweep measured nothing, which leaves the resource unscored
+/// rather than dividing by a ceiling that does not exist.
+fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
+    let mut curves = CURVES.lock().expect("curves mutex is not poisoned");
+    let curve = curves
+        .entry(access)
+        .or_insert_with(|| measure_memory_curve(&client(), access));
+
+    curve.ceiling_at(bytes as u64).unwrap_or(0.0)
+}
 
 /// Looks up `key`'s peak rate in [`PEAKS`], measuring and caching it on a
 /// miss. Never re-enters itself, so holding the lock across the measurement
@@ -96,6 +116,17 @@ impl<T> CatalogEntry<T> {
             label: self.label.clone(),
         }
     }
+}
+
+/// Where a declared resource's ceiling comes from.
+///
+/// Memory names only its direction: the working set is applied when the curve
+/// is read, so two rows of different sizes share one sweep instead of each
+/// asking the device for a probe of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Ceiling {
+    Probe(ThroughputKey),
+    Curve(MemoryAccess),
 }
 
 /// Which resource a bench row's binding measurement is judged against.
@@ -204,38 +235,29 @@ impl CategoryWork {
     /// traffic itself: that is the grid [`MemoryCurve`] is measured on, so rows
     /// of neighbouring sizes share one probe instead of each paying for their
     /// own. The amount stays exact, since that is what the kernel moves.
-    fn declared_resources(
-        &self,
-        timing: TimingMethod,
-    ) -> Vec<(ResourceKind, usize, ThroughputKey)> {
+    fn declared_resources(&self, timing: TimingMethod) -> Vec<(ResourceKind, usize, Ceiling)> {
         let mut out = Vec::with_capacity(4);
 
         if let Some(compute) = self.compute.filter(|c| c.ops > 0) {
-            out.push((ResourceKind::Compute, compute.ops, compute.key));
+            out.push((
+                ResourceKind::Compute,
+                compute.ops,
+                Ceiling::Probe(compute.key),
+            ));
         }
         if self.bytes_read > 0 {
-            let key = ThroughputKey {
-                mode: ThroughputMode::Memory(MemorySpec::new(
-                    MemoryAccess::Read,
-                    sweep_size(self.bytes_read as u64),
-                )),
-            };
-            out.push((ResourceKind::Read, self.bytes_read, key));
+            let read = Ceiling::Curve(MemoryAccess::Read);
+            out.push((ResourceKind::Read, self.bytes_read, read));
         }
         if self.bytes_written > 0 {
-            let key = ThroughputKey {
-                mode: ThroughputMode::Memory(MemorySpec::new(
-                    MemoryAccess::Write,
-                    sweep_size(self.bytes_written as u64),
-                )),
-            };
-            out.push((ResourceKind::Write, self.bytes_written, key));
+            let write = Ceiling::Curve(MemoryAccess::Write);
+            out.push((ResourceKind::Write, self.bytes_written, write));
         }
         if !out.is_empty() && timing == TimingMethod::System {
-            let key = ThroughputKey {
+            let launch = Ceiling::Probe(ThroughputKey {
                 mode: ThroughputMode::Launch,
-            };
-            out.push((ResourceKind::Launch, 1, key));
+            });
+            out.push((ResourceKind::Launch, 1, launch));
         }
 
         out
@@ -246,14 +268,13 @@ impl CategoryWork {
     fn resources(&self, timing: TimingMethod) -> Vec<(ResourceKind, ResourceBound)> {
         self.declared_resources(timing)
             .into_iter()
-            .map(|(kind, amount, key)| {
-                (
-                    kind,
-                    ResourceBound {
-                        amount,
-                        peak_per_s: peak_per_s(key),
-                    },
-                )
+            .map(|(kind, amount, ceiling)| {
+                let peak_per_s = match ceiling {
+                    Ceiling::Probe(key) => peak_per_s(key),
+                    Ceiling::Curve(access) => curve_ceiling(access, amount),
+                };
+
+                (kind, ResourceBound { amount, peak_per_s })
             })
             .collect()
     }
@@ -471,9 +492,12 @@ impl<C: Category> BenchmarkCategory for C {
             let Some(work) = Category::work(self, &problem.value) else {
                 continue;
             };
-            for (_, _, key) in work.declared_resources(Category::timing_method(self)) {
-                if seen.insert(key) {
-                    peak_per_s(key);
+            for (_, amount, ceiling) in work.declared_resources(Category::timing_method(self)) {
+                if seen.insert(ceiling) {
+                    match ceiling {
+                        Ceiling::Probe(key) => peak_per_s(key),
+                        Ceiling::Curve(access) => curve_ceiling(access, amount),
+                    };
                 }
             }
         }
@@ -562,6 +586,7 @@ mod tests {
     /// work rather than standing in for it.
     #[test]
     fn zero_work_declares_no_resources() {
+        // Declares nothing, so this measures nothing.
         let resources = work(0, 0, 0).resources(TimingMethod::System);
         assert!(resources.is_empty());
 
@@ -574,73 +599,61 @@ mod tests {
     /// declared byte count as its `amount`; no `Write` or `Compute` entry.
     #[test]
     fn read_only_work_declares_a_single_read_resource() {
-        let resources = work(0, 4096, 0).resources(NO_LAUNCH);
+        let resources = work(0, 4096, 0).declared_resources(NO_LAUNCH);
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Read);
-        assert_eq!(resources[0].1.amount, 4096);
+        assert_eq!(resources[0].1, 4096);
     }
 
     /// A write-only declaration produces exactly one `Write` bound, mirroring
     /// the read-only case.
     #[test]
     fn write_only_work_declares_a_single_write_resource() {
-        let resources = work(0, 0, 2048).resources(NO_LAUNCH);
+        let resources = work(0, 0, 2048).declared_resources(NO_LAUNCH);
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].0, ResourceKind::Write);
-        assert_eq!(resources[0].1.amount, 2048);
+        assert_eq!(resources[0].1, 2048);
     }
 
     /// A mixed declaration produces all three bounds, each carrying its own
     /// field's amount, compute first.
     #[test]
     fn mixed_work_declares_compute_read_and_write_resources() {
-        let resources = work(1_000_000, 4096, 1024).resources(NO_LAUNCH);
+        let resources = work(1_000_000, 4096, 1024).declared_resources(NO_LAUNCH);
         assert_eq!(resources.len(), 3);
         assert_eq!(
-            resources.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(),
+            resources.iter().map(|(kind, ..)| *kind).collect::<Vec<_>>(),
             vec![
                 ResourceKind::Compute,
                 ResourceKind::Read,
                 ResourceKind::Write
             ]
         );
-        assert_eq!(resources[0].1.amount, 1_000_000);
-        assert_eq!(resources[1].1.amount, 4096);
-        assert_eq!(resources[2].1.amount, 1024);
+        assert_eq!(resources[0].1, 1_000_000);
+        assert_eq!(resources[1].1, 4096);
+        assert_eq!(resources[2].1, 1024);
     }
 
-    /// Same-shaped work keys to the same `ThroughputKey`; a shape an octave
-    /// away does not.
+    /// Every working set of one direction reads the same curve, so a sweep of
+    /// problem shapes asks the device once per access rather than once per
+    /// distinct size. The size is carried as the amount and applied when the
+    /// curve is read.
     #[test]
-    fn declared_resources_key_on_shape_not_identity() {
-        let a = work(0, 16384, 0).declared_resources(NO_LAUNCH);
-        let b = work(0, 16384, 0).declared_resources(NO_LAUNCH);
-        let c = work(0, 32768, 0).declared_resources(NO_LAUNCH);
+    fn memory_resources_share_one_curve_per_access() {
+        let small = work(0, 16384, 4096).declared_resources(NO_LAUNCH);
+        let large = work(0, 1 << 30, 1 << 30).declared_resources(NO_LAUNCH);
 
-        assert_eq!(a[0].2, b[0].2);
-        assert_ne!(a[0].2, c[0].2);
+        assert_eq!(small[0].2, Ceiling::Curve(MemoryAccess::Read));
+        assert_eq!(small[1].2, Ceiling::Curve(MemoryAccess::Write));
+        assert_eq!(small[0].2, large[0].2);
+        assert_eq!(small[1].2, large[1].2);
 
-        let mut seen = HashSet::new();
-        seen.insert(a[0].2);
-        seen.insert(b[0].2);
-        seen.insert(c[0].2);
-        assert_eq!(seen.len(), 2);
-    }
+        // Read and write are still distinct ceilings.
+        assert_ne!(small[0].2, small[1].2);
 
-    /// Sizes inside one octave share a probe. A key taken from the exact byte
-    /// count would measure the device once per distinct problem shape, and
-    /// land on no size the curve is measured at.
-    #[test]
-    fn sizes_within_an_octave_share_one_probe() {
-        let exact = work(0, 16384, 0).declared_resources(NO_LAUNCH);
-        let above = work(0, 16385, 0).declared_resources(NO_LAUNCH);
-        let below = work(0, 32767, 0).declared_resources(NO_LAUNCH);
-
-        assert_eq!(exact[0].2, above[0].2);
-        assert_eq!(exact[0].2, below[0].2);
-
-        // The amount is still what the kernel moves, only the probe rounds.
-        assert_eq!(above[0].1, 16385);
+        // The amount is exactly what the kernel moves.
+        assert_eq!(small[0].1, 16384);
+        assert_eq!(large[0].1, 1 << 30);
     }
 
     /// No resources to score: `score_bounds` leaves both `tflops` and `binding`
@@ -725,9 +738,9 @@ mod tests {
         assert_eq!(timed[1].1, 1);
         assert_eq!(
             timed[1].2,
-            ThroughputKey {
+            Ceiling::Probe(ThroughputKey {
                 mode: ThroughputMode::Launch
-            }
+            })
         );
 
         let untimed = work(0, 0, 2048).declared_resources(TimingMethod::Device);
