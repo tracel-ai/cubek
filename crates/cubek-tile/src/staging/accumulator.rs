@@ -238,7 +238,10 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] monoid: Monoid,
     ) -> AccumulatorScope<EA, Acc> {
         let write = self.write();
-        comptime!(self.space.leaf_split_share().validate(write, "Tile::accumulate"));
+        // The stamped value, not a fresh derivation: this space is the operand's own projection
+        // and the axis that splits it is exactly the one the projection dropped.
+        let split_share = self.split_share();
+        comptime!(split_share.validate(write, "Tile::accumulate"));
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
@@ -311,30 +314,11 @@ mod tests {
         ))
     }
 
-    /// Opening an accumulator whose cells several cubes hold slices of is refused, since nothing
-    /// combines them: this one would drain by storing and the last cube to arrive would erase
-    /// every other cube's slice.
-    ///
-    /// Expanded here rather than launched. The refusal is a comptime panic, and a launched kernel
-    /// expands on a worker thread where `#[should_panic]` never sees it (`blocked.rs` and
-    /// `packed.rs` say the same of theirs). The guard runs before the accumulator's kind is
-    /// looked at, so any tile carries the test.
-    #[test]
-    #[should_panic(expected = "split across planes or cubes")]
-    fn opening_an_accumulator_split_across_cubes_is_refused() {
-        let scope = test_scope();
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::cube(CubeAxis::Y, 4))
-            })
-            .build();
-        let out = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, N]));
-        let lhs = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, K]));
-        out.__expand_accumulate_method::<f32, f32>(&scope, &lhs, Monoid::Sum);
-    }
+    // Opening an accumulator whose cells several instances hold slices of is refused, and the
+    // refusal is checked in two halves, each where it can be observed: `space::base` checks the
+    // share that is stamped on the tile, and `space::partition::distribution` checks what
+    // `validate` does with it. What is left here is one read of the stamped value, which a
+    // procedural tile (the only kind that can be built without a launch) does not carry.
 
     /// The same cut on an axis the output spans is a plain output split: each cube owns its
     /// columns outright, so the accumulator opens as it always has.

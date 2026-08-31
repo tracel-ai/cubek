@@ -6,7 +6,7 @@ use cubecl::zspace::SmallVec;
 
 use crate::{
     Axis, ComputeScope, SplitShare, Distribution, Instruction, LaneShare, LaneWork, Lanes,
-    LevelRole, MAX_AXES, Partitioner, join_split_share, join_lane_share,
+    LevelRole, MAX_AXES, Partitioner, join_lane_share,
 };
 
 use super::ByAxis;
@@ -492,56 +492,59 @@ impl Space {
         LaneWork::Repeated
     }
 
-    /// What one instance holds of this space's cells at this level:
-    /// [`Partial`](SplitShare::Partial) where some `Plane` or `Cube` axis this space does not span
-    /// is dealt out across more than one of them, so each contracts a slice and none of their
-    /// results is a whole cell.
+    /// What one instance of `axes`' operand holds of its cells: [`Partial`](SplitShare::Partial)
+    /// where some `Plane` or `Cube` axis the operand does not span is dealt out across more than
+    /// one instance, so each contracts a slice and none of their results is a whole cell.
     ///
-    /// [`lane_share`](Self::lane_share)'s counterpart, reading the partitioner's own axis list for
-    /// the same reason that one does: an output space (`{M, N}`) still names its contraction, and
-    /// it is exactly an axis named there and absent here that splits the cell. `Unit` is not among
-    /// the scopes here because a plane's lanes combine in registers, which is
+    /// [`lane_share`](Self::lane_share)'s counterpart, and asked of the *whole* space rather than
+    /// of the operand's own projection. The projection is what drops the contracted axis, and an
+    /// axis it has dropped has no extent left to divide, so a projected space cannot tell a split
+    /// from a cut whose edge happens to be the whole axis. `Unit` is not among the scopes here
+    /// because a plane's lanes combine in registers, which is
     /// [`lane_share`](Self::lane_share)'s subject.
     ///
-    /// Answered conservatively where the split's width is not comptime. An axis sized by
-    /// [`TilesEach`](Coverage::TilesEach) has as many instances as the runtime grid has tiles,
-    /// which only the shape knows; calling that partial costs a fold that a one-instance grid did
-    /// not need, while calling it whole loses every partial but one. The same bargain
-    /// [`spans_contracted_at_leaf`](Self::spans_contracted_at_leaf) strikes on a `Dynamic` extent.
-    pub(crate) fn split_share(&self) -> SplitShare {
-        if self.partitioner.is_final() {
-            return SplitShare::Whole;
-        }
-        let split = self.partitioner.axes().into_iter().any(|axis| {
-            let Distribution::Spatial {
-                scope: ComputeScope::Cube(_) | ComputeScope::Plane,
-                coverage,
-                ..
-            } = self.partitioner.distribution(axis)
-            else {
-                return false;
-            };
-            // A pinned count of one is one instance, so nothing is split; every other count is
-            // either more than one or unknown until the shape is.
-            !self.contains(axis) && coverage.instances_const() != Some(1)
-        });
-        match split {
-            true => SplitShare::Partial,
-            false => SplitShare::Whole,
-        }
-    }
-
-    /// The split share a tile ends up with at the leaf: every level's own joined, the way
-    /// [`MemData::at`](crate::MemData) joins them on the way down.
-    /// [`leaf_lane_share`](Self::leaf_lane_share)'s twin, and there for the same reason.
-    pub(crate) fn leaf_split_share(&self) -> SplitShare {
-        let mut share = SplitShare::Whole;
+    /// Answered conservatively where the instance count is not comptime, which is any
+    /// [`Dynamic`](Extent::Dynamic) extent under [`TilesEach`](Coverage::TilesEach): only the
+    /// shape knows how many tiles it has. Calling that partial costs a fold a one-instance grid
+    /// did not need, while calling it whole loses every partial but one. The same bargain
+    /// [`spans_contracted_at_leaf`](Self::spans_contracted_at_leaf) strikes.
+    pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
         let mut level = self.clone();
         while !level.is_final() {
-            share = join_split_share(share, level.split_share());
+            let split = level.partitioner().axes().into_iter().any(|axis| {
+                // An axis the operand spans is carried, not split: it gives each instance a cell
+                // of its own rather than a slice of one.
+                if axes.contains(&axis) {
+                    return false;
+                }
+                let dist = level.partitioner().distribution(axis);
+                match dist.scope() {
+                    Some(ComputeScope::Cube(_)) | Some(ComputeScope::Plane) => {}
+                    Some(ComputeScope::Unit) | None => return false,
+                }
+                level.instances_along(axis) != Some(1)
+            });
+            if split {
+                return SplitShare::Partial;
+            }
             level = level.divide();
         }
-        share
+        SplitShare::Whole
+    }
+
+    /// How many instances `axis` is dealt out to at this level, where that is comptime: the pinned
+    /// count, or the tile grid divided by each instance's share. `None` where the extent is
+    /// [`Dynamic`](Extent::Dynamic) and so the grid is only known at runtime.
+    fn instances_along(&self, axis: Axis) -> Option<usize> {
+        let coverage = self.partitioner.distribution(axis).coverage();
+        match coverage.instances_const() {
+            Some(instances) => Some(instances),
+            // `TilesEach`: the grid decides, and the grid needs the extent.
+            None => match self.extent_raw(axis) {
+                Extent::Static(_) => Some(coverage.instances(self.count(axis))),
+                Extent::Dynamic => None,
+            },
+        }
     }
 
     /// The instance-index weight this space's own axis list cannot see: the product of the
@@ -952,10 +955,10 @@ mod contraction_tests {
                     .axis(K, Cut::cube(CubeAxis::Y, 4))
             })
             .build();
-        assert_eq!(space.project(&[M, N]).leaf_split_share(), SplitShare::Partial);
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
         // The operands span `K`, so their own cells are whole: nothing about a split is
         // visible from a space that covers the axis being split.
-        assert_eq!(space.project(&[M, K]).leaf_split_share(), SplitShare::Whole);
+        assert_eq!(space.split_share_of(&[M, K]), SplitShare::Whole);
     }
 
     /// The same at plane scope: planes of one cube share no registers either, so a contraction
@@ -971,7 +974,25 @@ mod contraction_tests {
                     .axis(K, Cut::plane(4))
             })
             .build();
-        assert_eq!(space.project(&[M, N]).leaf_split_share(), SplitShare::Partial);
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+    }
+
+    /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
+    /// The case a projected space cannot answer, and the reason the question is asked of the
+    /// whole one: a mapping parameterised by its split count writes the same cut with `splits`
+    /// of one, and refusing that would refuse the control it is compared against.
+    #[test]
+    fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
+        use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+        let space = Tiling::new()
+            .extents(&[(M, 4), (N, 4), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::cube(CubeAxis::X, 1))
+                    .axis(K, Cut::cube(CubeAxis::Z, 8))
+            })
+            .build();
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
     }
 
     /// The same cut on an axis the output *does* span is a plain output split: each cube owns
@@ -987,7 +1008,7 @@ mod contraction_tests {
                     .axis(K, Cut::sequential(4))
             })
             .build();
-        assert_eq!(space.project(&[M, N]).leaf_split_share(), SplitShare::Whole);
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
     }
 
     /// Two levels: `outer` the extents, `inner` the tile each axis is cut to below it.

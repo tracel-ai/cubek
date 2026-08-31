@@ -627,6 +627,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// What one instance holds of this tile's cells. A form that is not memory holds whole cells
+    /// by construction: it is a plane's own registers, which no other instance writes.
+    pub(crate) fn split_share(&self) -> comptime_type!(SplitShare) {
+        match &self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.split_share),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                comptime!(SplitShare::Whole)
+            }
+        }
+    }
+
     /// What a write to this tile does to the cell it lands on. A form that is not memory has no
     /// cell to land on, so it answers with the only thing a later store into memory can be asked
     /// to do, and the memory it drains into answers for itself.

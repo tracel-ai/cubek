@@ -113,15 +113,6 @@ impl SplitShare {
     }
 }
 
-/// A descent's share, given the parent's and the level's: once partial, always partial, since a
-/// level below cannot put back a slice a level above gave to another instance.
-pub(crate) fn join_split_share(parent: SplitShare, level: SplitShare) -> SplitShare {
-    match (parent, level) {
-        (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
-        (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
-    }
-}
-
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -323,5 +314,32 @@ impl Distribution {
             Distribution::Spatial { spread, .. } => spread,
             Distribution::Sequential => panic!("spread: not a Spatial axis"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Write;
+
+    /// A destination that replaces cannot take a cell several instances hold slices of: the
+    /// refusal is the whole of phase zero, since the alternative is a wrong number.
+    #[test]
+    #[should_panic(expected = "split across planes or cubes")]
+    fn a_partial_cell_may_not_be_stored() {
+        SplitShare::Partial.validate(Write::Replace, "test");
+    }
+
+    /// A destination that folds is exactly the case it exists to let through.
+    #[test]
+    fn a_partial_cell_may_be_folded() {
+        SplitShare::Partial.validate(Write::Fold, "test");
+    }
+
+    /// A whole cell is nobody else's business, whichever way it is written.
+    #[test]
+    fn a_whole_cell_is_written_either_way() {
+        SplitShare::Whole.validate(Write::Replace, "test");
+        SplitShare::Whole.validate(Write::Fold, "test");
     }
 }

@@ -57,9 +57,10 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
-    /// What one cube holds of these cells, stamped across [`at`](Tile::at)s exactly as
-    /// [`lane_share`](Self::lane_share) is, and spuriously `Partial` on an operand for the same
-    /// reason: only an accumulator reads it.
+    /// What one instance holds of these cells, settled once where the tile is built (the whole
+    /// space is in hand there, and only it can tell a split from a cut whose edge is the whole
+    /// axis) and carried down unchanged. Spuriously `Partial` on an operand orthogonal to a
+    /// split, as [`lane_share`](Self::lane_share) is: only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
     /// What the accumulation being lowered right now starts from ([`InitFrom`]).
@@ -613,6 +614,9 @@ impl<T: Numeric> Tile<T> {
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<T> {
+        // Asked before the projection, which is what drops the contracted axis: only the whole
+        // space still has the extent that says whether that axis is split or merely cut.
+        let split_share = comptime!(space.split_share_of(spec.axes()));
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
         let projection = comptime!(spec.projection.clone());
@@ -765,7 +769,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
-                split_share: comptime!(SplitShare::Whole),
+                split_share,
                 init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(space),
@@ -2376,7 +2380,9 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
-            split_share: comptime!(join_split_share(self.split_share, space.split_share())),
+            // Settled at construction, so a descent carries it: which instances hold a cell is a
+            // fact about the whole space, and windowing down does not change it.
+            split_share: comptime!(self.split_share),
             init_from: comptime!(self.init_from),
         }
     }
