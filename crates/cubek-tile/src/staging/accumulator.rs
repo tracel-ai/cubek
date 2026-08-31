@@ -237,6 +237,7 @@ impl<Acc: Numeric> Tile<Acc> {
         lhs: &Tile<EL>,
         #[comptime] monoid: Monoid,
     ) -> AccumulatorScope<EA, Acc> {
+        comptime!(self.space.leaf_cube_share().validate("Tile::accumulate"));
         let plan = self.stage_plan();
         match comptime!(plan.head()) {
             Residence::Register => {
@@ -285,5 +286,68 @@ impl<Acc: Numeric> Tile<Acc> {
             lane_share,
             monoid,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+    use cubecl::ir::Scope;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    fn test_scope() -> Scope {
+        Scope::root(cubecl::ir::settings::KernelSettings::new(
+            cubecl::ir::settings::Dim3::new_single(),
+            cubecl::ir::settings::ExecutionMode::Checked,
+            cubecl::ir::AddressType::U32,
+        ))
+    }
+
+    /// Opening an accumulator whose cells several cubes hold slices of is refused, since nothing
+    /// combines them: this one would drain by storing and the last cube to arrive would erase
+    /// every other cube's slice.
+    ///
+    /// Expanded here rather than launched. The refusal is a comptime panic, and a launched kernel
+    /// expands on a worker thread where `#[should_panic]` never sees it (`blocked.rs` and
+    /// `packed.rs` say the same of theirs). The guard runs before the accumulator's kind is
+    /// looked at, so any tile carries the test.
+    #[test]
+    #[should_panic(expected = "split across cubes")]
+    fn opening_an_accumulator_split_across_cubes_is_refused() {
+        let scope = test_scope();
+        let space = Tiling::new()
+            .extents(&[(M, 4), (N, 4), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::cube(CubeAxis::Y, 4))
+            })
+            .build();
+        let out = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, N]));
+        let lhs = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, K]));
+        out.__expand_accumulate_method::<f32, f32>(&scope, &lhs, Monoid::Sum);
+    }
+
+    /// The same cut on an axis the output spans is a plain output split: each cube owns its
+    /// columns outright, so the accumulator opens as it always has.
+    #[test]
+    fn opening_an_accumulator_over_a_cube_split_output_is_fine() {
+        let scope = test_scope();
+        let space = Tiling::new()
+            .extents(&[(M, 4), (N, 8), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::cube(CubeAxis::X, 4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build()
+            .with_instruction(Instruction::registers(16));
+        let out = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, N]));
+        let lhs = Tile::<f32>::__expand_zeros(&scope, space.project(&[M, K]));
+        out.__expand_accumulate_method::<f32, f32>(&scope, &lhs, Monoid::Sum);
     }
 }

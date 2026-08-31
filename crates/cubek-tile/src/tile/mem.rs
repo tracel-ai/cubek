@@ -57,6 +57,11 @@ pub struct MemData<T: Numeric> {
     /// merely replicated to an operand, so only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) lane_share: LaneShare,
+    /// What one cube holds of these cells, stamped across [`at`](Tile::at)s exactly as
+    /// [`lane_share`](Self::lane_share) is, and spuriously `Partial` on an operand for the same
+    /// reason: only an accumulator reads it.
+    #[cube(comptime)]
+    pub(crate) cube_share: CubeShare,
     /// What the accumulation being lowered right now starts from ([`InitFrom`]).
     ///
     /// Not a claim about the bytes: it says nothing about what the buffer holds, only what the
@@ -667,6 +672,7 @@ impl<T: Numeric> Tile<T> {
                     stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                cube_share: comptime!(CubeShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(space),
@@ -992,6 +998,7 @@ impl<T: Numeric> MemData<T> {
                     stage: meta.stage,
                 }),
                 lane_share: comptime!(LaneShare::Whole),
+                cube_share: comptime!(CubeShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
             }),
@@ -2069,10 +2076,12 @@ impl<T: Numeric> MemData<T> {
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
         let lane_share = comptime!(self.lane_share);
+        let cube_share = comptime!(self.cube_share);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.matrix_mut::<W>(i, axes, space),
             lane_share,
+            cube_share,
             monoid,
             init_from,
         )
@@ -2096,8 +2105,15 @@ impl<T: Numeric> MemData<T> {
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
         let lane_share = comptime!(self.lane_share);
+        let cube_share = comptime!(self.cube_share);
         let init_from = comptime!(self.init_from);
-        AccumulateView::new(self.flat_mut::<W>(), lane_share, monoid, init_from)
+        AccumulateView::new(
+            self.flat_mut::<W>(),
+            lane_share,
+            cube_share,
+            monoid,
+            init_from,
+        )
     }
 
     /// Window down to `region`: shift the origin by the region's tile coordinate times the
@@ -2261,6 +2277,7 @@ impl<T: Numeric> MemData<T> {
                 stage: self.access.stage.descend(),
             }),
             lane_share: comptime!(join_lane_share(self.lane_share, space.lane_share())),
+            cube_share: comptime!(join_cube_share(self.cube_share, space.cube_share())),
             init_from: comptime!(self.init_from),
         }
     }

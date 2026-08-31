@@ -1326,6 +1326,15 @@ fn register_matmul_unit_spread_n() {
         .enforce()
 }
 
+// A contraction cut at cube scope leaves each cube holding a slice of every output cell, and
+// nothing combines them: a register-resident accumulator drains by storing, so the last cube to
+// arrive erases the others, and one accumulating in place reads the cell, folds, and writes it
+// back, which is a lost update between cubes. Both are refused (`CubeShare::validate`), and both
+// refusals are unit-tested where they can be observed: `staging::accumulator` expands the
+// accumulator's opening, `space::base` checks the share the two of them read. Not here, for the
+// reason `blocked.rs` gives: this one fires inside the kernel, on a worker thread, where
+// `#[should_panic]` never sees it and the launch just returns zeros.
+
 /// The legacy register budget as a level structure: an in-place contraction-step walk
 /// (windowing only), an N-walk refilling one B fragment per step while the A
 /// column fills once above it, and an M-only fragment walk below. Exercises sub-block

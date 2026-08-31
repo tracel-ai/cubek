@@ -37,6 +37,52 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
     }
 }
 
+/// What one cube holds of a tile's cells, once a `Cube` split is dealt out.
+///
+/// The cube twin of [`LaneShare`], and deliberately a coarser answer. Lanes elect one of their
+/// own to write, so they have to know which lanes share a cell and a mask says it; cubes each
+/// fold their own contribution through memory, so there is nothing to elect and no mask to read.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum CubeShare {
+    /// Every cell this cube writes is its own outright, so the drain is a store.
+    Whole,
+    /// Several cubes hold partials of the same cell, so the drain has to fold across cubes
+    /// rather than store. A contraction cut at cube scope is the way to get here.
+    Partial,
+}
+
+impl CubeShare {
+    /// Refuse an accumulation this share leaves in pieces. Called where an accumulator is opened
+    /// and where one is written, which are the two places a partial can escape.
+    ///
+    /// Nothing folds across cubes yet, so a [`Partial`](CubeShare::Partial) accumulator is wrong
+    /// twice over and silently: a register-resident one drains by storing, so the last cube to
+    /// arrive erases every other cube's slice, and one accumulating in place reads the cell,
+    /// folds, and writes it back, which is a lost update between cubes. Neither shows up as
+    /// anything but a wrong number, so it is refused here instead.
+    pub(crate) fn validate(self, site: &str) {
+        match self {
+            CubeShare::Whole => {}
+            CubeShare::Partial => panic!(
+                "{site}: this accumulator's cells are split across cubes, and nothing combines \
+                 them. A contracted axis cut at cube scope (`Cut::cube`) gives each cube a slice \
+                 of the contraction, so no cube holds a whole cell and the drain would lose every \
+                 partial but one. Cut the contraction at unit scope (`Cut::unit`, combined by the \
+                 plane) or give the output an axis of its own for the split."
+            ),
+        }
+    }
+}
+
+/// A descent's share, given the parent's and the level's: once partial, always partial, since a
+/// level below cannot put back a slice a level above gave to another cube.
+pub(crate) fn join_cube_share(parent: CubeShare, level: CubeShare) -> CubeShare {
+    match (parent, level) {
+        (CubeShare::Whole, CubeShare::Whole) => CubeShare::Whole,
+        (CubeShare::Partial, _) | (_, CubeShare::Partial) => CubeShare::Partial,
+    }
+}
+
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
