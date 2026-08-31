@@ -110,7 +110,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
     };
     let launcher = space.clone().launcher(&client);
     let w_op = launcher
-        .arg(w_tensor.binding())
+        .arg(w_tensor.clone().binding())
         .gathered(split())
         .operand(&operands.0)
         .packed(field)

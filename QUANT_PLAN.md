@@ -229,6 +229,29 @@ grouping writes its lines where the sink reads something else.
 is dropped, so an unpartitioned promoted walk never asks. A promoted accumulator whose *levels*
 cut a split column group would, and that is where to look next.
 
+### Measured
+
+`tests/tile/dequant.rs`'s kernel, timed back to back in one process against a plain `f32` copy of
+the same output size (an ad-hoc harness, since a permanent one belongs in an `eval` category and
+`cubek-tile` has none):
+
+| | ms/pass | GB/s |
+|---|---|---|
+| dequant 4096x4096 q4 -> f32 | 0.61 – 1.11 | 70 – 128 |
+| copy 4096x4096 f32 | 0.92 – 1.52 | 88 – 146 |
+
+The spread is the machine, not the kernels: four back-to-back runs moved the copy's own number by
+40%, which is the thermal variance this box is known for. Only the within-run pairing says
+anything, and there the decode tracks the copy across every run while moving an eighth of the read
+traffic and taking less wall time for it.
+
+**So the decode is bandwidth-bound, and its arithmetic is not what limits it.** That retires a
+suspicion rather than confirming one: `unpack_line` builds its output vector a lane at a time and
+the emitted WGSL rebuilds the whole vector per lane, which reads like waste — ten rebuilds per
+eight values. It is not worth attacking. `Vector::insert` lowers to a `CompositeInsertOp` with no
+assemble-from-components alternative to reach for, the rebuild is a register shuffle a downstream
+compiler is free to remove, and the effect being hunted is smaller than the noise floor.
+
 **Out of scope.** The fragment path (`MatrixAxes::whole`, `plane.rs`). A cmma fragment's `16x16` is
 a hardware number, so grouping it by extent is right there and stays.
 
