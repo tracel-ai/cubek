@@ -4,18 +4,31 @@
 //! here rather than under a view because a scale line covers several value lines: which lane of it
 //! a line takes has to be a constant, and only a caller walking a comptime run knows that. `run`
 //! is that position, and an operand with nothing to index by it ignores it.
+//!
+//! **The scales are read through this same trait**, so a scaled operand's scales may themselves be
+//! scaled: one scale for a tile of values, a tile of scales for a tile of tiles of values. Depth is
+//! whatever the type says, and every level reads the level above it the same way, so nothing here
+//! counts levels or knows how many there are.
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::*;
 
 /// One operand's lines as the contraction reads them.
+///
+/// The element and width are the implementor's own, so a source can be wrapped by another source
+/// that reads it — which is what makes a scale chain a chain rather than an arity.
 #[cube]
-pub(crate) trait Lines<E: Numeric, V: Size>: CubeType {
+pub(crate) trait Lines: CubeType {
+    /// The element one line holds.
+    type E: Numeric;
+    /// Values per line.
+    type V: Size;
+
     /// The line at `pos`, folded with whatever this operand carries beside its values. `run` names
     /// this line's ordinal along the edge the fold is indexed by, so the lane it selects is a
     /// constant.
-    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<E, V>;
+    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<Self::E, Self::V>;
 
     /// How this operand's fold repeats across its lines ([`FoldRun`]).
     fn fold_run(&self) -> comptime_type!(FoldRun);
@@ -47,6 +60,48 @@ impl FoldRun {
     pub fn span(&self) -> usize {
         self.folds * self.lines
     }
+
+    /// This level's run against the one its own scales carry, in value lines.
+    ///
+    /// A level whose read serves a single fold constrains no walk: every line takes the same lane
+    /// whatever its ordinal, so it drops out here rather than widening the run its caller has to
+    /// unroll. That is what keeps a coarse outer level free — and a per-tensor scale, which is one
+    /// fold covering everything, entirely invisible to the walk.
+    ///
+    /// `per_line` is how many value lines one line of *these* scales covers, which is what carries
+    /// the level above into value-line units.
+    pub fn compose(self, above: FoldRun, per_line: usize) -> FoldRun {
+        let here = (self.folds > 1).then_some(self);
+        let above = (above.folds > 1).then_some(FoldRun {
+            folds: above.folds,
+            lines: above.lines * per_line,
+        });
+        match (here, above) {
+            (None, None) => FoldRun::ONE,
+            (Some(only), None) | (None, Some(only)) => only,
+            // The finer run is the one a caller must hold constant, and the coarser is a multiple
+            // of it, so they repeat together at the wider span.
+            (Some(here), Some(above)) => {
+                let lines = here.lines.min(above.lines);
+                let span = lcm(here.span(), above.span());
+                FoldRun {
+                    folds: span / lines,
+                    lines,
+                }
+            }
+        }
+    }
+}
+
+fn lcm(a: usize, b: usize) -> usize {
+    a / gcd(a, b) * b
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    match b {
+        0 => a,
+        _ => gcd(b, a % b),
+    }
 }
 
 // `folds` alone decides how a caller must walk: at one, every line takes the same lane whatever
@@ -54,7 +109,10 @@ impl FoldRun {
 // a constant, which is what the walks below branch on.
 
 #[cube]
-impl<'a, E: Numeric, V: Size> Lines<E, V> for MaskedView<'a, Vector<E, V>, Coords2d> {
+impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
+    type E = E;
+    type V = V;
+
     fn line(&self, pos: Coords2d, #[comptime] _run: usize) -> Vector<E, V> {
         self.read(pos)
     }
@@ -70,10 +128,14 @@ impl<'a, E: Numeric, V: Size> Lines<E, V> for MaskedView<'a, Vector<E, V>, Coord
 /// count lines. Which *lane* of a scale line a value line takes is a constant the caller knows and
 /// the view could not: `run` is the value line's ordinal along the shared edge, and the lane falls
 /// out of it. Which scale *line* to read is only an address, so it stays runtime.
+///
+/// The scales are themselves a [`Lines`], so they may carry scales of their own; this level reads
+/// them at the ordinal one line of them covers and asks no more. A second level is then this same
+/// type wrapping this same type, which is why nothing here says how deep the chain goes.
 #[derive(CubeType)]
-pub(crate) struct ScaledLines<'a, E: Numeric, V: Size, S: Numeric, SW: Size> {
+pub(crate) struct ScaledLines<'a, E: Numeric, V: Size, S: Lines> {
     values: MaskedView<'a, Vector<E, V>, Coords2d>,
-    scales: MaskedView<'a, Vector<S, SW>, Coords2d>,
+    scales: S,
     /// Value lines one scale covers along the shared edge.
     #[cube(comptime)]
     lines_per_scale: usize,
@@ -83,10 +145,10 @@ pub(crate) struct ScaledLines<'a, E: Numeric, V: Size, S: Numeric, SW: Size> {
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ScaledLines<'a, E, V, S, SW> {
+impl<'a, E: Numeric, V: Size, S: Lines> ScaledLines<'a, E, V, S> {
     pub fn new(
         values: MaskedView<'a, Vector<E, V>, Coords2d>,
-        scales: MaskedView<'a, Vector<S, SW>, Coords2d>,
+        scales: S,
         #[comptime] lines_per_scale: usize,
         #[comptime] lanes: usize,
     ) -> Self {
@@ -95,7 +157,7 @@ impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ScaledLines<'a, E, V, S, SW>
             "ScaledLines: one scale covers less than a whole line of values, so a line straddles \
              two scales"
         ));
-        ScaledLines::<'a, E, V, S, SW> {
+        ScaledLines::<'a, E, V, S> {
             values,
             scales,
             lines_per_scale,
@@ -105,20 +167,31 @@ impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> ScaledLines<'a, E, V, S, SW>
 }
 
 #[cube]
-impl<'a, E: Numeric, V: Size, S: Numeric, SW: Size> Lines<E, V> for ScaledLines<'a, E, V, S, SW> {
+impl<'a, E: Numeric, V: Size, S: Lines> Lines for ScaledLines<'a, E, V, S> {
+    type E = E;
+    type V = V;
+
     fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<E, V> {
         let value = self.values.read(pos);
         let (row, col) = pos;
         let per_line = comptime!(self.lines_per_scale * self.lanes);
-        let scale = self.scales.read((row, col / comptime!(per_line as u32)));
+        // One line of these scales covers `per_line` value lines, so that is both the column it
+        // sits at and the ordinal it is read under: the level above indexes scale lines, not value
+        // lines, and folds its own scale in on the way back.
+        let scale = self.scales.line(
+            (row, col / comptime!(per_line as u32)),
+            comptime!(run / per_line),
+        );
         let lane = comptime!((run / self.lines_per_scale) % self.lanes);
         value * Vector::<E, V>::cast_from(scale.extract(lane))
     }
 
     fn fold_run(&self) -> comptime_type!(FoldRun) {
+        let above = self.scales.fold_run();
         comptime!(FoldRun {
             folds: self.lanes,
             lines: self.lines_per_scale,
-        })
+        }
+        .compose(above, self.lines_per_scale * self.lanes))
     }
 }

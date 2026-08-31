@@ -26,8 +26,8 @@ pub(crate) fn contract<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -135,8 +135,8 @@ fn lane_walk<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -215,8 +215,8 @@ fn folded_lane_walk<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -286,8 +286,8 @@ fn rank1_update<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,

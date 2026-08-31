@@ -203,8 +203,8 @@ fn body<
     ER: Numeric,
     V: Size,
     A: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     acc: &mut AccumulateView<'_, E, A>,
     lhs: &Lhs,
@@ -406,13 +406,13 @@ fn nest_scaled<
                 let values = lhs.matrix_packed::<L>(lhs_axes, mat);
                 let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
                 let unroll = comptime!(eligible && !values.check && !rhs_mat.check && !acc_check);
-                let lhs_mat = ScaledLines::<EL, L, ES, S>::new(
+                let lhs_mat = ScaledLines::<EL, L, MatrixView<Vector<ES, S>>>::new(
                     values,
                     scales.matrix_packed::<S>(scales_axes, mat),
                     lines_per_scale,
                     sw,
                 );
-                body::<E, EL, L, ER, V, A, ScaledLines<EL, L, ES, S>, MatrixView<Vector<ER, V>>>(
+                body::<E, EL, L, ER, V, A, ScaledLines<EL, L, MatrixView<Vector<ES, S>>>, MatrixView<Vector<ER, V>>>(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
@@ -432,13 +432,13 @@ fn nest_scaled<
                 let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
                 let values = rhs.matrix_packed::<V>(rhs_axes, mat);
                 let unroll = comptime!(eligible && !lhs_mat.check && !values.check && !acc_check);
-                let rhs_mat = ScaledLines::<ER, V, ES, S>::new(
+                let rhs_mat = ScaledLines::<ER, V, MatrixView<Vector<ES, S>>>::new(
                     values,
                     scales.matrix_packed::<S>(scales_axes, mat),
                     lines_per_scale,
                     sw,
                 );
-                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, ScaledLines<ER, V, ES, S>>(
+                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, ScaledLines<ER, V, MatrixView<Vector<ES, S>>>>(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
