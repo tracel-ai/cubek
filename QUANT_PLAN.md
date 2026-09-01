@@ -842,3 +842,37 @@ traffic and structure are unchanged.
 
 **No phase may assume an algebra.** If the engine reorders, reassociates or merges levels, something
 must have *said* it could. A rewrite licensed by a comment is not licensed.
+
+### What building it changed
+
+Steps 1, 3, 6 and the load placement landed. Three of the remaining steps were wrong as written, and
+contact with the code is what said so.
+
+**Step 4 was wrong: the width is a binding choice, and `EdgeOrdinal` stays.** "The walk sizes the
+scale line" does not hold. What the axes determine is how many *distinct* scales a region holds
+(`edge / lines_per_scale`); how many to read at once is bounded by that but not fixed by it, and a
+narrower binding is correct, just more reads. `EdgeOrdinal` answers a different question, which
+survives untouched: whether the caller can hold a constant ordinal at all. What the cut really
+determines is the *best* width, which is a coalescing statement and belongs with the layout rule.
+**Merged into step 10. `EdgeOrdinal` is not deleted.**
+
+**Step 5 largely dissolved.** It existed so a level above the first could compute its own
+`ScaleLevel` against the level below. It does not need to: every level is read at the *same* logical
+position and resolves it to its own granularity through its own projection, so one `MatrixAxes`
+serves the whole list and no level needs geometry of its own. What remains of step 5 is small: each
+level should carry its own `Apply` rather than reading the innermost's. `ContractEdges` stays.
+
+**Step 7 is not mechanized.** There is no golden harness in this repo, and `CUBECL_DEBUG_LOG` emitted
+nothing for this runtime. The claim it was meant to check is instead structural and readable in the
+source: `combined_scales` reads each coarser level once, outside `line`, and `line` is
+`inner.read(pos) * coarser`. Worth mechanizing when a harness exists; not worth blocking on.
+
+### Where that leaves the plan
+
+Done: 0, 1, 3, 6, and the load placement. Dissolved or merged: 4, 5 (down to a per-level verb).
+Open: 2 (`tile_as`, needed only for tier 2, since tier 1 shares one dtype), 8, 9, 10, 11.
+
+**Step 2 also moved.** It is not needed for tier 1, whose levels share a dtype, and it is bigger than
+"small": a narrow buffer served wide is `Packing::Native` today, which is `i8`-only, cannot be
+stated on a spec, and would need the stored type to reach the read site inside `MemData<T>`. It
+belongs with step 8, where the byte counts are the point.
