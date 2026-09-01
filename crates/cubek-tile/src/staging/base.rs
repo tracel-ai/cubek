@@ -150,12 +150,10 @@ pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
     /// What each operand's payload is, and where it lives at this level; both resolved when the
-    /// slot was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entry
-    /// is `None` and asking for it is a bug, not a default.
+    /// slot was built. One entry per operand the payload `T` carries, in [`LHS`], [`RHS`] order,
+    /// so the slot's arity is however many the caller built it with.
     #[cube(comptime)]
-    pub(crate) lhs: OperandPlan,
-    #[cube(comptime)]
-    pub(crate) rhs: Option<OperandPlan>,
+    pub(crate) plans: Vec<OperandPlan>,
 }
 
 #[cube]
@@ -166,40 +164,32 @@ impl<T: CubeType> Staging<T> {
     pub(crate) fn wrap(
         data: T,
         pipeline: Pipeline,
-        #[comptime] lhs: OperandPlan,
-        #[comptime] rhs: Option<OperandPlan>,
+        #[comptime] plans: Vec<OperandPlan>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
-            lhs,
-            rhs,
+            plans,
         }
     }
 
-    /// The resolved plan for `operand`. Unary slots have only [`LHS`].
+    /// The resolved plan for `operand`. Asking a slot for an operand it does not carry is a bug,
+    /// not a default.
     pub(crate) fn plan(&self, #[comptime] operand: usize) -> comptime_type!(OperandPlan) {
-        comptime!(match operand {
-            LHS => self.lhs,
-            RHS => self.rhs.expect("Staging: unary slot has no rhs"),
-            _ => panic!("Staging: invalid operand index"),
-        })
+        comptime!(*self.plans.get(operand).unwrap_or_else(|| panic!(
+            "Staging: a {}-operand slot has no operand {operand}",
+            self.plans.len()
+        )))
     }
 
     /// Whether this slot has any fixed operand.
     pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
-        comptime!(
-            self.lhs.payload.is_fixed()
-                || matches!(self.rhs, Option::Some(p) if p.payload.is_fixed())
-        )
+        comptime!(self.plans.iter().any(|plan| plan.payload.is_fixed()))
     }
 
     /// Whether either operand is read by selecting fragments, requiring an unrolled walk.
     pub(crate) fn has_fragment_read(&self) -> comptime_type!(bool) {
-        comptime!(
-            self.lhs.reads_fragments()
-                || matches!(self.rhs, Option::Some(p) if p.reads_fragments())
-        )
+        comptime!(self.plans.iter().any(|plan| plan.reads_fragments()))
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`

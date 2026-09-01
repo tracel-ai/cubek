@@ -80,7 +80,7 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
                 u32::elem_type_native(),
             )
             .binding(),
-            scales: handle(&client, s.clone(), [d_out, blocks]).binding(),
+            scales: vec![handle(&client, s.clone(), [d_out, blocks]).binding()],
             out: out.binding(),
         },
         &problem,
@@ -131,4 +131,91 @@ fn four_bit_weights_decode_against_f16_scales() {
 #[test]
 fn several_activation_rows_share_one_weight_stream() {
     decode_gemv_matches_the_reference(QuantValue::Q4S, 32, 3);
+}
+
+/// **Two scale levels through the routine.** `nvfp4`'s shape at the shipping surface: a scale per
+/// `(row, block)`, and one factor over the whole tensor.
+///
+/// The second level is not a parameter, a flag or a scheme field. It is one more binding in the
+/// list, and what it covers is read off its own shape: a single element distinguishes nothing, so
+/// it covers every tile the level below it covers.
+#[test]
+fn a_second_scale_level_is_one_more_binding() {
+    let field = QuantValue::Q4S;
+    let (block, rows) = (32, 1);
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let plane = client.properties().hardware.plane_size_max as usize;
+
+    let (d_out, d_in) = (256, block * 8);
+    let blocks = d_in / block;
+
+    let span = 1i32 << field.size_bits();
+    let w: Vec<i32> = (0..d_out * d_in)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let x: Vec<f16> = (0..rows * d_in)
+        .map(|i| f16::from_f32((i % 7) as f32 - 3.0))
+        .collect();
+    let s: Vec<f16> = (0..d_out * blocks)
+        .map(|i| f16::from_f32((i % 9) as f32 / 4.0 + 0.25))
+        .collect();
+    let g = vec![f16::from_f32(0.5)];
+
+    let out = handle(&client, vec![0f32; d_out * rows], [d_out, rows]);
+    let written = out.handle.clone();
+
+    let problem = QuantGemvProblem {
+        d_out,
+        d_in,
+        rows,
+        field,
+        block,
+    };
+    launch_ref::<TestRuntime>(
+        &client,
+        QuantGemvBindings {
+            x: handle(&client, x.clone(), [rows, d_in]).binding(),
+            weights: TensorHandle::<TestRuntime>::new_contiguous(
+                vec![d_out, d_in],
+                client.create(Bytes::from_elems(pack(&w, field.size_bits()))),
+                u32::elem_type_native(),
+            )
+            .binding(),
+            scales: vec![
+                handle(&client, s.clone(), [d_out, blocks]).binding(),
+                handle(&client, g.clone(), [1, 1]).binding(),
+            ],
+            out: out.binding(),
+        },
+        &problem,
+        &BlueprintStrategy::default(),
+        QuantGemvElems {
+            served: f32::elem_type_native(),
+            x: f16::elem_type_native(),
+            scales: f16::elem_type_native(),
+            out: f32::elem_type_native(),
+        },
+    )
+    .unwrap_or_else(|e| panic!("the gemv declined {problem:?}: {e}"));
+
+    let bytes = client.read_one(written).unwrap();
+    let got: &[f32] = bytemuck::cast_slice(&bytes);
+    for m in 0..d_out {
+        for r in 0..rows {
+            let want: f32 = (0..d_in)
+                .map(|k| {
+                    w[m * d_in + k] as f32
+                        * s[m * blocks + k / block].to_f32()
+                        * g[0].to_f32()
+                        * x[r * d_in + k].to_f32()
+                })
+                .sum();
+            let tolerance = want.abs() * 1e-2 + 1e-2;
+            let have = got[m * rows + r];
+            assert!(
+                (have - want).abs() <= tolerance,
+                "at ({m}, {r}): got {have}, want {want} (plane {plane})"
+            );
+        }
+    }
 }

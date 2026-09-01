@@ -26,17 +26,27 @@ pub(super) const KI: Axis = Axis(17);
 pub(super) struct QuantGemvOperands {
     pub w: Operand,
     pub x: Operand,
-    pub scales: Operand,
+    /// The scale levels, innermost first. A level covers a tile of the tiles the level before it
+    /// covers, which is what its own axes say; nothing here counts them.
+    pub scales: Vec<Operand>,
     pub out: Operand,
 }
 
 impl QuantGemvOperands {
     /// `served` is the element the packed words decode to and the contraction runs in.
-    pub fn new(served: ElemType, x: ElemType, scales: ElemType, out: ElemType) -> Self {
+    pub fn new(
+        served: ElemType,
+        x: ElemType,
+        scales: ElemType,
+        levels: usize,
+        out: ElemType,
+    ) -> Self {
         QuantGemvOperands {
             w: Operand::new(&[M, KB, KI], served),
             x: Operand::new(&[N, KB, KI], x),
-            scales: Operand::new(&[M, KB], scales),
+            scales: (0..levels)
+                .map(|_| Operand::new(&[M, KB], scales))
+                .collect(),
             out: Operand::new(&[M, N], out),
         }
     }
@@ -44,6 +54,9 @@ impl QuantGemvOperands {
 
 impl OperandSet for QuantGemvOperands {
     fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
-        [&mut self.w, &mut self.x, &mut self.scales, &mut self.out].into_iter()
+        [&mut self.w, &mut self.x]
+            .into_iter()
+            .chain(self.scales.iter_mut())
+            .chain([&mut self.out])
     }
 }

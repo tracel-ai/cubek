@@ -11,7 +11,9 @@ mod base;
 mod direct;
 mod gather;
 mod promoted;
+mod scale;
 mod shape;
 
-pub use base::ScaleSide;
-pub(crate) use base::{memory, memory_scaled, scale_side};
+pub(crate) use base::{memory, memory_scaled};
+pub(crate) use scale::scale_side;
+pub use scale::{Apply, ScaleSide};

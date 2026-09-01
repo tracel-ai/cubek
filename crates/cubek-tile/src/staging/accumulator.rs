@@ -163,7 +163,7 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Tile<S>,
+        scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
         match self {
@@ -188,7 +188,7 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Tile<S>,
+        scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
         match self {

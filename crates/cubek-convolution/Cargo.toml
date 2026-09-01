@@ -33,10 +33,9 @@ cubek-matmul = { path = "../cubek-matmul", default-features = false, version = "
 cubek-std = { path = "../cubek-std", default-features = false, version = "=0.3.0-pre.3" }
 cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false, optional = true }
-derive-new = { workspace = true }
 
 bytemuck = { workspace = true }
-enumset = { workspace = true }
+cubecl-ir = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
@@ -44,5 +43,3 @@ serde = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-convolution = { path = ".", features = ["cpu-reference"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
-pretty_assertions = { workspace = true }
-trybuild = "1"

@@ -7,7 +7,6 @@
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
-use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
@@ -223,8 +222,10 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::Some(plan.operand_plan(RHS, slot))),
+                comptime!(vec![
+                    plan.operand_plan(LHS, slot),
+                    plan.operand_plan(RHS, slot)
+                ]),
             );
             slots.push(staging);
         }
@@ -342,8 +343,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::None),
+                comptime!(vec![plan.operand_plan(LHS, slot)]),
             );
             slots.push(staging);
         }

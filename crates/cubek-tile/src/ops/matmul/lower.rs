@@ -137,7 +137,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Tile<S>,
+        scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
         let spans = self.contracts_whole_at_leaf(lhs, rhs);
@@ -156,7 +156,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Tile<S>,
+        scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
         let partitioner = comptime!(self.space.partitioner().clone());
@@ -280,7 +280,7 @@ pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    scales: &Tile<S>,
+    scales: &Sequence<Tile<S>>,
     #[comptime] semiring: Semiring,
 ) {
     let space = comptime!(acc.space.clone());
@@ -355,7 +355,7 @@ impl<E: Numeric> PlaneTile<E> {
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
-        scales: &Tile<ES>,
+        scales: &Sequence<Tile<ES>>,
         #[comptime] out: Space,
         #[comptime] semiring: Semiring,
     ) {

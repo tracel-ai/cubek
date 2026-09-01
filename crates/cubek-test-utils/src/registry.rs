@@ -173,6 +173,31 @@ impl RunSamples {
         }
     }
 
+    /// Score the run as a single compute resource, from a raw operation count
+    /// and the measured compute peak.
+    ///
+    /// For callers that know their own FLOP count and have no full
+    /// [`CategoryWork`] to declare. `peak_ops_per_s` is `None` when the probe
+    /// found no usable ceiling, in which case the run still reports the TFLOPS
+    /// it achieved but nothing binds it.
+    pub fn with_flops(mut self, flops: f64, peak_ops_per_s: Option<f64>) -> Self {
+        let Some(median_secs) = self.median_secs() else {
+            return self;
+        };
+
+        let bound = ResourceBound {
+            amount: flops as usize,
+            // A non-finite fraction of peak is what drops the resource out of
+            // the binding selection, which is the wanted behaviour with no peak.
+            peak_per_s: peak_ops_per_s.unwrap_or(f64::NAN),
+        };
+        let (tflops, binding) = score_bounds(median_secs, &[(ResourceKind::Compute, bound)]);
+        self.tflops = tflops;
+        self.binding = binding;
+
+        self
+    }
+
     /// Median sample duration in seconds, or `None` when there are no samples
     /// or the median is zero (which would divide a throughput into NaN/inf).
     fn median_secs(&self) -> Option<f64> {

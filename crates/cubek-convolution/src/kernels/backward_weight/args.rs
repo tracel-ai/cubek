@@ -11,6 +11,7 @@ use cubecl::{
     },
     zspace::{metadata::Metadata, shape, strides},
 };
+use cubecl_ir::EnumSet;
 use cubek_matmul::multi_level::stage::SwizzleMode;
 use cubek_matmul::{
     definition::MatmulElems,
@@ -25,7 +26,6 @@ use cubek_std::{
     InputBinding,
     launch::tma::{remap_storage_for_tma, tma_meta_tiled},
 };
-use enumset::EnumSet;
 
 use crate::components::{
     ConvolutionParams, ConvolutionProblem,

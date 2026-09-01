@@ -46,14 +46,15 @@ fn matmul<E: Numeric>(
 fn scaled_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
     c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
@@ -580,14 +581,15 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
 fn wide_scaled_matmul<E: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, E, SW>,
+    scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
     c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
@@ -792,14 +794,15 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
 fn wide_scaled_promoted<E: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, E, SW>,
+    scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
     acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
@@ -903,14 +906,15 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
 fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, S, SW>,
+    scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
     c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }

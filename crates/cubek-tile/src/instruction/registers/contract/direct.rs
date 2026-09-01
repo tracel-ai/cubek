@@ -2,10 +2,10 @@
 
 use cubecl::prelude::*;
 
+use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
-use crate::instruction::registers::contract::ScaleSide;
-use crate::instruction::registers::lines::{Lines, ScaledLines};
+use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -203,8 +203,8 @@ fn body<
     ER: Numeric,
     V: Size,
     A: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     acc: &mut AccumulateView<'_, E, A>,
     lhs: &Lhs,
@@ -260,7 +260,7 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    scales: &Tile<ES>,
+    scales: &Sequence<Tile<ES>>,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] side: ScaleSide,
@@ -277,7 +277,7 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
     let lw = lhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let rw = rhs.vector_size();
-    let sw = scales.vector_size();
+    let sw = scales.index(0).vector_size();
     comptime!(assert!(
         rw == aw || contracted_per_step > 1,
         "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
@@ -325,7 +325,7 @@ fn nest_scaled<
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    scales: &Tile<ES>,
+    scales: &Sequence<Tile<ES>>,
     #[comptime] shape: ContractShape,
     #[comptime] side: ScaleSide,
     #[comptime] sw: usize,
@@ -345,47 +345,36 @@ fn nest_scaled<
 
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
-    // The scales share one edge with the values: the contraction where a folded step or the lhs
-    // carries them, the accumulator's columns otherwise. `value_width` is the width that edge is
-    // served at, and each axis is paired with its extent because a contracted one is not the
-    // accumulator's to size.
-    let scale_cols = comptime!(scales.space.extent_at(scales.space.rank() - 1));
-    let (scales_axes, edge, value_width) = comptime!(match (side, contracted_per_step > 1) {
-        (ScaleSide::Lhs, _) => (
-            MatrixAxes::of(&scales.space, mr, scale_cols),
-            shape.reduce_edge(),
-            lw
-        ),
-        (ScaleSide::Rhs, false) => (
-            MatrixAxes::of(&scales.space, kc, scale_cols),
-            shape.column_edge(),
-            aw
-        ),
-        (ScaleSide::Rhs, true) => (
-            MatrixAxes::of(&scales.space, cols, scale_cols),
-            shape.reduce_edge(),
-            contracted_per_step
-        ),
-    });
-    // How many value lines share one scale, read off the axes rather than divided out of the
-    // extents: the scale is constant along the edge axes it does not distinguish, so one read of
-    // it serves every position of them.
+    // This nest's own geometry, which is all a scale level needs of it; what the level *is*
+    // against those values is [`ScaleLevel`]'s to read, here and in the promoted block alike.
+    // Every query about "the scales" is about the level nearest the values; the coarser ones cover
+    // a tile of its tiles and neither pick the side nor set the granularity.
+    let inner = scales.index(0);
     let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-    let invariant = scales.invariant_over(operands);
-    let lines_per_scale = comptime!(
-        edge.iter()
-            .filter(|(axis, _)| invariant.contains(axis))
-            .map(|(_, extent)| *extent)
-            .product::<usize>()
-            / value_width
-    );
-    // A scale line wider than one scale needs each value line's ordinal along the shared edge as a
-    // constant. The rhs's columns are walked under one at a step; the lhs's are the contraction,
-    comptime!(assert!(
-        sw == 1 || contracted_per_step == 1,
-        "mm_scaled: {sw} scales are served as one line, which needs each value line's ordinal \
-         along the shared edge as a constant. A step folding {contracted_per_step} contracted \
-         values walks no such edge; bind the scales scalar here"
+    let invariant = inner.invariant_over(operands);
+    let level = comptime!(ScaleLevel::of(
+        &inner.space,
+        &ContractEdges {
+            mr,
+            kc,
+            cols,
+            reduce: shape.reduce_edge(),
+            columns: shape.column_edge(),
+            lw,
+            aw,
+            contracted_per_step,
+            // A step folding several contracted values takes them from one line at a runtime
+            // index; an unfolded one walks its lines under a constant ordinal.
+            ordinal: match contracted_per_step {
+                1 => EdgeOrdinal::Constant,
+                folded => EdgeOrdinal::Runtime(format!(
+                    "a step folding {folded} contracted values walks no such edge"
+                )),
+            },
+        },
+        side,
+        &invariant,
+        sw,
     ));
     let eligible = comptime!(mr * nr * contracted_per_step * aw <= config.budget);
 
@@ -406,13 +395,22 @@ fn nest_scaled<
                 let values = lhs.matrix_packed::<L>(lhs_axes, mat);
                 let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
                 let unroll = comptime!(eligible && !values.check && !rhs_mat.check && !acc_check);
-                let lhs_mat = ScaledLines::<EL, L, ES, S>::new(
+                let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>::new(
                     values,
-                    scales.matrix_packed::<S>(scales_axes, mat),
-                    lines_per_scale,
-                    sw,
+                    combined_scales::<ES, S>(scales, comptime!(level), mat),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
-                body::<E, EL, L, ER, V, A, ScaledLines<EL, L, ES, S>, MatrixView<Vector<ER, V>>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>,
+                    MatrixView<Vector<ER, V>>,
+                >(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
@@ -432,13 +430,22 @@ fn nest_scaled<
                 let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
                 let values = rhs.matrix_packed::<V>(rhs_axes, mat);
                 let unroll = comptime!(eligible && !lhs_mat.check && !values.check && !acc_check);
-                let rhs_mat = ScaledLines::<ER, V, ES, S>::new(
+                let rhs_mat = ScaledLines::<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>::new(
                     values,
-                    scales.matrix_packed::<S>(scales_axes, mat),
-                    lines_per_scale,
-                    sw,
+                    combined_scales::<ES, S>(scales, comptime!(level), mat),
+                    comptime!(level.lines_per_scale),
+                    comptime!(level.lanes),
                 );
-                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, ScaledLines<ER, V, ES, S>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    MatrixView<Vector<EL, L>>,
+                    ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>,
+                >(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
@@ -456,4 +463,57 @@ fn nest_scaled<
             }
         }
     }
+}
+
+/// Every level of a scales operand as one line source.
+///
+/// The innermost level is read at the width its cut gives it; each coarser one is read a single
+/// scale at a time and broadcast across that line. All of them are read at the same position: a
+/// level resolves it to its own granularity through its own projection, which is what "one scale
+/// per block" already means.
+#[cube]
+pub(super) fn combined_scales<'a, ES: Numeric, S: Size>(
+    scales: &'a Sequence<Tile<ES>>,
+    #[comptime] level: ScaleLevel,
+    mat: usize,
+) -> CombinedScales<'a, ES, S> {
+    let inner = scales.index(0);
+    let count = scales.len();
+    let origin = (0u32.runtime(), 0u32.runtime());
+    let mut coarser = Vector::<ES, Const<1>>::cast_from(1);
+    #[unroll]
+    for k in 1..count {
+        let level_above = scales.index(k);
+        // Same axes at the same extents, so one `MatrixAxes` reads every level. What differs is
+        // which of those axes each level's projection addresses, and that is what makes one cover
+        // a tile of the other's tiles.
+        comptime!(assert!(
+            level_above.space.axes().collect::<Vec<_>>() == inner.space.axes().collect::<Vec<_>>()
+                && (0..level_above.space.rank())
+                    .all(|p| { level_above.space.extent_at(p) == inner.space.extent_at(p) }),
+            "mm_scaled: a coarser scale level spans {:?} at extents {:?} where the level below it \
+             spans {:?} at {:?}. Levels declare the same axes and differ by what their projections \
+             address, which is what makes one cover a tile of the other's tiles",
+            level_above.space.axes().collect::<Vec<_>>(),
+            (0..level_above.space.rank())
+                .map(|p| level_above.space.extent_at(p))
+                .collect::<Vec<_>>(),
+            inner.space.axes().collect::<Vec<_>>(),
+            (0..inner.space.rank())
+                .map(|p| inner.space.extent_at(p))
+                .collect::<Vec<_>>()
+        ));
+        // Read once, here, which is once per region. A coarser level covers this whole region, so
+        // it has no position of its own inside it; that it does is what the assert above says.
+        let one = level_above
+            .matrix_packed::<Const<1>>(comptime!(level.axes), mat)
+            .read(origin);
+        match comptime!(level.apply) {
+            Apply::Product => coarser *= one,
+        }
+    }
+    CombinedScales::<ES, S>::new(
+        inner.matrix_packed::<S>(comptime!(level.axes), mat),
+        coarser,
+    )
 }

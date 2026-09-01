@@ -19,16 +19,18 @@ version = "0.3.0-pre.3"
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
 # cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
+# cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
 ### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "2f9b71fe04f4bb8f0d9aaad2d2b64b1b35326dab", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "2f9b71fe04f4bb8f0d9aaad2d2b64b1b35326dab", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "2f9b71fe04f4bb8f0d9aaad2d2b64b1b35326dab", default-features = false }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "c8e971c4fd51c047cfdd964501e12aee31dd3560", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "c8e971c4fd51c047cfdd964501e12aee31dd3560", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "c8e971c4fd51c047cfdd964501e12aee31dd3560", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "c8e971c4fd51c047cfdd964501e12aee31dd3560", default-features = false }
 ### For releases ###
 # cubecl = { version = "=0.11.0-pre.3", default-features = false }
 # cubecl-common = { version = "=0.11.0-pre.3", default-features = false }
 # cubecl-environment = { version = "=0.11.0-pre.3", default-features = false }
+# cubecl-ir = { version = "=0.11.0-pre.3", default-features = false }
 
-derive-new = { version = "0.7.0", default-features = false }
 log = { default-features = false, version = "0.4.22" }
 
 serde = { version = "1.0.204", default-features = false, features = [
@@ -41,7 +43,6 @@ rand = { version = "0.10.0", default-features = false, features = [
 ] } # std_rng is for no_std
 
 # Testing
-rstest = "0.26"
 
 bytemuck = "1.16.1"
 half = { version = "2.5", features = [
@@ -52,14 +53,13 @@ half = { version = "2.5", features = [
 num-traits = { version = "0.2.19", default-features = false, features = [
     "libm",
 ] } # libm is for no_std
+num-complex = "0.4.6"
 
-enumset = { version = "1.1.12", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 ### For xtask crate ###
-strum = { version = "0.28", features = ["derive"] }
+strum = { version = "0.27", features = ["derive"] }
 tracel-xtask = { version = "=5.0.0" }
-pretty_assertions = "1.4"
 
 [profile.dev]
 debug = 1     # Speed up compilation time and not necessary.
