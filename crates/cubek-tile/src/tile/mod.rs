@@ -616,7 +616,7 @@ impl<T: Numeric> Tile<T> {
     /// from: the split is the space's, not the storage's.
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         match &self.tile_kind {
-            TileKind::Gmem(d) | TileKind::Smem(d) => d.lane_share,
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.lanes.share,
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)

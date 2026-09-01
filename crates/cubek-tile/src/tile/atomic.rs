@@ -34,7 +34,7 @@ impl<T: Numeric> Tile<T> {
     /// A tile whose writes accumulate into `values` instead of replacing, at served width `N`.
     ///
     /// The constructor behind [`AccumulateArg`], which is the surface a kernel binds. See
-    /// [`Tile::of_accumulating_sink`] for what the caller owns.
+    /// [`Tile::of_sink`] for what the caller owns.
     pub(crate) fn of_atomic_accumulate<N: Size>(
         values: &Tensor<Atomic<T>>,
         #[comptime] space: Space,
@@ -47,7 +47,14 @@ impl<T: Numeric> Tile<T> {
             comptime!(spec.projection.physical_rank()),
         );
         let sink = ErasedTensor::<T, WriteOnly>::of_atomic_accumulate::<N>(values);
-        Tile::<T>::of_accumulating_sink(sink, geometry, comptime!(N::value()), space, spec)
+        Tile::<T>::of_sink(
+            sink,
+            geometry,
+            comptime!(N::value()),
+            space,
+            spec,
+            Write::Accumulate,
+        )
     }
 }
 
@@ -91,7 +98,8 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
     /// In lines of `N`, as the trait counts them, off a buffer whose own elements are scalar.
     fn __expand_lines_method(&self, scope: &Scope) -> NativeExpand<usize> {
         let scalars = self.values.__expand_len_method(scope);
-        lines_of::expand(scope, scalars, N::value())
+        let width = N::value().__expand_runtime_method(scope);
+        scalars.__expand_div_method(scope, width)
     }
 
     fn __expand_write_line_method(
@@ -122,10 +130,4 @@ fn accumulate_line<E: Numeric, N: Size>(
     for k in 0..N::value() {
         values[base + k].fetch_add(value.extract(k));
     }
-}
-
-/// The backing's length in lines of `N`, off a buffer counted in scalars.
-#[cube]
-fn lines_of(scalars: usize, #[comptime] width: usize) -> usize {
-    scalars / width.runtime()
 }

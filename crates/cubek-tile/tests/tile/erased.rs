@@ -72,6 +72,7 @@ fn sink_kernel<E: Float>(
         1usize,
         comptime!(space.clone()),
         comptime!(out.spec.clone()),
+        Write::Replace,
     );
     let src = Tile::<E>::procedural::<Position>(comptime!(space.clone()), Position {});
     dst.copy_from(&src);
@@ -180,7 +181,14 @@ fn derived_sink_kernel<E: Float>(
     geometry.push(cols, col_stride);
 
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
-    let mut dst = Tile::<E>::of_sink(sink, geometry, 1usize, comptime!(space.clone()), spec);
+    let mut dst = Tile::<E>::of_sink(
+        sink,
+        geometry,
+        1usize,
+        comptime!(space.clone()),
+        spec,
+        Write::Replace,
+    );
     let src = Tile::<E>::procedural::<Position>(space, Position {});
     dst.copy_from(&src);
 }
@@ -286,6 +294,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         1usize,
         comptime!(space.clone()),
         comptime!(c.spec.clone()),
+        Write::Replace,
     );
     let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
     acc.mm(&a, &b, Semiring::SUM_PROD);
@@ -528,6 +537,7 @@ fn wide_sink_kernel<E: Float>(
         2usize,
         comptime!(space.clone()),
         comptime!(out.spec.clone()),
+        Write::Replace,
     );
     dst.copy_from(&src);
 }
