@@ -683,3 +683,150 @@ So phase 3's order is:
 
 Nothing speculative was left on `cubek-paul`: the chain compiles but is unwired, so it sits on
 `wip/scale-chain-and-broadcast` until step 1 makes it safe to land.
+
+## The scale list: the plan that replaces the chain
+
+Supersedes the surface described above. The chain is dead and the reason is worth keeping.
+
+### Why `ScaleChain` is dead
+
+Two reasons, and only the first is fatal on its own.
+
+**It cannot be inferred.** `CubeType::ExpandType` has no inverse, so from a `&TileExpand<S>` argument
+nothing solves `Ch = Tile<S>`. Every call site has to name the chain, which states the depth twice:
+once in `Scaled<S, Tile<G>>` and once in `blocks.scale(&global)`. Saying a thing twice is the failure
+this design exists to avoid, so a spelling that requires it is not a spelling we want.
+
+**It encoded an order in the type.** That is not wrong, but a type is a heavy place to put it when an
+ordered list already carries order for free.
+
+### What replaces it
+
+The scales of an operand are a **`Sequence`, applied in order, innermost first**.
+
+```rust
+let mut scales = Sequence::new();
+scales.push(blocks.tile_as::<f32>(comptime!(space.clone())));   // applied first
+scales.push(global.tile_as::<f32>(comptime!(space.clone())));   // then this
+
+out.tile(space).mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+```
+
+`Sequence<Tile<ES>>` is concrete at the call site, so the inference wall is gone: no chain type, no
+turbofish, no base case, no `ChainShape`, no `with_tile`. Depth is a list length that nothing
+branches on.
+
+**Order is preserved and nothing assumes commutativity.** The levels are applied in the order they
+were pushed. Flattening `(v × block) × global` into `v × (block × global)` is a *reassociation*, and
+the engine may only do it because something said it may:
+
+```rust
+/// How a scale level is applied to what it covers.
+///
+/// Named rather than assumed. What the engine may do with several levels follows from this and from
+/// nothing else, the same way `Semiring` licenses what the contraction may do.
+pub enum Apply {
+    /// The level below is multiplied by it.
+    Product,
+}
+
+/// How a chain's levels meet the values, read off the verbs and never stated.
+pub enum Fold {
+    /// Every level is a product, so they combine at their own loads and meet the values as one
+    /// factor: one application per value whatever the depth.
+    Combined,
+    /// Applied in turn: one application per level, per value.
+    InTurn,
+}
+```
+
+`QuantMode` in the pinned rev is `Symmetric | Lookup`, and `Lookup` changes the *value* decode
+(`table[field] * scale`), not the scale. So every level today is a `Product` and `Fold::Combined` is
+the path taken. Nothing about that is baked in.
+
+**Lifting the loads needs no verb at all.** A level does not change along the axes it omits, so one
+read serves the whole run whatever `Apply` says. The global is read once per kernel under both folds;
+only whether the levels merge before meeting the values differs.
+
+### The layout rule, derived
+
+A scales operand wants a different memory layout from the values it scales, and the reason is
+structural rather than incidental: within a group of lanes the scale is a *broadcast*, so the only
+lanes wanting different scales are in different groups, which means different output rows.
+
+> **The innermost axis is the fastest axis lanes differ along, and the load width along it is the
+> extent one lane owns of that axis.**
+
+Both halves are needed. Checked against both operands of the decode gemv:
+
+| operand | innermost | load width |
+|---|---|---|
+| weight `[M, KB, KI]` | `KI`, lanes take different words | `factor` values = one `u32` word |
+| scales `[M, KB]`, omitting `KI` | `M`, groups take different rows | `rows_per_lane` |
+
+The weight row is what the shipped code already does, which is the sanity check: one sentence
+reproduces a layout known to be right and produces the transpose the scales need. The scales row is
+`[KB][M]` rather than today's `[M][KB]`.
+
+Worked through with the Q4 blueprint (plane 32, `inside_lanes` 4, `block_lanes` 2, `groups` 4,
+`rows_per_lane` 2): today's layout gives four pairs separated by `2 * blocks`; the transpose read one
+scale at a time gives stride 2; the transpose read `rows_per_lane` wide gives a contiguous
+eight-element run. **Only the second half of the rule turns the layout into a coalesced read**, which
+is also the concrete argument for taking `per_load` from the cut rather than the binding.
+
+*Unverified:* that `Cut::unit(rows_per_lane, Spread::Contiguous, groups)` gives group `g` the rows
+`[g * rows_per_lane, ..)`. The address arithmetic above assumes it. Confirm before building on it.
+
+### Mimicking nvfp4 without the device
+
+Only `ue4m3` *storage* is device-blocked. Hold everything else identical.
+
+- **Tier 1, the structure.** e2m1 values, block scales at **f16**, block 16, per-tensor f32. Same
+  axes, same order, same two levels. Reference: `e2m1_decode(code) × block × global`. Proves the
+  levels compose, the order holds, the global loads once, and a broadcast operand works under a real
+  scheme. `inside_lanes = 16/8 = 2`, which the blueprint admits.
+- **Tier 2, the bytes.** Store block scales as `u8` and decode `e4m3` in software at the scale load,
+  which is what metabolic already does for e2m1 *values* ("streams packed on every backend rather
+  than only on the ones with silicon for it"), and cheap here for the same reason the design is
+  cheap: the decode runs once per load, not per value. Gives the true traffic, and is probably how
+  it ships anywhere without native ue4m3.
+- **Tier 3.** Swap the decode for a native binding behind `supports_type`. A substitution, not a port.
+
+**Check the claims by reading the kernel, not the clock**: the global must appear as one load outside
+every loop, and there must be one multiply per value rather than two. Both are visible in the emitted
+source and the goldens already diff kernel text. A benchmark will not say this as clearly.
+
+### Order
+
+0. Confirm the `Spread::Contiguous` row mapping.
+1. `FoldRun` -> `Reuse { per_load, steps }`. A rename; `fold_run()` becomes `reuse()`, a question.
+2. `tile_as::<f32>`, so levels of different storage share one list. `tile_packed::<O>` is the
+   precedent: the served type is stated at the call rather than read off the binding.
+3. Scales as a `Sequence` with `Apply` and `Fold`. The real one: two levels become expressible and
+   `mm_scaled` stops naming a single scales operand.
+4. `per_load` from the cut. Deletes `EdgeOrdinal`, whose only job is reconciling a width the binding
+   should never have stated.
+5. `ScaleLevel::of(level, below, walk)` instead of `ContractEdges`, so level 1 against level 0 is the
+   same call as level 0 against the values.
+6. The nvfp4 mimic, tiers 1 and 2.
+7. The layout: the transpose in metabolic's re-quantization walk, then the rule derived in the plan
+   and *checked* at launch. A mismatch must be a rejection, never a kernel quietly running at a
+   fraction of its speed.
+
+Steps 1-6 are all cubek, all testable on the existing q4/q8 path, and need no new device.
+
+### Measure before step 7
+
+The scale layout is architecturally right and its measured value is probably small on the shape we
+have. Of the decode gemv's 9.85 ms win, ~8.5 ms was deleting the widening pass and ~1.4 ms was the
+gemv itself; scales are about an eighth of the weight bytes, and the memory-backed accumulator is
+nearer a fifth of the kernel. The bigger fish for speed is still the promoted accumulator taking a
+`K`-lined rhs (see **Known gaps**). Do step 7 for the design, not for the number, unless the number
+says otherwise.
+
+### The rules for reviewing this
+
+**No phase may add a number.** Unchanged from above.
+
+**No phase may assume an algebra.** If the engine reorders, reassociates, or merges levels, something
+must have *said* it could. A rewrite licensed by a comment is not licensed.
