@@ -11,9 +11,6 @@ pub(crate) const FIRST_SLOT: usize = 0;
 
 pub(crate) const LHS: usize = 0;
 pub(crate) const RHS: usize = 1;
-/// A scaled contraction's third operand. The scales are an operand like any other, so they take a
-/// slot like any other.
-pub(crate) const SCALES: usize = 2;
 
 /// What one operand's slot payload *is*, which decides what consuming the slot has to do with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -153,8 +150,8 @@ pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
     /// What each operand's payload is, and where it lives at this level; both resolved when the
-    /// slot was built. One entry per operand the payload `T` carries, in [`LHS`], [`RHS`],
-    /// [`SCALES`] order, so the slot's arity is however many the caller built it with.
+    /// slot was built. One entry per operand the payload `T` carries, in [`LHS`], [`RHS`] order,
+    /// so the slot's arity is however many the caller built it with.
     #[cube(comptime)]
     pub(crate) plans: Vec<OperandPlan>,
 }

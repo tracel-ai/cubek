@@ -49,17 +49,17 @@ fn packed_copy<O: Numeric, V: Size>(
 fn packed_matmul<E: Numeric>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 /// [`packed_matmul`] with two scale levels: `nvfp4`'s shape.
@@ -75,11 +75,11 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(blocks.tile(comptime!(space.clone())));
-    levels.push(global.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(blocks.tile(comptime!(space.clone())));
+    scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 /// **`nvfp4`'s shape, end to end.** `e2m1` values eight to a word, a scale per sixteen of them, and
@@ -227,17 +227,17 @@ fn nvfp4_shaped_decode() {
 fn packed_matmul_rhs<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
     w: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&x, &w, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
 }
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
@@ -248,17 +248,17 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 fn native_matmul<E: Numeric>(
     w: &TileArg<'_, i8, Const<1>>,
     x: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 /// The decode gemv, whole: one row of activations against packed weights read straight from
@@ -268,18 +268,18 @@ fn native_matmul<E: Numeric>(
 fn packed_gemv<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
     w: &TileArg<'_, u32, Const<1>>,
-    scales: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
-    acc.mm_scaled(&x, &w, &levels, Semiring::SUM_PROD);
+    acc.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
 }
 
 /// Four 8-bit values per word.

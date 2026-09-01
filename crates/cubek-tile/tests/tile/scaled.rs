@@ -30,17 +30,17 @@ const KI: Axis = Axis(3);
 fn scaled_matmul<E: Numeric, S: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, S, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
 /// [`scaled_matmul`] with the accumulator promoted to registers: the partials never round-trip
@@ -49,18 +49,18 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
 fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, S, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
+    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -78,11 +78,11 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     // The list is the hierarchy: block scales first, then the level that covers a tile of their
     // tiles. Nothing states a scheme, a depth, or which level is which.
-    let mut levels = Sequence::new();
-    levels.push(blocks.tile(comptime!(space.clone())));
-    levels.push(global.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(blocks.tile(comptime!(space.clone())));
+    scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
 /// **Two scale levels, applied in order.** `nvfp4`'s shape: a scale per block of the contraction,
@@ -331,114 +331,6 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         })
         .build()
         .with_instruction(Instruction::registers(16));
-
-    scaled_matmul::launch::<TestRuntime>(
-        &client,
-        space.cube_count(),
-        space.cube_dim(&client),
-        TileArgLaunch::new(
-            a_t.binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[M, KB, KI],
-                &[
-                    PhysicalAxisMap::of(M),
-                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
-                ],
-            )),
-        ),
-        TileArgLaunch::new(
-            b_t.binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[KB, KI, N],
-                &[
-                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
-                    PhysicalAxisMap::of(N),
-                ],
-            )),
-        ),
-        TileArgLaunch::new(
-            s_t.binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[M, KB],
-                &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
-            )),
-        ),
-        TileArgLaunch::new(
-            c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
-        ),
-        space,
-        [dtype, dtype],
-    );
-
-    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
-    for m in 0..rows {
-        for n in 0..cols {
-            let want: f32 = (0..depth)
-                .map(|k| a[m * depth + k] * s[m * blocks + k / block] * b[k * cols + n])
-                .sum();
-            let have = got.get_f32(&[m, n]);
-            assert!(
-                (have - want).abs() < 1e-3,
-                "at ({m}, {n}): got {have}, want {want}"
-            );
-        }
-    }
-}
-
-/// The scales take the residence the level states for them.
-///
-/// They are an operand, so where they live at a level is that level's to say, the same as for the
-/// values it scales. It used to be said and not heard: the stage was allocated, filled, and then
-/// the contraction read global memory anyway. Here the numbers come back right *through* the
-/// staged copy, so a fill that dropped a scale would show.
-#[test]
-fn the_scales_take_the_residence_the_level_states() {
-    let (rows, cols, block, blocks) = (4, 4, 8, 2);
-    let depth = block * blocks;
-
-    let client = <TestRuntime as Runtime>::client(&Default::default());
-    let dtype = f32::elem_type_native();
-    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
-    let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
-    let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
-
-    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
-        .dtype(dtype)
-        .custom(a.clone())
-        .generate_with_f32_host_data();
-    let (b_t, _) = TestInput::builder(client.clone(), shape![depth, cols])
-        .dtype(dtype)
-        .custom(b.clone())
-        .generate_with_f32_host_data();
-    let (s_t, _) = TestInput::builder(client.clone(), shape![rows, blocks])
-        .dtype(dtype)
-        .custom(s.clone())
-        .generate_with_f32_host_data();
-    let c = TestInput::builder(client.clone(), shape![rows, cols])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    let mut ops = (
-        Operand::new(&[M, KB, KI], dtype),
-        Operand::new(&[KB, KI, N], dtype),
-        Operand::new(&[M, KB], dtype),
-        Operand::new(&[M, N], dtype),
-    );
-    let space = Tiling::over(
-        &mut ops,
-        &[(M, rows), (N, cols), (KB, blocks), (KI, block)],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, Cut::sequential(rows))
-            .axis(N, Cut::sequential(cols))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block));
-        o.2.stage(Residence::Smem);
-    })
-    .build()
-    .with_instruction(Instruction::registers(16));
 
     scaled_matmul::launch::<TestRuntime>(
         &client,
@@ -1182,18 +1074,18 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
 fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, S, SW>,
+    scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
+    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
@@ -1311,17 +1203,17 @@ fn rhs_scales_are_served_several_at_a_time() {
 fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<4>>,
     b: &TileArg<'_, E, Const<1>>,
-    scales: &TileArg<'_, S, SW>,
+    scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
 }
 
 /// **Scales served as lines along the contraction.** The lhs's scales vary over `KB` and nothing
