@@ -19,7 +19,7 @@ use crate::*;
 /// [`Projection::of_tiling`]'s synthetic per-position map, not the operand's own.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct GmemLayout {
+pub(crate) struct GmemLayout {
     pub(crate) physical_shape: Coords<u32>,
     pub(crate) physical_strides: Coords<u32>,
     #[cube(comptime)]
@@ -181,7 +181,7 @@ impl Window {
 /// was filled.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct SourceWindow {
+pub(crate) struct SourceWindow {
     /// The source window's origin, as [`fill_from`](MemData::fill_from) found it.
     pub(crate) origin: Coords<i32>,
     /// The source buffer's logical extent, which is what a tap is in bounds against.

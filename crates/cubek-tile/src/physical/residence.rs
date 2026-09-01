@@ -45,7 +45,7 @@ impl StageStorage {
     /// The safe default for an operand with these stages: a cmma fragment load reads a whole
     /// transaction, so tile its stages. Anything else keeps plain strided rows, the manual-mma
     /// form included: it addresses each element by computed offset, so contiguity buys it nothing.
-    pub fn for_stages(stages: &[Residence], instruction: Option<Instruction>) -> Self {
+    pub(crate) fn for_stages(stages: &[Residence], instruction: Option<Instruction>) -> Self {
         match instruction.filter(|_| Instruction::stages_to_registers(stages)) {
             Some(Instruction::Cmma) => StageStorage::Tiled,
             Some(Instruction::Registers { .. }) | Some(Instruction::Mma { .. }) | None => {
@@ -102,7 +102,7 @@ impl StagePlan {
     /// Serve this plan's next shared-memory stage at `width` rather than at the source operand's
     /// own line width.
     /// See [`stage_width`](StagePlan::stage_width).
-    pub fn staged_at(mut self, width: Option<usize>) -> Self {
+    pub(crate) fn staged_at(mut self, width: Option<usize>) -> Self {
         self.stage_width = width;
         self
     }

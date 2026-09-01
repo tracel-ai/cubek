@@ -26,7 +26,7 @@ use crate::*;
 /// and the scales through the same one. A blanket impl, so this bundles bounds rather than naming
 /// a new concept; [`TileMatrix`](super::TileMatrix) and [`AxisProjection`] are the two the leaves
 /// read through, and [`StepUp`] rides the same bounds under a fill.
-pub trait LogicalLayout:
+pub(crate) trait LogicalLayout:
     Layout<SourceCoordinates = CoordsDyn> + Clone + 'static + CubeType<ExpandType: Clone>
 {
 }
@@ -37,7 +37,10 @@ impl<L> LogicalLayout for L where
 }
 
 /// [`LogicalLayout`] answering a particular coordinate `C`, for the readers that name one.
-pub trait TileLayout<C: Coordinates>: LogicalLayout + Layout<Coordinates = C> {}
+pub(crate) trait TileLayout<C: Coordinates>:
+    LogicalLayout + Layout<Coordinates = C>
+{
+}
 
 impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coordinates = C> {}
 
@@ -48,7 +51,7 @@ impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coor
 /// [`Fold`](crate::Fold) collapses to the coordinate itself.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Projected<L: LogicalLayout> {
+pub(crate) struct Projected<L: LogicalLayout> {
     inner: L,
     projection: AxisProjection,
 }
@@ -444,7 +447,7 @@ impl<T: Numeric> Tile<T> {
     /// Refused where two logical positions can share a cell, which is the only way a write
     /// aliases. A [partition](Composition::Disjoint) cannot: its windows tile, so each cell is
     /// written once.
-    pub fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
+    pub(crate) fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
         let space = comptime!(self.space.clone());
         let vector_size = self.vector_size();
         match &mut self.tile_kind {
@@ -471,7 +474,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The whole logical box, read through whatever [`Packing`] this tile carries, under the
     /// guard the reader states. The N-D twin of [`matrix_packed`](Tile::matrix_packed).
-    pub fn nd_packed<W: Size>(
+    pub(crate) fn nd_packed<W: Size>(
         &self,
         #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
@@ -558,7 +561,7 @@ impl<T: Numeric> Tile<T> {
 
 /// A gathered operand split into the map folded once per run and the physical view it addresses.
 #[derive(CubeType)]
-pub struct NdReader<'a, T: Numeric, W: Size> {
+pub(crate) struct NdReader<'a, T: Numeric, W: Size> {
     pub map: AxisProjection,
     pub view: MaskedView<'a, Vector<T, W>, CoordsDyn>,
     #[cube(comptime)]
@@ -579,7 +582,7 @@ impl<'a, T: Numeric, W: Size> NdReader<'a, T, W> {
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// [`nd_split`](Tile::nd_split) with this tile's quant packing resolved.
-    pub fn nd_split_packed<W: Size>(&self) -> NdReader<'_, T, W> {
+    pub(crate) fn nd_split_packed<W: Size>(&self) -> NdReader<'_, T, W> {
         let served = self.vector_size();
         let packing = self.packing();
         let physical = comptime!(packing.physical(served));
@@ -601,7 +604,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The map, physical read surface, and physical rank needed to step a gathered operand by
     /// hand. Constructed together so all three describe the same memory operand.
-    pub fn nd_split<I: Numeric, WP: Size, W: Size>(&self) -> NdReader<'_, T, W> {
+    pub(crate) fn nd_split<I: Numeric, WP: Size, W: Size>(&self) -> NdReader<'_, T, W> {
         match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => NdReader::new(
                 axis_projection(

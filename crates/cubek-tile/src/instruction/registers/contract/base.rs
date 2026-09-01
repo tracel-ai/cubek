@@ -72,7 +72,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
 /// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
 /// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ScaleSide {
+pub(crate) enum ScaleSide {
     /// The scale spans the accumulator's rows (or the contracted axis alone): folded into the
     /// lhs value before it forms its products.
     Lhs,

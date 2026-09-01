@@ -133,7 +133,7 @@ impl Walk {
 
     /// This walk, unrolled when `unroll`. Lets a caller pick the mode from a comptime flag
     /// without branching on the [`Walk`] value (which `#[cube]` would read as a runtime select).
-    pub fn with_unroll(self, #[comptime] unroll: bool) -> Walk {
+    pub(crate) fn with_unroll(self, #[comptime] unroll: bool) -> Walk {
         Walk {
             counts: self.counts,
             positions: self.positions,

@@ -193,7 +193,7 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// `c = fold(c, input)`: [`reduce_axis`](AccumulatorScope::reduce_axis) folding onto an
     /// accumulator the caller [`seed`](AccumulatorScope::seed)ed.
-    pub fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
+    pub(crate) fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
         match self {
             AccumulatorScope::Register { tile, sink, monoid } => {
                 tile.reduce_axis_accumulate(input, comptime!(*monoid));

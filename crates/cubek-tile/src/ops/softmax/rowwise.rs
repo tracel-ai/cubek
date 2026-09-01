@@ -232,7 +232,7 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Cast-copy the owned rows into `dest`.
-    pub fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, #[comptime] rpu: usize) {
+    pub(crate) fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let size!(W) = self.vector_size();

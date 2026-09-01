@@ -74,7 +74,7 @@ fn field_bits(field: QuantValue) -> usize {
 /// block grid with it, and a packed operand has none of those to give.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
-pub struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> {
+pub(crate) struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> {
     words: View<'a, Vector<u32, NQ>, C>,
     #[cube(comptime)]
     field: QuantValue,

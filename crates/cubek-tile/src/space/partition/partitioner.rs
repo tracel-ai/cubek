@@ -60,7 +60,7 @@ pub enum Partitioner {
 /// inside a cube, and what a level separates inside a cube the cube's own cooperative
 /// transports already spread.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub enum LevelScope {
+pub(crate) enum LevelScope {
     /// Every axis `Sequential`: one instance walks the whole grid.
     Sequential,
     /// Some axis rides a cube dim and none reaches inside a cube, so the level separates
@@ -95,7 +95,7 @@ impl LevelScope {
 /// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
 /// A view over [`LevelScope`], never stored: the scope is the level's own state.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum LevelRole {
+pub(crate) enum LevelRole {
     /// Spreads its tiles across hardware instances (`Spatial` on some axis).
     Instance,
     /// Partitions its tiles sequentially across a grid (every axis `Sequential`).

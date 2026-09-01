@@ -179,7 +179,7 @@ impl<T: Numeric> MemData<T> {
     /// quotiented out) instead of becoming direct: its buffer is the same shape of window the gmem
     /// operand was, so [`Tile::nd`] and [`at`](MemData::at) address it through exactly the machinery
     /// they address gmem through, and the fill stays a plain box copy.
-    pub fn smem_gathered(
+    pub(crate) fn smem_gathered(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,
@@ -243,7 +243,7 @@ impl<T: Numeric> MemData<T> {
     /// dequantizes at the read instead of the fill inflating it to `T`. Carries a compact `Shared`
     /// scales buffer beside the values (one f32 per block of the sub-tile, refilled per region by
     /// [`fill_from`](MemData::fill_from)).
-    pub fn smem_quant<I: Numeric>(
+    pub(crate) fn smem_quant<I: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
         #[comptime] stage: StagePlan,

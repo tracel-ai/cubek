@@ -227,7 +227,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
 /// fragment accumulator contracts through a hardware instruction that takes two operands and no
 /// scales, so a scaled contraction there is a different instruction, not this one under a flag.
 #[cube]
-pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
+pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,

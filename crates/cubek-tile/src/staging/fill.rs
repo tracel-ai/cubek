@@ -237,7 +237,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Fill the fixed operand(s), those the walk leaves invariant, from `region`'s window.
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
     /// A no-op when nothing is fixed, and when a later ring slot reuses the first's buffers.
-    pub fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
+    pub(crate) fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
         let lhs_plan = self.plan(LHS);
         let rhs_plan = self.plan(RHS);
         let fixed_lhs = comptime!(lhs_plan.payload.is_fixed());
@@ -354,7 +354,7 @@ impl<T: Numeric> Ring<Tile<T>> {
 #[cube]
 impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk leaves it fixed.
-    pub fn fill_fixed(&mut self, input: &Tile<T>, region: &Region) {
+    pub(crate) fn fill_fixed(&mut self, input: &Tile<T>, region: &Region) {
         let plan = self.plan(LHS);
         let fixed = comptime!(plan.payload.is_fixed());
         if comptime!(fixed) {

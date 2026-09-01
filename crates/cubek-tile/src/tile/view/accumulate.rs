@@ -9,7 +9,7 @@ use crate::{instruction::plane, *};
 /// write ([`Tile::mm`] and [`Tile::reduce_axis`] say [`Identity`](InitFrom::Identity), the
 /// accumulating verbs say [`Cell`](InitFrom::Cell)).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum InitFrom {
+pub(crate) enum InitFrom {
     /// Fold onto the cell: it holds a value that counts, whether a partial the walk above left
     /// there or an accumulator the caller seeded.
     Cell,
@@ -99,7 +99,7 @@ impl Drain {
 /// accumulation, not a fact about each cell, so they are settled where the view is built and read
 /// from there by every seed and commit the leaf runs.
 #[derive(CubeType)]
-pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
+pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
     lanes: Lanes,
@@ -140,7 +140,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// How these cells are shared across the plane's lanes. A leaf that commits *conditionally*
     /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
     /// under divergent control flow is undefined.
-    pub fn lane_share(&self) -> comptime_type!(LaneShare) {
+    pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
         comptime!(self.lanes.share)
     }
 
@@ -151,7 +151,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     }
 
     /// Whether a non-empty output block is wholly valid for unchecked seed/commit accesses.
-    pub fn block_in_bounds(&self, pos: C, extent: C) -> bool {
+    pub(crate) fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         self.values.block_in_bounds(pos, extent)
     }
 

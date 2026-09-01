@@ -41,7 +41,7 @@ pub(crate) struct FoldRun {
 
 impl FoldRun {
     /// An operand that folds nothing in.
-    pub const ONE: FoldRun = FoldRun { folds: 1, lines: 1 };
+    pub(crate) const ONE: FoldRun = FoldRun { folds: 1, lines: 1 };
 
     /// Lines walked before the folds repeat.
     pub fn span(&self) -> usize {

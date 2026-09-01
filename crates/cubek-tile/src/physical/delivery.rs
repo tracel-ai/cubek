@@ -27,7 +27,7 @@ impl Delivery {
     }
 
     /// The synchronization required to materialize this source in a staging slot.
-    pub fn rendezvous(&self) -> Sync {
+    pub(crate) fn rendezvous(&self) -> Sync {
         match self {
             Delivery::Copy | Delivery::Procedural => Sync::Cube,
             Delivery::Tma => Sync::Barrier,

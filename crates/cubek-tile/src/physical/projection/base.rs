@@ -30,7 +30,7 @@ impl Projection {
 
     /// [`direct`](Projection::direct) over a space's own axes: what a materialized tile (an smem
     /// stage, a fragment) maps through, whatever its source mapped through.
-    pub fn direct_over(space: &crate::Space) -> Self {
+    pub(crate) fn direct_over(space: &crate::Space) -> Self {
         Projection::direct(&space.axes().collect::<Vec<_>>())
     }
 
@@ -42,7 +42,7 @@ impl Projection {
     /// [`StridedTileSource::subspace`](crate::StridedTileSource::subspace) derives a labeled
     /// operand's mapping from; [`StridedTileSource::gathered`](crate::StridedTileSource::gathered)
     /// is the entry for one no labeling describes.
-    pub fn of_layout(layout: &ConcreteLayout) -> Projection {
+    pub(crate) fn of_layout(layout: &ConcreteLayout) -> Projection {
         Projection {
             physical: layout
                 .axes()
@@ -151,7 +151,7 @@ impl Projection {
     /// (`0..tiling.rank()`) labeled by the synthetic axis `Axis(p)`, split per `tiling`. A
     /// `GmemLayout` addresses its buffer by physical position, already resolved past any gather one
     /// layer up, so it never needs the operand's real axis labels.
-    pub fn of_tiling(tiling: StorageTiling) -> Projection {
+    pub(crate) fn of_tiling(tiling: StorageTiling) -> Projection {
         let axes: Vec<Axis> = (0..tiling.rank()).map(|p| Axis(p as u8)).collect();
         Projection::tiled(&axes, tiling)
     }
@@ -188,7 +188,7 @@ impl Projection {
     /// [`tiled`](Projection::tiled) and [`of_tiling`](Projection::of_tiling), and for any untiled
     /// projection trivially; a buffer that groups an axis's fragments together
     /// (`[A, A, B]`) is a layout the counts alone do not pin down.
-    pub fn is_level_major(&self) -> bool {
+    pub(crate) fn is_level_major(&self) -> bool {
         self.is_invertible()
             && self.tiling().order(&self.axes)
                 == self
@@ -201,7 +201,7 @@ impl Projection {
     /// Whether some axis is storage-tiled: split across several physical fragments, so a
     /// coordinate along it decomposes into one digit per fragment. Not a rank comparison, which a
     /// gather also fails (its logical rank exceeds its physical one without any axis being split).
-    pub fn is_tiled(&self) -> bool {
+    pub(crate) fn is_tiled(&self) -> bool {
         self.tiling().is_tiled()
     }
 
@@ -215,7 +215,11 @@ impl Projection {
     /// whose extents are comptime and fold the arithmetic away, and a gmem tensor, whose tile
     /// extents are genuine runtime values. An axis carried by a single physical axis yields
     /// `(&[], None)`: the whole coordinate, no arithmetic at all.
-    pub fn digit(&self, pa: usize, axis: Axis) -> (SmallVec<[usize; MAX_AXES]>, Option<usize>) {
+    pub(crate) fn digit(
+        &self,
+        pa: usize,
+        axis: Axis,
+    ) -> (SmallVec<[usize; MAX_AXES]>, Option<usize>) {
         let carriers = self.carriers(axis);
         assert!(
             carriers.contains(&pa),
@@ -237,7 +241,7 @@ impl Projection {
     /// ([`logical_extent`](crate::logical_extent)). Never empty: every caller decomposes a coordinate along `axis`, and an
     /// axis addressing no physical axis has no decomposition, so that is a malformed projection
     /// rather than an empty answer ([`validate`](Projection::validate) rules it out up front).
-    pub fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
+    pub(crate) fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
         let carriers: SmallVec<[usize; MAX_AXES]> = (0..self.physical.len())
             .filter(|&q| self.physical[q].terms().iter().any(|t| t.axis == axis))
             .collect();
@@ -258,7 +262,7 @@ impl Projection {
 
     /// Whether this is the [`direct`](Projection::direct) mapping. Every generalized path is
     /// gated on this being `false`, so a direct operand keeps its exact previous codegen.
-    pub fn is_direct(&self) -> bool {
+    pub(crate) fn is_direct(&self) -> bool {
         self.physical.len() == self.axes.len()
             && self
                 .physical
@@ -271,11 +275,11 @@ impl Projection {
         self.physical.len()
     }
 
-    pub fn logical_rank(&self) -> usize {
+    pub(crate) fn logical_rank(&self) -> usize {
         self.axes.len()
     }
 
-    pub fn logical_axes(&self) -> &[Axis] {
+    pub(crate) fn logical_axes(&self) -> &[Axis] {
         &self.axes
     }
 
@@ -287,7 +291,7 @@ impl Projection {
             .expect("Projection::position: axis not spanned by this operand")
     }
 
-    pub fn physical_axis(&self, pa: usize) -> &PhysicalAxisMap {
+    pub(crate) fn physical_axis(&self, pa: usize) -> &PhysicalAxisMap {
         &self.physical[pa]
     }
 
@@ -314,7 +318,7 @@ impl Projection {
 
     /// Whether any physical axis carries a negative offset or a dynamic offset (whose sign
     /// cannot be proven non-negative at comptime).
-    pub fn may_underflow(&self) -> bool {
+    pub(crate) fn may_underflow(&self) -> bool {
         self.physical.iter().any(|m| match m.offset() {
             Offset::Static(o) => o < 0,
             Offset::Dynamic => true,
@@ -357,19 +361,19 @@ impl Projection {
 
     /// The length of the runtime coefficient carrier: every [`Dynamic`](Scale::Dynamic) coefficient
     /// and every [`Dynamic`](Divisor::Dynamic) divisor.
-    pub fn dynamic_coefficient_count(&self) -> usize {
+    pub(crate) fn dynamic_coefficient_count(&self) -> usize {
         self.coefficient_base(self.physical.len())
     }
 
     /// Whether any physical axis's divisor is only known at runtime.
-    pub fn has_dynamic_divisors(&self) -> bool {
+    pub(crate) fn has_dynamic_divisors(&self) -> bool {
         self.physical.iter().any(|m| m.divisor().is_dynamic())
     }
 
     /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
     /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
     /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
-    pub fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
+    pub(crate) fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
         if !self.physical[pa].offset().is_dynamic() {
             return None;
         }
@@ -382,7 +386,7 @@ impl Projection {
     }
 
     /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
-    pub fn dynamic_offset_count(&self) -> usize {
+    pub(crate) fn dynamic_offset_count(&self) -> usize {
         self.physical
             .iter()
             .filter(|m| m.offset().is_dynamic())
@@ -390,12 +394,12 @@ impl Projection {
     }
 
     /// Whether any coefficient, offset or divisor is only known at runtime.
-    pub fn has_dynamic(&self) -> bool {
+    pub(crate) fn has_dynamic(&self) -> bool {
         self.has_dynamic_scales() || self.dynamic_offset_count() > 0 || self.has_dynamic_divisors()
     }
 
     /// Whether any coefficient is only known at runtime.
-    pub fn has_dynamic_scales(&self) -> bool {
+    pub(crate) fn has_dynamic_scales(&self) -> bool {
         self.physical.iter().any(|m| m.has_dynamic_scale())
     }
 
@@ -486,7 +490,7 @@ impl Projection {
         }
     }
 
-    pub fn is_invertible(&self) -> bool {
+    pub(crate) fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
             m.offset() == Offset::Static(0)
                 && m.divisor().is_unit()

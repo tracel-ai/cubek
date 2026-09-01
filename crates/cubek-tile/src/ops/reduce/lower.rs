@@ -39,7 +39,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// against garbage.
     ///
     /// Also the recursion the walk re-enters per region, for the reason [`mma`](Tile::mma) gives.
-    pub fn reduce_axis_accumulate<In: Numeric>(
+    pub(crate) fn reduce_axis_accumulate<In: Numeric>(
         &mut self,
         input: &Tile<In>,
         #[comptime] monoid: Monoid,
@@ -77,7 +77,7 @@ impl<Acc: Numeric> Tile<Acc> {
 
 /// Dispatches to the register nest by the accumulator's storage at `Partitioner::Final`.
 #[cube]
-pub fn reduce_leaf<Acc: Numeric, In: Numeric>(
+pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
     acc: &mut Tile<Acc>,
     input: &Tile<In>,
     #[comptime] monoid: Monoid,

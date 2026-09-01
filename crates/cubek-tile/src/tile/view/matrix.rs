@@ -12,9 +12,9 @@ use cubecl::{
 use crate::*;
 
 /// A masked 2-D ([`TileMatrix`]) view: one matrix of a [`Tile`].
-pub type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
+pub(crate) type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
-pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
+pub(crate) type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 
 /// A [`Layout`] presenting a tile's logical box as one `(row, col)` matrix over three axes of
 /// axes, in the space's own order: a *batch* prefix already pinned to one matrix, then the axes
@@ -28,7 +28,7 @@ pub type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
 /// row group at extent `1`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct TileMatrix {
+pub(crate) struct TileMatrix {
     /// Leading coordinates, already resolved to this matrix.
     batches: Coords<u32>,
     /// The group `row` unravels over, in the space's axis order.
@@ -40,7 +40,7 @@ pub struct TileMatrix {
 
 /// A [`TileMatrix`] over the operand's mapping: what every 2-D reader of a tile sees, from the
 /// matmul leaves to an mma fragment's stage.
-pub type ProjectedMatrix = Projected<TileMatrix>;
+pub(crate) type ProjectedMatrix = Projected<TileMatrix>;
 
 #[cube]
 impl TileMatrix {
@@ -107,7 +107,7 @@ impl MatrixAxes {
     /// The trailing pair: leading axes batch, the last two the matrix. What a tile whose axes are
     /// already `[batch…, row, col]` reads through, which is every operand of an unpartitioned
     /// problem.
-    pub fn trailing_pair(space: &Space) -> Self {
+    pub(crate) fn trailing_pair(space: &Space) -> Self {
         let rank = space.rank();
         MatrixAxes {
             row_split: rank - 2,
@@ -394,7 +394,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Mutable version of [`matrix`](Tile::matrix). Refused where two logical positions can share
     /// a cell, which is the only way a write aliases.
-    pub fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
+    pub(crate) fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
         let vector_size = self.vector_size();
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
@@ -491,7 +491,7 @@ impl<T: Numeric> Tile<T> {
     /// manual-mma twin of [`matrix_packed`](Tile::matrix_packed).
     ///
     /// `cols` is scalar, as an mma definition states it; the view serves lines.
-    pub fn fragment_matrix_packed<W: Size>(
+    pub(crate) fn fragment_matrix_packed<W: Size>(
         &self,
         #[comptime] rows: usize,
         #[comptime] cols: usize,

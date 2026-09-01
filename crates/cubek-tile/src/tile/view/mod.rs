@@ -10,12 +10,12 @@ mod packed;
 mod projected;
 mod quant;
 
-pub use accumulate::*;
+pub(crate) use accumulate::*;
 // Crate-internal helpers, so this re-export carries no public item.
 pub(crate) use coords::*;
-pub use flat::*;
+pub(crate) use flat::*;
 pub use masked::*;
 pub use matrix::*;
-pub use packed::*;
+pub(crate) use packed::*;
 pub use projected::*;
 pub use quant::*;

@@ -14,7 +14,7 @@ pub(crate) const RHS: usize = 1;
 
 /// What one operand's slot payload *is*, which decides what consuming the slot has to do with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum SlotPayload {
+pub(crate) enum SlotPayload {
     /// A buffer this slot filled, already the current region's when the slot is consumed:
     /// [`WindowMode`] says how it got there.
     Windowed(WindowMode),
@@ -28,7 +28,7 @@ pub enum SlotPayload {
 /// Whether a slot can transport an operand from its current backing, or merely retains fragments
 /// already resident in registers.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum StageSource {
+pub(crate) enum StageSource {
     Transport(Delivery),
     ResidentFragment,
 }

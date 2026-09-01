@@ -144,7 +144,7 @@ impl TileSpec {
     /// [`Tile::of`](crate::Tile::of). `vector_size` is the width the operand is served from global
     /// memory at and `quantized` whether it carries a quantized form: neither is a fact about the
     /// spec, so both are passed in.
-    pub fn validate_stage_width(&self, vector_size: usize, quantized: bool) {
+    pub(crate) fn validate_stage_width(&self, vector_size: usize, quantized: bool) {
         let Some(width) = self.stage_width else {
             return;
         };

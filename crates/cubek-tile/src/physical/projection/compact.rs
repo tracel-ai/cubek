@@ -171,7 +171,7 @@ impl Compaction {
     /// Whether the window has no holes to skip, so a fill reads the source box straight through and
     /// emits exactly what a direct operand's fill does. True for every direct operand, and for a
     /// gather whose taps land on consecutive offsets (a unit-dilation convolution, at any stride).
-    pub fn is_dense(&self) -> bool {
+    pub(crate) fn is_dense(&self) -> bool {
         self.steps.iter().all(|&g| g == 1)
     }
 
@@ -187,7 +187,7 @@ impl Compaction {
     /// That rounding is only sound for a *padded* stage, one served wider than the source it is
     /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
     /// extent that is not a whole number of source lines, on every path a fill can take.
-    pub fn line_extents(&self, vector_size: usize) -> Vec<usize> {
+    pub(crate) fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
             self.steps[last] == 1,

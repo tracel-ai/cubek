@@ -129,7 +129,7 @@ impl Divisor {
     /// Whether this divides by `1`, i.e. the mapping is integer and every rational path below is
     /// the identity. A `Dynamic` divisor is never unit whatever its bound: the launch may still
     /// pass anything at or above it, so the division has to stay.
-    pub fn is_unit(self) -> bool {
+    pub(crate) fn is_unit(self) -> bool {
         self == Divisor::Static(1)
     }
 }
@@ -343,7 +343,7 @@ impl PhysicalAxisMap {
     /// claim against a space it holds.
     ///
     /// Empty for an [`Overlapping`](Composition::Overlapping) map: it claims nothing to check.
-    pub fn claimed_radices(&self) -> SmallVec<[(Axis, usize); MAX_AXES]> {
+    pub(crate) fn claimed_radices(&self) -> SmallVec<[(Axis, usize); MAX_AXES]> {
         match self.composition {
             Composition::Overlapping => SmallVec::new(),
             Composition::Disjoint => self
@@ -409,12 +409,12 @@ impl PhysicalAxisMap {
     }
 
     /// How many of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
-    pub fn dynamic_scale_count(&self) -> usize {
+    pub(crate) fn dynamic_scale_count(&self) -> usize {
         self.terms.iter().filter(|t| t.scale.is_dynamic()).count()
     }
 
     /// Whether any of this axis's coefficients are [`Dynamic`](Scale::Dynamic).
-    pub fn has_dynamic_scale(&self) -> bool {
+    pub(crate) fn has_dynamic_scale(&self) -> bool {
         self.terms.iter().any(|t| t.scale.is_dynamic())
     }
 
@@ -437,7 +437,7 @@ impl PhysicalAxisMap {
     /// The one [`Axis`] this map is the identity of, `None` when it combines several, scales,
     /// shifts or divides. An identity map reaches exactly as far as its own coordinate, which is
     /// what lets a caller prove it stays inside the buffer; anything else reaches further.
-    pub fn identity_axis(&self) -> Option<Axis> {
+    pub(crate) fn identity_axis(&self) -> Option<Axis> {
         match self.terms.as_slice() {
             [
                 AxisTerm {
@@ -452,7 +452,7 @@ impl PhysicalAxisMap {
     /// Whether this physical axis is exactly `axis` at coefficient `1` with zero offset and no
     /// division. Says nothing about digit extraction, which is a property of the whole
     /// [`Projection`](crate::Projection) (how many physical axes carry `axis`), not of one map.
-    pub fn is_identity(&self, axis: Axis) -> bool {
+    pub(crate) fn is_identity(&self, axis: Axis) -> bool {
         self.identity_axis() == Some(axis)
     }
 }

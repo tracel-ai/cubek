@@ -294,7 +294,7 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits`
     /// f32 entries: the unpack's mask bounds every index to that range, so a shorter buffer
     /// is read out of bounds, and no check here can see its length.
-    pub fn quantized_lookup(
+    pub(crate) fn quantized_lookup(
         mut self,
         scales: TensorArg<R>,
         table: BufferArg<R>,

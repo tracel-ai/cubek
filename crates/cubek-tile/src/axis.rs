@@ -5,10 +5,10 @@
 use cubecl::zspace::SmallVec;
 
 /// Inline capacity for per-axis allocations in small vectors (spills to heap if exceeded).
-pub const MAX_AXES: usize = 6;
+pub(crate) const MAX_AXES: usize = 6;
 
 /// Inline capacity for per-level allocations in small vectors (spills to heap if exceeded).
-pub const MAX_LEVELS: usize = 6;
+pub(crate) const MAX_LEVELS: usize = 6;
 
 /// A labeled axis. The `u8` is a client-assigned index, not a position.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

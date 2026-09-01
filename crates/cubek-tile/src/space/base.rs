@@ -10,7 +10,7 @@ use crate::{Axis, ByAxis, Distribution, Instruction, LevelRole, MAX_AXES, Partit
 /// `Static` is a comptime constant (a tile edge);
 /// `Dynamic` is a runtime scalar resolved in-kernel from the tensor shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Extent {
+pub(crate) enum Extent {
     Static(usize),
     Dynamic,
 }
@@ -154,7 +154,7 @@ impl Space {
     /// The runtime operation space for a tiling level: the comptime tiling spec plus the runtime
     /// `sizes` of its `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
     /// [`Walk::over`](crate::Walk) reads them through [`Extents::count`].
-    pub fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
+    pub(crate) fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
         Space {
             extents: Extents {
                 kinds: comptime!(space.extents.kinds.clone()),
@@ -176,7 +176,7 @@ impl Space {
     }
 
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
-    pub fn from_extents(extents: &[(Axis, Extent)]) -> Self {
+    pub(crate) fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
             partitioner: Partitioner::Final,
@@ -253,7 +253,7 @@ impl Space {
         self.extents.get(axis).get()
     }
 
-    pub fn extent_raw(&self, axis: Axis) -> Extent {
+    pub(crate) fn extent_raw(&self, axis: Axis) -> Extent {
         self.extents.get(axis)
     }
 
@@ -264,7 +264,7 @@ impl Space {
     /// Every axis is [`Static`](Extent::Static), so the walk is fully comptime. True at every
     /// interior tiling level, since [`divide`](Space::divide) yields `Static` children; only the top
     /// merge can be dynamic.
-    pub fn is_static(&self) -> bool {
+    pub(crate) fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
     }
 
@@ -420,7 +420,7 @@ impl Space {
     /// walk actually steps (more than one tile) is absent from the operand: the same
     /// structural fact as broadcast omission. A staged walk fills such an operand once, above
     /// the loop. Host-side, static extents.
-    pub fn walk_invariant(&self, operand: &Space) -> bool {
+    pub(crate) fn walk_invariant(&self, operand: &Space) -> bool {
         self.axes()
             .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
     }
@@ -437,7 +437,7 @@ impl Space {
     /// accumulator back: the one leaf visit that owns a cell is also the only one, so nothing it
     /// would have read back is ever a partial. Asked of the operands' [`merge`](Space::merge)
     /// where there are two.
-    pub fn spans_contracted_at_leaf(&self, output: &Space) -> bool {
+    pub(crate) fn spans_contracted_at_leaf(&self, output: &Space) -> bool {
         let leaf = self.final_space();
         self.contracting(output).iter().all(|&axis| {
             // A Dynamic extent is only known at runtime, so whether the leaf spans it whole
@@ -456,7 +456,7 @@ impl Space {
     /// rather than cells that must stay apart. Skipping the test merges cells that must stay
     /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
     /// walk needs no masked tail.
-    pub fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
+    pub(crate) fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
         let lined = self.axis_at(self.rank() - 1);
         let folds = width > 1
             && contracted.last() == Some(&lined)
@@ -479,7 +479,7 @@ impl Space {
     /// Reads the extents off this space as it stands, like every other consumer of a tile's edges
     /// ([`MatrixAxes::whole`](crate::MatrixAxes::whole)); call it on the [`final_space`](Space::final_space)
     /// when the caller holds a level above the leaf.
-    pub fn contracted_extent(&self, output: &Space) -> usize {
+    pub(crate) fn contracted_extent(&self, output: &Space) -> usize {
         self.contracting(output)
             .iter()
             .map(|&axis| self.extent(axis))
@@ -492,7 +492,7 @@ impl Space {
     /// two operands listing the same axes in different orders contract mismatched positions with
     /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
     /// axis list, which is stated per operand, so nothing upstream forces them to agree.
-    pub fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
+    pub(crate) fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
         lhs.contracting(output) == rhs.contracting(output)
     }
 
@@ -541,7 +541,7 @@ impl Space {
     ///
     /// A [`Final`](Partitioner::Final) space has no level left to read edges from, and is
     /// already the tile, so it is returned unchanged.
-    pub fn sub_tile_space(&self) -> Space {
+    pub(crate) fn sub_tile_space(&self) -> Space {
         if self.is_final() {
             return self.clone();
         }

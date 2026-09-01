@@ -173,7 +173,7 @@ impl<T: Numeric> Tile<T> {
     /// level above already placed in registers. A fragment has no bytes any transport can move, so
     /// its slot holds the fragments themselves and each read selects the region's block out of them
     /// by comptime coordinate ([`AtRegion`](crate::SlotPayload::AtRegion)).
-    pub fn stage_source(&self) -> comptime_type!(StageSource) {
+    pub(crate) fn stage_source(&self) -> comptime_type!(StageSource) {
         match &self.tile_kind {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 comptime!(StageSource::ResidentFragment)
@@ -642,7 +642,7 @@ impl<T: Numeric> Tile<T> {
     /// tile count. Only an axis this tile [`witnesses`](Tile::witnesses) has one: a fragment has no
     /// buffer extent ([`bounded`](Tile::bounded)), and a gathered or storage-tiled axis no bound of
     /// its own ([`bound_position`]).
-    pub fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
+    pub(crate) fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let projection = self.projection();
         let p = comptime!(bound_position(&projection, axis));
         let raw = match &self.tile_kind {
@@ -699,7 +699,7 @@ impl<T: Numeric> Tile<T> {
     /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
     /// fragments included; the other monoids need a real value and so reach only the forms
     /// [`init`](Tile::init) serves.
-    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+    pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
             Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
@@ -742,7 +742,7 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The mutable twin of [`dense`](Tile::dense).
-    pub fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
+    pub(crate) fn dense_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => d.dense_lines_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

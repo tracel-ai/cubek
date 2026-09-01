@@ -45,7 +45,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// Only the lengths are checked, so the two index orders above are the contract: swap a
     /// coefficient for a divisor and the read is silently wrong.
-    pub fn of_gathered<E: CubePrimitive<Scalar = T>>(
+    pub(crate) fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
@@ -68,7 +68,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// No scales and no scheme: what the spec states is a fact about *these* values, and an
     /// operand that also has scales names them as its own tensor.
-    pub fn of_packed<E: CubePrimitive>(
+    pub(crate) fn of_packed<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
@@ -92,7 +92,7 @@ impl<T: Numeric> Tile<T> {
     /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
     /// them back in. The served width is the binding's width × the scheme's packing factor.
     #[allow(clippy::too_many_arguments)]
-    pub fn of_dequant<E: CubePrimitive>(
+    pub(crate) fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
         scales: &Tensor<f32>,
         known: KnownScale,
