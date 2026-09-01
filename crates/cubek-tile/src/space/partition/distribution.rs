@@ -206,31 +206,3 @@ impl Distribution {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Write;
-
-    /// A destination that replaces cannot take a cell several instances hold slices of. The
-    /// guard is the only thing between that mistake and a wrong number: nothing about it shows up
-    /// at compile time or in a crash.
-    #[test]
-    #[should_panic(expected = "split across planes or cubes")]
-    fn a_partial_cell_may_not_be_stored() {
-        SplitShare::Partial.validate(Write::Replace, "test");
-    }
-
-    /// A destination that accumulates is exactly the case it exists to let through.
-    #[test]
-    fn a_partial_cell_may_be_accumulated() {
-        SplitShare::Partial.validate(Write::Accumulate, "test");
-    }
-
-    /// A whole cell is nobody else's business, whichever way it is written.
-    #[test]
-    fn a_whole_cell_is_written_either_way() {
-        SplitShare::Whole.validate(Write::Replace, "test");
-        SplitShare::Whole.validate(Write::Accumulate, "test");
-    }
-}

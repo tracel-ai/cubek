@@ -8,6 +8,7 @@ mod phase;
 mod product;
 mod recipe;
 mod sum;
+mod tile;
 
 pub use affine::*;
 pub use base::*;

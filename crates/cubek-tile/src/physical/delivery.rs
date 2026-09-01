@@ -58,6 +58,13 @@ impl Delivery {
     }
 }
 
+/// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a
+/// kernel serves that argument as a [`Tile`]. Each argument bundles its own comptime
+/// [`TileSpec`] ([`TileArg`] strided, [`TmaTileArg`] tensor map), so a tensor can never
+/// pair with another operand's spec; only the kernel's one [`Space`] crosses the seam. A
+/// kernel body written over `D: DeliveryFamily` runs strided or TMA unchanged; the launch
+/// entry picks the family. One family covers both operands, since
+/// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.
