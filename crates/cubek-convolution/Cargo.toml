@@ -35,7 +35,7 @@ cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-feature
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false, optional = true }
 
 bytemuck = { workspace = true }
-enumset = { workspace = true }
+cubecl-ir = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
