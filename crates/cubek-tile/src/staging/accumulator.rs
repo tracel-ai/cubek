@@ -366,7 +366,7 @@ impl<Acc: Numeric> Tile<Acc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
+    use crate::{Buffering, CubeAxis, Tiling, WalkOrder, cubes};
     use cubecl::ir::Scope;
 
     const M: Axis = Axis(0);
@@ -399,9 +399,7 @@ mod tests {
                 l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(4))
+                l.walk(&[(M, 4), (N, 4), (K, 4)])
             })
             .build();
         opens(&space.project(&[M, N]), Residence::InPlace);
@@ -415,9 +413,8 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 4), (N, 8), (K, 4)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::cube(CubeAxis::X, 4))
-                    .axis(K, Cut::sequential(4))
+                l.distribute(cubes(CubeAxis::X), &[(N, 4)])
+                    .walk(&[(M, 4), (K, 4)])
             })
             .build()
             .with_instruction(Instruction::registers(16));

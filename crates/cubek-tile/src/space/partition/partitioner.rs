@@ -353,7 +353,7 @@ impl PartitionerBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Axis, CubeAxis, Cut, Tiling};
+    use crate::{Axis, CubeAxis, Tiling, cubes, lanes, planes};
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -363,7 +363,7 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4)).axis(N, Cut::sequential(4))
+                l.walk(&[(M, 4), (N, 4)])
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Sequential);
@@ -375,8 +375,8 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::cube(CubeAxis::Y, 4))
-                    .axis(N, Cut::cube(CubeAxis::X, 4))
+                l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
+                    .distribute(cubes(CubeAxis::X), &[(N, 4)])
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Cubes);
@@ -390,7 +390,8 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::cube(CubeAxis::Y, 4)).axis(N, Cut::plane(4))
+                l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
+                    .distribute(planes(), &[(N, 4)])
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Planes);
@@ -401,7 +402,8 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::plane(4)).axis(N, Cut::unit(4))
+                l.distribute(planes(), &[(M, 4)])
+                    .distribute(lanes(), &[(N, 4)])
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Lanes);

@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Instruction, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
+    Tiling, WalkOrder, cubes, lanes,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -119,29 +119,26 @@ impl Mapping {
     /// The space for this mapping. N always rides the cubes, so every mapping loads the grid the
     /// same way and only the intra-plane split differs; each spread takes the columns per cube its
     /// `cols` implies (`plane_size · cols` for `n_spread`, `cols` for `split_k`), `seq_k` takes one.
-    fn space(self, problem: SplitKProblem, lanes: usize) -> Space {
+    fn space(self, problem: SplitKProblem, plane_size: usize) -> Space {
         let SplitKProblem { m, n, k } = problem;
-        let seq = Cut::sequential;
         match self {
             // One column per cube, one lane, whole K walked serially.
             Mapping::SeqK => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, 1))
-                        .axis(K, seq(k))
+                    l.distribute(cubes(CubeAxis::X), &[(N, 1)])
+                        .walk(&[(M, m), (K, k)])
                 })
                 .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, lanes * cols))
-                        .axis(K, seq(k))
+                    l.distribute(cubes(CubeAxis::X), &[(N, plane_size * cols)])
+                        .walk(&[(M, m), (K, k)])
                 })
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
+                    l.distribute(lanes(), &[(N, cols)]).walk(&[(M, m), (K, k)])
                 })
                 .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
@@ -149,13 +146,13 @@ impl Mapping {
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, cols))
-                        .axis(K, Cut::unit(k / lanes))
+                    l.distribute(cubes(CubeAxis::X), &[(N, cols)])
+                        .distribute(lanes(), &[(K, k / plane_size)])
+                        .walk(&[(M, m)])
                 })
                 .build(),
         }
-        .resolve_lanes(lanes)
+        .resolve_lanes(plane_size)
     }
 
     fn rhs_layout(self) -> RhsLayout {

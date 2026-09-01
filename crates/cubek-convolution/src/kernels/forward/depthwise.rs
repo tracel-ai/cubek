@@ -195,7 +195,7 @@ impl DepthwiseTiling {
     /// useless one. The second separates what one cube took across the cube's own threads: rows
     /// go to planes, channels to lanes. The taps stay `sequential` throughout — they are the
     /// contraction, and every tap of one output position accumulates into the same register.
-    fn space(&self, geometry: &Geometry, lanes: usize, tile_c: usize, width: usize) -> Space {
+    fn space(&self, geometry: &Geometry, plane_size: usize, tile_c: usize, width: usize) -> Space {
         let Self { rows, cols, .. } = *self;
         let Geometry {
             b,
@@ -211,12 +211,11 @@ impl DepthwiseTiling {
             // The channel axis takes X so that the fastest-moving cube index is the one memory is
             // contiguous along.
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, Cut::cube(CubeAxis::X, tile_c))
-                    .axis(OW, Cut::cube(CubeAxis::Y, cols))
-                    .axis(OH, Cut::cube(CubeAxis::Z, rows))
-                    .axis(B, Cut::cube(CubeAxis::Z, 1))
-                    .axis(RH, Cut::sequential(rh))
-                    .axis(RW, Cut::sequential(rw))
+                l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
+                    .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
+                    .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
+                    .distribute(cubes(CubeAxis::Z), &[(B, 1)])
+                    .walk(&[(RH, rh), (RW, rw)])
             })
             // Rows across the cube's planes, channels across each plane's lanes. Columns stay
             // sequential: they are the register block, not a split.
@@ -225,16 +224,13 @@ impl DepthwiseTiling {
                 // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
                 // between what neighbouring lanes read and breaks the coalescing the whole NHWC
                 // layout is for.
-                l.axis(C, Cut::unit(width).interleaved())
-                    .axis(OW, Cut::sequential(cols))
-                    .axis(OH, Cut::plane(1))
-                    .axis(B, Cut::sequential(1))
-                    .axis(RH, Cut::sequential(rh))
-                    .axis(RW, Cut::sequential(rw))
+                l.distribute(lanes().interleaved(), &[(C, width)])
+                    .distribute(planes(), &[(OH, 1)])
+                    .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)])
             })
             .build()
             .with_instruction(INSTRUCTION)
-            .resolve_lanes(lanes)
+            .resolve_lanes(plane_size)
     }
 }
 

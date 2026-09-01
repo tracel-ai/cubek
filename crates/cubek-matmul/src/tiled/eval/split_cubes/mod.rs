@@ -35,9 +35,9 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Cut, Instruction, Monoid,
+    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Instruction, Monoid,
     PhysicalAxisMap, Projection, RegisterBlock, Residence, Semiring, Space, TileArg, TileArgLaunch,
-    TileSpec, Tiling, WalkOrder,
+    TileSpec, Tiling, WalkOrder, cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -151,25 +151,24 @@ impl Mapping {
 
     /// The contraction's space. `N` rides the cubes in every mapping, so only the treatment of
     /// `K` differs.
-    fn space(self, problem: Problem, lanes: usize) -> Space {
+    fn space(self, problem: Problem, plane_size: usize) -> Space {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
             Mapping::DataParallel | Mapping::Atomic { .. } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                        .walk(&[(M, m)])
                 })
                 .build(),
             Mapping::Workspace { .. } => Tiling::new()
                 .extents(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(KB, Cut::cube(CubeAxis::Z, 1))
-                        .axis(KI, Cut::sequential(k / splits))
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                        .walk(&[(M, m), (KI, k / splits)])
                 })
                 .build(),
             // The cube's slice of K cut again across the plane: each lane contracts its own
@@ -178,17 +177,16 @@ impl Mapping {
             Mapping::AtomicLanes { .. } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                        .walk(&[(M, m)])
                 })
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::sequential(COLS))
-                        .axis(K, Cut::unit(k / splits / lanes))
+                    l.distribute(lanes(), &[(K, k / splits / plane_size)])
+                        .walk(&[(M, m), (N, COLS)])
                 })
                 .build()
-                .resolve_lanes(lanes),
+                .resolve_lanes(plane_size),
         }
         .with_instruction(INSTRUCTION)
     }
@@ -199,9 +197,9 @@ impl Mapping {
         Tiling::new()
             .extents(&[(M, m), (N, n), (KB, self.splits())])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::cube(CubeAxis::X, 1))
-                    .axis(N, Cut::cube(CubeAxis::Y, FOLD_COLS))
-                    .axis(KB, Cut::sequential(self.splits()))
+                l.distribute(cubes(CubeAxis::X), &[(M, 1)])
+                    .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
+                    .walk(&[(KB, self.splits())])
             })
             .build()
             .with_instruction(INSTRUCTION)

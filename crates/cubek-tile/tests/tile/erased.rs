@@ -95,9 +95,7 @@ fn space() -> Space {
     Tiling::new()
         .extents(&[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
+            level.walk(&[(ROW, 2), (COL, 3)])
         })
         .build()
 }
@@ -496,9 +494,7 @@ fn masked_space() -> Space {
     Tiling::new()
         .extents(&[(ROW, MASKED_ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(2))
+            level.walk(&[(ROW, 2), (COL, 2)])
         })
         .build()
 }

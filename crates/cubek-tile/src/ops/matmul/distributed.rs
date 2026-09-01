@@ -144,7 +144,7 @@ fn steps_below(space: &Space) -> usize {
 #[cfg(test)]
 mod tests {
     use super::refuse_work_below;
-    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder, cubes};
+    use crate::{Axis, Buffering, CubeAxis, Space, Tiling, WalkOrder, cubes};
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -161,10 +161,7 @@ mod tests {
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| match twice {
                 true => l.distribute(cubes(CubeAxis::Y).instances(2), &[(M, 4), (N, 4), (K, 4)]),
-                false => l
-                    .axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(4)),
+                false => l.walk(&[(M, 4), (N, 4), (K, 4)]),
             })
             .build()
     }

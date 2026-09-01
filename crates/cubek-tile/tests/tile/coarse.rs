@@ -61,9 +61,7 @@ fn space(cut: usize) -> Space {
     Tiling::new()
         .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(ROWS))
-                .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(cut))
+            l.walk(&[(M, ROWS), (N, COLS), (K, cut)])
         })
         .build()
         .with_instruction(Instruction::registers(16))
