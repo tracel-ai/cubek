@@ -27,5 +27,3 @@ serde = { workspace = true }
 [dev-dependencies]
 cubek-quant = { path = "./../cubek-quant/", default-features = false }
 cubek-test-utils = { path = "./../cubek-test-utils/", default-features = false }
-pretty_assertions = { workspace = true }
-trybuild = "1"
