@@ -597,3 +597,105 @@ fn an_atomic_drain_folds_across_planes() {
         }
     }
 }
+
+/// The output as something that may already hold contributions, contracted *in place* with the
+/// accumulating verb and no register accumulator at all.
+///
+/// The shape a split wants once ownership stops being claimed: `out` is never read, because
+/// folding is itself the read-modify-write, so a cube adds its slice to whatever is there and
+/// never learns who else wrote it. What phase two needed `Residence::Register` for was the drain;
+/// this needs no drain, because every commit is one.
+#[cube(launch)]
+fn atomic_split_matmul_in_place<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &Tensor<Atomic<E>>,
+    #[comptime] space: Space,
+    #[comptime] out_spec: TileSpec,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = cubek_tile::Tile::<E>::of_atomic_sink::<Const<1>>(
+        out,
+        comptime!(space.clone()),
+        comptime!(out_spec.clone()),
+    );
+    // `mma`, not `mm`: nothing here may state what the cell *is*.
+    c.mma(&a, &b, Semiring::SUM_PROD);
+}
+
+#[test]
+fn a_folding_output_contracts_in_place_with_the_accumulating_verb() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
+    {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let (m, n, k, splits) = (4usize, 4usize, 16usize, 4usize);
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(m))
+                .axis(N, Cut::sequential(n))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    atomic_split_matmul_in_place::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        out.clone().binding().into_tensor_arg(),
+        space,
+        // No residence stated: the contraction happens where the output already lies.
+        TileSpec::direct(&[M, N]),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    let want = reference(m, n, k, 0..k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}

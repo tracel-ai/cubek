@@ -111,41 +111,6 @@ impl<T: Numeric> RegisterData<T> {
     }
 }
 
-/// Which of the plane's lanes carry a drain's writes, and what they do to their values first.
-///
-/// Derived from the three facts that decide it and matched on once, so the store below reads as
-/// four cases rather than as a lane guard nested in a share.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum Drain {
-    /// Each lane holds whole cells of its own and writes them as they are.
-    EachLane,
-    /// Every lane holds the same whole cells, and the write folds, so one lane writes.
-    LaneZero,
-    /// The plane's lanes each hold a partial of one cell: combine across the plane, lane zero
-    /// writes.
-    PlaneFold,
-    /// Groups of lanes each hold a partial of one cell: combine within the group, its first
-    /// lane writes.
-    GroupFold { fold_mask: usize },
-}
-
-impl Drain {
-    const fn of(lanes: Lanes, write: Write) -> Self {
-        match lanes.share {
-            LaneShare::Plane => Drain::PlaneFold,
-            LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
-            // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
-            // all write is a different question, and the one a fold turns on: repeated lanes hold
-            // the same cells, so a store lands the same value however many make it and a fold
-            // lands it once per lane.
-            LaneShare::Whole => match (lanes.work, write) {
-                (LaneWork::Repeated, Write::Fold) => Drain::LaneZero,
-                (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
-            },
-        }
-    }
-}
-
 #[cube]
 impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element: the same manual,

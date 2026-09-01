@@ -101,6 +101,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             }
             AccumulatorScope::InPlace { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
+                let write = sink.write();
+                comptime!(write.validate_owning_verb("AccumulatorScope::mm"));
                 sink.mm(lhs, rhs, semiring)
             }
         }
@@ -150,6 +152,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             }
             AccumulatorScope::InPlace { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
+                let write = sink.write();
+                comptime!(write.validate_owning_verb("AccumulatorScope::mm_scaled"));
                 sink.mm_scaled(lhs, rhs, scales, semiring)
             }
         }
@@ -186,6 +190,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 tile.drain_cast_into(sink);
             }
             AccumulatorScope::InPlace { sink, monoid } => {
+                let write = sink.write();
+                comptime!(write.validate_owning_verb("AccumulatorScope::reduce_axis"));
                 sink.reduce_axis(input, comptime!(*monoid))
             }
         }
@@ -248,10 +254,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 let tile = self.register_partition::<EA, EL>(lhs, monoid);
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone(), monoid)
             }
-            Residence::InPlace => {
-                comptime!(write.validate_in_place("Tile::accumulate"));
-                AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid)
-            }
+            Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid),
             Residence::Smem => panic!(
                 "Tile::accumulate: an accumulator has no shared-memory form; state \
                  Residence::Register to contract in registers, or nothing to contract in place"

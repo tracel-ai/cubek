@@ -63,6 +63,12 @@ pub struct MemData<T: Numeric> {
     /// split, as [`lane_share`](Self::lane_share) is: only an accumulator reads it.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
+    /// Whether the plane's lanes each hold their own cells or all repeat the same ones. A
+    /// whole-space fact like [`split_share`](Self::split_share), settled once and carried down,
+    /// and read only where a write folds: repeated lanes storing the same value land it once,
+    /// repeated lanes folding it land it once each.
+    #[cube(comptime)]
+    pub(crate) lane_work: LaneWork,
     /// What the accumulation being lowered right now starts from ([`InitFrom`]).
     ///
     /// Not a claim about the bytes: it says nothing about what the buffer holds, only what the
@@ -216,18 +222,25 @@ pub enum Write {
 }
 
 impl Write {
-    /// Refuse an accumulation that contracts *in* this destination.
+    /// Refuse a verb that claims the destination's cells are its own.
     ///
-    /// Contracting in place reads the cell back between steps, and what a folding destination
-    /// holds mid-flight is other cubes' slices. It is write-only precisely so that nothing tries,
-    /// so a fold is a drain and not a contraction.
-    pub(crate) fn validate_in_place(self, site: &str) {
+    /// A destination that folds is one several instances write, so a cell may already hold their
+    /// contributions and no verb may state what it *is*: `c = a·b` would be a lie about a cell
+    /// that ends up holding more than this instance contracted. The accumulating verb says the
+    /// true thing, `c += a·b`, and needs no ownership to say it.
+    ///
+    /// Only asked where the accumulation happens in the destination itself. A register-resident
+    /// accumulator states `c = a·b` about its own registers, which nothing else writes, and its
+    /// drain folds that whole contribution in one go.
+    pub(crate) fn validate_owning_verb(self, site: &str) {
         match self {
             Write::Replace => {}
             Write::Fold => panic!(
-                "{site}: this output folds into its destination, so it cannot also contract \
-                 there. State Residence::Register on it, so the contraction runs in registers and \
-                 the drain folds the cube's whole contribution in one write."
+                "{site}: this output folds into its destination, so a cell may already hold other \
+                 instances' contributions and this verb cannot state what it is. Use the \
+                 accumulating verb (`mma` rather than `mm`), which folds onto what is there, or \
+                 state Residence::Register so the contraction runs in registers and the drain \
+                 folds the whole contribution in one write."
             ),
         }
     }
@@ -617,6 +630,7 @@ impl<T: Numeric> Tile<T> {
         // Asked before the projection, which is what drops the contracted axis: only the whole
         // space still has the extent that says whether that axis is split or merely cut.
         let split_share = comptime!(space.split_share_of(spec.axes()));
+        let lane_work = comptime!(space.lane_work());
         // The one projection: the kernel's space narrowed to this operand's axes.
         let space = comptime!(space.project(spec.axes()));
         let projection = comptime!(spec.projection.clone());
@@ -770,6 +784,7 @@ impl<T: Numeric> Tile<T> {
                 }),
                 lane_share: comptime!(LaneShare::Whole),
                 split_share,
+                lane_work,
                 init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(space),
@@ -1097,6 +1112,7 @@ impl<T: Numeric> MemData<T> {
                 }),
                 lane_share: comptime!(LaneShare::Whole),
                 split_share: comptime!(SplitShare::Whole),
+                lane_work: comptime!(LaneWork::Repeated),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
             }),
@@ -2173,13 +2189,16 @@ impl<T: Numeric> MemData<T> {
         #[comptime] space: Space,
         #[comptime] monoid: Monoid,
     ) -> AccumulateView<'_, T, W> {
-        let lane_share = comptime!(self.lane_share);
+        let lanes = comptime!(Lanes {
+            share: self.lane_share,
+            work: self.lane_work,
+        });
         let split_share = comptime!(self.split_share);
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.matrix_mut::<W>(i, axes, space),
-            lane_share,
+            lanes,
             split_share,
             write,
             monoid,
@@ -2204,13 +2223,16 @@ impl<T: Numeric> MemData<T> {
             self.projection.is_direct(),
             "MemData::flat_accumulate: a gathered window has no flat logical accumulator view"
         ));
-        let lane_share = comptime!(self.lane_share);
+        let lanes = comptime!(Lanes {
+            share: self.lane_share,
+            work: self.lane_work,
+        });
         let split_share = comptime!(self.split_share);
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
             self.flat_mut::<W>(),
-            lane_share,
+            lanes,
             split_share,
             write,
             monoid,
@@ -2383,6 +2405,7 @@ impl<T: Numeric> MemData<T> {
             // Settled at construction, so a descent carries it: which instances hold a cell is a
             // fact about the whole space, and windowing down does not change it.
             split_share: comptime!(self.split_share),
+            lane_work: comptime!(self.lane_work),
             init_from: comptime!(self.init_from),
         }
     }

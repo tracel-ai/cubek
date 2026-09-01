@@ -34,12 +34,57 @@ pub(crate) enum CellRead {
 impl CellRead {
     /// Derived, never stated: whether the cell counts at all is the accumulation's statement, and
     /// which site reads it is what the plane's lanes hold of it.
-    const fn of(lane_share: LaneShare, init_from: InitFrom) -> Self {
-        match init_from {
-            InitFrom::Identity => CellRead::Never,
-            InitFrom::Cell => match lane_share {
-                LaneShare::Whole => CellRead::AtSeed,
-                LaneShare::Plane | LaneShare::Group { .. } => CellRead::AtCommit,
+    ///
+    /// A destination that folds is never read here, whatever the accumulation says. Folding *is*
+    /// the read-modify-write, done atomically by the store, so reading the cell back to add to it
+    /// would both duplicate what the commit does and race every other instance writing it. That
+    /// is what lets an accumulation contract in place across a split: the cell may already hold
+    /// other instances' contributions, and nothing here has to know.
+    const fn of(lane_share: LaneShare, init_from: InitFrom, write: Write) -> Self {
+        match write {
+            Write::Fold => CellRead::Never,
+            Write::Replace => match init_from {
+                InitFrom::Identity => CellRead::Never,
+                InitFrom::Cell => match lane_share {
+                    LaneShare::Whole => CellRead::AtSeed,
+                    LaneShare::Plane | LaneShare::Group { .. } => CellRead::AtCommit,
+                },
+            },
+        }
+    }
+}
+
+/// Which of the plane's lanes carry a drain's writes, and what they do to their values first.
+///
+/// Derived from the three facts that decide it and matched on once, so a write reads as four
+/// cases rather than as a lane guard nested in a share. Shared by the two sites that carry an
+/// accumulation into memory: this view's commit, and a register block's drain.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Drain {
+    /// Each lane holds whole cells of its own and writes them as they are.
+    EachLane,
+    /// Every lane holds the same whole cells, and the write folds, so one lane writes.
+    LaneZero,
+    /// The plane's lanes each hold a partial of one cell: combine across the plane, lane zero
+    /// writes.
+    PlaneFold,
+    /// Groups of lanes each hold a partial of one cell: combine within the group, its first
+    /// lane writes.
+    GroupFold { fold_mask: usize },
+}
+
+impl Drain {
+    pub(crate) const fn of(lanes: Lanes, write: Write) -> Self {
+        match lanes.share {
+            LaneShare::Plane => Drain::PlaneFold,
+            LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
+            // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
+            // all write is a different question, and the one a fold turns on: repeated lanes hold
+            // the same cells, so a store lands the same value however many make it and a fold
+            // lands it once per lane.
+            LaneShare::Whole => match (lanes.work, write) {
+                (LaneWork::Repeated, Write::Fold) => Drain::LaneZero,
+                (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
             },
         }
     }
@@ -57,30 +102,32 @@ impl CellRead {
 pub struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
-    lane_share: LaneShare,
+    lanes: Lanes,
     #[cube(comptime)]
     monoid: Monoid,
     #[cube(comptime)]
     cell_read: CellRead,
+    #[cube(comptime)]
+    drain: Drain,
 }
 
 #[cube]
 impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
-        #[comptime] lane_share: LaneShare,
+        #[comptime] lanes: Lanes,
         #[comptime] split_share: SplitShare,
         #[comptime] write: Write,
         #[comptime] monoid: Monoid,
         #[comptime] init_from: InitFrom,
     ) -> Self {
-        comptime!(write.validate_in_place("AccumulateView"));
         comptime!(split_share.validate(write, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
-            lane_share,
+            lanes,
             monoid,
-            cell_read: comptime!(CellRead::of(lane_share, init_from)),
+            cell_read: comptime!(CellRead::of(lanes.share, init_from, write)),
+            drain: comptime!(Drain::of(lanes, write)),
         }
     }
 
@@ -94,7 +141,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
     /// under divergent control flow is undefined.
     pub fn lane_share(&self) -> comptime_type!(LaneShare) {
-        comptime!(self.lane_share)
+        comptime!(self.lanes.share)
     }
 
     /// The monoid these cells fold under, stated where the view was built. A register block asks
@@ -124,17 +171,20 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// siblings don't all hit the address: the plane's first lane where the whole plane shares one
     /// cell, each group's first lane where the plane carries a cell per group.
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
-        match comptime!(self.lane_share) {
-            LaneShare::Plane => {
+        match comptime!(self.drain) {
+            Drain::PlaneFold => {
                 let combined = plane::broadcast::<Vector<E, V>>(value, self.monoid);
                 self.commit_shared(pos, combined, UNIT_POS_X == 0);
             }
-            LaneShare::Group { fold_mask } => {
+            Drain::GroupFold { fold_mask } => {
                 let combined = plane::group(value, fold_mask, self.monoid);
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                 self.commit_shared(pos, combined, lane_in_group == 0);
             }
-            LaneShare::Whole => self.values.write(pos, value),
+            // Nothing to combine, but a fold from lanes that repeat each other's work would land
+            // once per lane, so one of them makes it.
+            Drain::LaneZero => self.commit_shared(pos, value, UNIT_POS_X == 0),
+            Drain::EachLane => self.values.write(pos, value),
         }
     }
 
