@@ -145,12 +145,12 @@ impl<O: OperandSet> OperandTiling<'_, O> {
     pub fn build(self) -> Space {
         // A dropped level is one no operand stated anything at, so its stage is the padded
         // `InPlace`; dropping it here keeps the residence column one entry per surviving level.
-        let kept = self.tiling.kept_levels();
+        let (space, kept) = self.tiling.build_kept();
         for operand in self.operands.each() {
             operand.keep_levels(&kept);
             operand.seal();
         }
-        self.tiling.build()
+        space
     }
 }
 
@@ -287,6 +287,13 @@ impl LeveledTiling {
     /// Build the [`Space`]: the extents, the stack of levels that cut something, and what runs
     /// once they are exhausted. Where each operand *lives* is the operands' own statement.
     pub fn build(self) -> Space {
+        self.build_kept().0
+    }
+
+    /// [`build`](Self::build), plus the flag per declared level saying whether it survived
+    /// [`kept_levels`](Self::kept_levels). One derivation, so an operand's residence column
+    /// cannot be trimmed against a different verdict than the one the space was built on.
+    fn build_kept(self) -> (Space, Vec<bool>) {
         let kept = self.kept_levels();
         let mut space = Space::new(&self.extents);
         for (level, _) in self.levels.iter().zip(&kept).filter(|&(_, &keep)| keep) {
@@ -306,10 +313,11 @@ impl LeveledTiling {
             };
             space = space.with_partitioner(builder.buffered(level.buffering));
         }
-        match self.instruction {
+        let space = match self.instruction {
             Some(instruction) => space.with_instruction(instruction),
             None => space,
-        }
+        };
+        (space, kept)
     }
 }
 
