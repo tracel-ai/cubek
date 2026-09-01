@@ -21,22 +21,20 @@ pub struct MemData<T: Numeric> {
     pub(crate) layout: GmemLayout,
     /// The region of the *physical* buffer this tile covers; narrowed by [`at`](Tile::at).
     pub(crate) window: Window,
-    /// How the tile's logical axes address the buffer's physical ones.
-    /// [`direct`](Projection::direct) for every non-gather operand, where logical rank equals
-    /// physical rank and this is the identity;
-    /// an affine map for an operand gathered over an abstract dimension. Fixed at construction,
-    /// like the layout: `at` moves the window, never the mapping.
+    /// How the tile's logical axes address the buffer's physical ones:
+    /// [`direct`](Projection::direct) for every non-gather operand, an affine map for one gathered
+    /// over an abstract dimension. Fixed at construction, like the layout: `at` moves the window,
+    /// never the mapping.
     #[cube(comptime)]
     pub(crate) projection: Projection,
     /// What [`projection`](Self::projection) only knows in the kernel: its runtime coefficients and
     /// the phase its window origin sits at. [`integral`](RuntimeMap::integral) for every operand
     /// but a runtime-strided or fractionally scaled gather.
     pub(crate) map: RuntimeMap,
-    /// The runtime half of the projection's constant terms: one value per
-    /// [`Offset::Dynamic`](crate::Offset) axis, in [`Projection::dynamic_offset_index`] order.
-    /// Signed, since a padding places the window before the buffer's origin. Not part of
-    /// [`map`](Self::map): an offset only ever places the top window, which
-    /// [`window`](Self::window) then carries, so nothing below reads it again.
+    /// The runtime half of the projection's constant terms: one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis, since a padding places the window before the
+    /// buffer's origin. Not part of [`map`](Self::map): an offset only places the top window,
+    /// which [`window`](Self::window) then carries.
     pub(crate) offsets: Coords<i32>,
     /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
     /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds
@@ -52,29 +50,22 @@ pub struct MemData<T: Numeric> {
     #[cube(comptime)]
     pub(crate) lanes: Lanes,
     /// What one instance holds of these cells, settled at construction: only the whole space can
-    /// tell a split from a cut whose edge is the whole axis.
-    ///
-    /// This and [`lanes`](Self::lanes) are read by accumulators alone. Both are `Partial` on an
-    /// operand that merely sits orthogonal to a split, where they mean nothing.
+    /// tell a split from a cut whose edge is the whole axis. This and [`lanes`](Self::lanes) are
+    /// read by accumulators alone, and both are `Partial` on an operand merely orthogonal to a
+    /// split, where they mean nothing.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
-    /// What the accumulation being lowered right now starts from ([`InitFrom`]).
-    ///
-    /// Not a claim about the bytes: it says nothing about what the buffer holds, only what the
-    /// caller asked for. [`Tile::mm`] and [`Tile::reduce_axis`] state
-    /// [`Identity`](InitFrom::Identity) for the span of their own lowering, having proven the leaf
-    /// visits each cell once ([`Space::spans_contracted_at_leaf`]); it is
-    /// [`Cell`](InitFrom::Cell) everywhere else, and rides [`at`](MemData::at) down so the levels
-    /// below see the verb the caller used.
+    /// What the accumulation being lowered right now starts from ([`InitFrom`]). Not a claim about
+    /// the bytes, only about what the caller asked for: [`Tile::mm`] and [`Tile::reduce_axis`]
+    /// state [`Identity`](InitFrom::Identity) over their own lowering, having proven the leaf
+    /// visits each cell once; it is [`Cell`](InitFrom::Cell) elsewhere and rides
+    /// [`at`](MemData::at) down.
     #[cube(comptime)]
     pub(crate) init_from: InitFrom,
-    /// Where this tile's cells sit inside the buffer they were *filled from*, when that is not
-    /// the buffer they live in.
-    ///
-    /// `None` for every tile that reads its source directly: there [`window`](Self::window)
-    /// already is the source window, so a boundary question is answered against it. `Some` only
-    /// for a gathered stage, whose fill replaced out-of-bounds samples with the boundary's value
-    /// and whose own window can no longer say which those were.
+    /// Where this tile's cells sit inside the buffer they were *filled from*, when that is not the
+    /// buffer they live in. `None` for every tile reading its source directly, where
+    /// [`window`](Self::window) already is the source window. `Some` only for a gathered stage,
+    /// whose fill replaced out-of-bounds samples and whose window can no longer say which.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
 }
 
