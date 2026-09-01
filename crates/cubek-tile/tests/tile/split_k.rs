@@ -299,7 +299,7 @@ const K: Axis = Axis(4);
 fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &FoldArg<'_, E>,
+    out: &AccumulateArg<'_, E>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -354,7 +354,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        FoldArgLaunch::new(
+        AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
@@ -495,7 +495,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        FoldArgLaunch::new(
+        AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
@@ -577,7 +577,7 @@ fn an_atomic_drain_folds_across_planes() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        FoldArgLaunch::new(
+        AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         ),
@@ -611,7 +611,7 @@ fn an_atomic_drain_folds_across_planes() {
 fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &FoldArg<'_, E>,
+    out: &AccumulateArg<'_, E>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -675,7 +675,7 @@ fn a_folding_output_contracts_in_place() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        FoldArgLaunch::new(
+        AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
             // No residence stated: the contraction happens where the output already lies.
             TileSpec::direct(&[M, N]),

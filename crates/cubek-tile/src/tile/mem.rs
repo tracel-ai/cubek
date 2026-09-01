@@ -65,8 +65,8 @@ pub struct MemData<T: Numeric> {
     pub(crate) split_share: SplitShare,
     /// Whether the plane's lanes each hold their own cells or all repeat the same ones. A
     /// whole-space fact like [`split_share`](Self::split_share), settled once and carried down,
-    /// and read only where a write folds: repeated lanes storing the same value land it once,
-    /// repeated lanes folding it land it once each.
+    /// and read only where a write accumulates: repeated lanes storing the same value land it
+    /// once, repeated lanes adding it land it once each.
     #[cube(comptime)]
     pub(crate) lane_work: LaneWork,
     /// What the accumulation being lowered right now starts from ([`InitFrom`]).
@@ -206,31 +206,31 @@ pub struct Access {
 /// What a write to a store does to the cell it lands on.
 ///
 /// `Replace` is every buffer and every plain sink: the cell is its writer's own, so the value
-/// that lands is the value that stays. `Fold` is what lets a contraction be cut at cube scope:
-/// cubes that each hold a slice of one cell all write it, and the store adds rather than
-/// overwrites, so no cube has to know about the others and no second pass is needed.
+/// that lands is the value that stays. `Accumulate` is what lets a contraction be cut at cube
+/// scope: instances that each hold a slice of one cell all write it, and the store adds rather
+/// than overwrites, so none of them has to know about the others and no second pass is needed.
 ///
-/// Stated by the constructor that builds the store ([`FoldArg`]), never derived. A
-/// backing cannot be asked what its writes mean: a folding sink and a fused epilogue are both
-/// calls through a layout, and only the caller knows which it built.
+/// Stated by the operand that binds the store ([`AccumulateArg`]), never derived. A backing
+/// cannot be asked what its writes mean: an accumulating sink and a fused epilogue are both calls
+/// through a layout, and only the caller knows which it built.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Write {
     /// Replaces the cell.
     Replace,
-    /// Folds into the cell, atomically.
-    Fold,
+    /// Adds into the cell, atomically.
+    Accumulate,
 }
 
 impl Write {
-    /// Refuse a fold from a drain that cannot elect one writer for it.
+    /// Refuse an accumulating write from a drain that cannot elect one writer for it.
     ///
     /// A hardware fragment stores through its own intrinsic, over a slice of the destination or
-    /// over its lanes' own positions, and neither leaves anywhere to put the election a fold
+    /// over its lanes' own positions, and neither leaves anywhere to put the election accumulating
     /// needs. The register block is the one drain that writes cell by cell and so can.
     pub(crate) fn validate_fragment_drain(self, fragment: &str) {
         match self {
             Write::Replace => {}
-            Write::Fold => panic!(
+            Write::Accumulate => panic!(
                 "{fragment}: a hardware fragment stores through its own intrinsic and elects no \
                  writer, so it cannot drain into a destination that folds. Contract through \
                  Instruction::Registers, whose block drains cell by cell."
@@ -492,7 +492,7 @@ impl<T: Numeric> Tile<T> {
 
     /// [`of_sink`](Tile::of_sink) whose writes *fold* into the cell instead of replacing it, which
     /// is what lets several cubes contract disjoint slices of one output cell and each write its
-    /// own. The destination is the sink's business: [`FoldArg`] builds the one that
+    /// own. The destination is the sink's business: [`AccumulateArg`] builds the one that
     /// folds atomically into a buffer.
     ///
     /// The destination is never read, and under a split it must not be: what is there mid-flight
@@ -503,14 +503,14 @@ impl<T: Numeric> Tile<T> {
     /// The buffer behind it holds the fold's identity before the launch, since the first cube to
     /// arrive folds onto whatever is there rather than replacing it. Nothing here can check that:
     /// the sink cannot read.
-    pub fn of_folding_sink(
+    pub fn of_accumulating_sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        Tile::<T>::sink_writing(sink, geometry, vector_size, space, spec, Write::Fold)
+        Tile::<T>::sink_writing(sink, geometry, vector_size, space, spec, Write::Accumulate)
     }
 
     fn sink_writing(

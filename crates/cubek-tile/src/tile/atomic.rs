@@ -1,9 +1,9 @@
-//! The destination a contraction cut across cubes drains into: a store whose writes *fold* into
-//! the cell rather than replace it.
+//! The destination a contraction cut across cubes drains into: a store whose writes *accumulate*
+//! into the cell rather than replace it.
 //!
 //! Cutting a contraction at cube scope leaves every cube holding a slice of each output cell it
 //! touches. Adding the slices up is the only thing that is missing, and this is the way that costs
-//! no second pass: each cube folds its own slice into the cell atomically and never learns that
+//! no second pass: each cube adds its own slice into the cell atomically and never learns that
 //! the others exist.
 //!
 //! It rides the machinery a fused epilogue already uses. A sink is
@@ -12,8 +12,8 @@
 //! only the last step differs: [`ErasedTensor`] ends the walk in a call, and this backing's call
 //! is [`Atomic::fetch_add`] rather than an assignment.
 //!
-//! Two things the caller owns, neither checkable here. The buffer holds the fold's identity before
-//! the launch, since the first cube to arrive folds onto what is there. And the order the folds
+//! Two things the caller owns, neither checkable here. The buffer holds the monoid's identity
+//! before the launch, since the first cube to arrive adds onto what is there. And the order the adds
 //! land in is the order the cubes run in, so the sum is not bit-identical run to run: a launch
 //! that needs reproducibility wants the split spelled as an axis instead (`tests/tile/split_k.rs`).
 
@@ -28,13 +28,13 @@ use cubecl::std::tensor::{
 
 use crate::*;
 
-/// Fold one line into the buffer: `N` scalar folds at the line's own offset.
+/// Accumulate one line into the buffer: `N` scalar adds at the line's own offset.
 ///
 /// Scalar because an atomic is: `Atomic<E>` is one element wide whatever the tile serves its
 /// lines at, so the width the walk works in is undone here and nowhere else. The tile above keeps
 /// addressing whole lines, which is what keeps this a backing rather than a second drain.
 #[cube]
-fn fold_line<E: Numeric, N: Size>(values: &Tensor<Atomic<E>>, index: usize, value: Vector<E, N>) {
+fn accumulate_line<E: Numeric, N: Size>(values: &Tensor<Atomic<E>>, index: usize, value: Vector<E, N>) {
     let base = index * N::value();
     #[unroll]
     for k in 0..N::value() {
@@ -48,7 +48,7 @@ fn lines_of(scalars: usize, #[comptime] width: usize) -> usize {
     scalars / width.runtime()
 }
 
-/// A backing that folds into an `Atomic<E>` buffer. Writes and never reads, so it declares
+/// A backing that accumulates into an `Atomic<E>` buffer. Writes and never reads, so it declares
 /// [`WritesLines`] alone: a partial that could be read back is one a cube could seed from, which
 /// is the race this exists to avoid.
 struct AtomicAccumulate<E: Numeric, N: Size> {
@@ -73,7 +73,7 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
         index: NativeExpand<usize>,
         value: ExpandValue,
     ) {
-        fold_line::expand::<E, N>(scope, &self.values, index, value.into());
+        accumulate_line::expand::<E, N>(scope, &self.values, index, value.into());
     }
 }
 
@@ -81,11 +81,11 @@ impl<E: Numeric, N: Size> WritesLines<E> for AtomicAccumulate<E, N> {}
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A tile whose writes fold into `values` instead of replacing, at served width `N`.
+    /// A tile whose writes accumulate into `values` instead of replacing, at served width `N`.
     ///
-    /// Reached through [`FoldArg`], which is where a kernel names `N` once; this is the
-    /// constructor behind it. See [`Tile::of_folding_sink`] for what the caller owns.
-    pub fn folding<N: Size>(
+    /// The constructor behind [`AccumulateArg`], which is the surface a kernel binds. See
+    /// [`Tile::of_accumulating_sink`] for what the caller owns.
+    pub(crate) fn of_atomic_accumulate<N: Size>(
         values: &Tensor<Atomic<T>>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
@@ -95,16 +95,16 @@ impl<T: Numeric> Tile<T> {
         let geometry =
             RuntimeGeometry::of_tensor::<Atomic<T>>(values, comptime!(spec.projection.physical_rank()));
         let sink = ErasedTensor::<T, WriteOnly>::of_atomic_accumulate::<N>(values);
-        Tile::<T>::of_folding_sink(sink, geometry, comptime!(N::value()), space, spec)
+        Tile::<T>::of_accumulating_sink(sink, geometry, comptime!(N::value()), space, spec)
     }
 }
 
-/// The erased tensor over an atomic buffer, folding at width `N`.
+/// The erased tensor over an atomic buffer, accumulating at width `N`.
 ///
 /// A constructor here rather than in cubecl for the reason the backing is here: what a write
 /// *means* is this crate's statement, and cubecl's own backings all replace.
 pub trait AtomicAccumulateSink<E: Numeric> {
-    /// The sink that folds `values` at width `N`.
+    /// The sink that accumulates into `values` at width `N`.
     fn of_atomic_accumulate<N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor<E, WriteOnly> {
         unexpanded!()
     }

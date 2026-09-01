@@ -86,7 +86,7 @@ pub enum SplitShare {
 }
 
 impl SplitShare {
-    /// Refuse an accumulation this share leaves in pieces, unless the destination folds them
+    /// Refuse an accumulation this share leaves in pieces, unless the destination adds them
     /// together. Called where an accumulator is opened and where one is written, which are the two
     /// places a partial can escape.
     ///
@@ -94,18 +94,21 @@ impl SplitShare {
     /// register-resident accumulator drains by storing, so the last instance to arrive erases
     /// every other one's slice, and one accumulating in place reads the cell, folds, and writes
     /// it back, which is a lost update. Neither shows up as anything but a wrong number, so it is
-    /// refused here instead. A destination that folds ([`Write::Fold`](crate::Write)) is the case
-    /// this exists to let through, and it serves both scopes alike: the drain's election is per
-    /// plane (`UNIT_POS_X == 0`), so one lane of every plane of every cube folds its own.
+    /// refused here instead. A destination that accumulates ([`Write::Accumulate`](crate::Write))
+    /// is the case this exists to let through, and it serves both scopes alike: the drain's
+    /// election is per plane (`UNIT_POS_X == 0`), so one lane of every plane of every cube adds
+    /// its own.
     pub(crate) fn validate(self, write: crate::Write, site: &str) {
         match (self, write) {
-            (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Fold) => {}
+            (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Accumulate) => {}
             (SplitShare::Partial, crate::Write::Replace) => panic!(
                 "{site}: this accumulator's cells are split across planes or cubes and its \
-                 destination replaces rather than folds, so every partial but one would be lost. \
+                 destination replaces rather than accumulates, so every partial but one would be \
+                 lost. \
                  A contracted axis cut at plane or cube scope (`Cut::plane`, `Cut::cube`) gives \
                  each instance a slice of the contraction, and none of them holds a whole cell. \
-                 Drain into a folding destination (bind it as a `FoldArg`), cut the contraction \
+                 Drain into an accumulating destination (bind it as an `AccumulateArg`), cut the \
+                 contraction \
                  at unit scope (`Cut::unit`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),
@@ -330,16 +333,16 @@ mod tests {
         SplitShare::Partial.validate(Write::Replace, "test");
     }
 
-    /// A destination that folds is exactly the case it exists to let through.
+    /// A destination that accumulates is exactly the case it exists to let through.
     #[test]
-    fn a_partial_cell_may_be_folded() {
-        SplitShare::Partial.validate(Write::Fold, "test");
+    fn a_partial_cell_may_be_accumulated() {
+        SplitShare::Partial.validate(Write::Accumulate, "test");
     }
 
     /// A whole cell is nobody else's business, whichever way it is written.
     #[test]
     fn a_whole_cell_is_written_either_way() {
         SplitShare::Whole.validate(Write::Replace, "test");
-        SplitShare::Whole.validate(Write::Fold, "test");
+        SplitShare::Whole.validate(Write::Accumulate, "test");
     }
 }

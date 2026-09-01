@@ -25,14 +25,27 @@ let space = Tiling::new()
     .with_instruction(Instruction::registers(64));
 ```
 
+The kernel is the one an unsplit contraction writes. `AccumulateArg` is `TileArg`'s twin for an
+output several instances add into, so only the argument's type differs:
+
 ```rust
-let c = Tile::<E>::of_atomic_sink::<Const<1>>(out, space, out_spec);   // `out: &Tensor<Atomic<E>>`
-let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);                   // out_spec states Register
-acc.mm(&a, &b, Semiring::SUM_PROD);
+fn matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,          // the only difference
+    #[comptime] space: Space,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = out.tile(space);
+    c.mm(&a, &b, Semiring::SUM_PROD);    // still `mm`, still `c = a·b`
+}
 ```
 
-The output buffer holds the fold's identity before the launch: the first cube to arrive folds onto
-what is there. Nothing can check that, since the destination cannot read.
+`mm` states `c = a·b` and owns the init that makes it true. Under a split a cell belongs to several
+instances and none of them may seed it, so the init leaves the kernel: **the buffer arrives holding
+the monoid's identity**, zeroed by the launch. Nothing can check that, since the destination cannot
+read.
 
 The deterministic alternative needs no atomics and no new engine: spell `K` as two axes and let the
 output span the split, then fold it away in a second pass. `tests/tile/split_k.rs` has both.
@@ -128,7 +141,7 @@ was that a cube's run crossing an output tile would force a mid-loop re-seed on 
 which meant `AccumulatorScope` giving up its lexical scope. What actually removes it is not
 claiming ownership: an output that folds is *maybe prefilled*, every contraction into it is `mma`
 rather than `mm`, and nothing has to prove a cube is the only contributor. `CellRead` answers
-`Never` for a folding destination and the store's `fetch_add` is the read-modify-write, so a cube
+`Never` for an accumulating destination and the store's `fetch_add` is the read-modify-write, so a cube
 adds its slice to whatever is there. Landed in `dc26fa6c`, with a test contracting in place into an
 atomic output with no register accumulator at all.
 

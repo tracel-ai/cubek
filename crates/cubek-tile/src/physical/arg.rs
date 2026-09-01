@@ -235,35 +235,35 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
     pub spec: TileSpec,
 }
 
-/// An output several instances fold into, as a single launch argument: [`TileArg`]'s twin for a
-/// destination whose writes add rather than replace.
+/// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
+/// for a destination whose writes add rather than replace.
 ///
-/// The buffer is bound as `Atomic<E>` because that is what a fold needs, and it carries no served
+/// The buffer is bound as `Atomic<E>` because that is what accumulating needs, and it carries no served
 /// width the way [`TileArg`] does: an atomic element is always one scalar, so there is nowhere in
 /// the type to put one. The tile is therefore served scalar.
 ///
 /// That is a limit, not a design. The width a tile is served at also sets its register block's
-/// line width, so a folding output accumulates in scalar registers where a storing one can
-/// accumulate in lines. Serving it wider is sound (a `V`-wide line commits as `V` folds, which is
+/// line width, so an accumulating output works in scalar registers where a storing one can work
+/// in lines. Serving it wider is sound (a `V`-wide line commits as `V` adds, which is
 /// what the backing already does), but the width would have to be stated on the [`TileSpec`]
 /// rather than read off the binding, and today no operand states one.
 ///
-/// **The buffer arrives holding the fold's identity.** `mm` states `c = a·b` and owns that init,
+/// **The buffer arrives holding the monoid's identity.** `mm` states `c = a·b` and owns that init,
 /// but a cell here belongs to several instances and none of them may seed it, so the seeding
 /// happens once at the launch instead. Nothing can check it: the destination cannot read.
 #[derive(CubeType, CubeLaunch)]
-pub struct FoldArg<'a, E: Numeric> {
+pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,
     #[cube(comptime)]
     pub spec: TileSpec,
 }
 
 #[cube]
-impl<'a, E: Numeric> FoldArg<'a, E> {
-    /// Serve the output as a [`Tile`] that folds into it. [`TileArg::tile`]'s twin, and the same
+impl<'a, E: Numeric> AccumulateArg<'a, E> {
+    /// Serve the output as a [`Tile`] that accumulates into it. [`TileArg::tile`]'s twin, and the same
     /// call: the kernel's one `space` projected onto this operand's `spec` axes.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        Tile::<E>::folding::<Const<1>>(self.tensor, space, comptime!(self.spec.clone()))
+        Tile::<E>::of_atomic_accumulate::<Const<1>>(self.tensor, space, comptime!(self.spec.clone()))
     }
 }
 

@@ -34,7 +34,7 @@ use cubecl::{
 use cubek_test_utils::{CatalogEntry, HostData, HostDataType, RunSamples, TileInput};
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Cut, Instruction, Monoid, PhysicalAxisMap, Projection, RegisterBlock,
-    FoldArg, FoldArgLaunch, Residence, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    AccumulateArg, AccumulateArgLaunch, Residence, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
     Tiling, WalkOrder,
 };
 
@@ -73,7 +73,7 @@ fn plain_matmul<E: Numeric>(
 fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &FoldArg<'_, E>,
+    out: &AccumulateArg<'_, E>,
     #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -341,7 +341,7 @@ impl Bound {
                     self.cube_dim,
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    FoldArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
                     self.space.clone(),
                     dtype,
                 );

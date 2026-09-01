@@ -673,7 +673,7 @@ impl<T: Numeric> Tile<T> {
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => {
                 let init_from = comptime!(match d.access.write {
-                    Write::Fold => InitFrom::Identity,
+                    Write::Accumulate => InitFrom::Identity,
                     Write::Replace => init_from,
                 });
                 d.set_init_from(comptime!(init_from));

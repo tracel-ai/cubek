@@ -42,7 +42,7 @@ impl CellRead {
     /// other instances' contributions, and nothing here has to know.
     const fn of(lane_share: LaneShare, init_from: InitFrom, write: Write) -> Self {
         match write {
-            Write::Fold => CellRead::Never,
+            Write::Accumulate => CellRead::Never,
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
                 InitFrom::Cell => match lane_share {
@@ -83,7 +83,7 @@ impl Drain {
             // the same cells, so a store lands the same value however many make it and a fold
             // lands it once per lane.
             LaneShare::Whole => match (lanes.work, write) {
-                (LaneWork::Repeated, Write::Fold) => Drain::LaneZero,
+                (LaneWork::Repeated, Write::Accumulate) => Drain::LaneZero,
                 (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
             },
         }

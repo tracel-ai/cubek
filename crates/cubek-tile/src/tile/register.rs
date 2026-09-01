@@ -121,7 +121,7 @@ impl<T: Numeric> RegisterData<T> {
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
     /// every lane writing its own fraction over the last.
     ///
-    /// A write that folds ([`Write::Fold`]) rather than replaces adds one more election: lanes
+    /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election: lanes
     /// that repeat each other's work would each add the same contribution.
     ///
     /// The write goes through the sink's masked matrix view, the same door
