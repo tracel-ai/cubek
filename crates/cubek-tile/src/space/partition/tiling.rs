@@ -8,8 +8,8 @@
 use crate::{Axis, ByAxis, Instruction, Space};
 
 use super::{
-    Buffering, ComputeScope, CubeAxis, Distribution, OperandSet, Partitioner, Spatial, Spread,
-    WalkOrder, Work, cubes, lanes, planes,
+    Buffering, ComputeScope, CubeAxis, Distribution, Handout, OperandSet, Partitioner, Spatial,
+    Spread, WalkOrder, Work, cubes, lanes, planes,
 };
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
@@ -406,50 +406,77 @@ impl LevelCuts {
         self
     }
 
-    /// Distribute these axes' work as one: `axes` pairs each axis with its tile edge, and `dist`
-    /// says who runs the tiles and how many of them there are.
+    /// Nobody owns these axes: every worker on this level covers all of their tiles, walking them
+    /// one at a time. `axes` pairs each axis with its tile edge.
     ///
-    /// The axes are read as a single index, so an instance takes a share of the whole rather than
-    /// a box of the grid. That is the only thing this says that [`axes`](Self::axes) does not,
-    /// and it is the only way to say it: dealing each axis on its own always yields a box, and a
-    /// share that begins inside one region and ends inside another is not one.
+    /// The contraction of a matmul is the everyday one. So is any axis a level leaves alone,
+    /// which is most of them at most levels.
+    pub fn walk(&mut self, axes: &[(Axis, usize)]) -> &mut Self {
+        self.cuts.extend(
+            axes.iter()
+                .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+        );
+        self
+    }
+
+    /// Hand these axes' regions to `dist`'s workers, in order: as many workers as regions means
+    /// one each, fewer means each takes a run. `axes` pairs each axis with its tile edge, and
+    /// `dist` says who runs the tiles and how many of them there are ([`cubes`], [`planes`],
+    /// [`lanes`] and their knobs).
     ///
-    /// The index runs over these axes' tiles at this level and one region of the level below, so
+    /// One axis, or one region each, is a box of the grid, so every axis gets a dial of its own
+    /// and two lines make a two-dimensional box. Several axes sharing a stated count are read as a
+    /// single index instead, so a worker takes a share of the whole rather than a box of it: a
+    /// dial per axis always yields a box, and a share that begins inside one region and ends
+    /// inside another is not one.
+    ///
+    /// That index runs over these axes' tiles at this level and one region of the level below, so
     /// a share can end part way through a region's own work. Where that region is an output tile
-    /// and the level below walks the contraction, several instances end up holding pieces of the
-    /// same cell, and the destination folds them exactly as it does under a cut
+    /// and the level below walks the contraction, several workers end up holding pieces of the
+    /// same cell, and the destination folds them exactly as it does under a dial
     /// ([`SplitShare`](crate::SplitShare)).
     ///
-    /// An axis named here is not named by [`axis`](Self::axis): a level states each of its axes
+    /// An axis named here is not named by [`walk`](Self::walk): a level states each of its axes
     /// once.
-    pub fn distribute(&mut self, axes: &[(Axis, usize)], dist: Spatial) -> &mut Self {
-        assert!(
-            self.work.is_none(),
-            "LevelCuts::distribute: this level already distributes work; state it once"
-        );
-        // A share is a range of one index, and lanes that reduce in registers have to reach
-        // their reduction together. Ranges put them on different regions, so they never would.
-        assert!(
-            dist.scope() != ComputeScope::Unit,
-            "LevelCuts::distribute: the plane's lanes combine in registers, which needs them in \
-             lockstep, and lanes holding different shares never are. Cut an axis across them \
-             (`Cut::unit`) instead."
-        );
-        // A share is walked as a nest: consecutive steps of one region under one accumulator,
-        // then the next region. Turns would put a different region under it at every step.
-        assert!(
-            dist.spread() == Spread::Contiguous,
-            "LevelCuts::distribute: a share is a run of the index, so its steps are consecutive; \
-             instances taking turns would leave no region long enough to accumulate in. \
-             Interleave an axis instead (`Cut::unit(..).interleaved()` and its siblings)."
-        );
-        for &(axis, edge) in axes {
-            self.cuts.push((axis, Cut::sequential(edge)));
+    pub fn distribute(&mut self, dist: Spatial, axes: &[(Axis, usize)]) -> &mut Self {
+        match dist.handout(axes.len()) {
+            Handout::Dial => self.cuts.extend(
+                axes.iter()
+                    .map(|&(axis, edge)| (axis, Cut::new(edge, dist.into()))),
+            ),
+            Handout::OneIndex => {
+                assert!(
+                    self.work.is_none(),
+                    "LevelCuts::distribute: this level already distributes work; state it once"
+                );
+                // A share is a range of one index, and lanes that reduce in registers have to
+                // reach their reduction together. Ranges put them on different regions, so they
+                // never would.
+                assert!(
+                    dist.scope() != ComputeScope::Unit,
+                    "LevelCuts::distribute: the plane's lanes combine in registers, which needs \
+                     them in lockstep, and lanes holding different shares never are. Distribute \
+                     one axis at a time across them instead."
+                );
+                // A share is walked as a nest: consecutive steps of one region under one
+                // accumulator, then the next region. Turns would put a different region under it
+                // at every step.
+                assert!(
+                    dist.spread() == Spread::Contiguous,
+                    "LevelCuts::distribute: a share is a run of the index, so its steps are \
+                     consecutive; instances taking turns would leave no region long enough to \
+                     accumulate in. Distribute one interleaved axis instead."
+                );
+                self.cuts.extend(
+                    axes.iter()
+                        .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+                );
+                self.work = Some(Work::new(
+                    axes.iter().map(|&(axis, _)| axis).collect(),
+                    dist,
+                ));
+            }
         }
-        self.work = Some(Work::new(
-            axes.iter().map(|&(axis, _)| axis).collect(),
-            dist,
-        ));
         self
     }
 }

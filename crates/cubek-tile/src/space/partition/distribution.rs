@@ -119,8 +119,8 @@ impl SplitShare {
 /// ones each takes.
 ///
 /// The value [`cubes`], [`planes`] and [`lanes`] build. It names no axis, which is what lets one
-/// value describe a single axis's tiles ([`Cut::cube`](crate::Cut::cube) and its siblings) or
-/// several axes' work at once ([`LevelCuts::distribute`](crate::LevelCuts::distribute)).
+/// value describe a single axis's tiles or several axes' work at once, whichever the level it is
+/// handed to names ([`LevelCuts::distribute`](crate::LevelCuts::distribute)).
 ///
 /// The knobs live here rather than on [`Distribution`] so they cannot be reached from
 /// [`Sequential`](Distribution::Sequential): one instance walking the whole axis has nobody to
@@ -195,6 +195,32 @@ impl Spatial {
     pub fn spread(self) -> Spread {
         self.spread
     }
+
+    /// How this distribution hands `axes` axes' regions out.
+    ///
+    /// Not a knob: it follows from what was stated. One axis's runs are boxes of the grid, and so
+    /// is one region each whatever the axes, so both get a dial per axis. Only several axes
+    /// sharing a stated count need an index no box can describe.
+    pub(crate) fn handout(self, axes: usize) -> Handout {
+        match (axes, self.coverage) {
+            (0 | 1, _) | (_, Coverage::TilesEach(1)) => Handout::Dial,
+            _ => Handout::OneIndex,
+        }
+    }
+}
+
+/// How a level hands the axes it distributes to their scope's workers.
+///
+/// [`Spatial::handout`]'s answer, read once where a level is stated
+/// ([`LevelCuts::distribute`](crate::LevelCuts::distribute)).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Handout {
+    /// A dial on each axis: its tiles ride the scope on their own, and several dials make a box
+    /// of the grid.
+    Dial,
+    /// One index over every named axis, whose runs the workers take a share of each
+    /// ([`Work`](crate::Work)).
+    OneIndex,
 }
 
 impl From<Spatial> for Distribution {

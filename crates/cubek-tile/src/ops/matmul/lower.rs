@@ -437,7 +437,7 @@ mod tests {
                 Buffering::SINGLE,
                 |l| match distributed {
                     true => {
-                        l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
+                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
                     }
                     false => l
                         .axis(M, Cut::sequential(4))

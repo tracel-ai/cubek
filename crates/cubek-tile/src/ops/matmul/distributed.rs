@@ -157,10 +157,10 @@ mod tests {
         Tiling::new()
             .extents(&[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
+                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| match twice {
-                true => l.distribute(&[(M, 4), (N, 4), (K, 4)], cubes(CubeAxis::Y).instances(2)),
+                true => l.distribute(cubes(CubeAxis::Y).instances(2), &[(M, 4), (N, 4), (K, 4)]),
                 false => l
                     .axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))

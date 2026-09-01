@@ -286,8 +286,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> Ho
         // region of this level is one output tile and the index reaches through the level below.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.distribute(
-                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                 cubes(CubeAxis::X).instances(runs),
+                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
             )
         })
         // One tile's contraction, which is what a run counts in.
@@ -471,8 +471,8 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .extents(&[(MM, m), (NN, n), (KK, k)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.distribute(
-                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                     cubes(CubeAxis::X).instances(runs),
+                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                 )
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {

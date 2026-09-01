@@ -245,8 +245,8 @@ fn over_distributes_work_beside_the_residences() {
     let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
             l.distribute(
-                &[(M, 16), (N, 32), (K, 16)],
                 cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
             );
             o.out.stage(Residence::Register);
         })
@@ -270,6 +270,88 @@ fn over_distributes_work_beside_the_residences() {
     assert_eq!(residences(&ops.b), [Residence::InPlace, Residence::Smem]);
 }
 
+/// One region each is a box of the grid however many axes are named, so the line deals a dial per
+/// axis and states no work. The claim every batch level's migration rests on: `.axes(&batch,
+/// Cut::cube(Z, 1))` is one `distribute` line, and stays the walk it always was.
+#[test]
+fn distributing_several_axes_one_region_each_deals_a_dial_each() {
+    let level = |l: &mut cubek_tile::LevelCuts| {
+        l.walk(&[(M, 16), (N, 32), (K, 16)]);
+    };
+    let one_line = Tiling::new()
+        .extents(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
+            level(l);
+            l
+        })
+        .build();
+    let a_dial_each = Tiling::new()
+        .extents(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
+                .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
+            level(l);
+            l
+        })
+        .build();
+
+    assert_eq!(one_line, a_dial_each);
+    // No work: the walk under it is the one an undistributed level has, and the lowering that
+    // reads this is the one that picks the per-region accumulator nest.
+    assert!(one_line.partitioner().work().is_none());
+    // Both axes still ride Z, one cube per (B0, B1) pair.
+    assert!(matches!(one_line.cube_count(), CubeCount::Static(1, 1, 6)));
+}
+
+/// The same axes with a count stated cannot be a box: a share begins inside one region and ends
+/// inside another, so they are read as one index instead.
+#[test]
+fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(
+                cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
+            )
+        })
+        .build();
+    assert!(space.partitioner().work().is_some());
+    // The shares ride the cubes, and no axis of them does: five cubes, not `4 * 2 * 1`.
+    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
+}
+
+/// One axis is a box whatever the count, so it is dealt a dial: `instances` there sizes the
+/// axis's own tiles across the scope, which is what a cut has always meant.
+#[test]
+fn distributing_one_axis_with_a_count_is_a_dial() {
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
+                .walk(&[(N, 32), (K, 16)])
+        })
+        .build();
+    assert!(space.partitioner().work().is_none());
+    assert!(matches!(space.cube_count(), CubeCount::Static(4, 1, 1)));
+}
+
+/// Nothing named is nothing said: a matmul with no batch axis passes an empty list and the level
+/// reads as if the line were not there.
+#[test]
+fn distributing_no_axis_states_nothing() {
+    let space = Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(cubes(CubeAxis::Z), &[])
+                .walk(&[(M, 16), (N, 32), (K, 16)])
+        })
+        .build();
+    assert!(space.partitioner().work().is_none());
+    assert!(matches!(space.cube_count(), CubeCount::Static(1, 1, 1)));
+}
+
 /// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
 /// shares are on different regions, so they never reach a reduction together.
 #[test]
@@ -278,7 +360,7 @@ fn distributing_work_across_lanes_is_refused() {
     Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.distribute(&[(M, 16), (N, 32), (K, 16)], lanes().instances(4))
+            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)])
         })
         .build();
 }
@@ -292,8 +374,8 @@ fn distributing_work_in_turns_is_refused() {
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.distribute(
-                &[(M, 16), (N, 32), (K, 16)],
                 cubes(CubeAxis::X).instances(5).interleaved(),
+                &[(M, 16), (N, 32), (K, 16)],
             )
         })
         .build();
@@ -307,8 +389,8 @@ fn an_axis_both_cut_and_distributed_is_refused() {
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(K, Cut::sequential(16)).distribute(
-                &[(M, 16), (N, 32), (K, 16)],
                 cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
             )
         })
         .build();
