@@ -859,8 +859,13 @@ determines is the *best* width, which is a coalescing statement and belongs with
 **Step 5 largely dissolved.** It existed so a level above the first could compute its own
 `ScaleLevel` against the level below. It does not need to: every level is read at the *same* logical
 position and resolves it to its own granularity through its own projection, so one `MatrixAxes`
-serves the whole list and no level needs geometry of its own. What remains of step 5 is small: each
-level should carry its own `Apply` rather than reading the innermost's. `ContractEdges` stays.
+serves the whole list and no level needs geometry of its own. `ContractEdges` stays.
+
+What looked like the remainder of step 5 was giving each level its own `Apply` rather than reading
+the innermost's. It is not worth building yet, and the reason is the point: there is nowhere to
+*state* a per-level verb. No operand, spec or scheme carries one, so the plumbing would thread a
+constant to the same place it already reaches. The verb becomes per-level when something can say it,
+and not before.
 
 **Step 7 is not mechanized.** There is no golden harness in this repo, and `CUBECL_DEBUG_LOG` emitted
 nothing for this runtime. The claim it was meant to check is instead structural and readable in the
