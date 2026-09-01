@@ -91,7 +91,6 @@ impl MatmulProblem {
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
     ) -> Result<Self, MatmulSetupError> {
-        let rank = out_shape.len();
         let lhs_layout =
             MatrixLayout::from_shape_and_strides(&lhs_shape, &lhs_strides, lhs_scheme)?;
         let rhs_layout =
@@ -99,9 +98,16 @@ impl MatmulProblem {
         let out_layout = MatrixLayout::from_shape_and_strides(&out_shape, &out_strides, None)?;
 
         Ok(Self {
-            m: lhs_shape[rank - 2],
-            n: rhs_shape[rank - 1],
-            k: lhs_shape[rank - 1],
+            // Each extent read off the rank of the shape it belongs to, which
+            // is what the batch lines below already do. Taking one rank from
+            // the *output* and indexing the operands with it is the same
+            // number only while every rank agrees, and out of bounds when they
+            // do not: a folded projection contracts a rank-2 `[rows, k]` and
+            // reshapes the product to `[batch, seq, n]`, so `lhs_shape[2]` of a
+            // length-2 shape is the panic rather than the wrong answer.
+            m: lhs_shape[lhs_shape.len() - 2],
+            n: rhs_shape[rhs_shape.len() - 1],
+            k: lhs_shape[lhs_shape.len() - 1],
             lhs_batches: lhs_shape[..lhs_shape.len() - 2].into(),
             rhs_batches: rhs_shape[..rhs_shape.len() - 2].into(),
             out_batches: out_shape[..out_shape.len() - 2].into(),
