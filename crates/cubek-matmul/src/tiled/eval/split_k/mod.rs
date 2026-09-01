@@ -6,10 +6,10 @@
 //!
 //! - `seq_k`: nothing on the lanes, so one lane per cube walks the whole K. The literal "no
 //!   split-K" baseline, launched at `CubeDim::new_single()` so it really is one lane.
-//! - `n_spread`: `Cut::unit` on N: each lane owns disjoint output columns and still walks the
+//! - `n_spread`: `lanes()` on N: each lane owns disjoint output columns and still walks the
 //!   whole K. No combine (the columns are disjoint): today's strategy, the
 //!   `GemvUnitPerpendicular` mapping. Needs `n ≥ plane_size · cols` *per cube* to fill the lanes.
-//! - `split_k`: `Cut::unit` on K: each lane contracts a disjoint K-slice and the plane
+//! - `split_k`: `lanes()` on K: each lane contracts a disjoint K-slice and the plane
 //!   `plane_sum`-combines, one lane writing. Works however small N gets.
 //!
 //! All three solve the same `(m, n, k)`; only the mapping differs, so the comparison is total time
@@ -83,9 +83,9 @@ fn launch_split_k_matmul<E: Numeric>(
 pub enum Mapping {
     /// Nothing on the lanes: one lane walks the whole K.
     SeqK,
-    /// `Cut::unit` on N: `cols` disjoint columns per lane, whole K each, no combine.
+    /// `lanes()` on N: `cols` disjoint columns per lane, whole K each, no combine.
     NSpread { cols: usize },
-    /// `Cut::unit` on K: a K-slice per lane over `cols` shared columns per cube,
+    /// `lanes()` on K: a K-slice per lane over `cols` shared columns per cube,
     /// `plane_sum` combine, one lane writes.
     SplitK { cols: usize },
     /// [`SplitK`](Mapping::SplitK) on its home layout: the rhs buffer stored K-contiguous
@@ -332,7 +332,7 @@ impl Benchmark for SplitKBench {
 
 /// A mapping that computes the wrong answer would still time fast, so every strategy proves itself
 /// on a small shape before it is measured. Guards the whole family of silent-zero traps: a
-/// wrongly sized `Cut::unit`, an unresolved lane count, a combine that never fires.
+/// wrongly sized lane distribution, an unresolved lane count, a combine that never fires.
 fn verify(
     client: &ComputeClient<TestRuntime>,
     mapping: Mapping,

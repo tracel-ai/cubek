@@ -18,9 +18,9 @@ destination that folds:
 let space = Tiling::new()
     .extents(&[(M, m), (N, n), (K, k)])
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-        l.axis(M, Cut::sequential(m))
-            .axis(N, Cut::cube(CubeAxis::X, cols))
-            .axis(K, Cut::cube(CubeAxis::Z, k / splits))   // the whole feature
+        l.distribute(cubes(CubeAxis::X), &[(N, cols)])
+            .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])   // the whole feature
+            .walk(&[(M, m)])
     })
     .build()
     .with_instruction(Instruction::registers(64));
@@ -71,7 +71,7 @@ means: each folds its own contribution into the destination and never learns tha
 
 **Phase 0, `e8cdc75c`.** `SplitShare`, `Space::split_share_of`, and the refusal. Three
 configurations were silently wrong before it: a contracted axis at cube scope, the same at plane
-scope, and the known cmma-plus-`Cut::unit`-on-K gap. A register-resident accumulator drains by
+scope, and the known cmma-plus-lanes-on-K gap. A register-resident accumulator drains by
 storing, so the last instance to arrive erased every other one's slice; one accumulating in place
 read the cell, folded, and wrote it back, which is a lost update. Neither showed up as anything but
 a wrong number.
@@ -123,7 +123,7 @@ guard inside a share. The control is a case with `N` on the lanes and `K` on the
 
 **A share cannot be derived from the operand's own projection.** The projection is exactly what
 drops the contracted axis, so a projected space cannot tell a split from a cut whose edge happens to
-be the whole axis, and the guard refused `Cut::cube(Z, k)` at `splits = 1`. Asked of the whole space
+be the whole axis, and the guard refused `distribute(cubes(Z), &[(K, k)])` at `splits = 1`. Asked of the whole space
 once, where the tile is built, and carried down unchanged the way `Write` is. Still conservative on a
 `Dynamic` extent, where only the shape knows the tile count; refining that means stamping the share
 host-side off the concrete space, the way bounds checks are already derived.
@@ -142,16 +142,14 @@ let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
     // region of this level is one output tile and the index reaches through the level below.
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
         l.distribute(
-            &[(M, bm), (N, bn), (K, k)],
             cubes(CubeAxis::X).instances(cubes_count),   // the whole feature
+            &[(M, bm), (N, bn), (K, k)],
         );
         o.out.stage(Residence::Register);
     })
     // One step of a share, which is what the shares are counted in.
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-        l.axis(M, Cut::sequential(bm))
-            .axis(N, Cut::sequential(bn))
-            .axis(K, Cut::sequential(bk));
+        l.walk(&[(M, bm), (N, bn), (K, bk)]);
         o.rhs.stage(Residence::Smem);
     })
     .build()
@@ -166,16 +164,15 @@ gives an instance a box of the grid, and a share that begins inside one region a
 another is not a box: no box of a four by two grid holds three regions. So the statement cannot be
 per axis. What it *can* be is the same statement one granularity up, and that is what `distribute`
 is: `Spatial` (built by `cubes`, `planes`, `lanes`) says who runs the tiles, how many of them,
-and which ones each takes, and it names no axis. Hand it to one axis with an edge and it is a
-`Cut`; hand it to several and they are read as one index. `Cut::cube(X, e)` is exactly the
-one-axis case, so every existing call site is unchanged.
+and which ones each takes, and it names no axis. Hand it one axis with an edge and it is a dial
+on that axis; hand it several with a count and they are read as one index.
 
-The two knobs that value carries were unreachable before: `Cut::cube`, `Cut::plane` and
+The two knobs that value carries were unreachable before: the old `Cut::cube`, `Cut::plane` and
 `Cut::unit` froze `Spread::Contiguous` and their coverage, so anything else fell out of the API
 into a hand-built `Distribution::Spatial { .. }`. Two crates had written the same private helper
 to get at them; both are gone, and `.interleaved()`, `.instances(n)` and `.tiles_each(t)` say it
-instead. They live on a builder rather than on `Cut`, so `Cut::sequential(4).interleaved()` does
-not compile: one instance walking the whole axis has nobody to take turns with.
+instead. They live on the scope value rather than on the axis, so a walked axis cannot reach
+them: every worker walking the whole axis has nobody to take turns with.
 
 **Four pieces, and the first is most of it.**
 

@@ -1248,7 +1248,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
 
 /// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
 /// column of the register-leaf output and contracts the whole K in registers: the
-/// gemv-perpendicular mapping. `Cut::unit` declares the split without the lane count;
+/// gemv-perpendicular mapping. A bare `lanes()` declares the split without the lane count;
 /// [`Space::resolve_lanes`] (the launch's stamping pass) fills it from the hardware
 /// `plane_size`, so the Unit axis rides the warp's lanes on the cube's X dim.
 /// `plane_size == 1` on CPU degenerates to one lane doing all of N (still correct); the
@@ -1266,7 +1266,7 @@ fn register_matmul_unit_spread_n() {
             l.distribute(lanes(), &[(N, nr)]).walk(&[(M, m), (K, k)])
         })
         .build()
-        // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
+        // The launcher's stamping pass: `lanes()`'s deferred count becomes `plane_size`.
         .resolve_lanes(plane_size);
 
     let dtype = f32::elem_type_native();
@@ -3505,7 +3505,7 @@ fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // The shape, not just the feature — see `require_mma_8x8x8_f32`. The `f32`
     // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
-    // the *walk*, cut `Cut::sequential(8)` deep, and `A` decodes at the read, so
+    // the *walk*, walked 8 deep, and `A` decodes at the read, so
     // the instruction this leaf reaches for is the same f32 `8x8x8` the plain
     // manual-mma test runs.
     if !require_mma_8x8x8_f32(&client) {

@@ -106,8 +106,8 @@ pub fn launch_ref<R: Runtime>(
         })
         // The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving
         // the contraction between them. Each takes one stored word of `KI`, and where a group
-        // reaches past one block it takes whole blocks of `KB` — a cut cuts one axis or the
-        // other and cannot straddle two. The partials the lanes hold drain inside the plane.
+        // reaches past one block it takes whole blocks of `KB` — a distribution deals one axis
+        // or the other and cannot straddle two. The partials the lanes hold drain inside the plane.
         .instruction(
             Instruction::registers(blueprint.rows_per_lane * factor),
             |l, _| {

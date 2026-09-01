@@ -460,7 +460,7 @@ impl Geometry {
 ///
 /// `plane_size_max` deliberately, and it is only safe because this kernel issues no plane
 /// instruction: the leaf is [`Instruction::Registers`], the taps contract into a register rather
-/// than across lanes, and `Cut::plane`/[`Coverage::PlaneLanes`] here distribute work rather than
+/// than across lanes, and `planes()`/[`Coverage::PlaneLanes`] here distribute work rather than
 /// cooperate. So the width is a coalescing decision, and a device honouring a narrower one still
 /// gets every lane of the tile from a real thread — `Space::cube_dim` sizes the launch from the
 /// same number.

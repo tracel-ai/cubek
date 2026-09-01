@@ -269,8 +269,8 @@ fn over_distributes_work_beside_the_residences() {
 }
 
 /// One region each is a box of the grid however many axes are named, so the line deals a dial per
-/// axis and states no work. The claim every batch level's migration rests on: `.axes(&batch,
-/// Cut::cube(Z, 1))` is one `distribute` line, and stays the walk it always was.
+/// axis and states no work. What lets a whole group of batch axes be one `distribute` line
+/// without turning the level into a share.
 #[test]
 fn distributing_several_axes_one_region_each_deals_a_dial_each() {
     let level = |l: &mut cubek_tile::LevelCuts| {
