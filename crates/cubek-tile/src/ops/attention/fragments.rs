@@ -19,7 +19,7 @@ use cubecl::{
     prelude::*,
 };
 
-use super::visit_box;
+use super::base::visit_box;
 use crate::*;
 
 #[cube]
