@@ -69,21 +69,21 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `c = (a ⊗ s) · b`, or `c = a · (b ⊗ s)`: [`mm`](Tile::mm) with one operand scaled by a
     /// real operand.
     ///
-    /// The scales are an operand like any other — their own tensor, their own axes, named at the
-    /// call — and the arithmetic that folds them in is this verb. Nothing decodes behind a read:
+    /// The scales are an operand like any other (their own tensor, their own axes, named at the
+    /// call), and the arithmetic that folds them in is this verb. Nothing decodes behind a read:
     /// an operand that arrives quantized arrives as what it is, and what it takes to serve it is
     /// written here.
     ///
     /// **Which operand it scales is not stated**: the scales' own axes say it
     /// ([`ScaleSide`](crate::ScaleSide)). A scale spanning the output's columns is a fact about
     /// the rhs's columns and nothing else could fold it in; anything else scales the lhs. The two
-    /// are the same sum of terms — the scale is one more factor of each — so one verb serves both,
+    /// are the same sum of terms, the scale being one more factor of each, so one verb serves both,
     /// folding once per `(row, k)` or once per `(col, k)`, whichever the operand asks for.
     ///
     /// `s` resolves at whatever granularity its own axes give it, and an axis it does not address
-    /// it cannot vary over. The block is an axis of the problem — `(KB, KI)` for a contracted one,
+    /// it cannot vary over. The block is an axis of the problem: `(KB, KI)` for a contracted one,
     /// `(NB, NI)` for a column, spelled with
-    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values — and the
+    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values, and the
     /// scales leave the position inside it unmapped. One scale per block then follows from which
     /// axes the operand spans, with nothing dividing anything, which is why no line can straddle a
     /// block here whatever width it is served at. A scales operand that divides instead is

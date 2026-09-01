@@ -2,15 +2,21 @@
 //! against its read. Generic slot mechanics only: the producer/consumer acquire/release and the
 //! final publish; the operand-specific construction and fill live in [`fill`](crate::fill).
 
-use core::option::Option;
 use cubecl::prelude::*;
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
 pub(crate) const FIRST_SLOT: usize = 0;
 
-pub(crate) const LHS: usize = 0;
-pub(crate) const RHS: usize = 1;
+/// Inline capacity for a slot's per-operand plans (spills to heap if exceeded).
+pub(crate) const MAX_OPERANDS: usize = 4;
+
+/// Operand positions within a slot's payload, in the order the payload holds them. Named here
+/// only because the two ring constructors below are one- and two-operand by construction; an
+/// operation names its own roles ([`ops::matmul`](crate::ops)).
+pub(crate) const FIRST: usize = 0;
+pub(crate) const SECOND: usize = 1;
 
 /// What one operand's slot payload *is*, which decides what consuming the slot has to do with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -142,20 +148,19 @@ impl OperandPlan {
     }
 }
 
-/// One slot of the staged `mma` pipeline: its payload `T` and the [`Pipeline`] sequencing fill vs
-/// read. Generic over `T`, so the slot is matmul-agnostic; it just hands out a synchronized `&mut T`
-/// to fill (`write`) and a synchronized `&T` to consume (`read`).
+/// One slot of a buffered walk: its payload `T` and the [`Pipeline`] sequencing fill vs read.
+/// Generic over `T` and over how many operands `T` holds, so the slot knows nothing about the
+/// operation; it just hands out a synchronized `&mut T` to fill (`write`) and a synchronized
+/// `&T` to consume (`read`).
 #[derive(CubeType)]
 pub struct Staging<T: CubeType> {
     pub(crate) data: T,
     pub(crate) pipeline: Pipeline,
     /// What each operand's payload is, and where it lives at this level; both resolved when the
-    /// slot was built. The slot's payload `T` fixes its arity, so a unary slot's right-hand entry
-    /// is `None` and asking for it is a bug, not a default.
+    /// slot was built. One entry per operand the payload `T` holds, in the order `T` holds them,
+    /// so the arity is the payload's and nothing here has to name a left or a right.
     #[cube(comptime)]
-    pub(crate) lhs: OperandPlan,
-    #[cube(comptime)]
-    pub(crate) rhs: Option<OperandPlan>,
+    pub(crate) plans: SmallVec<[OperandPlan; MAX_OPERANDS]>,
 }
 
 #[cube]
@@ -166,40 +171,31 @@ impl<T: CubeType> Staging<T> {
     pub(crate) fn wrap(
         data: T,
         pipeline: Pipeline,
-        #[comptime] lhs: OperandPlan,
-        #[comptime] rhs: Option<OperandPlan>,
+        #[comptime] plans: SmallVec<[OperandPlan; MAX_OPERANDS]>,
     ) -> Staging<T> {
         Staging::<T> {
             data,
             pipeline,
-            lhs,
-            rhs,
+            plans,
         }
     }
 
-    /// The resolved plan for `operand`. Unary slots have only [`LHS`].
-    pub(crate) fn plan(&self, #[comptime] operand: usize) -> comptime_type!(OperandPlan) {
-        comptime!(match operand {
-            LHS => self.lhs,
-            RHS => self.rhs.expect("Staging: unary slot has no rhs"),
-            _ => panic!("Staging: invalid operand index"),
-        })
+    /// The resolved plan for operand `index`, counted as the payload holds them.
+    pub(crate) fn plan(&self, #[comptime] index: usize) -> comptime_type!(OperandPlan) {
+        comptime!(*self.plans.get(index).unwrap_or_else(|| panic!(
+            "Staging: operand {index} of a slot staging {}",
+            self.plans.len()
+        )))
     }
 
     /// Whether this slot has any fixed operand.
     pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
-        comptime!(
-            self.lhs.payload.is_fixed()
-                || matches!(self.rhs, Option::Some(p) if p.payload.is_fixed())
-        )
+        comptime!(self.plans.iter().any(|p| p.payload.is_fixed()))
     }
 
-    /// Whether either operand is read by selecting fragments, requiring an unrolled walk.
+    /// Whether any operand is read by selecting fragments, requiring an unrolled walk.
     pub(crate) fn has_fragment_read(&self) -> comptime_type!(bool) {
-        comptime!(
-            self.lhs.reads_fragments()
-                || matches!(self.rhs, Option::Some(p) if p.reads_fragments())
-        )
+        comptime!(self.plans.iter().any(|p| p.reads_fragments()))
     }
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`

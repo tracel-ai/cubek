@@ -6,6 +6,10 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+/// This operation's operands, at the positions its slot payload holds them.
+const LHS: usize = FIRST;
+const RHS: usize = SECOND;
+
 /// One level's matmul as a [`Pipelined`] operation: the accumulator it writes, the two operands
 /// its slots stage, and the algebra they contract under. The tiles are handles, so the walk
 /// addressing them addresses the same storage the caller passed in.

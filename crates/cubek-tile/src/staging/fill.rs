@@ -7,9 +7,9 @@
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
-use core::option::Option;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
+use cubecl::zspace::SmallVec;
 
 use crate::*;
 
@@ -210,12 +210,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_lhs = if comptime!(plan.reuses_first_buffer(LHS, slot)) {
+            let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.0.clone()
             } else {
                 stage_operand(lhs, comptime!(out.clone()), lhs_residence)
             };
-            let staged_rhs = if comptime!(plan.reuses_first_buffer(RHS, slot)) {
+            let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
                 slots.index(FIRST_SLOT).data.1.clone()
             } else {
                 stage_operand(rhs, comptime!(out.clone()), rhs_residence)
@@ -223,8 +223,10 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::Some(plan.operand_plan(RHS, slot))),
+                comptime!(SmallVec::from_slice(&[
+                    plan.operand_plan(FIRST, slot),
+                    plan.operand_plan(SECOND, slot),
+                ])),
             );
             slots.push(staging);
         }
@@ -238,8 +240,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// Their window never moves, so `region` is region 0 and this runs once, above the loop.
     /// A no-op when nothing is fixed, and when a later ring slot reuses the first's buffers.
     pub(crate) fn fill_fixed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let lhs_plan = self.plan(LHS);
-        let rhs_plan = self.plan(RHS);
+        let lhs_plan = self.plan(FIRST);
+        let rhs_plan = self.plan(SECOND);
         let fixed_lhs = comptime!(lhs_plan.payload.is_fixed());
         let fixed_rhs = comptime!(rhs_plan.payload.is_fixed());
         if comptime!(fixed_lhs || fixed_rhs) {
@@ -258,8 +260,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Staging<(Tile<Lhs>, Tile<Rhs>)> {
     /// region inside the walk. The slot still rendezvouses when every operand is fixed: the
     /// pipeline's phase belongs to the slot, not to any one operand.
     pub fn fill_streamed(&mut self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>, region: &Region) {
-        let lhs_plan = self.plan(LHS);
-        let rhs_plan = self.plan(RHS);
+        let lhs_plan = self.plan(FIRST);
+        let rhs_plan = self.plan(SECOND);
         let stream_lhs = comptime!(lhs_plan.payload.is_streamed());
         let stream_rhs = comptime!(rhs_plan.payload.is_streamed());
         self.fill(|staged_operands, pipe| {
@@ -334,7 +336,7 @@ impl<T: Numeric> Ring<Tile<T>> {
         let mut slots = Sequence::<Staging<Tile<T>>>::new();
         #[unroll]
         for slot in 0..depth {
-            let staged_input = if comptime!(plan.reuses_first_buffer(LHS, slot)) {
+            let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
                 stage_operand(input, comptime!(out.clone()), residence)
@@ -342,8 +344,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staging = Staging::wrap(
                 staged_input,
                 Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
-                comptime!(plan.operand_plan(LHS, slot)),
-                comptime!(Option::None),
+                comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),
             );
             slots.push(staging);
         }
@@ -355,7 +356,7 @@ impl<T: Numeric> Ring<Tile<T>> {
 impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk leaves it fixed.
     pub(crate) fn fill_fixed(&mut self, input: &Tile<T>, region: &Region) {
-        let plan = self.plan(LHS);
+        let plan = self.plan(FIRST);
         let fixed = comptime!(plan.payload.is_fixed());
         if comptime!(fixed) {
             self.fill(|s, pipe| {
@@ -367,7 +368,7 @@ impl<T: Numeric> Staging<Tile<T>> {
     /// Fill the operand from `region`'s window if the walk moves it. The slot still rendezvouses
     /// otherwise: the pipeline's phase belongs to the slot, not to the operand.
     pub fn fill_streamed(&mut self, input: &Tile<T>, region: &Region) {
-        let plan = self.plan(LHS);
+        let plan = self.plan(FIRST);
         let stream = comptime!(plan.payload.is_streamed());
         self.fill(|s, pipe| {
             if comptime!(stream) {
@@ -582,11 +583,11 @@ mod tests {
             &space,
         );
         assert_eq!(
-            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            plan.operand_plan(FIRST, FIRST_SLOT).payload,
             SlotPayload::AtRegion
         );
-        assert_eq!(plan.operand_plan(LHS, 1).payload, SlotPayload::AtRegion);
-        assert!(!plan.reuses_first_buffer(LHS, 1));
+        assert_eq!(plan.operand_plan(FIRST, 1).payload, SlotPayload::AtRegion);
+        assert!(!plan.reuses_first_buffer(FIRST, 1));
         // It joins no rendezvous either: only the staged operand's delivery sets the sync.
         assert_eq!(plan.sync(), Sync::Cube);
     }
@@ -607,9 +608,15 @@ mod tests {
                 op_space,
             );
             for slot in 0..2 {
-                assert_eq!(plan.operand_plan(LHS, slot).payload, SlotPayload::AtRegion);
-                assert_eq!(plan.operand_plan(RHS, slot).payload, SlotPayload::AtRegion);
-                assert!(!plan.reuses_first_buffer(RHS, slot));
+                assert_eq!(
+                    plan.operand_plan(FIRST, slot).payload,
+                    SlotPayload::AtRegion
+                );
+                assert_eq!(
+                    plan.operand_plan(SECOND, slot).payload,
+                    SlotPayload::AtRegion
+                );
+                assert!(!plan.reuses_first_buffer(SECOND, slot));
             }
         }
     }
@@ -622,20 +629,20 @@ mod tests {
     fn either_end_of_a_fragment_read_asks_for_the_unrolled_walk() {
         let (space, lhs, rhs) = spaces();
         let resident = SlotPlan::new(&[fragment(Residence::InPlace, &lhs)], &space);
-        assert!(resident.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+        assert!(resident.operand_plan(FIRST, FIRST_SLOT).reads_fragments());
 
         let staged = SlotPlan::new(
             &[operand(Residence::Register, Delivery::Copy, &lhs)],
             &space,
         );
-        assert!(staged.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+        assert!(staged.operand_plan(FIRST, FIRST_SLOT).reads_fragments());
 
         // A window is a window wherever it lives: nothing here is selected by coordinate.
         for windowed in [
             SlotPlan::new(&[operand(Residence::Smem, Delivery::Copy, &rhs)], &space),
             SlotPlan::new(&[operand(Residence::InPlace, Delivery::Copy, &rhs)], &space),
         ] {
-            assert!(!windowed.operand_plan(LHS, FIRST_SLOT).reads_fragments());
+            assert!(!windowed.operand_plan(FIRST, FIRST_SLOT).reads_fragments());
         }
     }
 
@@ -678,15 +685,15 @@ mod tests {
         );
         for slot in 0..3 {
             assert_eq!(
-                plan.operand_plan(LHS, slot).payload,
+                plan.operand_plan(FIRST, slot).payload,
                 SlotPayload::Windowed(WindowMode::Streamed)
             );
             assert_eq!(
-                plan.operand_plan(RHS, slot).payload,
+                plan.operand_plan(SECOND, slot).payload,
                 SlotPayload::Windowed(WindowMode::Streamed)
             );
-            assert!(!plan.reuses_first_buffer(LHS, slot));
-            assert!(!plan.reuses_first_buffer(RHS, slot));
+            assert!(!plan.reuses_first_buffer(FIRST, slot));
+            assert!(!plan.reuses_first_buffer(SECOND, slot));
         }
     }
 
@@ -704,23 +711,23 @@ mod tests {
             &space.project(&[K]),
         );
         assert_eq!(
-            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            plan.operand_plan(FIRST, FIRST_SLOT).payload,
             SlotPayload::Windowed(WindowMode::Streamed)
         );
         assert_eq!(
-            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            plan.operand_plan(SECOND, FIRST_SLOT).payload,
             SlotPayload::Windowed(WindowMode::Fixed)
         );
         assert_eq!(
-            plan.operand_plan(RHS, 1).payload,
+            plan.operand_plan(SECOND, 1).payload,
             SlotPayload::Windowed(WindowMode::Reused)
         );
         assert_eq!(
-            plan.operand_plan(RHS, 2).payload,
+            plan.operand_plan(SECOND, 2).payload,
             SlotPayload::Windowed(WindowMode::Reused)
         );
-        assert!(plan.reuses_first_buffer(RHS, 1));
-        assert!(!plan.reuses_first_buffer(RHS, FIRST_SLOT));
+        assert!(plan.reuses_first_buffer(SECOND, 1));
+        assert!(!plan.reuses_first_buffer(SECOND, FIRST_SLOT));
     }
 
     /// Two operands the walk leaves equally invariant, one shared and one in place. Fixing is a
@@ -738,21 +745,21 @@ mod tests {
             &space.project(&[K]),
         );
         assert_eq!(
-            plan.operand_plan(LHS, FIRST_SLOT).payload,
+            plan.operand_plan(FIRST, FIRST_SLOT).payload,
             SlotPayload::Windowed(WindowMode::Fixed)
         );
         assert_eq!(
-            plan.operand_plan(LHS, 1).payload,
+            plan.operand_plan(FIRST, 1).payload,
             SlotPayload::Windowed(WindowMode::Reused)
         );
-        assert!(plan.reuses_first_buffer(LHS, 1));
+        assert!(plan.reuses_first_buffer(FIRST, 1));
 
         assert_eq!(
-            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            plan.operand_plan(SECOND, FIRST_SLOT).payload,
             SlotPayload::AtRegion
         );
-        assert_eq!(plan.operand_plan(RHS, 1).payload, SlotPayload::AtRegion);
-        assert!(!plan.reuses_first_buffer(RHS, 1));
+        assert_eq!(plan.operand_plan(SECOND, 1).payload, SlotPayload::AtRegion);
+        assert!(!plan.reuses_first_buffer(SECOND, 1));
     }
 
     /// A TMA pair keeps the joint per-region fill, so no operand is fixed and no buffer is reused:
@@ -770,11 +777,11 @@ mod tests {
             &space.project(&[K]),
         );
         assert_eq!(
-            plan.operand_plan(RHS, FIRST_SLOT).payload,
+            plan.operand_plan(SECOND, FIRST_SLOT).payload,
             SlotPayload::Windowed(WindowMode::Streamed)
         );
         assert_eq!(
-            plan.operand_plan(RHS, 1).payload,
+            plan.operand_plan(SECOND, 1).payload,
             SlotPayload::Windowed(WindowMode::Streamed)
         );
         assert_eq!(plan.sync(), Sync::Barrier);
