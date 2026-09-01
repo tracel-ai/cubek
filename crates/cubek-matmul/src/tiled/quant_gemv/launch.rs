@@ -13,8 +13,7 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_tile::{
-    Buffering, ComputeScope, Coverage, CubeAxis, Cut, Distribution, Instruction, PhysicalAxisMap,
-    Projection, Spread, Tiling, WalkOrder,
+    Buffering, CubeAxis, Cut, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder,
 };
 
 use crate::{
@@ -55,22 +54,6 @@ pub struct QuantGemvBindings<R: Runtime> {
     /// The result, `[d_out, rows]` — the weight's rows are the output's, this orientation
     /// putting them on the buffer's outer dim.
     pub out: TensorBinding<R>,
-}
-
-/// `edge`-wide tiles dealt across `lanes` lanes of the plane.
-///
-/// Not [`Cut::unit`], twice over: that constructor hardwires [`Spread::Contiguous`] where the
-/// fold wants lanes reading neighbouring words, and it defers the lane count to whatever the
-/// launcher resolves, where the blueprint derived its edges *from* that count on the host.
-fn unit(edge: usize, spread: Spread, lanes: usize) -> Cut {
-    Cut::new(
-        edge,
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread,
-            coverage: Coverage::Instances(lanes),
-        },
-    )
 }
 
 /// `y = (W ⊗ s) · x`, one launch.
@@ -123,19 +106,23 @@ pub fn launch_ref<R: Runtime>(
         .instruction(
             Instruction::registers(blueprint.rows_per_lane * factor),
             |l, _| {
+                // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words.
+                // The lane counts are the blueprint's, derived on the host from the plane width:
+                // their product with the row groups is exactly it.
                 l.axis(
                     M,
-                    unit(
-                        blueprint.rows_per_lane,
-                        Spread::Contiguous,
-                        blueprint.groups(),
-                    ),
+                    Cut::unit(blueprint.rows_per_lane).instances(blueprint.groups()),
                 )
                 .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, unit(1, Spread::Interleaved, blueprint.block_lanes))
+                .axis(
+                    KB,
+                    Cut::unit(1).instances(blueprint.block_lanes).interleaved(),
+                )
                 .axis(
                     KI,
-                    unit(factor, Spread::Interleaved, blueprint.inside_lanes),
+                    Cut::unit(factor)
+                        .instances(blueprint.inside_lanes)
+                        .interleaved(),
                 );
             },
         )

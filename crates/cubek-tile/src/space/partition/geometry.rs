@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 
 use crate::Space;
 
-use super::{ComputeScope, CubeAxis, Deal};
+use super::{ComputeScope, CubeAxis};
 
 impl Space {
     /// Cube dimension `d` gets the instance count of whichever axis is
@@ -34,20 +34,17 @@ impl Space {
 }
 
 /// Product of instance counts over every axis riding `scope`, across the whole partitioner tree,
-/// times the run count of any level dealt as a line on it ([`Deal::Streamed`]).
+/// times the instance count of any work a level distributes as one on it ([`Work`]).
 fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
     let mut total = 1u32;
     let mut level = space.clone();
     while !level.is_final() {
-        // A streamed level rides its scope as a whole rather than through one of its axes: the
-        // line is cut into runs, and how many is the count.
-        if let Deal::Streamed {
-            scope: streamed,
-            instances,
-        } = level.partitioner().deal()
-            && streamed == scope
+        // Work distributed as one rides its scope whole rather than through any one of its
+        // axes, so its instance count is the dim's and no axis of it contributes.
+        if let Some(work) = level.partitioner().work()
+            && work.scope() == scope
         {
-            total *= instances as u32;
+            total *= work.instances() as u32;
         }
         for axis in level.axes() {
             let dist = level.partitioner().distribution(axis);

@@ -221,7 +221,11 @@ impl DepthwiseTiling {
             // Rows across the cube's planes, channels across each plane's lanes. Columns stay
             // sequential: they are the register block, not a split.
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, interleaved_lanes(width))
+                // Round-robin, so a lane holding several channel lines takes every
+                // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
+                // between what neighbouring lanes read and breaks the coalescing the whole NHWC
+                // layout is for.
+                l.axis(C, Cut::unit(width).interleaved())
                     .axis(OW, Cut::sequential(cols))
                     .axis(OH, Cut::plane(1))
                     .axis(B, Cut::sequential(1))
@@ -475,24 +479,6 @@ fn plane_lanes<R: Runtime>(client: &ComputeClient<R>) -> usize {
 /// The boundary an axis needs, or `None` when every read along it is in bounds by construction.
 fn guard(ragged: bool) -> Option<Boundary> {
     ragged.then_some(Boundary::Zero)
-}
-
-/// One line of channels per lane, dealt round-robin, so a lane holding several takes every
-/// `plane_size`-th line rather than a contiguous run of them.
-///
-/// [`Cut::unit`] deals contiguous runs, which puts a stride between what neighbouring lanes read
-/// and breaks the coalescing the whole NHWC layout is for. Taking turns instead keeps lane `i` on
-/// line `i` of every round, so a round is one contiguous stretch of memory however many rounds
-/// there are.
-fn interleaved_lanes(width: usize) -> Cut {
-    Cut::new(
-        width,
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread: Spread::Interleaved,
-            coverage: Coverage::PlaneLanes,
-        },
-    )
 }
 
 /// The widest line the channel axis can be served in across all three operands, up to what the

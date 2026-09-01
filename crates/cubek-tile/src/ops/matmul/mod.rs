@@ -4,8 +4,8 @@
 //! Two layers: [`lower`] + [`schedule`] recurse over tiles as opaque [`CubePrimitive`]
 //! until a final tile, lowering to [`mma_leaf`](crate::mma_leaf).
 
+mod distributed;
 mod lower;
 mod schedule;
-mod stream;
 
-pub(crate) use stream::*;
+pub(crate) use distributed::*;

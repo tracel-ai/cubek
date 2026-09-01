@@ -52,11 +52,11 @@ pub enum AccumulatorScope<EA: Numeric, Out: Numeric> {
         #[cube(comptime)]
         monoid: Monoid,
     },
-    /// Contracts a run of the level's line ([`Deal::Streamed`]), which is several of the output's
-    /// regions and part of the contraction of the two at either end. The scope is per region of
-    /// the run rather than per instance, so the accumulator opens and drains inside the loop and
-    /// there is none to hold here.
-    Streamed {
+    /// Contracts this instance's share of work the level distributes as one
+    /// ([`LevelCuts::distribute`]), which is several of the output's regions whole and part of the
+    /// two at either end. The scope is per region of the share rather than per instance, so the
+    /// accumulator opens and drains inside the loop and there is none to hold here.
+    Distributed {
         sink: Tile<Out>,
         #[cube(comptime)]
         monoid: Monoid,
@@ -87,9 +87,9 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 monoid,
             } => tile.init_identity(comptime!(*monoid)),
             AccumulatorScope::InPlace { sink, monoid } => sink.init_identity(comptime!(*monoid)),
-            AccumulatorScope::Streamed { sink: _, monoid: _ } => panic!(
-                "AccumulatorScope::seed: a streamed scope opens one accumulator per region of \
-                 its run and seeds each, so there is nothing here to seed"
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => panic!(
+                "AccumulatorScope::seed: a distributed scope opens one accumulator per region of \
+                 its share and seeds each, so there is nothing here to seed"
             ),
         }
     }
@@ -116,9 +116,9 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mm(lhs, rhs, semiring)
             }
-            AccumulatorScope::Streamed { sink, monoid } => {
+            AccumulatorScope::Distributed { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
-                stream_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
+                distributed_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
             }
         }
     }
@@ -143,12 +143,12 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mma(lhs, rhs, semiring)
             }
-            // The same call as `mm`: a streamed destination is written by instances that cannot
-            // see each other, so none of them may claim a cell, and the init every one of them
-            // would otherwise do is the launch's ([`Write::Accumulate`]).
-            AccumulatorScope::Streamed { sink, monoid } => {
+            // The same call as `mm`: a distributed destination is written by instances that
+            // cannot see each other, so none of them may claim a cell, and the init every one of
+            // them would otherwise do is the launch's ([`Write::Accumulate`]).
+            AccumulatorScope::Distributed { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
-                stream_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
+                distributed_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
             }
         }
     }
@@ -176,8 +176,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mm_scaled(lhs, rhs, scales, semiring)
             }
-            AccumulatorScope::Streamed { sink: _, monoid: _ } => {
-                panic!("AccumulatorScope::mm_scaled: a scaled contraction over a streamed run")
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!("AccumulatorScope::mm_scaled: a scaled contraction over a distributed share")
             }
         }
     }
@@ -201,8 +201,10 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mma_scaled(lhs, rhs, scales, semiring)
             }
-            AccumulatorScope::Streamed { sink: _, monoid: _ } => {
-                panic!("AccumulatorScope::mma_scaled: a scaled contraction over a streamed run")
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!(
+                    "AccumulatorScope::mma_scaled: a scaled contraction over a distributed share"
+                )
             }
         }
     }
@@ -218,8 +220,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 sink.reduce_axis(input, comptime!(*monoid))
             }
-            AccumulatorScope::Streamed { sink: _, monoid: _ } => {
-                panic!("AccumulatorScope::reduce_axis: a reduction over a streamed run")
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!("AccumulatorScope::reduce_axis: a reduction over a distributed share")
             }
         }
     }
@@ -235,37 +237,40 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 sink.reduce_axis_accumulate(input, comptime!(*monoid))
             }
-            AccumulatorScope::Streamed { sink: _, monoid: _ } => {
-                panic!("AccumulatorScope::reduce_axis_accumulate: a reduction over a streamed run")
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!(
+                    "AccumulatorScope::reduce_axis_accumulate: a reduction over a distributed share"
+                )
             }
         }
     }
 }
 
-/// What an accumulator scope opens over, which is the level's [`Deal`] read together with the
-/// output's [`Residence`] there. Both are needed and neither is a choice made here.
+/// What an accumulator scope opens over: whether the level distributes work as one, read
+/// together with the output's [`Residence`] there. Both are needed and neither is a choice made
+/// here.
 enum Opens {
     /// This instance's own region, in registers.
     Register,
     /// This instance's own region, where it already lies.
     InPlace,
-    /// One region at a time of the run this instance holds, in registers. A streamed instance
-    /// holds several regions and cannot open one accumulator across them: the run's length is
-    /// runtime, and a register block is not.
+    /// One region at a time of the share this instance holds, in registers. An instance holding a
+    /// share of distributed work covers several regions and cannot open one accumulator across
+    /// them: the share's length is runtime, and a register block is not.
     PerRegion,
 }
 
-/// The scope `residence` opens under `space`'s deal, and the refusals that leaves.
+/// The scope `residence` opens under this level's distribution, and the refusals that leaves.
 fn opens(space: &Space, residence: Residence) -> Opens {
-    let streamed = matches!(space.partitioner().deal(), Deal::Streamed { .. });
-    match (residence, streamed) {
+    let distributed = space.partitioner().work().is_some();
+    match (residence, distributed) {
         (Residence::Register, false) => Opens::Register,
         (Residence::Register, true) => Opens::PerRegion,
         (Residence::InPlace, false) => Opens::InPlace,
         (Residence::InPlace, true) => panic!(
-            "Tile::accumulate: a streamed run contracts several output regions, and contracting \
-             in place would fold into the destination once per step of the line rather than once \
-             per region; state Residence::Register on the output"
+            "Tile::accumulate: a share of distributed work covers several output regions, and \
+             contracting in place would fold into the destination once per step of it rather \
+             than once per region; state Residence::Register on the output"
         ),
         (Residence::Smem, _) => panic!(
             "Tile::accumulate: an accumulator has no shared-memory form; state \
@@ -317,7 +322,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone(), monoid)
             }
             Opens::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid),
-            Opens::PerRegion => AccumulatorScope::<EA, Acc>::new_Streamed(self.clone(), monoid),
+            Opens::PerRegion => AccumulatorScope::<EA, Acc>::new_Distributed(self.clone(), monoid),
         }
     }
 
@@ -361,7 +366,7 @@ impl<Acc: Numeric> Tile<Acc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+    use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
     use cubecl::ir::Scope;
 
     const M: Axis = Axis(0);
@@ -382,20 +387,17 @@ mod tests {
     // `validate` does with it. What is left here is one read of the stamped value, which a
     // procedural tile (the only kind that can be built without a launch) does not carry.
 
-    /// A streamed run covers several output regions, so an accumulator has to open per region
-    /// and a register form is the only one that can. Host-side: a comptime panic raised in a
+    /// A share of distributed work covers several output regions, so an accumulator has to open
+    /// per region and a register form is the only one that can. Host-side: a comptime panic raised in a
     /// kernel lands on a worker thread where `#[should_panic]` never sees it.
     #[test]
     #[should_panic = "contracting in place would fold into the destination once per step"]
-    fn a_streamed_output_contracting_in_place_is_refused() {
+    fn distributed_work_contracting_in_place_is_refused() {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(8))
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
             })
-            .streamed(CubeAxis::X, 3)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))

@@ -4,8 +4,8 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_tile::{
-    Axis, Buffering, ByAxis, Cut, Distribution, Instruction, Operand, OperandSet, Partitioner,
-    Residence, Space, Stage, Tiling, WalkOrder,
+    Axis, Buffering, ByAxis, CubeAxis, Cut, Distribution, Instruction, Operand, OperandSet,
+    Partitioner, Residence, Space, Stage, Tiling, WalkOrder, cubes, lanes,
 };
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
@@ -235,6 +235,67 @@ fn matmul_operands() -> MatmulOperands {
         b: Operand::new(&[K, N], f32t),
         out: Operand::new(&[M, N], f32t),
     }
+}
+
+/// Distributing work is a statement about the level's cuts, so it is available wherever cuts are
+/// collected: the operand-threaded chain says it beside the residences the same level states.
+#[test]
+fn over_distributes_work_beside_the_residences() {
+    let mut ops = matmul_operands();
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.distribute(
+                &[(M, 16), (N, 32), (K, 16)],
+                cubes(CubeAxis::X).instances(5),
+            );
+            o.out.stage(Residence::Register);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.axis(M, Cut::sequential(16))
+                .axis(N, Cut::sequential(32))
+                .axis(K, Cut::sequential(4));
+            o.b.stage(Residence::Smem);
+        })
+        .build();
+
+    // The shares ride the cubes even though no axis does.
+    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
+    // And the operands' residences are the ones stated, level by level, untouched by the
+    // distribution.
+    let residences = |o: &Operand| o.stages().iter().map(|s| s.residence).collect::<Vec<_>>();
+    assert_eq!(
+        residences(&ops.out),
+        [Residence::Register, Residence::InPlace]
+    );
+    assert_eq!(residences(&ops.b), [Residence::InPlace, Residence::Smem]);
+}
+
+/// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
+/// shares are on different regions, so they never reach a reduction together.
+#[test]
+#[should_panic = "combine in registers"]
+fn distributing_work_across_lanes_is_refused() {
+    Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(&[(M, 16), (N, 32), (K, 16)], lanes().instances(4))
+        })
+        .build();
+}
+
+/// A level states each of its axes once, whichever way it states them.
+#[test]
+#[should_panic = "a level states each of its axes once"]
+fn an_axis_both_cut_and_distributed_is_refused() {
+    Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(K, Cut::sequential(16)).distribute(
+                &[(M, 16), (N, 32), (K, 16)],
+                cubes(CubeAxis::X).instances(5),
+            )
+        })
+        .build();
 }
 
 /// The two builders cannot drift: an operand-threaded build partitions exactly as the plain

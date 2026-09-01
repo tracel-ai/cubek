@@ -12,15 +12,15 @@ use cubecl::prelude::*;
 use crate::instruction::registers::contract;
 use crate::*;
 
-/// A streamed level walked as if it were dealt per axis would give every instance the whole grid,
-/// which is the wrong answer computed as many times as there are instances. The run is the
-/// accumulator scope's ([`Tile::accumulate`]), because it is the scope that changes.
-fn refuse_a_streamed_level(space: &Space) {
+/// A level that distributes work as one, walked as if every axis were dealt on its own, would
+/// give each instance the whole grid: the wrong answer computed once per instance. The share is
+/// the accumulator scope's ([`Tile::accumulate`]), because the scope is what changes.
+fn refuse_distributed_work(space: &Space) {
     assert!(
-        !matches!(space.partitioner().deal(), Deal::Streamed { .. }),
-        "Tile::mma: this level deals its grid as runs across instances, so the contraction is \
-         the run's rather than the whole grid's. Open the output's accumulator scope \
-         (`c.accumulate(..)`) and contract through it."
+        space.partitioner().work().is_none(),
+        "Tile::mma: this level distributes its axes' work as one, so a contraction here is an \
+         instance's share of it rather than the whole grid's. Open the output's accumulator \
+         scope (`c.accumulate(..)`) and contract through it."
     );
 }
 
@@ -66,7 +66,7 @@ impl<Acc: Numeric> Tile<Acc> {
         match comptime!(partitioner) {
             Partitioner::Final => mma_leaf(self, lhs, rhs, semiring),
             Partitioner::Level(level) => {
-                comptime!(refuse_a_streamed_level(&self.space));
+                comptime!(refuse_distributed_work(&self.space));
                 let op_space = self.op_space(lhs, rhs);
                 self.mma_buffered(
                     lhs,
@@ -419,8 +419,8 @@ fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compt
 
 #[cfg(test)]
 mod tests {
-    use super::refuse_a_streamed_level;
-    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder};
+    use super::refuse_distributed_work;
+    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder, cubes};
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -429,21 +429,22 @@ mod tests {
     // Host-side, because a comptime panic raised in a kernel lands on a worker thread where
     // `#[should_panic]` never sees it and the launch returns zeros.
 
-    fn space(streamed: bool) -> Space {
-        let tiling = Tiling::new().extents(&[(M, 8), (N, 8), (K, 8)]).level(
-            WalkOrder::RowMajor,
-            Buffering::SINGLE,
-            |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(8))
-            },
-        );
-        let tiling = match streamed {
-            true => tiling.streamed(CubeAxis::X, 3),
-            false => tiling,
-        };
-        tiling
+    fn space(distributed: bool) -> Space {
+        Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(
+                WalkOrder::RowMajor,
+                Buffering::SINGLE,
+                |l| match distributed {
+                    true => {
+                        l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
+                    }
+                    false => l
+                        .axis(M, Cut::sequential(4))
+                        .axis(N, Cut::sequential(4))
+                        .axis(K, Cut::sequential(8)),
+                },
+            )
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
@@ -453,13 +454,13 @@ mod tests {
     }
 
     #[test]
-    #[should_panic = "deals its grid as runs"]
-    fn contracting_a_streamed_level_whole_is_refused() {
-        refuse_a_streamed_level(&space(true));
+    #[should_panic = "distributes its axes' work as one"]
+    fn contracting_distributed_work_whole_is_refused() {
+        refuse_distributed_work(&space(true));
     }
 
     #[test]
     fn contracting_a_level_dealt_per_axis_is_the_walk_it_always_was() {
-        refuse_a_streamed_level(&space(false));
+        refuse_distributed_work(&space(false));
     }
 }

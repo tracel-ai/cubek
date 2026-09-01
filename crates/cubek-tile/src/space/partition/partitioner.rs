@@ -3,7 +3,7 @@
 
 use crate::{Axis, ByAxis};
 
-use super::{ComputeScope, Deal, Distribution, WalkOrder};
+use super::{ComputeScope, Coverage, Distribution, Spatial, WalkOrder};
 
 /// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
 /// materialized at all, and into what, is the operand's own
@@ -102,12 +102,52 @@ pub enum LevelRole {
     Partition,
 }
 
+/// Several axes' work distributed as one.
+///
+/// Dealing each axis on its own gives an instance the product of its per-axis runs, which is a
+/// box of the grid. These axes are read as a single index instead, so an instance takes a share
+/// of the whole rather than a box of it: the shares that no box can describe are exactly the ones
+/// that balance a grid its shape cannot divide.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Work {
+    axes: Vec<Axis>,
+    dist: Spatial,
+}
+
+impl Work {
+    pub(crate) fn new(axes: Vec<Axis>, dist: Spatial) -> Self {
+        Work { axes, dist }
+    }
+
+    /// The axes read as one index.
+    pub(crate) fn axes(&self) -> &[Axis] {
+        &self.axes
+    }
+
+    pub(crate) fn scope(&self) -> ComputeScope {
+        self.dist.scope()
+    }
+
+    /// How many instances share the work. Pinned, not derived: the index's length is the whole
+    /// level's grid and can be runtime, so nothing here could divide it.
+    pub(crate) fn instances(&self) -> usize {
+        match self.dist.coverage() {
+            Coverage::Instances(n) => n,
+            Coverage::TilesEach(_) | Coverage::PlaneLanes => panic!(
+                "LevelCuts::distribute: state how many instances share the work \
+                 (`.instances(n)`); a share of the whole cannot be derived from a grid whose \
+                 length is only known at launch"
+            ),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
     scope: LevelScope,
-    deal: Deal,
+    work: Option<Work>,
     order: WalkOrder,
     buffering: Buffering,
     next: Partitioner,
@@ -126,8 +166,8 @@ impl Level {
         self.scope.role()
     }
 
-    pub(crate) fn deal(&self) -> Deal {
-        self.deal
+    pub(crate) fn work(&self) -> Option<&Work> {
+        self.work.as_ref()
     }
 }
 
@@ -171,10 +211,10 @@ impl Partitioner {
         self.level().order
     }
 
-    /// How this level hands its grid out. Panics on [`Final`](Partitioner::Final), which carries
-    /// no level.
-    pub fn deal(&self) -> Deal {
-        self.level().deal
+    /// The axes this level distributes as one, if any. Panics on
+    /// [`Final`](Partitioner::Final), which carries no level.
+    pub fn work(&self) -> Option<&Work> {
+        self.level().work.as_ref()
     }
 
     /// How many levels this chain has left, i.e. how many residences an operand descending it
@@ -197,7 +237,7 @@ impl Partitioner {
                     edges,
                     dists,
                     scope,
-                    deal,
+                    work,
                     order,
                     buffering,
                     next,
@@ -207,7 +247,7 @@ impl Partitioner {
                     edges,
                     dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
                     scope,
-                    deal,
+                    work,
                     order,
                     buffering,
                     next: next.resolve_lanes(plane_size),
@@ -224,7 +264,7 @@ impl Partitioner {
                     edges: sub_tile,
                     dists,
                     scope,
-                    deal,
+                    work,
                     order,
                     buffering,
                     next,
@@ -233,7 +273,7 @@ impl Partitioner {
                     edges: sub_tile,
                     dists,
                     scope,
-                    deal,
+                    work,
                     order,
                     buffering,
                     next: next.append(tail),
@@ -278,7 +318,7 @@ impl PartitionerBuilder {
 
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
-    fn finish(self, buffering: Buffering, deal: Deal) -> Partitioner {
+    fn finish(self, buffering: Buffering, work: Option<Work>) -> Partitioner {
         // The finest scope any axis rides; `Sequential` when none spreads at all.
         let scope = self
             .dists
@@ -290,7 +330,7 @@ impl PartitionerBuilder {
             edges: self.sub_tile,
             dists: self.dists,
             scope,
-            deal,
+            work,
             order: self.order,
             buffering,
             next: Partitioner::Final,
@@ -300,13 +340,13 @@ impl PartitionerBuilder {
     /// Close the level with the depth its walk buffers to. The one way to state it: a depth is a
     /// number, so naming a few of them would only hide that.
     pub fn buffered(self, buffering: Buffering) -> Partitioner {
-        self.finish(buffering, Deal::PerAxis)
+        self.finish(buffering, None)
     }
 
-    /// [`buffered`](Self::buffered) for a level whose grid is dealt out as runs rather than per
-    /// axis ([`Deal`]).
-    pub fn dealt(self, buffering: Buffering, deal: Deal) -> Partitioner {
-        self.finish(buffering, deal)
+    /// [`buffered`](Self::buffered) for a level that distributes some of its axes' work as one
+    /// ([`Work`]).
+    pub fn distributing(self, buffering: Buffering, work: Option<Work>) -> Partitioner {
+        self.finish(buffering, work)
     }
 }
 

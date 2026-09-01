@@ -5,8 +5,8 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, Deal, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole,
-    MAX_AXES, Partitioner, SplitShare, join_lane_share,
+    Axis, ComputeScope, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole, MAX_AXES,
+    Partitioner, SplitShare, join_lane_share,
 };
 
 use super::ByAxis;
@@ -511,15 +511,11 @@ impl Space {
     pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
         let mut level = self.clone();
         while !level.is_final() {
-            // A streamed level deals a line, not an axis: a run of it covers part of a cell
-            // whenever the line runs over an axis the operand does not span, and which part is
-            // not something the level's own distributions record.
-            if let Deal::Streamed { .. } = level.partitioner().deal()
-                && level
-                    .partitioner()
-                    .axes()
-                    .into_iter()
-                    .any(|axis| !axes.contains(&axis))
+            // Work distributed as one is not an axis: a share of it covers part of a cell
+            // whenever the index runs over an axis the operand does not span, and which part is
+            // not something the level's per-axis distributions record.
+            if let Some(work) = level.partitioner().work()
+                && work.axes().iter().any(|axis| !axes.contains(axis))
             {
                 return SplitShare::Partial;
             }
@@ -989,20 +985,17 @@ mod contraction_tests {
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
     }
 
-    /// A streamed level deals a line rather than an axis, and the line runs over the
-    /// contraction: a run of it can start and end inside a cell's contraction, so the output is
-    /// partial even though no axis of the level rides the cubes.
+    /// Work distributed as one is not an axis, and the index runs over the contraction: a share
+    /// of it can start and end inside a cell's contraction, so the output is partial even though
+    /// no axis of the level rides the cubes.
     #[test]
-    fn a_streamed_level_is_partial_to_the_output() {
-        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+    fn distributed_work_is_partial_to_the_output() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(8))
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
             })
-            .streamed(CubeAxis::X, 3)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
@@ -1010,24 +1003,21 @@ mod contraction_tests {
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
-        // An operand spanning every axis of the line holds whole cells of its own, the same way
+        // An operand spanning every axis of the work holds whole cells of its own, the same way
         // it does under a cut.
         assert_eq!(space.split_share_of(&[M, N, K]), SplitShare::Whole);
     }
 
-    /// The runs ride the cubes even though no axis does, so the launch grid is the run count.
+    /// The shares ride the cubes even though no axis does, so the launch grid is their count.
     #[test]
-    fn a_streamed_level_launches_its_runs() {
-        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+    fn distributed_work_launches_its_instances() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
         use cubecl::CubeCount;
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(8))
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
             })
-            .streamed(CubeAxis::X, 3)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))

@@ -1,15 +1,15 @@
-//! Dealing a level's grid out as contiguous runs of its flat step space.
+//! Distributing a level's work as one index, which is stream-K.
 //!
-//! The split that landed gives each cube a rectangular block: every axis is dealt on its own, so
-//! a cube's share is a product of per-axis runs. Stream-K's share is not a rectangle. It is a
-//! range of the flattened grid, which may start in the middle of one output tile and end in the
-//! middle of another, and the assignment is a division rather than a decode per axis.
+//! Dealing each axis on its own gives a cube the product of its per-axis runs, which is a box of
+//! the grid. A share of the work is not a box: it is a range of the index the axes make together,
+//! and it may start inside one output tile and end inside another. No box of a four by two grid
+//! holds three regions.
 //!
-//! [`Walk::window`] is that range. The axes stay `Sequential`, so the walk's counts are the whole
-//! grid and its flat index already carries every coordinate; an instance's share is `base` and
-//! `steps` into it, both runtime. These tests are the assignment on a copy, with no contraction
-//! and nothing partial: what they prove is that the runs tile the grid exactly once, and that a
-//! run starting late reads the regions it was given rather than the first ones.
+//! [`Walk::window`] is that range. The axes of the distributed work stay `Sequential`, so the
+//! walk's counts are the whole grid and its flat index already carries every coordinate; an
+//! instance's share is `base` and `steps` into it, both runtime. The first tests here are the
+//! assignment on a copy, with no contraction and nothing partial: they prove the shares cover the
+//! grid exactly once, and that a share starting late reads the regions it was given.
 
 use cubecl::{
     Runtime, TestRuntime,
@@ -257,8 +257,10 @@ const TILE_M: usize = 4;
 const TILE_N: usize = 4;
 const BLOCK_K: usize = 4;
 
-/// `a · b` with the line dealt out over `cubes` runs, folded atomically into a zeroed output.
-fn run_stream_k(m: usize, n: usize, k: usize, cubes: usize) -> HostData {
+/// `a · b` with the work shared between `runs` cubes, folded atomically into a zeroed output.
+/// `rhs` is where the right operand lives at the level *below* the distribution, which is the one
+/// that walks a share step by step and the only one that can stage anything.
+fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> HostData {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
 
@@ -280,13 +282,14 @@ fn run_stream_k(m: usize, n: usize, k: usize, cubes: usize) -> HostData {
 
     let space = Tiling::new()
         .extents(&[(MM, m), (NN, n), (KK, k)])
-        // The output's tiles. `K` is uncut here, so this level's grid is the tile grid.
+        // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
+        // region of this level is one output tile and the index reaches through the level below.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(MM, Cut::sequential(TILE_M))
-                .axis(NN, Cut::sequential(TILE_N))
-                .axis(KK, Cut::sequential(k))
+            l.distribute(
+                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
+                cubes(CubeAxis::X).instances(runs),
+            )
         })
-        .streamed(CubeAxis::X, cubes)
         // One tile's contraction, which is what a run counts in.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
             l.axis(MM, Cut::sequential(TILE_M))
@@ -306,11 +309,11 @@ fn run_stream_k(m: usize, n: usize, k: usize, cubes: usize) -> HostData {
         ),
         TileArgLaunch::new(
             b_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[KK, NN]),
+            TileSpec::direct(&[KK, NN]).residence(&[Residence::InPlace, rhs]),
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[MM, NN]).residence(&[Residence::Register]),
+            TileSpec::direct(&[MM, NN]).residence(&[Residence::Register, Residence::InPlace]),
         ),
         space,
         dtype,
@@ -337,7 +340,7 @@ fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
 /// this stream-K rather than a split of `K`.
 fn stream_k_agrees_with_the_whole(cubes: usize) {
     let (m, n, k) = (8usize, 8usize, 16usize);
-    let got = run_stream_k(m, n, k, cubes);
+    let got = run_stream_k(m, n, k, cubes, Residence::InPlace);
     let want = reference(m, n, k);
     for i in 0..m {
         for j in 0..n {
@@ -402,4 +405,31 @@ fn folds_atomically() -> bool {
         .enforce();
     }
     folds
+}
+
+/// An operand staged under the distribution. A share is walked region by region, and each region
+/// runs the level below through its own ring, so what a share does inside a region is what any
+/// walk does: nothing about staging changes because the regions arrived as a share.
+#[test]
+fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
+    if !folds_atomically() {
+        return;
+    }
+    let (m, n, k) = (8usize, 8usize, 16usize);
+    let want = reference(m, n, k);
+    // Shares that straddle a tile boundary, so the staged operand is read from part way through
+    // a tile's contraction as well as from its start.
+    for runs in [1usize, 3, 5] {
+        let got = run_stream_k(m, n, k, runs, Residence::Smem);
+        for i in 0..m {
+            for j in 0..n {
+                let have = got.get_f32(&[i, j]);
+                let want = want[i * n + j];
+                assert!(
+                    (have - want).abs() < 1e-3,
+                    "{runs} shares, rhs staged: at ({i}, {j}): got {have}, want {want}"
+                );
+            }
+        }
+    }
 }
