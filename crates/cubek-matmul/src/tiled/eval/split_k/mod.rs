@@ -124,36 +124,35 @@ impl Mapping {
         let seq = Cut::sequential;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            Mapping::SeqK => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, 1))
-                        .axis(K, seq(k))
+                        .axis(K, seq(k));
                 })
                 .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            Mapping::NSpread { cols } => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.axis(M, seq(m))
                         .axis(N, Cut::cube(CubeAxis::X, lanes * cols))
-                        .axis(K, seq(k))
+                        .axis(K, seq(k));
                 })
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                    l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k));
                 })
                 .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *space*: only the rhs strides differ.
-            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, cols))
-                        .axis(K, Cut::unit(k / lanes))
-                })
-                .build(),
+            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.axis(M, seq(m))
+                            .axis(N, Cut::cube(CubeAxis::X, cols))
+                            .axis(K, Cut::unit(k / lanes));
+                    })
+                    .build()
+            }
         }
         .resolve_lanes(lanes)
     }

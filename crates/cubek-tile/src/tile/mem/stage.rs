@@ -649,13 +649,12 @@ mod tests {
     /// three distinct block shapes to nest.
     fn space() -> Space {
         let seq = |edge| Cut::sequential(edge);
-        Tiling::new()
-            .extents(&[(M, 16), (N, 16)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, seq(8)).axis(N, seq(8))
+        Tiling::over(&mut (), &[(M, 16), (N, 16)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, seq(8)).axis(N, seq(8));
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, seq(4)).axis(N, seq(4))
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, seq(4)).axis(N, seq(4));
             })
             .build()
     }
@@ -663,10 +662,9 @@ mod tests {
     /// [`space`] plus the ungathered innermost axis a gathered projection is required to carry.
     fn gathered_space() -> Space {
         let seq = |edge| Cut::sequential(edge);
-        Tiling::new()
-            .extents(&[(M, 16), (N, 16), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, seq(8)).axis(N, seq(8)).axis(K, seq(4))
+        Tiling::over(&mut (), &[(M, 16), (N, 16), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, seq(8)).axis(N, seq(8)).axis(K, seq(4));
             })
             .build()
     }

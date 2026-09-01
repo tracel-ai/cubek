@@ -118,39 +118,41 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let space = Tiling::new()
-            .extents(&[
+        let space = Tiling::over(
+            &mut (),
+            &[
                 (B, self.b),
                 (OH, self.oh),
                 (OW, self.ow),
                 (C, self.c),
                 (RH, self.rh),
                 (RW, self.rw),
-            ])
-            // Two levels, not one. A single all-`sequential` level puts the whole
-            // convolution in one instance; the grid has to separate the output before
-            // anything else about the kernel matters.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, Cut::cube(CubeAxis::X, tile_c))
-                    .axis(OW, Cut::cube(CubeAxis::Y, tile_ow))
-                    .axis(OH, Cut::cube(CubeAxis::Z, tile_oh))
-                    .axis(B, Cut::cube(CubeAxis::Z, 1))
-                    .axis(RH, Cut::sequential(self.rh))
-                    .axis(RW, Cut::sequential(self.rw))
-            })
-            // Channels across the cube's planes; the leaf spreads each plane's tile over its
-            // own lanes, so consecutive lanes still read consecutive channels of one pixel —
-            // which is the whole reason to keep NHWC here.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, Cut::plane(1))
-                    .axis(OW, Cut::sequential(1))
-                    .axis(OH, Cut::sequential(1))
-                    .axis(B, Cut::sequential(1))
-                    .axis(RH, Cut::sequential(self.rh))
-                    .axis(RW, Cut::sequential(self.rw))
-            })
-            .build()
-            .with_instruction(INSTRUCTION);
+            ],
+        )
+        // Two levels, not one. A single all-`sequential` level puts the whole
+        // convolution in one instance; the grid has to separate the output before
+        // anything else about the kernel matters.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(C, Cut::cube(CubeAxis::X, tile_c))
+                .axis(OW, Cut::cube(CubeAxis::Y, tile_ow))
+                .axis(OH, Cut::cube(CubeAxis::Z, tile_oh))
+                .axis(B, Cut::cube(CubeAxis::Z, 1))
+                .axis(RH, Cut::sequential(self.rh))
+                .axis(RW, Cut::sequential(self.rw));
+        })
+        // Channels across the cube's planes; the leaf spreads each plane's tile over its
+        // own lanes, so consecutive lanes still read consecutive channels of one pixel —
+        // which is the whole reason to keep NHWC here.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(C, Cut::plane(1))
+                .axis(OW, Cut::sequential(1))
+                .axis(OH, Cut::sequential(1))
+                .axis(B, Cut::sequential(1))
+                .axis(RH, Cut::sequential(self.rh))
+                .axis(RW, Cut::sequential(self.rw));
+        })
+        .build()
+        .with_instruction(INSTRUCTION);
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case — it is only the weight and accumulator that change.

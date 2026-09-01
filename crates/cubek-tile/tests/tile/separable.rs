@@ -125,22 +125,24 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (ROW, ROWS),
             (COL, COLS),
             (TAP[0], TAPS[0]),
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
-        ])
-        .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(COLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
-        })
-        .build();
+        ],
+    )
+    .instruction(Instruction::registers(16), |l, _| {
+        l.axis(ROW, Cut::sequential(ROWS))
+            .axis(COL, Cut::sequential(COLS))
+            .axis(TAP[0], Cut::sequential(TAPS[0]))
+            .axis(TAP[1], Cut::sequential(TAPS[1]))
+            .axis(TAP[2], Cut::sequential(TAPS[2]));
+    })
+    .build();
 
     separable_kernel::launch::<TestRuntime>(
         &client,
@@ -210,22 +212,24 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (ROW, ROWS),
             (COL, COLS),
             (TAP[0], TAPS[0]),
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
-        ])
-        .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(COLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
-        })
-        .build();
+        ],
+    )
+    .instruction(Instruction::registers(16), |l, _| {
+        l.axis(ROW, Cut::sequential(ROWS))
+            .axis(COL, Cut::sequential(COLS))
+            .axis(TAP[0], Cut::sequential(TAPS[0]))
+            .axis(TAP[1], Cut::sequential(TAPS[1]))
+            .axis(TAP[2], Cut::sequential(TAPS[2]));
+    })
+    .build();
 
     let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL])
         .residence(&[Residence::Smem])
@@ -327,22 +331,24 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (ROW, ROWS),
             (COL, QCOLS),
             (TAP[0], TAPS[0]),
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
-        ])
-        .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(QCOLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
-        })
-        .build();
+        ],
+    )
+    .instruction(Instruction::registers(16), |l, _| {
+        l.axis(ROW, Cut::sequential(ROWS))
+            .axis(COL, Cut::sequential(QCOLS))
+            .axis(TAP[0], Cut::sequential(TAPS[0]))
+            .axis(TAP[1], Cut::sequential(TAPS[1]))
+            .axis(TAP[2], Cut::sequential(TAPS[2]));
+    })
+    .build();
 
     let launcher = space.launcher_over(&client, &[]);
     let input_op = launcher
@@ -418,22 +424,24 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (ROW, ROWS),
             (COL, pack),
             (TAP[0], TAPS[0]),
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
-        ])
-        .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(pack))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
-        })
-        .build();
+        ],
+    )
+    .instruction(Instruction::registers(16), |l, _| {
+        l.axis(ROW, Cut::sequential(ROWS))
+            .axis(COL, Cut::sequential(pack))
+            .axis(TAP[0], Cut::sequential(TAPS[0]))
+            .axis(TAP[1], Cut::sequential(TAPS[1]))
+            .axis(TAP[2], Cut::sequential(TAPS[2]));
+    })
+    .build();
 
     let input = TileInput::builder(&client, space.project(&[TAP[0], TAP[1], TAP[2], COL]))
         .untiled()
@@ -572,12 +580,11 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(RROWS))
                 .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+                .axis(TAP[0], Cut::sequential(RTAPS));
         })
         .build();
 
@@ -664,12 +671,11 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let space = Tiling::new()
-        .extents(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, 1), (COL, 1), (TAP[0], 3)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(1))
                 .axis(COL, Cut::sequential(1))
-                .axis(TAP[0], Cut::sequential(2))
+                .axis(TAP[0], Cut::sequential(2));
         })
         .build();
 
@@ -730,12 +736,11 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(RROWS))
                 .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+                .axis(TAP[0], Cut::sequential(RTAPS));
         })
         .build();
 
@@ -809,12 +814,11 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(RROWS))
                 .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+                .axis(TAP[0], Cut::sequential(RTAPS));
         })
         .build();
 
@@ -912,12 +916,11 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(RROWS))
                 .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+                .axis(TAP[0], Cut::sequential(RTAPS));
         })
         .build();
 
@@ -996,12 +999,11 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(RROWS))
                 .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+                .axis(TAP[0], Cut::sequential(RTAPS));
         })
         .build();
 
@@ -1097,13 +1099,12 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(ROW, Cut::sequential(1))
                 .axis(COL, Cut::sequential(1))
                 .axis(TAP[0], Cut::sequential(2))
-                .axis(TAP[1], Cut::sequential(2))
+                .axis(TAP[1], Cut::sequential(2));
         })
         .build();
 

@@ -476,12 +476,11 @@ mod tests {
     /// A one-level space over `M`/`N`/`K`, plus a projection per operand so a slot can be planned
     /// against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
     fn spaces() -> (Space, Space, Space) {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4));
             })
             .build();
         let lhs = space.project(&[M, K]);

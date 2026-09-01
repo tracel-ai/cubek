@@ -166,8 +166,9 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (G, g),
             (QP, qp),
             (S, s_total),
@@ -175,17 +176,18 @@ fn run(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(qp))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-                .axis(R, Cut::sequential(1))
-                .axis(C, Cut::sequential(1))
-        })
-        .build();
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.axis(G, Cut::sequential(g))
+            .axis(QP, Cut::sequential(qp))
+            .axis(S, Cut::sequential(block))
+            .axis(D, Cut::sequential(d))
+            .axis(V, Cut::sequential(val_dim))
+            .axis(R, Cut::sequential(1))
+            .axis(C, Cut::sequential(1));
+    })
+    .build();
 
     attention_fold_kernel::launch::<TestRuntime>(
         &client,
@@ -332,11 +334,10 @@ fn attention_fold_split_kernel<W: Size>(
     // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
     let score_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows), (C, block)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        Tiling::over(&mut (), &[(R, split_rows), (C, block)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(R, Cut::sequential(rows))
-                    .axis(C, Cut::sequential(block))
+                    .axis(C, Cut::sequential(block));
             })
             .build()
     );
@@ -349,19 +350,17 @@ fn attention_fold_split_kernel<W: Size>(
         [(T, splits), (R, rows)]
     });
     let row_space = comptime!(
-        Tiling::new()
-            .extents(&row_extents)
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows))
+        Tiling::over(&mut (), &row_extents)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows));
             })
             .build()
     );
     let acc_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        Tiling::over(&mut (), &[(R, split_rows), (V, val_dim)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(R, Cut::sequential(rows))
-                    .axis(V, Cut::sequential(val_dim))
+                    .axis(V, Cut::sequential(val_dim));
             })
             .build()
     );
@@ -539,8 +538,9 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention space, as in [`run`].
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (G, g),
             (QP, qp),
             (S, s_total),
@@ -548,17 +548,18 @@ fn run_split_at(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(qp))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-                .axis(R, Cut::sequential(1))
-                .axis(C, Cut::sequential(1))
-        })
-        .build();
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.axis(G, Cut::sequential(g))
+            .axis(QP, Cut::sequential(qp))
+            .axis(S, Cut::sequential(block))
+            .axis(D, Cut::sequential(d))
+            .axis(V, Cut::sequential(val_dim))
+            .axis(R, Cut::sequential(1))
+            .axis(C, Cut::sequential(1));
+    })
+    .build();
 
     attention_fold_split_kernel::launch::<TestRuntime>(
         &client,
@@ -749,16 +750,18 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let space = Tiling::new()
-        .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(1))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-        })
-        .build();
+    let space = Tiling::over(
+        &mut (),
+        &[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.axis(G, Cut::sequential(g))
+            .axis(QP, Cut::sequential(1))
+            .axis(S, Cut::sequential(block))
+            .axis(D, Cut::sequential(d))
+            .axis(V, Cut::sequential(val_dim));
+    })
+    .build();
 
     attention_stream_test_kernel::launch::<TestRuntime>(
         &client,

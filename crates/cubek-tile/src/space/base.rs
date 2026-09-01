@@ -636,13 +636,11 @@ impl<'a> IntoIterator for &'a Space {
 #[cfg(test)]
 pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
     use crate::{Buffering, Cut, Tiling, WalkOrder};
-    Tiling::new()
-        .extents(extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+    Tiling::over(&mut (), extents)
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             for &(axis, e) in extents {
-                l = l.axis(axis, Cut::sequential(e));
+                l.axis(axis, Cut::sequential(e));
             }
-            l
         })
         .build()
 }
@@ -744,12 +742,11 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
         use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::cube(CubeAxis::Y, 4))
+                    .axis(K, Cut::cube(CubeAxis::Y, 4));
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
@@ -763,12 +760,11 @@ mod contraction_tests {
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
         use crate::{Buffering, Cut, Tiling, WalkOrder};
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::plane(4))
+                    .axis(K, Cut::plane(4));
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
@@ -781,12 +777,11 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::cube(CubeAxis::X, 1))
-                    .axis(K, Cut::cube(CubeAxis::Z, 8))
+                    .axis(K, Cut::cube(CubeAxis::Z, 8));
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
@@ -797,12 +792,11 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
         use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 8), (K, 4)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::cube(CubeAxis::X, 4))
-                    .axis(K, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4));
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
@@ -811,19 +805,16 @@ mod contraction_tests {
     /// Two levels: `outer` the extents, `inner` the tile each axis is cut to below it.
     fn split_space(outer: &[(Axis, usize)], inner: &[(Axis, usize)]) -> Space {
         use crate::{Buffering, Cut, Tiling, WalkOrder};
-        Tiling::new()
-            .extents(outer)
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+        Tiling::over(&mut (), outer)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 for &(axis, e) in outer {
-                    l = l.axis(axis, Cut::sequential(e));
+                    l.axis(axis, Cut::sequential(e));
                 }
-                l
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |mut l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 for &(axis, e) in inner {
-                    l = l.axis(axis, Cut::sequential(e));
+                    l.axis(axis, Cut::sequential(e));
                 }
-                l
             })
             .build()
     }

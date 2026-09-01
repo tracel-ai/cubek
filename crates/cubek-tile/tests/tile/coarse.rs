@@ -58,12 +58,11 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Space {
-    Tiling::new()
-        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    Tiling::over(&mut (), &[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(ROWS))
                 .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(cut))
+                .axis(K, Cut::sequential(cut));
         })
         .build()
         .with_instruction(Instruction::registers(16))

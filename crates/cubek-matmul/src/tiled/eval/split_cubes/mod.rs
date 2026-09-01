@@ -153,37 +153,38 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
-                })
-                .build(),
-            Mapping::Workspace { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(KB, Cut::cube(CubeAxis::Z, 1))
-                        .axis(KI, Cut::sequential(k / splits))
-                })
-                .build(),
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.axis(M, Cut::sequential(m))
+                            .axis(N, Cut::cube(CubeAxis::X, COLS))
+                            .axis(K, Cut::cube(CubeAxis::Z, k / splits));
+                    })
+                    .build()
+            }
+            Mapping::Workspace { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, k / splits)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.axis(M, Cut::sequential(m))
+                            .axis(N, Cut::cube(CubeAxis::X, COLS))
+                            .axis(KB, Cut::cube(CubeAxis::Z, 1))
+                            .axis(KI, Cut::sequential(k / splits));
+                    })
+                    .build()
+            }
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            Mapping::AtomicLanes { .. } => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.axis(M, Cut::sequential(m))
                         .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                        .axis(K, Cut::cube(CubeAxis::Z, k / splits));
                 })
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.axis(M, Cut::sequential(m))
                         .axis(N, Cut::sequential(COLS))
-                        .axis(K, Cut::unit(k / splits / lanes))
+                        .axis(K, Cut::unit(k / splits / lanes));
                 })
                 .build()
                 .resolve_lanes(lanes),
@@ -194,12 +195,11 @@ impl Mapping {
     /// The fold pass's space, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Space {
         let Problem { m, n, .. } = problem;
-        Tiling::new()
-            .extents(&[(M, m), (N, n), (KB, self.splits())])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        Tiling::over(&mut (), &[(M, m), (N, n), (KB, self.splits())])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::cube(CubeAxis::X, 1))
                     .axis(N, Cut::cube(CubeAxis::Y, FOLD_COLS))
-                    .axis(KB, Cut::sequential(self.splits()))
+                    .axis(KB, Cut::sequential(self.splits()));
             })
             .build()
             .with_instruction(INSTRUCTION)

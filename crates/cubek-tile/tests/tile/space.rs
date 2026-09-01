@@ -241,17 +241,16 @@ fn matmul_operands() -> MatmulOperands {
 /// chain does, so migrating a caller changes nothing about its space.
 #[test]
 fn over_builds_the_space_plain_tiling_would() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(16))
                 .axis(N, Cut::sequential(32))
-                .axis(K, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(8))
                 .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
         })
         .build();
 
@@ -448,20 +447,18 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
 /// which is what stops the two from compiling as two kernels.
 #[test]
 fn a_level_that_cuts_nothing_is_dropped() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32));
         })
         .build();
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32));
         })
         // The same edges again: nothing left to cut.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32));
         })
         .build();
 
@@ -473,13 +470,12 @@ fn a_level_that_cuts_nothing_is_dropped() {
 /// two regions where its parent buffers one, so it is not a no-op and stays.
 #[test]
 fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32));
         })
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32));
         })
         .build();
 
@@ -496,10 +492,9 @@ fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
 /// on (attention's split count, a plane grid of one) lands on 1.
 #[test]
 fn the_only_level_stays_even_when_it_cuts_nothing() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(64)).axis(N, Cut::sequential(64))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(64)).axis(N, Cut::sequential(64));
         })
         .build();
 

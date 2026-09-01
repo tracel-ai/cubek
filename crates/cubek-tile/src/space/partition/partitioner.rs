@@ -298,10 +298,9 @@ mod tests {
 
     #[test]
     fn a_level_with_no_spatial_axis_is_sequential() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4)).axis(N, Cut::sequential(4))
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, Cut::sequential(4)).axis(N, Cut::sequential(4));
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Sequential);
@@ -310,11 +309,10 @@ mod tests {
 
     #[test]
     fn cube_axes_alone_separate_what_the_launch_grid_does() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::cube(CubeAxis::Y, 4))
-                    .axis(N, Cut::cube(CubeAxis::X, 4))
+                    .axis(N, Cut::cube(CubeAxis::X, 4));
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Cubes);
@@ -325,10 +323,9 @@ mod tests {
     /// level reads as `Planes`. Reading only the first axis, or the coarsest, would say `Cubes`.
     #[test]
     fn a_plane_axis_beside_a_cube_axis_reaches_inside_the_cube() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::cube(CubeAxis::Y, 4)).axis(N, Cut::plane(4))
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, Cut::cube(CubeAxis::Y, 4)).axis(N, Cut::plane(4));
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Planes);
@@ -336,10 +333,9 @@ mod tests {
 
     #[test]
     fn a_unit_axis_is_the_finest_scope() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::plane(4)).axis(N, Cut::unit(4))
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, Cut::plane(4)).axis(N, Cut::unit(4));
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Lanes);

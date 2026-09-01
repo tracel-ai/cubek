@@ -92,13 +92,12 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -188,13 +187,12 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -284,13 +282,12 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -383,13 +380,12 @@ fn f16_scales_are_read_as_f16() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -479,13 +475,12 @@ fn scales_over_the_columns_scale_the_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -575,13 +570,12 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -670,13 +664,12 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -768,13 +761,12 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(rows))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(per_region))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -889,13 +881,12 @@ fn lhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(1))
                 .axis(N, Cut::sequential(cols))
                 .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block))
+                .axis(KI, Cut::sequential(block));
         })
         .build()
         // The fold rides the lane walk, which reads one line per `lw` steps and takes a fixed

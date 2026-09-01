@@ -206,31 +206,33 @@ impl DepthwiseTiling {
             rw,
             ..
         } = *geometry;
-        Tiling::new()
-            .extents(&[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)])
-            // The channel axis takes X so that the fastest-moving cube index is the one memory is
-            // contiguous along.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, Cut::cube(CubeAxis::X, tile_c))
-                    .axis(OW, Cut::cube(CubeAxis::Y, cols))
-                    .axis(OH, Cut::cube(CubeAxis::Z, rows))
-                    .axis(B, Cut::cube(CubeAxis::Z, 1))
-                    .axis(RH, Cut::sequential(rh))
-                    .axis(RW, Cut::sequential(rw))
-            })
-            // Rows across the cube's planes, channels across each plane's lanes. Columns stay
-            // sequential: they are the register block, not a split.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(C, interleaved_lanes(width))
-                    .axis(OW, Cut::sequential(cols))
-                    .axis(OH, Cut::plane(1))
-                    .axis(B, Cut::sequential(1))
-                    .axis(RH, Cut::sequential(rh))
-                    .axis(RW, Cut::sequential(rw))
-            })
-            .build()
-            .with_instruction(INSTRUCTION)
-            .resolve_lanes(lanes)
+        Tiling::over(
+            &mut (),
+            &[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)],
+        )
+        // The channel axis takes X so that the fastest-moving cube index is the one memory is
+        // contiguous along.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(C, Cut::cube(CubeAxis::X, tile_c))
+                .axis(OW, Cut::cube(CubeAxis::Y, cols))
+                .axis(OH, Cut::cube(CubeAxis::Z, rows))
+                .axis(B, Cut::cube(CubeAxis::Z, 1))
+                .axis(RH, Cut::sequential(rh))
+                .axis(RW, Cut::sequential(rw));
+        })
+        // Rows across the cube's planes, channels across each plane's lanes. Columns stay
+        // sequential: they are the register block, not a split.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(C, interleaved_lanes(width))
+                .axis(OW, Cut::sequential(cols))
+                .axis(OH, Cut::plane(1))
+                .axis(B, Cut::sequential(1))
+                .axis(RH, Cut::sequential(rh))
+                .axis(RW, Cut::sequential(rw));
+        })
+        .build()
+        .with_instruction(INSTRUCTION)
+        .resolve_lanes(lanes)
     }
 }
 

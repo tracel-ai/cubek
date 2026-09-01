@@ -100,19 +100,18 @@ fn binding(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBindin
 /// X/Y, 8×8 plane leaves with `leaf_k = 4`.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_tile::Space {
     let batches = [B0, B1];
-    Tiling::new()
-        .extents(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    Tiling::over(&mut (), &[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batches, Cut::cube(CubeAxis::Z, 1))
                 .axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(k))
+                .axis(K, Cut::sequential(k));
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axes(&batches, Cut::sequential(1))
                 .axis(M, Cut::plane(8))
                 .axis(N, Cut::plane(8))
-                .axis(K, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
         })
         .build()
 }
@@ -542,12 +541,11 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
 #[test]
 fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let staged = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -571,12 +569,11 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
 #[test]
 fn arg_gathered_rational_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let staged = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -598,12 +595,11 @@ fn arg_gathered_rational_stages() {
 #[test]
 fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let staged = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -625,12 +621,11 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
 #[test]
 fn arg_gathered_cancelling_divisor_stages() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let staged = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::cube(CubeAxis::X, 16))
                 .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+                .axis(K, Cut::sequential(16));
         })
         .build()
         .launcher_over(&client, &[N]);

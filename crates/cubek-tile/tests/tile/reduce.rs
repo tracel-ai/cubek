@@ -160,12 +160,11 @@ fn run(
 
 /// The one-axis reference: an ordinary `{M, N, K}` matmul through the 2-D register leaf.
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
-                .axis(K, Cut::sequential(k))
+                .axis(K, Cut::sequential(k));
         })
         .build();
     run(
@@ -181,13 +180,12 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
 
 /// [`plain`] with a leading batch axis both operands span.
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::new()
-        .extents(&[(B, b), (M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(B, b), (M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
-                .axis(K, Cut::sequential(k))
+                .axis(K, Cut::sequential(k));
         })
         .build();
     run(
@@ -224,13 +222,12 @@ fn split_k_whole_reduce_at_leaf() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K1, k1), (K2, k2)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(k1))
-                .axis(K2, Cut::sequential(k2))
+                .axis(K2, Cut::sequential(k2));
         })
         .build();
 
@@ -253,13 +250,12 @@ fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K1, k1), (K2, k2)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(1))
-                .axis(K2, Cut::sequential(k2))
+                .axis(K2, Cut::sequential(k2));
         })
         .build();
 
@@ -282,14 +278,13 @@ fn split_k_with_a_batch_axis() {
     let (b, m, n, k1, k2) = (3, 4, 8, 2, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::new()
-        .extents(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(tm))
                 .axis(N, Cut::sequential(tn))
                 .axis(K1, Cut::sequential(k1))
-                .axis(K2, Cut::sequential(k2))
+                .axis(K2, Cut::sequential(k2));
         })
         .build();
 
@@ -351,10 +346,9 @@ fn run_reduce_resident(
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
 fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, buffering, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
     // Every caller of this helper stages: the level is what the buffering coverage exercises.
@@ -451,10 +445,9 @@ fn run_reduce_with_vw(
 #[test]
 fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -469,10 +462,9 @@ fn test_reduce_axis_sum_2d_to_1d() {
 #[test]
 fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -487,10 +479,9 @@ fn test_reduce_axis_sum_walked_levels() {
 #[test]
 fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -507,10 +498,9 @@ fn test_reduce_axis_max_2d_to_1d() {
 #[test]
 fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -527,12 +517,11 @@ fn test_reduce_axis_min_2d_to_1d() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
-    let space = Tiling::new()
-        .extents(&[(B, b), (M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(B, b), (M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(2))
-                .axis(K, Cut::sequential(4))
+                .axis(K, Cut::sequential(4));
         })
         .build();
 
@@ -591,10 +580,9 @@ fn test_reduce_axis_min_double_buffered() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -620,10 +608,9 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -653,10 +640,9 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -732,10 +718,9 @@ fn run_reduce_checked(
 }
 
 fn nondivisible_k_space(m: usize, k: usize, tk: usize, schedule: Buffering) -> Space {
-    Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, schedule, |l| {
-            l.axis(M, Cut::sequential(m)).axis(K, Cut::sequential(tk))
+    Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, schedule, |l, _| {
+            l.axis(M, Cut::sequential(m)).axis(K, Cut::sequential(tk));
         })
         .build()
 }
@@ -963,10 +948,9 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -996,10 +980,9 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -1031,10 +1014,9 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(tm)).axis(K, Cut::sequential(tk));
         })
         .build();
 
@@ -1063,12 +1045,11 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
-    let space = Tiling::new()
-        .extents(&[(B, b), (M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(B, b), (M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(B, Cut::sequential(1))
                 .axis(M, Cut::sequential(2))
-                .axis(K, Cut::sequential(8))
+                .axis(K, Cut::sequential(8));
         })
         .build();
 
@@ -1108,10 +1089,9 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = lanes * kr;
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr));
         })
         .build()
         .resolve_lanes(lanes);
@@ -1135,10 +1115,9 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = lanes * kr;
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr));
         })
         .build()
         .resolve_lanes(lanes);
@@ -1164,10 +1143,9 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = lanes * kr;
-    let space = Tiling::new()
-        .extents(&[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr))
+    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.axis(M, Cut::sequential(m)).axis(K, Cut::unit(kr));
         })
         .build()
         .resolve_lanes(lanes);
@@ -1217,12 +1195,11 @@ fn resident_max_over_lane_split_k() {
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = lanes * kr;
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
-                .axis(K, Cut::unit(kr))
+                .axis(K, Cut::unit(kr));
         })
         .build()
         .resolve_lanes(lanes);
@@ -1301,12 +1278,11 @@ fn resident_max_over_lane_group_k() {
             },
         )
     };
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .instruction(Instruction::registers(16), |l, _| {
             l.axis(M, unit(1, Spread::Contiguous, groups))
                 .axis(N, Cut::sequential(n))
-                .axis(K, unit(kr, Spread::Interleaved, group_lanes))
+                .axis(K, unit(kr, Spread::Interleaved, group_lanes));
         })
         .build();
 

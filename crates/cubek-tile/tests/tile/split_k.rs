@@ -91,13 +91,12 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let split_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, inside)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
                 .axis(KB, Cut::cube(CubeAxis::Z, 1))
-                .axis(KI, Cut::sequential(inside))
+                .axis(KI, Cut::sequential(inside));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -136,12 +135,11 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let fold_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::cube(CubeAxis::X, 1))
                 .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::sequential(splits))
+                .axis(KB, Cut::sequential(splits));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -332,12 +330,11 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -472,12 +469,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::unit(per_lane))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits));
         })
         .build()
         .resolve_lanes(lanes)
@@ -555,12 +551,11 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
-                .axis(K, Cut::plane(k / planes))
+                .axis(K, Cut::plane(k / planes));
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -653,12 +648,11 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.axis(M, Cut::sequential(m))
                 .axis(N, Cut::sequential(n))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+                .axis(K, Cut::cube(CubeAxis::Z, k / splits));
         })
         .build()
         .with_instruction(Instruction::registers(16));

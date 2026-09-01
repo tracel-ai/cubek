@@ -322,12 +322,11 @@ mod tests {
     #[test]
     fn opening_an_accumulator_over_a_cube_split_output_is_fine() {
         let scope = test_scope();
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 8), (K, 4)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.axis(M, Cut::sequential(4))
                     .axis(N, Cut::cube(CubeAxis::X, 4))
-                    .axis(K, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4));
             })
             .build()
             .with_instruction(Instruction::registers(16));

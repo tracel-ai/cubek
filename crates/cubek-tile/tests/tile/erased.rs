@@ -92,12 +92,11 @@ macro_rules! output_arg {
 /// The space both kernels walk, cut so the store is not one contiguous run —
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space() -> Space {
-    Tiling::new()
-        .extents(&[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+    Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
             level
                 .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3))
+                .axis(COL, Cut::sequential(3));
         })
         .build()
 }
@@ -493,12 +492,11 @@ const MASKED_ROWS: usize = 5;
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space() -> Space {
-    Tiling::new()
-        .extents(&[(ROW, MASKED_ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
+    Tiling::over(&mut (), &[(ROW, MASKED_ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
             level
                 .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(2))
+                .axis(COL, Cut::sequential(2));
         })
         .build()
 }
