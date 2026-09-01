@@ -13,12 +13,10 @@ use crate::*;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one
-    /// `space` projected onto the operand's `spec` axes, so no operand carries its own
-    /// copy of the space. The element type carries the line width: `Vector<T, W>` for a
-    /// lined operand, `T` itself for scalar, so the served width *is* the binding's
-    /// width by construction and is never re-lined in-kernel. Shape/strides come in
-    /// scalar-unit and convert to line-unit here.
+    /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one `space`
+    /// projected onto the operand's `spec` axes, so no operand carries its own copy. The element
+    /// type carries the line width, so the served width *is* the binding's by construction and is
+    /// never re-lined in-kernel. Shape/strides arrive scalar-unit and convert to line-unit here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -35,16 +33,12 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) for a gather whose affine map is not all comptime: `coefficients` holds one
-    /// value per [`Scale::Dynamic`](crate::Scale) term in [`Projection::dynamic_scale_index`] order
-    /// *and* one per [`Divisor::Dynamic`](crate::Divisor) axis in
-    /// [`Projection::dynamic_divisor_index`] order, the two interleaved physical axis major so an
-    /// axis's divisor follows its own coefficients; `offsets` one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis in [`Projection::dynamic_offset_index`] order. A
-    /// runtime stride, dilation, padding or resize ratio is exactly this, and the kernel builds the
-    /// carriers from its own scalar arguments, so nothing about them reaches the launch.
-    ///
-    /// Only the lengths are checked, so the two index orders above are the contract: swap a
-    /// coefficient for a divisor and the read is silently wrong.
+    /// value per [`Scale::Dynamic`](crate::Scale) term and one per
+    /// [`Divisor::Dynamic`](crate::Divisor) axis, interleaved physical axis major so an axis's
+    /// divisor follows its own coefficients; `offsets` one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis. A runtime stride, dilation, padding or resize
+    /// ratio is exactly this. Only the lengths are checked, so those index orders are the
+    /// contract: swap a coefficient for a divisor and the read is silently wrong.
     pub(crate) fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -64,9 +58,7 @@ impl<T: Numeric> Tile<T> {
 
     /// [`of`](Tile::of) from a [`packed`](TileSpec::packed) operand: the binding holds stored
     /// `u32` words and the tile serves the values inside them, `factor` per word, unpacked at the
-    /// read. The served width is the binding's width × that factor.
-    ///
-    /// No scales and no scheme: what the spec states is a fact about *these* values, and an
+    /// read, so the served width is the binding's × that factor. No scales and no scheme: an
     /// operand that also has scales names them as its own tensor.
     pub(crate) fn of_packed<E: CubePrimitive>(
         values: &Tensor<E>,
@@ -144,14 +136,9 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Shared body of [`of`](Tile::of)/[`of_dequant`](Tile::of_dequant): `E` is the *binding*
-    /// element (its scalar the stored type), `T` the served scalar; they differ only for a
-    /// quantized operand, whose served width is the binding's width × the packing factor.
-    /// [`of_impl`](Self::of_impl) reading its geometry off a launched tensor,
-    /// which is where every destination that *has* an address comes from.
-    ///
-    /// Re-typing the buffer to the served scalar `T` is a static coercion for a
-    /// plain operand (the binding's real element is `Vector<T, w>`, same bytes);
-    /// a quantized store truly holds the stored type and the read view downcasts
+    /// element, `T` the served scalar, differing only for a quantized operand whose served width
+    /// is the binding's × the packing factor. Re-typing the buffer to `T` is a static coercion for
+    /// a plain operand; a quantized store truly holds the stored type and the read view downcasts
     /// back ([`lines_storage`](MemData::lines_storage)).
     fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
@@ -181,30 +168,18 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// A tile whose values are handed to `sink` instead of stored: the walk is the walk a buffer
-    /// gets, and only its last step is a call rather than a store.
+    /// A tile whose values are handed to `sink` instead of stored: the walk a buffer gets, with
+    /// only its last step a call rather than a store. The geometry is *stated* because a
+    /// destination with no address has none to read, so a caller that states the product's own
+    /// metadata gets the store the unfused kernel would have made.
     ///
-    /// The geometry is *stated* rather than read, because a destination with no
-    /// address has none to read: it is the physical extents and strides in
-    /// scalars that the product would have had, and `vector_size` the line width
-    /// the sink takes. The tile addresses the sink through exactly the layout
-    /// those describe, so a caller that states the product's own metadata gets
-    /// the store the unfused kernel would have made.
+    /// A sink serves the layout-addressed writes and only those: it cannot be staged into shared
+    /// memory, written dense, quantized, filled by a tensor map, or [`packed`](TileSpec::packed),
+    /// each of which wants an address rather than a call.
     ///
-    /// A sink serves the layout-addressed writes and only those. It cannot be
-    /// staged into shared memory, written dense ([`Tile::dense_mut`]), quantized,
-    /// or filled by a tensor map: each of those wants an address rather than a
-    /// call, and says so.
-    ///
-    /// Nor may its spec state a [`packing`](TileSpec::packed): a packed operand is
-    /// addressed at the *stored* width and serves several values per element, so
-    /// the width stated here would no longer be the width the sink is written at.
-    ///
-    /// `write` is what the sink does with a value it is handed.
-    /// [`Accumulate`](Write::Accumulate) is what lets several instances write one cell: the
-    /// destination is never read (accumulating is itself the read-modify-write), and the buffer
-    /// behind it holds the monoid's identity before the launch, since the first instance to
-    /// arrive adds onto what is there. Nothing here can check that: the sink cannot read.
+    /// `write` is what the sink does with a value. [`Accumulate`](Write::Accumulate) lets several
+    /// instances write one cell, and requires the buffer behind it to hold the monoid's identity
+    /// before the launch. Nothing here can check that: the sink cannot read.
     pub fn of_sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
@@ -236,24 +211,10 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// A tile whose values come from `source` instead of from memory: the
-    /// fuse-on-read twin of [`of_sink`](Tile::of_sink).
-    ///
-    /// The geometry is *stated* for the same reason it is there: a source with
-    /// no address has none to read off. It is the physical extents and strides in
-    /// scalars the operand *would* have had, and `vector_size` the line width the
-    /// source serves. The tile reads through exactly the layout those describe,
-    /// so a caller that states the producer's own metadata gets the reads the
-    /// unfused kernel would have made.
-    ///
-    /// A source serves the layout-addressed reads and only those. It cannot be
-    /// staged into shared memory, read dense, quantized, or loaded by a tensor
-    /// map: each of those wants an address rather than a call, and says so.
-    ///
-    /// Nor may its spec state a [`packing`](TileSpec::packed), for the reason
-    /// [`of_sink`](Tile::of_sink) states: a packed operand is addressed at the
-    /// *stored* width, and the width stated here would no longer be the one the
-    /// source is read at.
+    /// A tile whose values come from `source` instead of from memory: the fuse-on-read twin of
+    /// [`of_sink`](Tile::of_sink), stated geometry and all. A source serves the layout-addressed
+    /// reads and only those: it cannot be staged into shared memory, read dense, quantized, loaded
+    /// by a tensor map, or [`packed`](TileSpec::packed).
     pub fn of_source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
@@ -464,11 +425,9 @@ impl<T: Numeric> Tile<T> {
 }
 
 /// [`full_window`] for the top gmem tile, over the *physical* axes, where an axis may be
-/// [`Dynamic`](crate::Extent): such an axis reads its runtime size from `bound` (the folded
-/// logical extent) instead of a comptime constant, so the problem shape never specializes the
-/// kernel. A gathered operand always reads `bound`: its physical axes are combinations of several
-/// logical ones, so no single extent sizes one, and the whole buffer is the top window by
-/// definition.
+/// [`Dynamic`](crate::Extent) and read its runtime size from `bound` instead of a comptime
+/// constant, so the problem shape never specializes the kernel. A gathered operand always reads
+/// `bound`: no single logical extent sizes a physical axis combining several.
 #[cube]
 fn top_window(
     #[comptime] space: Space,
@@ -519,14 +478,10 @@ fn top_window(
 }
 
 /// Where a gathered physical axis's top window starts, and the phase its division left behind:
-/// `⌊offset / divisor⌋` and `offset mod divisor`. An integer mapping divides by `1`, so its origin
-/// absorbs the offset whole and its phase is `0`; a rational one can only absorb the multiples of
-/// its divisor, and hands the rest to [`AxisProjection`](crate::AxisProjection), which adds it back
-/// inside the numerator.
-///
-/// The floor is the host's whenever both sides are comptime
-/// ([`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin)); only a `Dynamic` offset or
-/// divisor pays for one in the kernel.
+/// `⌊offset / divisor⌋` and `offset mod divisor`. An integer mapping divides by `1` and absorbs
+/// the offset whole; a rational one absorbs only the multiples of its divisor and hands the rest
+/// to [`AxisProjection`](crate::AxisProjection). The floor is the host's whenever both sides are
+/// comptime; only a `Dynamic` offset or divisor pays for one in the kernel.
 #[cube]
 fn gathered_origin(
     #[comptime] projection: Projection,

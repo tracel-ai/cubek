@@ -10,11 +10,10 @@
 
 use crate::{Axis, ComputeScope, Distribution, Extent, Space};
 
-/// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out.
-///
-/// A `Unit` axis the tile doesn't span is *folded*: the lanes cover disjoint slices of it, so
-/// each holds a partial. One the tile does span is *carried*: it gives each lane a different
-/// cell. Which of the three cases below a tile is in is what says how a partial drains.
+/// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
+/// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
+/// does span is *carried* (each lane gets a different cell). Which case a tile is in says how a
+/// partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LaneShare {
     /// Nothing folded: the lane's cells are whole, so they read and write as they are.
@@ -29,11 +28,9 @@ pub enum LaneShare {
 }
 
 /// A descent's share, given the parent's and the level's: the folds compose, since each level
-/// takes its own bits of the lane index.
-///
-/// [`LaneShare::Plane`] already spans every lane, so nothing can fold under it, and nothing
-/// builds that, since [`Space::cube_dim`](crate::Space::cube_dim) caps the tree's `Unit` instance
-/// product at the plane width.
+/// takes its own bits of the lane index. [`LaneShare::Plane`] already spans every lane, so nothing
+/// folds under it, and nothing builds that: [`Space::cube_dim`](crate::Space::cube_dim) caps the
+/// tree's `Unit` instance product at the plane width.
 pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
     match (parent, level) {
         (LaneShare::Whole, share) | (share, LaneShare::Whole) => share,
@@ -44,17 +41,11 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
     }
 }
 
-/// How many of the plane's lanes run one tile's work.
-///
-/// A space that distributes nothing at `Unit` scope still launches a full plane
-/// ([`Space::cube_dim`](crate::Space::cube_dim) sizes it at the hardware `plane_size`), and every
-/// lane of it then runs the same code over the same cells. Identical stores land the same value
-/// however many lanes make them, so only a write that accumulates has to count the writers.
-///
-/// A fold is not idempotent. `Repeated` lanes folding one cell add their contribution
-/// `plane_size` times, so a folding drain elects one of them. Distinct from [`LaneShare`], which
-/// says what the lanes hold of a cell rather than how many of them hold it: with nothing on the
-/// lanes both answers are "whole", and only one of them is the one a fold needs.
+/// How many of the plane's lanes run one tile's work. A space distributing nothing at `Unit` scope
+/// still launches a full plane, every lane running the same code over the same cells. Identical
+/// stores land the same value however many lanes make them, but a fold is not idempotent, so a
+/// folding drain elects one lane. Distinct from [`LaneShare`], which says what a lane holds of a
+/// cell rather than how many lanes hold it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LaneWork {
     /// Something rides the lanes, so each has its own share and a cell is written once.
@@ -63,11 +54,9 @@ pub enum LaneWork {
     Repeated,
 }
 
-/// What the plane's lanes are to a tile's cells: what each of them holds of one
-/// ([`LaneShare`]), and how many of them hold it ([`LaneWork`]).
-///
-/// Two answers to one question. They are derived from the same space at the same moment and read
-/// together on drain, where neither settles who writes on its own, so they travel together.
+/// What the plane's lanes are to a tile's cells: what each holds of one ([`LaneShare`]), and how
+/// many hold it ([`LaneWork`]). Two answers to one question, derived from the same space and read
+/// together on drain, where neither settles who writes on its own.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Lanes {
     pub share: LaneShare,
@@ -75,13 +64,9 @@ pub struct Lanes {
 }
 
 /// What one instance holds of a tile's cells, across the scopes whose instances can only meet in
-/// the destination: `Plane` and `Cube`.
-///
-/// [`LaneShare`]'s counterpart, and deliberately a coarser answer, because the two combine in
-/// different places. A plane's lanes share registers, so they combine there, and to elect one of
-/// their own to write they have to know which lanes hold a cell: hence a mask. Planes and cubes
-/// share no registers. Each folds its own contribution into the destination and never learns that
-/// the others exist, so there is nothing to elect between them and no mask to read.
+/// the destination: `Plane` and `Cube`. [`LaneShare`]'s counterpart, and deliberately coarser: a
+/// plane's lanes share registers and must elect a writer, hence a mask, but planes and cubes share
+/// none, so each folds its own contribution and there is nothing to elect between them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SplitShare {
     /// Every cell this instance writes is its own outright, so the drain is a store.
@@ -93,17 +78,10 @@ pub enum SplitShare {
 
 impl SplitShare {
     /// Refuse an accumulation this share leaves in pieces, unless the destination adds them
-    /// together. Called where an accumulator is opened and where one is written, which are the two
-    /// places a partial can escape.
-    ///
-    /// A destination that replaces is wrong twice over under a split, and silently: a
-    /// register-resident accumulator drains by storing, so the last instance to arrive erases
-    /// every other one's slice, and one accumulating in place reads the cell, folds, and writes
-    /// it back, which is a lost update. Neither shows up as anything but a wrong number, so it is
-    /// refused here instead. A destination that accumulates ([`Write::Accumulate`](crate::Write))
-    /// is the case this exists to let through, and it serves both scopes alike: the drain's
-    /// election is per plane (`UNIT_POS_X == 0`), so one lane of every plane of every cube adds
-    /// its own.
+    /// together. Called where an accumulator is opened and where one is written, the two places a
+    /// partial can escape. A destination that replaces is wrong twice over and silently: a
+    /// register drain stores, so the last instance erases the rest, and one accumulating in place
+    /// loses the update. [`Write::Accumulate`](crate::Write) is the case this lets through.
     pub(crate) fn validate(self, write: crate::Write, site: &str) {
         match (self, write) {
             (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Accumulate) => {}
@@ -123,20 +101,10 @@ impl SplitShare {
 }
 
 impl Space {
-    /// What the plane's lanes hold of this space's cells: a `Unit` axis the space doesn't span is
-    /// *folded* across the lanes, so each holds only a partial; one it does span is *carried*,
-    /// giving each lane a cell of its own.
-    ///
-    /// Which lanes hold partials of one cell is a question about the lane index's digits, so the
-    /// answer is a bit mask. `Walk::from_counts` decodes a `Unit` axis as
-    /// `UNIT_POS_X / inner_weight % instances`, which for power-of-two counts is a contiguous run
-    /// of bits; the folded axes' runs are exactly the bits a cell's partials differ in. Fold
-    /// everything and that mask is the whole plane ([`LaneShare::Plane`]); fold under a carry and
-    /// it is a [`LaneShare::Group`], whatever order the axes sit in.
     /// The share a tile ends up with at the leaf: every level's own share joined, the way
     /// [`MemData::at`](crate::MemData) joins them one at a time on the way down. A block built
-    /// before the walk descends cannot read the stamped value, but it can compute the value that
-    /// stamping would arrive at, because every level is already known here.
+    /// before the walk descends cannot read the stamped value, but every level is known here, so
+    /// it can compute the value stamping would arrive at.
     pub(crate) fn leaf_lane_share(&self) -> LaneShare {
         let mut share = LaneShare::Whole;
         let mut level = self.clone();
@@ -156,13 +124,10 @@ impl Space {
         }
     }
 
-    /// Whether anything rides this space's lanes, across every level: [`Own`](LaneWork::Own) if
-    /// some `Unit` axis is dealt out to more than one lane, [`Repeated`](LaneWork::Repeated) if
-    /// none is and the plane's lanes therefore all run the same work.
-    ///
-    /// Read off the axes rather than off [`cube_dim`](Space::cube_dim), which asks the client for
-    /// the hardware `plane_size` and is a launch-side question; this one is comptime, and what a
-    /// drain needs to know before it elects a writer.
+    /// Whether anything rides this space's lanes, across every level. Read off the axes rather
+    /// than off [`cube_dim`](Space::cube_dim), which asks the client for the hardware `plane_size`
+    /// and is a launch-side question; this one is comptime, which is what a drain needs before it
+    /// elects a writer.
     pub(crate) fn lane_work(&self) -> LaneWork {
         let mut level = self.clone();
         while !level.is_final() {
@@ -186,21 +151,11 @@ impl Space {
     }
 
     /// What one instance of `axes`' operand holds of its cells: [`Partial`](SplitShare::Partial)
-    /// where some `Plane` or `Cube` axis the operand does not span is dealt out across more than
-    /// one instance, so each contracts a slice and none of their results is a whole cell.
-    ///
-    /// [`lane_share`](Self::lane_share)'s counterpart, and asked of the *whole* space rather than
-    /// of the operand's own projection. The projection is what drops the contracted axis, and an
-    /// axis it has dropped has no extent left to divide, so a projected space cannot tell a split
-    /// from a cut whose edge happens to be the whole axis. `Unit` is not among the scopes here
-    /// because a plane's lanes combine in registers, which is
-    /// [`lane_share`](Self::lane_share)'s subject.
-    ///
-    /// Answered conservatively where the instance count is not comptime, which is any
-    /// [`Dynamic`](Extent::Dynamic) extent under [`TilesEach`](Coverage::TilesEach): only the
-    /// shape knows how many tiles it has. Calling that partial costs a fold a one-instance grid
-    /// did not need, while calling it whole loses every partial but one. The same bargain
-    /// [`spans_contracted_at_leaf`](Self::spans_contracted_at_leaf) strikes.
+    /// where a `Plane` or `Cube` axis the operand does not span is dealt across several instances,
+    /// so each contracts a slice. Asked of the *whole* space, not the operand's projection: a
+    /// projection has dropped the contracted axis and so cannot tell a split from a cut whose edge
+    /// is the whole axis. Answered conservatively where the instance count is not comptime, since
+    /// calling it whole loses every partial but one.
     pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
         let mut level = self.clone();
         while !level.is_final() {
@@ -248,20 +203,12 @@ impl Space {
         }
     }
 
-    /// The instance-index weight this space's own axis list cannot see: the product of the
-    /// instance counts of the same-scope axes *inside* `axis* that the partitioner distributes and
-    /// this space does not span.
-    ///
-    /// A projected space is the reason this exists. The instance index is a hardware fact and its
-    /// odometer belongs to the *partitioner*: [`Partitioner::axes`] "keeps every axis of the
-    /// operation, so an output space (`{M, N}`) still names its contraction". An operand that does
-    /// not span a contracted axis still runs on an instance whose index encodes it, so it has to
-    /// divide that axis out to find its own digit. Decoding over the spanned axes alone reads every
-    /// omitted inner axis as weight `1`, which aliases the outer digits onto one value, the same
-    /// list [`lane_share`](Self::lane_share) already reads, for the same reason.
-    ///
-    /// Panics where such an axis carries no comptime instance count: there is nothing to decode
-    /// with, and assuming `1` is exactly the silent aliasing above.
+    /// The instance-index weight this space's own axis list cannot see: the instance counts of the
+    /// same-scope axes *inside* `axis` that the partitioner distributes and this space does not
+    /// span. A projected space is why: the index's odometer belongs to the partitioner, so an
+    /// operand not spanning a contracted axis must still divide it out to find its own digit, and
+    /// reading omitted axes as weight `1` aliases the outer digits onto one value. Panics where
+    /// such an axis has no comptime count: assuming `1` is exactly that aliasing.
     pub(crate) fn inner_weight_unspanned(&self, axis: Axis) -> usize {
         if self.partitioner().is_final() {
             return 1;
