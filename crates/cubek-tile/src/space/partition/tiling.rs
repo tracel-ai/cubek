@@ -55,11 +55,9 @@ impl Cut {
 }
 
 /// A [`Cut`] whose tiles ride some hardware scope, still open to the two knobs a
-/// [`Sequential`](Distribution::Sequential) cut has no use for.
-///
-/// Returned by [`Cut::cube`], [`Cut::plane`] and [`Cut::unit`], and turned into a [`Cut`]
-/// wherever one is taken, so a call site that states nothing more reads exactly as it always
-/// did.
+/// [`Sequential`](Distribution::Sequential) cut has no use for. Returned by [`Cut::cube`],
+/// [`Cut::plane`] and [`Cut::unit`], and turned into a [`Cut`] wherever one is taken, so a call
+/// site that states nothing more reads exactly as it always did.
 #[derive(Clone, Copy, Debug)]
 pub struct SpatialCut {
     edge: usize,
@@ -119,17 +117,12 @@ impl LevelSpec {
 pub struct Tiling;
 
 impl Tiling {
-    /// Build a space together with its operands. `extents` declares every axis and its top
-    /// extent, fixing the canonical axis order; cuts may then come in any order and are
-    /// realigned to it.
-    ///
-    /// Each level closure gets the cut collector and the operand set, so an operand's residence
-    /// at a level is stated where the level is declared
-    /// ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an operand
-    /// leaves it in place. [`build`](OperandTiling::build) returns the space and seals the
-    /// operands.
-    ///
-    /// A space with no operand to place passes the empty set: `Tiling::over(&mut (), …)`.
+    /// Build a space together with its operands. `extents` declares every axis and its top extent,
+    /// fixing the canonical axis order; cuts may come in any order and are realigned to it. Each
+    /// level closure gets the cut collector and the operand set, so an operand's residence is
+    /// stated where the level is declared ([`Operand::stage`](crate::Operand::stage)) and a level
+    /// stating nothing leaves it in place. A space with no operand passes the empty set,
+    /// `Tiling::over(&mut (), …)`.
     pub fn over<'o, O: OperandSet>(
         operands: &'o mut O,
         extents: &[(Axis, usize)],
@@ -265,15 +258,11 @@ impl<O: OperandSet> OperandTiling<'_, O> {
         });
     }
 
-    /// Which levels [`build`](Self::build) keeps, one flag per declared level.
-    ///
-    /// A level whose edges are the extents handed to it cuts nothing: [`Space::count`] is 1 on
-    /// every axis. Drop it: the level is part of the [`Space`], and the [`Space`] is the
-    /// kernel-cache key, so keeping it compiles the same program twice. Five things a level
-    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, work it
-    /// distributes as one, an operand moving here, the instruction it carries, and being the
-    /// only level left. That last one is not a fallback: a partitioned space separates a tile from the cells it is walked in, and
-    /// a space with no level at all *is* its cell, which is a different space entirely.
+    /// Which levels [`build`](Self::build) keeps, one flag per declared level. A level cutting
+    /// nothing is dropped: the [`Space`] is the kernel-cache key, so keeping it compiles the same
+    /// program twice. Five things keep one anyway: a deeper pipeline than its parent, work it
+    /// distributes as one, an operand moving here, the instruction it carries, and being the only
+    /// level left, which is not a fallback but the difference between a tile and its cell.
     fn kept_levels(&self) -> Vec<bool> {
         // The extents handed to the next level: the top extents, then each kept level's edges.
         // Nothing is staged above the first level, so its parent buffers once.
@@ -345,22 +334,15 @@ impl LevelCuts {
         self
     }
 
-    /// Distribute these axes' work as one: `axes` pairs each axis with its tile edge, and `dist`
-    /// says who runs the tiles and how many of them there are.
+    /// Distribute these axes' work as one: `axes` pairs each axis with its tile edge, `dist` says
+    /// who runs the tiles and how many there are. The axes are read as a single index, so an
+    /// instance takes a share of the whole rather than a box of the grid, which is the only thing
+    /// this says that [`axes`](Self::axes) does not and the only way to say it.
     ///
-    /// The axes are read as a single index, so an instance takes a share of the whole rather than
-    /// a box of the grid. That is the only thing this says that [`axes`](Self::axes) does not,
-    /// and it is the only way to say it: dealing each axis on its own always yields a box, and a
-    /// share that begins inside one region and ends inside another is not one.
-    ///
-    /// The index runs over these axes' tiles at this level and one region of the level below, so
-    /// a share can end part way through a region's own work. Where that region is an output tile
-    /// and the level below walks the contraction, several instances end up holding pieces of the
-    /// same cell, and the destination folds them exactly as it does under a cut
-    /// ([`SplitShare`](crate::SplitShare)).
-    ///
-    /// An axis named here is not named by [`axis`](Self::axis): a level states each of its axes
-    /// once.
+    /// A share can end part way through a region's own work, so where the level below walks the
+    /// contraction several instances hold pieces of one cell and the destination folds them as it
+    /// does under a cut ([`SplitShare`](crate::SplitShare)). An axis named here is not named by
+    /// [`axis`](Self::axis): a level states each of its axes once.
     pub fn distribute(&mut self, axes: &[(Axis, usize)], dist: Spatial) -> &mut Self {
         assert!(
             self.work.is_none(),

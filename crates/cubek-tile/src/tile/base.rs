@@ -10,11 +10,8 @@ use crate::*;
 
 /// A tile's backing store. Every variant is lifetime-free (a `Box<[T]>` or a
 /// [`cmma::Matrix`](cubecl::cmma::Matrix)); [`view`](Tile::view) rebuilds a borrowed view on
-/// demand.
-///
-/// `Clone` copies the handle, not the cells: two clones name the same storage, so writing through
-/// one is visible through the other. That is how later ring slots reuse a fixed operand's first
-/// buffer, and it is only sound where nothing rewrites the buffer afterwards.
+/// demand. `Clone` copies the handle, not the cells, which is how later ring slots reuse a fixed
+/// operand's first buffer and is only sound where nothing rewrites the buffer afterwards.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum TileKind<T: Numeric> {
@@ -74,11 +71,8 @@ impl<T: Numeric> TileKind<T> {
 /// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it
 /// projects. `T` is the element the tile serves and computes in; its physical vector width is a
 /// storage detail inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
-///
-/// What an operand is at the instruction is its operand.s own statement (the finest
-/// [`Residence::Register`] stage); no tile carries a second copy of it, and operands that
-/// disagree meet the kind-pairing panics at the instruction, which is the same way every other
-/// mismatched pair is caught.
+/// What an operand is at the instruction is the operand's own statement (the finest
+/// [`Residence::Register`] stage), so operands that disagree meet the kind-pairing panics there.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Tile<T: Numeric> {
@@ -303,16 +297,11 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Ask this accumulator to start from `init_from`, and answer what actually took.
-    ///
-    /// Asking rather than deciding is what keeps a kind that cannot take the request from having
-    /// to be listed anywhere else.
-    ///
-    /// A destination that folds always answers [`Identity`](InitFrom::Identity), whatever is
-    /// asked. Its cells belong to several instances, so no one of them may seed the cell, and the
-    /// seed has happened already: the buffer arrives holding the fold's identity, which is the
-    /// launch's obligation and the price of the split. Answering `Cell` instead would have this
-    /// instance write the identity into a cell its siblings are already folding into.
+    /// Ask this accumulator to start from `init_from`, and answer what actually took. Asking
+    /// rather than deciding keeps a kind that cannot take the request from being listed anywhere
+    /// else. A destination that folds always answers [`Identity`](InitFrom::Identity): its cells
+    /// belong to several instances, so the buffer must already hold the fold's identity (the
+    /// launch's obligation), and `Cell` would seed a cell the siblings are folding into.
     pub(crate) fn request_init_from(
         &mut self,
         #[comptime] init_from: InitFrom,
@@ -367,14 +356,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile's buffer is addressed through a mapping whose windows may *overlap*: a
-    /// physical cell does not determine the logical position, so the only read surface that
-    /// describes the tile is the N-D one ([`nd`](Tile::nd)) and no window of it is dense.
-    ///
-    /// False for a [`direct`](Projection::direct) operand, and equally for one whose axes
-    /// [partition](Composition::Disjoint) a physical axis: a partition is a bijection, so its
-    /// windows tile rather than overlap and every dense path still describes it. A fragment or a
-    /// tensor map has no buffer to gather from.
+    /// Whether this tile's buffer is addressed through a mapping whose windows may *overlap*, so
+    /// the only read surface describing it is the N-D one ([`nd`](Tile::nd)) and no window is
+    /// dense. False for a [`direct`](Projection::direct) operand and equally for one whose axes
+    /// [partition](Composition::Disjoint) a physical axis, a partition being a bijection.
     pub fn gathered(&self) -> comptime_type!(bool) {
         let projection = self.projection();
         comptime!(projection.composition() == Composition::Overlapping)
@@ -464,10 +449,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// One factor of a separable recipe, evaluated at `pos`. Only the coordinate along the axis
-    /// that factor reads matters, which is what lets the contraction walk it in 1-D.
-    ///
-    /// Asking [`factors`](Tile::factors) first is the whole precondition: a tile answering `None`
-    /// has no factorization to index into, and is exactly the tile kind that cannot evaluate one.
+    /// that factor reads matters, which is what lets the contraction walk it in 1-D. Asking
+    /// [`factors`](Tile::factors) first is the whole precondition.
     pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
         match &self.tile_kind {
             TileKind::Procedural(data) => {
@@ -486,27 +469,11 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Whether this tile can state `axis`'s runtime size for the operation it takes part in: it
-    /// spans the axis [`Dynamic`](crate::Extent), has a buffer to read a bound off, and that bound
-    /// is the axis's own extent ([`bound_states`]). Each clause rules out an operand that spans the
-    /// axis without being able to answer for it: a `Static` one knows its size at comptime already
-    /// (and a broadcast `1` is not the operation's extent), a fragment has no bound, and a gathered
-    /// axis's bound is the receptive field its axes reach over.
-    ///
-    /// Spanning an axis and having to supply it are therefore separate questions: an operation
-    /// sizes each `Dynamic` axis from whichever of its operands witnesses it and lets the others
-    /// pass ([`witnessed_space`]).
-    /// The axes of `walk` this tile is constant along, so that one read of it serves every
-    /// position of all of them at once.
-    ///
-    /// Two spellings, one fact. An axis the tile's own space does not span it cannot vary over at
-    /// all; an axis it spans but whose projection addresses nothing it cannot vary over either.
-    /// Both say the same thing (the operand distinguishes nothing there) and a consumer that
-    /// wants to know how far out of a nest a read lifts wants both.
-    ///
-    /// The [gathered nest](crate::FactorReuse) asks this of a procedural factor through its
-    /// recipe, which reads its own axes rather than addressing them. Same question, and the answer
-    /// means the same thing: the scope over which the value holds.
+    /// The axes of `walk` this tile is constant along, so one read serves every position of all
+    /// of them at once. Two spellings, one fact: an axis the tile's space does not span, and an
+    /// axis it spans but whose projection addresses nothing. A consumer asking how far out of a
+    /// nest a read lifts wants both. The [gathered nest](crate::FactorReuse) asks the same of a
+    /// procedural factor through its recipe, which reads its axes rather than addressing them.
     pub(crate) fn invariant_over(&self, #[comptime] walk: Space) -> comptime_type!(Vec<Axis>) {
         let projection = self.projection();
         comptime!(
@@ -516,6 +483,11 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
+    /// Whether this tile can state `axis`'s runtime size for its operation: it spans the axis
+    /// [`Dynamic`](crate::Extent), has a buffer to read a bound off, and that bound is the axis's
+    /// own extent ([`bound_states`]). Spanning an axis and being able to supply it are separate
+    /// questions, so an operation sizes each `Dynamic` axis from whichever operand witnesses it
+    /// and lets the others pass ([`witnessed_space`]).
     pub fn witnesses(&self, #[comptime] axis: Axis) -> comptime_type!(bool) {
         let bounded = self.bounded();
         let projection = self.projection();
@@ -637,11 +609,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData)
-    /// folded from the tensor shape. The source of a [`Dynamic`](crate::Extent) axis's
-    /// tile count. Only an axis this tile [`witnesses`](Tile::witnesses) has one: a fragment has no
-    /// buffer extent ([`bounded`](Tile::bounded)), and a gathered or storage-tiled axis no bound of
-    /// its own ([`bound_position`]).
+    /// This operand's runtime logical size along `axis`, read off the [`bound`](MemData) folded
+    /// from the tensor shape, and the source of a [`Dynamic`](crate::Extent) axis's tile count.
+    /// Only an axis this tile [`witnesses`](Tile::witnesses) has one.
     pub(crate) fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let projection = self.projection();
         let p = comptime!(bound_position(&projection, axis));
@@ -693,12 +663,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding
-    /// it in leaves unchanged.
-    ///
-    /// `Sum` goes through [`zero`](Tile::zero), which every accumulator form can do, hardware mma
-    /// fragments included; the other monoids need a real value and so reach only the forms
-    /// [`init`](Tile::init) serves.
+    /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding it
+    /// in leaves unchanged. `Sum` goes through [`zero`](Tile::zero), which every accumulator form
+    /// can do; the other monoids need a real value and so reach only [`init`](Tile::init)'s forms.
     pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
@@ -792,13 +759,10 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element
-    /// type. [`copy_from`](Self::copy_from) can't: its transports move bytes so stay same-type,
-    /// but a register accumulator (`f32`) is wider than the output it writes (`f16`). Only a
-    /// fragment partition drains this way.
-    ///
-    /// Crate-internal: what closes an accumulator's scope is the scope's own business
-    /// ([`AccumulatorScope`](crate::AccumulatorScope)), not a call site's.
+    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element type.
+    /// [`copy_from`](Self::copy_from) cannot: its transports move bytes and stay same-type, but a
+    /// register accumulator is wider than the output it writes. Crate-internal, because closing an
+    /// accumulator's scope is the scope's own business.
     pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
             TileKind::PlanePartition(s) => s.drain_cast_into(dst),
