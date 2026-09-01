@@ -191,6 +191,10 @@ impl Spatial {
     pub fn coverage(self) -> Coverage {
         self.coverage
     }
+
+    pub fn spread(self) -> Spread {
+        self.spread
+    }
 }
 
 impl From<Spatial> for Distribution {

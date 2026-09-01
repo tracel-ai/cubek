@@ -8,8 +8,8 @@
 use crate::{Axis, ByAxis, Instruction, Space};
 
 use super::{
-    Buffering, ComputeScope, CubeAxis, Distribution, OperandSet, Partitioner, Spatial, WalkOrder,
-    Work, cubes, lanes, planes,
+    Buffering, ComputeScope, CubeAxis, Distribution, OperandSet, Partitioner, Spatial, Spread,
+    WalkOrder, Work, cubes, lanes, planes,
 };
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
@@ -434,6 +434,14 @@ impl LevelCuts {
             "LevelCuts::distribute: the plane's lanes combine in registers, which needs them in \
              lockstep, and lanes holding different shares never are. Cut an axis across them \
              (`Cut::unit`) instead."
+        );
+        // A share is walked as a nest: consecutive steps of one region under one accumulator,
+        // then the next region. Turns would put a different region under it at every step.
+        assert!(
+            dist.spread() == Spread::Contiguous,
+            "LevelCuts::distribute: a share is a run of the index, so its steps are consecutive; \
+             instances taking turns would leave no region long enough to accumulate in. \
+             Interleave an axis instead (`Cut::unit(..).interleaved()` and its siblings)."
         );
         for &(axis, edge) in axes {
             self.cuts.push((axis, Cut::sequential(edge)));

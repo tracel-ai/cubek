@@ -283,6 +283,22 @@ fn distributing_work_across_lanes_is_refused() {
         .build();
 }
 
+/// A share is walked as a nest, one region at a time, so its steps have to be consecutive.
+/// Instances taking turns would put a different region under the accumulator at every step.
+#[test]
+#[should_panic = "instances taking turns would leave no region long enough"]
+fn distributing_work_in_turns_is_refused() {
+    Tiling::new()
+        .extents(&[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.distribute(
+                &[(M, 16), (N, 32), (K, 16)],
+                cubes(CubeAxis::X).instances(5).interleaved(),
+            )
+        })
+        .build();
+}
+
 /// A level states each of its axes once, whichever way it states them.
 #[test]
 #[should_panic = "a level states each of its axes once"]
