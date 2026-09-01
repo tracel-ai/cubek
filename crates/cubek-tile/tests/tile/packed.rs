@@ -62,6 +62,164 @@ fn packed_matmul<E: Numeric>(
     c.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
 }
 
+/// [`packed_matmul`] with two scale levels: `nvfp4`'s shape.
+#[cube(launch)]
+fn nvfp4_shaped_matmul<E: Numeric>(
+    w: &TileArg<'_, u32, Const<1>>,
+    x: &TileArg<'_, E, Const<1>>,
+    blocks: &TileArg<'_, E, Const<1>>,
+    global: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let x = x.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(blocks.tile(comptime!(space.clone())));
+    levels.push(global.tile(comptime!(space.clone())));
+    let mut c = c.tile(space);
+    c.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
+}
+
+/// **`nvfp4`'s shape, end to end.** `e2m1` values eight to a word, a scale per sixteen of them, and
+/// one factor over the whole tensor.
+///
+/// The only thing standing between this and the format itself is where the block scales are
+/// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything the design
+/// has to get right is here — the value decode, two levels in order, the coarser one spanning no
+/// axis, and a block of sixteen against words of eight.
+///
+/// Nothing in the kernel names the format, the block, or the number of levels.
+#[test]
+fn nvfp4_shaped_decode() {
+    let (field, rows, cols, block, blocks) = (QuantValue::E2M1, 4, 4, 16, 2);
+    let depth = block * blocks;
+    let factor = 32 / field.size_bits();
+
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    // Every code, cycled, so the whole value ladder and both signs are read back.
+    let codes: Vec<u32> = (0..rows * depth).map(|i| (i % 16) as u32).collect();
+    let words: Vec<u32> = codes
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &c)| acc | (c << (j * field.size_bits())))
+        })
+        .collect();
+    let x: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Halves and a quarter, so the reference is exact.
+    let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
+    let g = vec![0.25f32];
+
+    let dtype = f32::elem_type_native();
+    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+        vec![rows, depth],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let (s_tensor, _) = TestInput::builder(client.clone(), shape![rows, blocks])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let (g_tensor, _) = TestInput::builder(client.clone(), shape![1])
+        .dtype(dtype)
+        .custom(g.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(M, Cut::sequential(rows))
+                .axis(N, Cut::sequential(cols))
+                .axis(KB, Cut::sequential(1))
+                .axis(KI, Cut::sequential(factor))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    nvfp4_shaped_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            // One scale per `(row, block of sixteen)`.
+            TileSpec::new(Projection::new(
+                &[M, KB],
+                &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
+            )),
+        ),
+        TileArgLaunch::new(
+            g_tensor.binding().into_tensor_arg(),
+            // The same axes, addressing neither: one value over all their tiles.
+            TileSpec::new(Projection::new(&[M, KB], &[PhysicalAxisMap::broadcast()])),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space,
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| {
+                    let value = e2m1::from_bits(codes[m * depth + k] as u8).to_f32();
+                    value * s[m * blocks + k / block] * g[0] * x[k * cols + n]
+                })
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
 /// `c = x · (w ⊗ s)` with `w` packed along its columns: the q4 kernel with the *weights on the
 /// right*, which is the shape the shipped quant matmul has. Same verb, same body — only the
 /// scales' axes differ, and that is what says which factor they meet.
