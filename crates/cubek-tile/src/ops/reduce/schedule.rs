@@ -76,15 +76,15 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         input: &Tile<In>,
         #[comptime] monoid: Monoid,
-        op_space: Space,
+        walk: Walk,
         #[comptime] depth: usize,
     ) {
         let out = comptime!(self.space.clone());
-        let mut walk = ReduceWalk::<Acc, In> {
+        let mut op = ReduceWalk::<Acc, In> {
             acc: self.clone(),
             input: input.clone(),
             monoid,
         };
-        pipelined_walk::<ReduceWalk<Acc, In>>(&mut walk, op_space, out, depth);
+        pipelined_walk::<ReduceWalk<Acc, In>>(&mut op, walk, out, depth);
     }
 }

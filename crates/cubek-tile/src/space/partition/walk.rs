@@ -28,8 +28,10 @@ pub struct Walk {
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
     steps: usize,
+    /// The space the regions are cut from, which is also what a schedule sizes its slots to
+    /// ([`pipelined_walk`](crate::pipelined_walk)).
     #[cube(comptime)]
-    space: Space,
+    pub(crate) space: Space,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
@@ -289,7 +291,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
 /// it through the axis's shared-dim stride to the per-axis instance coordinate.
 #[cube]
-fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
+pub(crate) fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     match comptime!(unit) {
         ComputeScope::Cube(dim) => {
             let cube_pos = match comptime!(dim) {

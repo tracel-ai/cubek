@@ -115,6 +115,30 @@ impl SplitShare {
     }
 }
 
+/// How a level hands its grid to the instances that run it.
+///
+/// [`PerAxis`](Deal::PerAxis) is the deal every level has had: each axis is distributed on its
+/// own ([`Distribution`]), so an instance's share is the product of its per-axis runs, which is a
+/// rectangle of the grid. A rectangle cannot name a run that starts inside one region and ends
+/// inside another, and that is exactly what a contraction cut without regard to the output's
+/// tiles has to be: no rectangle of a four by two grid holds three regions.
+///
+/// [`Streamed`](Deal::Streamed) is that run. This level's grid and its child's are one line, and
+/// an instance takes a contiguous range of it, so the level and the one under it are dealt
+/// together and the axes of both stay [`Sequential`](Distribution::Sequential).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Deal {
+    /// Each axis dealt on its own, an instance's share a rectangle of the grid.
+    PerAxis,
+    /// This level's grid and its child's dealt as one line, an instance's share a run of it.
+    /// `instances` is how many runs the line is cut into, which the grid cannot say: it is the
+    /// width of the device rather than a fact about the problem.
+    Streamed {
+        scope: ComputeScope,
+        instances: usize,
+    },
+}
+
 /// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
 /// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

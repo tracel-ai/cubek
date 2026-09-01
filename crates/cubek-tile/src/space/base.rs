@@ -5,8 +5,8 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole, MAX_AXES,
-    Partitioner, SplitShare, join_lane_share,
+    Axis, ComputeScope, Deal, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole,
+    MAX_AXES, Partitioner, SplitShare, join_lane_share,
 };
 
 use super::ByAxis;
@@ -511,6 +511,18 @@ impl Space {
     pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
         let mut level = self.clone();
         while !level.is_final() {
+            // A streamed level deals a line, not an axis: a run of it covers part of a cell
+            // whenever the line runs over an axis the operand does not span, and which part is
+            // not something the level's own distributions record.
+            if let Deal::Streamed { .. } = level.partitioner().deal()
+                && level
+                    .partitioner()
+                    .axes()
+                    .into_iter()
+                    .any(|axis| !axes.contains(&axis))
+            {
+                return SplitShare::Partial;
+            }
             let split = level.partitioner().axes().into_iter().any(|axis| {
                 // An axis the operand spans is carried, not split: it gives each instance a cell
                 // of its own rather than a slice of one.
@@ -975,6 +987,54 @@ mod contraction_tests {
             })
             .build();
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+    }
+
+    /// A streamed level deals a line rather than an axis, and the line runs over the
+    /// contraction: a run of it can start and end inside a cell's contraction, so the output is
+    /// partial even though no axis of the level rides the cubes.
+    #[test]
+    fn a_streamed_level_is_partial_to_the_output() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(8))
+            })
+            .streamed(CubeAxis::X, 3)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build();
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+        // An operand spanning every axis of the line holds whole cells of its own, the same way
+        // it does under a cut.
+        assert_eq!(space.split_share_of(&[M, N, K]), SplitShare::Whole);
+    }
+
+    /// The runs ride the cubes even though no axis does, so the launch grid is the run count.
+    #[test]
+    fn a_streamed_level_launches_its_runs() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+        use cubecl::CubeCount;
+        let space = Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(8))
+            })
+            .streamed(CubeAxis::X, 3)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4))
+            })
+            .build();
+        assert!(matches!(space.cube_count(), CubeCount::Static(3, 1, 1)));
     }
 
     /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.

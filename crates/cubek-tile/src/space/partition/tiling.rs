@@ -7,7 +7,9 @@
 
 use crate::{Axis, ByAxis, Instruction, Space};
 
-use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
+use super::{
+    Buffering, ComputeScope, CubeAxis, Deal, Distribution, OperandSet, Partitioner, WalkOrder,
+};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
 /// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
@@ -49,6 +51,9 @@ impl Cut {
 struct LevelSpec {
     order: WalkOrder,
     buffering: Buffering,
+    /// How the level hands its grid out. [`PerAxis`](Deal::PerAxis) unless
+    /// [`streamed`](LeveledTiling::streamed) says otherwise.
+    deal: Deal,
     cuts: Vec<(Axis, Cut)>,
     /// Whether any operand stated a residence here ([`Tiling::over`] only). A level that cuts
     /// nothing but moves an operand is not null, so it is not droppable.
@@ -210,9 +215,29 @@ impl LeveledTiling {
         self.levels.push(LevelSpec {
             order,
             buffering,
+            deal: Deal::PerAxis,
             cuts,
             moves_an_operand,
         });
+    }
+
+    /// Deal the level just declared, and the one under it, as one line of `instances`
+    /// contiguous runs across the cubes of `axis` ([`Deal::Streamed`]).
+    ///
+    /// The two levels are dealt together because the run is what makes them one: a run of the
+    /// line covers whole regions of the level below and parts of the ones at either end, which
+    /// is the whole point and is why no rectangle can express it. Every axis of both stays
+    /// [`sequential`](Cut::sequential); what rides the cubes is the line, not an axis of it.
+    pub fn streamed(mut self, axis: CubeAxis, instances: usize) -> Self {
+        let level = self
+            .levels
+            .last_mut()
+            .expect("LeveledTiling::streamed: no level to deal; declare one first");
+        level.deal = Deal::Streamed {
+            scope: ComputeScope::Cube(axis),
+            instances,
+        };
+        self
     }
 
     /// The last level, and what runs on the cells it cuts out. See
@@ -242,8 +267,9 @@ impl LeveledTiling {
     /// A level whose edges are the extents handed to it cuts nothing: [`Space::count`] is 1 on
     /// every axis. Drop it: the level is part of the [`Space`], and the [`Space`] is the
     /// kernel-cache key, so keeping it compiles the same program twice. Four things a level
-    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, an operand
-    /// moving here, the instruction it carries, and being the only level left. That last one is
+    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, a deal of
+    /// its own, an operand moving here, the instruction it carries, and being the only level
+    /// left. That last one is
     /// not a fallback: a partitioned space separates a tile from the cells it is walked in, and
     /// a space with no level at all *is* its cell, which is a different space entirely.
     fn kept_levels(&self) -> Vec<bool> {
@@ -262,6 +288,7 @@ impl LeveledTiling {
                 let last_standing = index == last && !kept_any;
                 let keep = edges != parent
                     || level.buffering != parent_buffering
+                    || level.deal != Deal::PerAxis
                     || level.moves_an_operand
                     || (self.instruction.is_some() && index == last)
                     || last_standing;
@@ -304,7 +331,7 @@ impl LeveledTiling {
                     Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
                 }
             };
-            space = space.with_partitioner(builder.buffered(level.buffering));
+            space = space.with_partitioner(builder.dealt(level.buffering, level.deal));
         }
         match self.instruction {
             Some(instruction) => space.with_instruction(instruction),

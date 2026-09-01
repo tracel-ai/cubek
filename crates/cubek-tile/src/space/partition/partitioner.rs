@@ -3,7 +3,7 @@
 
 use crate::{Axis, ByAxis};
 
-use super::{ComputeScope, Distribution, WalkOrder};
+use super::{ComputeScope, Deal, Distribution, WalkOrder};
 
 /// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
 /// materialized at all, and into what, is the operand's own
@@ -107,6 +107,7 @@ pub struct Level {
     edges: ByAxis<usize>,
     dists: ByAxis<Distribution>,
     scope: LevelScope,
+    deal: Deal,
     order: WalkOrder,
     buffering: Buffering,
     next: Partitioner,
@@ -123,6 +124,10 @@ impl Level {
 
     pub(crate) fn role(&self) -> LevelRole {
         self.scope.role()
+    }
+
+    pub(crate) fn deal(&self) -> Deal {
+        self.deal
     }
 }
 
@@ -166,6 +171,12 @@ impl Partitioner {
         self.level().order
     }
 
+    /// How this level hands its grid out. Panics on [`Final`](Partitioner::Final), which carries
+    /// no level.
+    pub fn deal(&self) -> Deal {
+        self.level().deal
+    }
+
     /// How many levels this chain has left, i.e. how many residences an operand descending it
     /// states ([`StagePlan`](crate::StagePlan)).
     pub fn depth(&self) -> usize {
@@ -186,6 +197,7 @@ impl Partitioner {
                     edges,
                     dists,
                     scope,
+                    deal,
                     order,
                     buffering,
                     next,
@@ -195,6 +207,7 @@ impl Partitioner {
                     edges,
                     dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
                     scope,
+                    deal,
                     order,
                     buffering,
                     next: next.resolve_lanes(plane_size),
@@ -211,6 +224,7 @@ impl Partitioner {
                     edges: sub_tile,
                     dists,
                     scope,
+                    deal,
                     order,
                     buffering,
                     next,
@@ -219,6 +233,7 @@ impl Partitioner {
                     edges: sub_tile,
                     dists,
                     scope,
+                    deal,
                     order,
                     buffering,
                     next: next.append(tail),
@@ -263,7 +278,7 @@ impl PartitionerBuilder {
 
     /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
     /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
-    fn finish(self, buffering: Buffering) -> Partitioner {
+    fn finish(self, buffering: Buffering, deal: Deal) -> Partitioner {
         // The finest scope any axis rides; `Sequential` when none spreads at all.
         let scope = self
             .dists
@@ -275,6 +290,7 @@ impl PartitionerBuilder {
             edges: self.sub_tile,
             dists: self.dists,
             scope,
+            deal,
             order: self.order,
             buffering,
             next: Partitioner::Final,
@@ -284,7 +300,13 @@ impl PartitionerBuilder {
     /// Close the level with the depth its walk buffers to. The one way to state it: a depth is a
     /// number, so naming a few of them would only hide that.
     pub fn buffered(self, buffering: Buffering) -> Partitioner {
-        self.finish(buffering)
+        self.finish(buffering, Deal::PerAxis)
+    }
+
+    /// [`buffered`](Self::buffered) for a level whose grid is dealt out as runs rather than per
+    /// axis ([`Deal`]).
+    pub fn dealt(self, buffering: Buffering, deal: Deal) -> Partitioner {
+        self.finish(buffering, deal)
     }
 }
 

@@ -12,9 +12,14 @@
 //! run starting late reads the regions it was given rather than the first ones.
 
 use cubecl::{
-    Runtime, TestRuntime, ir::ElemType, prelude::*, std::tensor::TensorHandle, zspace::shape,
+    Runtime, TestRuntime,
+    features::AtomicUsage,
+    ir::{ElemType, FloatKind, Type},
+    prelude::*,
+    std::tensor::TensorHandle,
+    zspace::shape,
 };
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
 
 const ROW: Axis = Axis(0);
@@ -217,4 +222,184 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
             );
         }
     }
+}
+
+// -- The contraction ---------------------------------------------------------
+//
+// The assignment above, over a matmul. `K` is not cut at cube scope and no axis is: the line runs
+// over the output's tiles and each tile's `K` blocks together, and a cube takes a run of it. A run
+// covers whole tiles in the middle and part of the contraction of the two at either end, so
+// several cubes hold slices of the same cell and the destination folds them.
+
+const MM: Axis = Axis(2);
+const NN: Axis = Axis(3);
+const KK: Axis = Axis(4);
+
+/// The kernel an unstreamed contraction writes. The stream is the space's statement and the
+/// output's, so only the argument's type says anything here.
+#[cube(launch)]
+fn stream_matmul<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile(space);
+    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
+    acc.mm(&a, &b, Semiring::SUM_PROD);
+}
+
+/// The tile the contraction accumulates in, and the block it walks `K` in.
+const TILE_M: usize = 4;
+const TILE_N: usize = 4;
+const BLOCK_K: usize = 4;
+
+/// `a · b` with the line dealt out over `cubes` runs, folded atomically into a zeroed output.
+fn run_stream_k(m: usize, n: usize, k: usize, cubes: usize) -> HostData {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let dtype = f32::elem_type_native();
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    // Zeroed by the launch: no cube owns a cell, so none of them may seed one.
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Tiling::new()
+        .extents(&[(MM, m), (NN, n), (KK, k)])
+        // The output's tiles. `K` is uncut here, so this level's grid is the tile grid.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(MM, Cut::sequential(TILE_M))
+                .axis(NN, Cut::sequential(TILE_N))
+                .axis(KK, Cut::sequential(k))
+        })
+        .streamed(CubeAxis::X, cubes)
+        // One tile's contraction, which is what a run counts in.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(MM, Cut::sequential(TILE_M))
+                .axis(NN, Cut::sequential(TILE_N))
+                .axis(KK, Cut::sequential(BLOCK_K))
+        })
+        .build()
+        .with_instruction(Instruction::registers(16));
+
+    stream_matmul::launch::<TestRuntime>(
+        &client,
+        space.cube_count(),
+        space.cube_dim(&client),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[MM, KK]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[KK, NN]),
+        ),
+        AccumulateArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[MM, NN]).residence(&[Residence::Register]),
+        ),
+        space,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
+}
+
+/// The same contraction on the host, from the same seeds.
+fn reference(m: usize, n: usize, k: usize) -> Vec<f32> {
+    let a = |i: usize, p: usize| ((i * k + p) % 7) as f32 - 3.0;
+    let b = |p: usize, j: usize| ((p * n + j) % 5) as f32 - 2.0;
+    let mut out = vec![0.0; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            out[i * n + j] = (0..k).map(|p| a(i, p) * b(p, j)).sum();
+        }
+    }
+    out
+}
+
+/// Every run count computes the same contraction. The interesting ones are those that do not
+/// divide the line: their runs start and end inside a tile's contraction, which is what makes
+/// this stream-K rather than a split of `K`.
+fn stream_k_agrees_with_the_whole(cubes: usize) {
+    let (m, n, k) = (8usize, 8usize, 16usize);
+    let got = run_stream_k(m, n, k, cubes);
+    let want = reference(m, n, k);
+    for i in 0..m {
+        for j in 0..n {
+            let have = got.get_f32(&[i, j]);
+            let want = want[i * n + j];
+            assert!(
+                (have - want).abs() < 1e-3,
+                "{cubes} runs: at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// The control: one run is the whole line, so nothing is partial and nothing is folded across
+/// cubes. A stream that only works when it is split is not working.
+#[test]
+fn a_stream_of_one_run_is_the_whole_contraction() {
+    if !folds_atomically() {
+        return;
+    }
+    stream_k_agrees_with_the_whole(1);
+}
+
+/// Runs that end on a tile boundary: the same work a split of `K` would do, reached by dealing a
+/// line rather than by cutting an axis.
+#[test]
+fn runs_that_end_on_a_tile_do_the_split_a_cut_would() {
+    if !folds_atomically() {
+        return;
+    }
+    // 4 tiles of 4 K blocks: 16 steps of line over 4 and 8 runs.
+    stream_k_agrees_with_the_whole(4);
+    stream_k_agrees_with_the_whole(8);
+}
+
+/// Runs that do not: 16 steps over 3, 5 and 7 leaves every run straddling a tile boundary, so a
+/// cube seeds a fresh accumulator part way through a tile's contraction and folds a slice that no
+/// cut of `K` could hand it.
+#[test]
+fn runs_that_straddle_a_tile_boundary_still_sum_to_the_whole() {
+    if !folds_atomically() {
+        return;
+    }
+    stream_k_agrees_with_the_whole(3);
+    stream_k_agrees_with_the_whole(5);
+    stream_k_agrees_with_the_whole(7);
+    // More runs than the line has steps, so some cubes get nothing at all.
+    stream_k_agrees_with_the_whole(24);
+}
+
+/// The drain folds, so a device without a float atomic add cannot run any of this.
+fn folds_atomically() -> bool {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let folds = client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add);
+    if !folds {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+    }
+    folds
 }
