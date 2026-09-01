@@ -9,6 +9,7 @@
 mod arg;
 mod delivery;
 mod geometry;
+mod launch;
 mod layout;
 mod projection;
 mod residence;
@@ -17,6 +18,7 @@ mod source;
 pub use arg::*;
 pub use delivery::*;
 pub use geometry::*;
+pub use launch::*;
 pub use layout::*;
 pub use projection::*;
 pub use residence::*;

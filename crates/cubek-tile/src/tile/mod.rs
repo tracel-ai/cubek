@@ -5,7 +5,6 @@
 
 mod atomic;
 mod cmma;
-mod geometry;
 mod mem;
 mod mma;
 mod packing;
@@ -16,7 +15,6 @@ mod tma;
 mod view;
 
 pub use cmma::*;
-pub use geometry::*;
 pub use mem::*;
 pub use mma::*;
 pub use packing::*;
