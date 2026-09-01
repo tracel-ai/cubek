@@ -38,7 +38,8 @@ pub fn quant_gemv_kernel<
 ) {
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(scales.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
-    out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    out.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
 }

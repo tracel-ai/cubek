@@ -78,7 +78,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    scales: &Tile<ES>,
+    scales: &Sequence<Tile<ES>>,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -114,8 +114,11 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
         "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
          N-D nest, which addresses every operand at the cell instead"
     ));
-    let side = comptime!(scale_side(&scales.space, &space, shape.acc_axes));
-    let scales_projection = scales.projection();
+    // Every query about "the scales" is about the level nearest the values: the coarser ones cover
+    // a tile of its tiles, so they neither pick the side nor set the granularity.
+    let inner = scales.index(0);
+    let side = comptime!(scale_side(&inner.space, &space, shape.acc_axes));
+    let scales_projection = inner.projection();
     comptime!(check_scales_omit_rather_than_divide(&scales_projection));
     direct::contract_scaled::<E, EL, ER, ES>(
         acc,

@@ -89,6 +89,17 @@ pub(crate) enum EdgeOrdinal {
     Runtime(String),
 }
 
+/// How a scale level is applied to what it covers.
+///
+/// Named rather than assumed. What the engine may do with several levels follows from this and from
+/// nothing else, the same way [`Semiring`] licenses what the contraction may do: combining levels
+/// before they meet the values is a reassociation, and only a verb can license one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Apply {
+    /// The level below is multiplied by it.
+    Product,
+}
+
 /// A caller's contraction geometry, as a scale level needs to see it: the two edges its values can
 /// be read along, the row counts their matrices take, and the widths each edge is served at.
 ///
@@ -125,6 +136,8 @@ pub(crate) struct ContractEdges {
 /// level beneath it at any level above. Nothing here knows which, or how many there are.
 #[derive(Clone, Copy)]
 pub(crate) struct ScaleLevel {
+    /// What this level does to the level below it.
+    pub apply: Apply,
     /// The scales' own matrix, as the level below reads it.
     pub axes: MatrixAxes,
     /// Lines of the level below that one scale covers, along the edge they share.
@@ -176,6 +189,7 @@ impl ScaleLevel {
             .product::<usize>()
             / value_width;
         ScaleLevel {
+            apply: Apply::Product,
             axes: MatrixAxes::of(scales, rows, cols),
             lines_per_scale,
             lanes,

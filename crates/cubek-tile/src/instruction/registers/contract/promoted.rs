@@ -12,7 +12,7 @@ use cubecl::prelude::*;
 use crate::instruction::registers::block;
 use crate::instruction::registers::contract::scale_side;
 use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
-use crate::instruction::registers::lines::ScaledLines;
+use crate::instruction::registers::lines::{CombinedScales, ScaledLines};
 use crate::*;
 
 #[cube]
@@ -112,7 +112,7 @@ impl<T: Numeric> RegisterData<T> {
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
-        scales: &Tile<ES>,
+        scales: &Sequence<Tile<ES>>,
         #[comptime] out: Space,
         #[comptime] semiring: Semiring,
     ) {
@@ -123,7 +123,8 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
-        let sw = scales.vector_size();
+        let inner = scales.index(0);
+        let sw = inner.vector_size();
         // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
         // packing factor, so this is the assert that asks the accumulator to be that wide.
         comptime!(assert!(
@@ -145,15 +146,15 @@ impl<T: Numeric> RegisterData<T> {
 
         let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs.space));
         let cols = comptime!(acc_axes.cols(&out));
-        let side = comptime!(scale_side(&scales.space, &out, acc_axes));
+        let side = comptime!(scale_side(&inner.space, &out, acc_axes));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
         // This block's own geometry. It walks one contracted value a step, so its accumulator
         // width is the width whichever edge the scales share is served at.
         let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-        let invariant = scales.invariant_over(comptime!(operands.clone()));
+        let invariant = inner.invariant_over(comptime!(operands.clone()));
         let level = comptime!(ScaleLevel::of(
-            &scales.space,
+            &inner.space,
             &ContractEdges {
                 mr,
                 kc,
@@ -190,9 +191,9 @@ impl<T: Numeric> RegisterData<T> {
         // source against one plain one. Which operand that is decides two types, so two calls.
         match comptime!(side) {
             ScaleSide::Lhs => {
-                let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, MatrixView<Vector<ES, S>>>::new(
+                let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>::new(
                     lhs.matrix_packed::<L>(lhs_axes, 0usize),
-                    scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
+                    super::direct::combined_scales::<ES, S>(scales, comptime!(level), 0usize),
                     comptime!(level.lines_per_scale),
                     comptime!(level.lanes),
                 );
@@ -203,7 +204,7 @@ impl<T: Numeric> RegisterData<T> {
                     L,
                     ER,
                     RA,
-                    ScaledLines<MatrixView<Vector<EL, L>>, MatrixView<Vector<ES, S>>>,
+                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>,
                     MatrixView<Vector<ER, RA>>,
                 >(
                     &lhs_mat,
@@ -221,9 +222,9 @@ impl<T: Numeric> RegisterData<T> {
             }
             ScaleSide::Rhs => {
                 let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
-                let rhs_mat = ScaledLines::<MatrixView<Vector<ER, RA>>, MatrixView<Vector<ES, S>>>::new(
+                let rhs_mat = ScaledLines::<MatrixView<Vector<ER, RA>>, CombinedScales<ES, S>>::new(
                     rhs.matrix_packed::<RA>(rhs_axes, 0usize),
-                    scales.matrix_packed::<S>(comptime!(level.axes), 0usize),
+                    super::direct::combined_scales::<ES, S>(scales, comptime!(level), 0usize),
                     comptime!(level.lines_per_scale),
                     comptime!(level.lanes),
                 );
@@ -234,7 +235,7 @@ impl<T: Numeric> RegisterData<T> {
                     ER,
                     RA,
                     MatrixView<Vector<EL, L>>,
-                    ScaledLines<MatrixView<Vector<ER, RA>>, MatrixView<Vector<ES, S>>>,
+                    ScaledLines<MatrixView<Vector<ER, RA>>, CombinedScales<ES, S>>,
                 >(
                     &lhs_mat,
                     &rhs_mat,

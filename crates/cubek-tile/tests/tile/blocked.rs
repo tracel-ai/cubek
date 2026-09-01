@@ -53,9 +53,10 @@ fn scaled_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(scales.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
 }
 
 /// The reference: one contracted axis, cut at the block. What the split has to reproduce.
@@ -587,9 +588,10 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(scales.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
 }
 
 /// **The scales read as a line.** Their innermost axis is `NB`, the block index, which is an axis
@@ -799,10 +801,11 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(scales.tile(comptime!(space.clone())));
     let c = c.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    acc.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
 }
 
 /// **The shape a decode gemv runs.** Scales read as a line against a register accumulator.
@@ -910,9 +913,10 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(scales.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.mm_scaled(&a, &b, &levels, Semiring::SUM_PROD);
 }
 
 /// **A scale is whatever its tensor holds, however many of them a read serves.** `f16` scales

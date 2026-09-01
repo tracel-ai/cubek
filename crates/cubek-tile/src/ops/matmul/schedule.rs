@@ -110,7 +110,7 @@ pub(crate) struct MmaScaledWalk<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Num
     acc: Tile<Acc>,
     lhs: Tile<Lhs>,
     rhs: Tile<Rhs>,
-    scales: Tile<S>,
+    scales: Sequence<Tile<S>>,
     #[cube(comptime)]
     semiring: Semiring,
 }
@@ -127,7 +127,7 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
         #[comptime] out: Space,
         #[comptime] depth: usize,
     ) -> Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)> {
-        Ring::ternary(&self.lhs, &self.rhs, &self.scales, op_space, out, depth)
+        Ring::ternary(&self.lhs, &self.rhs, self.scales.index(0), op_space, out, depth)
     }
 
     fn unrolled(&self, ring: &Ring<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>) -> comptime_type!(bool) {
@@ -140,11 +140,11 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
     }
 
     fn fill_fixed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>, region: &Region) {
-        slot.fill_fixed(&self.lhs, &self.rhs, &self.scales, region);
+        slot.fill_fixed(&self.lhs, &self.rhs, self.scales.index(0), region);
     }
 
     fn fill_streamed(&self, slot: &mut Staging<(Tile<Lhs>, Tile<Rhs>, Tile<S>)>, region: &Region) {
-        slot.fill_streamed(&self.lhs, &self.rhs, &self.scales, region);
+        slot.fill_streamed(&self.lhs, &self.rhs, self.scales.index(0), region);
     }
 
     fn compute(
@@ -159,16 +159,25 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric, S: Numeric> Pipelined
         let lhs_payload = comptime!(lhs_plan.payload);
         let rhs_payload = comptime!(rhs_plan.payload);
         let scales_payload = comptime!(scales_plan.payload);
+        // The ring stages the level nearest the values; the coarser ones ride in place, each being
+        // one value over a span the walk never leaves.
+        let coarser = self.scales.clone();
         if comptime!(publish) {
             slot.publish();
         }
         slot.consume(|staged_lhs, staged_rhs, staged_scales| {
             let lhs = read_operand(staged_lhs, region, lhs_payload);
             let rhs = read_operand(staged_rhs, region, rhs_payload);
-            let scales = read_operand(staged_scales, region, scales_payload);
+            let staged = read_operand(staged_scales, region, scales_payload);
+            let mut levels = Sequence::new();
+            levels.push(staged);
+            #[unroll]
+            for k in 1..coarser.len() {
+                levels.push(coarser.index(k).at(region));
+            }
             self.acc
                 .at(region)
-                .mma_scaled(&lhs, &rhs, &scales, comptime!(self.semiring))
+                .mma_scaled(&lhs, &rhs, &levels, comptime!(self.semiring))
         });
     }
 }
@@ -180,7 +189,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Tile<S>,
+        scales: &Sequence<Tile<S>>,
         op_space: Space,
         #[comptime] depth: usize,
         #[comptime] semiring: Semiring,

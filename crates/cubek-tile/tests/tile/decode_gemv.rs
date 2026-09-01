@@ -50,9 +50,10 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let s = s.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(s.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
-    out.mm_scaled(&w, &x, &s, Semiring::SUM_PROD);
+    out.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
 }
 
 /// The same, with the partials living in registers for the whole `K` walk: `out` states
@@ -73,10 +74,11 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let s = s.tile(comptime!(space.clone()));
+    let mut levels = Sequence::new();
+    levels.push(s.tile(comptime!(space.clone())));
     let out = out.tile(space);
     let mut acc = out.accumulate::<E, _>(&w, Monoid::Sum);
-    acc.mm_scaled(&w, &x, &s, Semiring::SUM_PROD);
+    acc.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
 }
 
 #[test]

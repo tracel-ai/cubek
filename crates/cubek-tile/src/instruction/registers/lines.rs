@@ -12,6 +12,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
+use crate::instruction::registers::contract::Apply;
 use crate::*;
 
 /// One operand's lines as the contraction reads them.
@@ -193,5 +194,65 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
             steps: self.lines_per_scale,
         }
         .compose(above, self.lines_per_scale * self.lanes))
+    }
+}
+
+/// Every level of a scales operand, read as one line.
+///
+/// The levels are a list, applied innermost first. Coarser levels are read one scale at a time and
+/// broadcast across the inner line, which is what a level covering a tile of the inner level's tiles
+/// *is*; the inner level is read at the width its own cut gives it.
+///
+/// **Every level is read at the same logical position.** A level resolves that position to its own
+/// granularity through its own projection, which is what "one scale per block" already means, so
+/// nothing here divides a coordinate or knows how many levels there are.
+#[derive(CubeType)]
+pub struct CombinedScales<'a, S: Numeric, W: Size> {
+    inner: MaskedView<'a, Vector<S, W>, Coords2d>,
+    outer: Sequence<MaskedView<'a, Vector<S, Const<1>>, Coords2d>>,
+    /// What each coarser level does to the line below it, in the order they are applied.
+    #[cube(comptime)]
+    applies: Vec<Apply>,
+}
+
+#[cube]
+impl<'a, S: Numeric, W: Size> CombinedScales<'a, S, W> {
+    pub fn new(
+        inner: MaskedView<'a, Vector<S, W>, Coords2d>,
+        outer: Sequence<MaskedView<'a, Vector<S, Const<1>>, Coords2d>>,
+        #[comptime] applies: Vec<Apply>,
+    ) -> Self {
+        CombinedScales::<'a, S, W> {
+            inner,
+            outer,
+            applies,
+        }
+    }
+}
+
+#[cube]
+impl<'a, S: Numeric, W: Size> Lines for CombinedScales<'a, S, W> {
+    type E = S;
+    type V = W;
+
+    fn line(&self, pos: Coords2d, #[comptime] _run: usize) -> Vector<S, W> {
+        let mut line = self.inner.read(pos);
+        // Each coarser level meets the whole line: it is one value over a span at least as wide as
+        // this line, so it has no lane of its own to pick. What it *does* is its verb's to say.
+        #[unroll]
+        for k in 0..self.outer.len() {
+            let coarser = self.outer.index(k).read(pos);
+            match comptime!(self.applies[k]) {
+                Apply::Product => line *= Vector::<S, W>::cast_from(coarser.extract(0usize)),
+            }
+        }
+        line
+    }
+
+    fn reuse(&self) -> comptime_type!(Reuse) {
+        // How a scale line is spent belongs to whoever reads it: this is the line, not the pattern.
+        // The coarser levels add nothing either, being one value each over a span at least this
+        // wide.
+        Reuse::PER_STEP
     }
 }
