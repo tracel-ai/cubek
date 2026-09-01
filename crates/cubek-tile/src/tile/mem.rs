@@ -210,7 +210,7 @@ pub struct Access {
 /// cubes that each hold a slice of one cell all write it, and the store adds rather than
 /// overwrites, so no cube has to know about the others and no second pass is needed.
 ///
-/// Stated by the constructor that builds the store ([`Tile::of_atomic_sink`]), never derived. A
+/// Stated by the constructor that builds the store ([`FoldArg`]), never derived. A
 /// backing cannot be asked what its writes mean: a folding sink and a fused epilogue are both
 /// calls through a layout, and only the caller knows which it built.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -492,7 +492,7 @@ impl<T: Numeric> Tile<T> {
 
     /// [`of_sink`](Tile::of_sink) whose writes *fold* into the cell instead of replacing it, which
     /// is what lets several cubes contract disjoint slices of one output cell and each write its
-    /// own. The destination is the sink's business: [`Tile::of_atomic_sink`] builds the one that
+    /// own. The destination is the sink's business: [`FoldArg`] builds the one that
     /// folds atomically into a buffer.
     ///
     /// The destination is never read, and under a split it must not be: what is there mid-flight

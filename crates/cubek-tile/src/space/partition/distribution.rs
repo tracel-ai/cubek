@@ -105,7 +105,7 @@ impl SplitShare {
                  destination replaces rather than folds, so every partial but one would be lost. \
                  A contracted axis cut at plane or cube scope (`Cut::plane`, `Cut::cube`) gives \
                  each instance a slice of the contraction, and none of them holds a whole cell. \
-                 Drain into a folding destination (`Tile::of_atomic_sink`), cut the contraction \
+                 Drain into a folding destination (bind it as a `FoldArg`), cut the contraction \
                  at unit scope (`Cut::unit`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),

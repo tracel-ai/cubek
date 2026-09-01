@@ -81,13 +81,11 @@ impl<E: Numeric, N: Size> WritesLines<E> for AtomicAccumulate<E, N> {}
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// A tile that folds into `values` atomically instead of storing, at line width `N`.
+    /// A tile whose writes fold into `values` instead of replacing, at served width `N`.
     ///
-    /// The output half of a contraction cut at cube scope: bind the same space and spec a plain
-    /// output would take, state [`Register`](Residence::Register) on the output so the
-    /// contraction runs in registers, and the drain that closes the accumulator folds each cube's
-    /// slice in. See [`Tile::of_folding_sink`] for what the caller owns.
-    pub fn of_atomic_sink<N: Size>(
+    /// Reached through [`FoldArg`], which is where a kernel names `N` once; this is the
+    /// constructor behind it. See [`Tile::of_folding_sink`] for what the caller owns.
+    pub fn folding<N: Size>(
         values: &Tensor<Atomic<T>>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,

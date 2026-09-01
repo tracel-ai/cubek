@@ -34,7 +34,8 @@ use cubecl::{
 use cubek_test_utils::{CatalogEntry, HostData, HostDataType, RunSamples, TileInput};
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Cut, Instruction, Monoid, PhysicalAxisMap, Projection, RegisterBlock,
-    Residence, Semiring, Space, TileArg, TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    FoldArg, FoldArgLaunch, Residence, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Tiling, WalkOrder,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -72,18 +73,13 @@ fn plain_matmul<E: Numeric>(
 fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &Tensor<Atomic<E>>,
+    out: &FoldArg<'_, E>,
     #[comptime] space: Space,
-    #[comptime] out_spec: TileSpec,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = cubek_tile::Tile::<E>::of_atomic_sink::<Const<1>>(
-        out,
-        comptime!(space.clone()),
-        comptime!(out_spec.clone()),
-    );
+    let c = out.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
     acc.mm(&a, &b, Semiring::SUM_PROD);
 }
@@ -345,9 +341,8 @@ impl Bound {
                     self.cube_dim,
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
-                    self.c.tensor_arg(1),
+                    FoldArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
                     self.space.clone(),
-                    self.out_spec.clone(),
                     dtype,
                 );
             }

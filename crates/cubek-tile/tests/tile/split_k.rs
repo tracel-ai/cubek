@@ -299,18 +299,13 @@ const K: Axis = Axis(4);
 fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &Tensor<Atomic<E>>,
+    out: &FoldArg<'_, E>,
     #[comptime] space: Space,
-    #[comptime] out_spec: TileSpec,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = Tile::<E>::of_atomic_sink::<Const<1>>(
-        out,
-        comptime!(space.clone()),
-        comptime!(out_spec.clone()),
-    );
+    let c = out.tile(space);
     let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
     acc.mm(&a, &b, Semiring::SUM_PROD);
 }
@@ -359,9 +354,11 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        out.clone().binding().into_tensor_arg(),
+        FoldArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        ),
         space,
-        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         dtype,
     );
 
@@ -498,9 +495,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        out.clone().binding().into_tensor_arg(),
+        FoldArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        ),
         space,
-        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         dtype,
     );
 
@@ -578,9 +577,11 @@ fn an_atomic_drain_folds_across_planes() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        out.clone().binding().into_tensor_arg(),
+        FoldArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+        ),
         space,
-        TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         dtype,
     );
 
@@ -610,18 +611,13 @@ fn an_atomic_drain_folds_across_planes() {
 fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
-    out: &Tensor<Atomic<E>>,
+    out: &FoldArg<'_, E>,
     #[comptime] space: Space,
-    #[comptime] out_spec: TileSpec,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = cubek_tile::Tile::<E>::of_atomic_sink::<Const<1>>(
-        out,
-        comptime!(space.clone()),
-        comptime!(out_spec.clone()),
-    );
+    let mut c = out.tile(space);
     c.mm(&a, &b, Semiring::SUM_PROD);
 }
 
@@ -679,10 +675,12 @@ fn a_folding_output_contracts_in_place() {
             b_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[K, N]),
         ),
-        out.clone().binding().into_tensor_arg(),
+        FoldArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            // No residence stated: the contraction happens where the output already lies.
+            TileSpec::direct(&[M, N]),
+        ),
         space,
-        // No residence stated: the contraction happens where the output already lies.
-        TileSpec::direct(&[M, N]),
         dtype,
     );
 
