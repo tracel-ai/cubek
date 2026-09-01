@@ -876,3 +876,46 @@ Open: 2 (`tile_as`, needed only for tier 2, since tier 1 shares one dtype), 8, 9
 "small": a narrow buffer served wide is `Packing::Native` today, which is `i8`-only, cannot be
 stated on a spec, and would need the stored type to reach the read site inside `MemData<T>`. It
 belongs with step 8, where the byte counts are the point.
+
+### Steps 4 and 10 collapse into one, and it belongs to the selector
+
+Three questions were running together. They are not the same question and they do not have the same
+owner.
+
+| | asks | owner |
+|---|---|---|
+| correctness | can a step pick one scale out of a batch at all | `EdgeOrdinal`, in the engine |
+| **quality** | **does the batch match the tiles the unit owns** | **the selector** |
+| layout | are the batch's scales adjacent in memory | model load, once |
+
+**If a unit loads four scales it should be doing the four tiles they cover.** Nothing makes that
+true: the width comes from the binding, the tiles come from the cuts, and they are two decisions
+that merely have to agree. A plan where they do not still computes the right answer. It is just a
+bad kernel, and plan quality is the selector's business.
+
+**So the engine states an invariant instead of a check.** It must be correct for *any* plan the
+selector picks: no assert tying the scale width to `rows_per_lane`, no refusal because a plan is
+merely wasteful. Reading fewer scales than a unit could use is more reads, not a wrong answer.
+`EdgeOrdinal` stays because it guards something else entirely, which is whether the batch can be
+indexed at all.
+
+**The layout and the width decouple, which is what makes the selector's job tractable.** With scales
+laid `[KB][M]`, the scales for consecutive output rows at one block are adjacent, and that holds for
+*any* `rows_per_lane`. So the layout can be baked at model-load time, before any selector runs, and
+stays right whatever the selector later chooses. That matters because the layout is the part that
+cannot be revisited per shape: it is in the file. Had it depended on `rows_per_lane`, a knob would
+have to be fixed at conversion time for every shape and device the weights might ever meet.
+
+What is left coupled is one number: **the scale line width must equal the tiles a unit owns**,
+decided per plan, in the blueprint, beside where `rows_per_lane` is already chosen. That is a real
+constraint. `rows_per_lane` is picked today for register pressure and would now also drive scale
+traffic, so the knob has to know about scales. But it is one knob against one number rather than a
+layout decision entangled with everything.
+
+**Step 10, restated.** Two pieces, in this order:
+
+1. `[KB][M]` in metabolic's load-time re-quantization walk. Independent of every later choice.
+2. The blueprint derives the scale line width from the tiles a unit owns, and a test asserts the two
+   agree for each plan it produces. Not an engine assert: a plan test.
+
+Gated on step 9 as before, for the reason recorded there.
