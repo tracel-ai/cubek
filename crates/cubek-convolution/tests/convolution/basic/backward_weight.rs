@@ -96,7 +96,7 @@ fn backward_weight_supports_end_only_padding() {
         }),
     };
 
-    let outcome = launch_and_capture_outcome(&client, |client| {
+    let outcome = launch_and_capture_outcome(&client, &[&weight_grad.handle], |client| {
         match launch_ref(&strategy, client, inputs, args, dtypes) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),

@@ -116,12 +116,13 @@ fn run_backward_data_case(
         }),
     };
 
-    let outcome = launch_and_capture_outcome(&client, |client| {
-        match launch_ref(&strategy, client, inputs, args, dtypes) {
-            Ok(()) => ExecutionOutcome::Executed,
-            Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),
-        }
-    });
+    let outcome =
+        launch_and_capture_outcome(&client, &[&in_grad.handle], |client| {
+            match launch_ref(&strategy, client, inputs, args, dtypes) {
+                Ok(()) => ExecutionOutcome::Executed,
+                Err(error) => ExecutionOutcome::CompileError(format!("{error:?}")),
+            }
+        });
 
     if let ExecutionOutcome::CompileError(error) = outcome {
         TestOutcome::CompileError(error).enforce();
