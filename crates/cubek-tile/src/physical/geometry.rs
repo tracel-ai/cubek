@@ -53,7 +53,7 @@ impl Geometry {
     ///
     /// The kernel re-expresses the geometry in lines rather than scalars: [`Tile::of`] counts the
     /// innermost extent in lines and divides every coarser stride by the served width, so a width
-    /// that does not divide them truncates — in bounds, no fault, addressing a fraction of the
+    /// that does not divide them truncates: in bounds, no fault, addressing a fraction of the
     /// operand. [`Launcher::vector_size`](crate::Launcher::vector_size) reads this to *pick* a
     /// width; a caller that states one is *refused* by it. One answer, so the two cannot drift
     /// apart about what a servable width is.
@@ -83,7 +83,7 @@ impl Geometry {
     }
 }
 
-/// Why a [`Geometry`] cannot be served at some width — the value that decided it, so a message
+/// Why a [`Geometry`] cannot be served at some width: the value that decided it, so a message
 /// names the number a reader has to go looking for otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LineMisfit {
@@ -158,7 +158,7 @@ impl RuntimeGeometry {
         }
     }
 
-    /// The geometry a launched tensor carries, over its first `rank` dims — the rank the
+    /// The geometry a launched tensor carries, over its first `rank` dims, the rank the
     /// operand's projection addresses, which is not always the tensor's own.
     pub fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,

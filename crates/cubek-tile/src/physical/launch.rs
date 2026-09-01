@@ -151,13 +151,13 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     }
 
     /// [`bind`](Self::bind) over a stated geometry rather than a binding: for an
-    /// operand with no tensor to bind — the destination a fused store writes
+    /// operand with no tensor to bind: the destination a fused store writes
     /// through ([`Tile::of_sink`](crate::Tile::of_sink)), or the producer a fused
     /// read comes from ([`Tile::of_source`](crate::Tile::of_source)).
     ///
     /// `geometry` is the physical extents and strides the operand *would* have
-    /// had. Everything else — the projection, the bounds-check derived from this
-    /// launcher's concrete overhang, the residence column, the cube size — is
+    /// had. Everything else (the projection, the bounds-check derived from this
+    /// launcher's concrete overhang, the residence column, the cube size) is
     /// settled exactly as it is for a bound operand, because this is the builder a
     /// bound operand configures: [`batches`](StridedTileSource::batches),
     /// [`vectorize`](StridedTileSource::vectorize),
@@ -170,7 +170,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// End it with [`build_spec`](StridedTileSource::build_spec) rather than
     /// [`build`](StridedTileSource::build): there is no tensor to ship, and the
     /// settled geometry comes back beside the spec, which is what
-    /// [`Tile::of_sink`](crate::Tile::of_sink) takes — not the stated one. The two
+    /// [`Tile::of_sink`](crate::Tile::of_sink) takes, not the stated one. The two
     /// part company exactly where a broadcast batch dim is dropped, which is why it
     /// is the settled one that travels: reading it keeps the dropping an
     /// implementation detail of the derivation rather than a fact the call site has
@@ -195,8 +195,8 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// innermost-contiguous; the width must divide each inner extent, every coarser stride, and
     /// the axis's leaf tile edge. `1` (scalar) when nothing wider qualifies.
     ///
-    /// A [`Geometry`] rather than a binding, so that an operand with no tensor to bind — the
-    /// destination of a fused store — constrains the shared width like any other. It is one
+    /// A [`Geometry`] rather than a binding, so that an operand with no tensor to bind (the
+    /// destination of a fused store) constrains the shared width like any other. It is one
     /// width for *all* of them, and one the destination cannot serve is not a width.
     pub fn vector_size(
         &self,

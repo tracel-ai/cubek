@@ -153,7 +153,7 @@ pub struct AxisTerm {
 /// Whether a physical axis's terms can land on the same cell.
 ///
 /// The coefficients alone cannot say. `affine(&[(A, 2), (B, 1)])` partitions the axis when `B` has
-/// extent `2` and is a stride-2 stencil when it has extent `3` — same map, different structure —
+/// extent `2` and is a stride-2 stencil when it has extent `3` (same map, different structure),
 /// so the caller states which it means and [`validate_composition`](crate::Projection) checks the
 /// claim against the extents.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -164,8 +164,8 @@ pub enum Composition {
     ///
     /// The mirror of storage tiling, which spreads one logical axis over several physical ones.
     /// Here several logical axes share one physical axis, for the opposite reason: the operands
-    /// tell them apart. A quantization block is this — one axis for the block index, one for the
-    /// position inside it — because the scales vary over the first and not the second.
+    /// tell them apart. A quantization block is this (one axis for the block index, one for the
+    /// position inside it), because the scales vary over the first and not the second.
     Disjoint,
     /// Two positions may land on the same cell, so a cell does not determine the position: a
     /// stencil's taps, a resample's ratio.

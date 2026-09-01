@@ -291,6 +291,11 @@ impl Projection {
             .expect("Projection::position: axis not spanned by this operand")
     }
 
+    /// Every physical axis's map, in the projection's own order.
+    pub(crate) fn axis_maps(&self) -> impl Iterator<Item = &PhysicalAxisMap> {
+        self.physical.iter()
+    }
+
     pub(crate) fn physical_axis(&self, pa: usize) -> &PhysicalAxisMap {
         &self.physical[pa]
     }
@@ -325,84 +330,6 @@ impl Projection {
         })
     }
 
-    /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
-    /// term order within, each axis's [`Dynamic`](Divisor::Dynamic) divisor last, so a caller fills
-    /// the carrier by walking the maps in order.
-    pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
-        if !self.physical[pa].terms()[t].scale.is_dynamic() {
-            return None;
-        }
-        let within = self.physical[pa].terms()[..t]
-            .iter()
-            .filter(|term| term.scale.is_dynamic())
-            .count();
-        Some(self.coefficient_base(pa) + within)
-    }
-
-    /// Where physical axis `pa`'s divisor sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Divisor::Static). Divisors share the carrier with coefficients: both are
-    /// unsigned values of the same combination, and an axis's divisor follows its own terms.
-    pub fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
-        if !self.physical[pa].divisor().is_dynamic() {
-            return None;
-        }
-        Some(self.coefficient_base(pa) + self.physical[pa].dynamic_scale_count())
-    }
-
-    /// Where physical axis `pa`'s entries start in the runtime coefficient carrier; at the physical
-    /// rank, the carrier's whole length.
-    fn coefficient_base(&self, pa: usize) -> usize {
-        self.physical[..pa]
-            .iter()
-            .map(|m| m.dynamic_scale_count() + m.divisor().is_dynamic() as usize)
-            .sum()
-    }
-
-    /// The length of the runtime coefficient carrier: every [`Dynamic`](Scale::Dynamic) coefficient
-    /// and every [`Dynamic`](Divisor::Dynamic) divisor.
-    pub(crate) fn dynamic_coefficient_count(&self) -> usize {
-        self.coefficient_base(self.physical.len())
-    }
-
-    /// Whether any physical axis's divisor is only known at runtime.
-    pub(crate) fn has_dynamic_divisors(&self) -> bool {
-        self.physical.iter().any(|m| m.divisor().is_dynamic())
-    }
-
-    /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
-    /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
-    /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
-    pub(crate) fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
-        if !self.physical[pa].offset().is_dynamic() {
-            return None;
-        }
-        Some(
-            self.physical[..pa]
-                .iter()
-                .filter(|m| m.offset().is_dynamic())
-                .count(),
-        )
-    }
-
-    /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
-    pub(crate) fn dynamic_offset_count(&self) -> usize {
-        self.physical
-            .iter()
-            .filter(|m| m.offset().is_dynamic())
-            .count()
-    }
-
-    /// Whether any coefficient, offset or divisor is only known at runtime.
-    pub(crate) fn has_dynamic(&self) -> bool {
-        self.has_dynamic_scales() || self.dynamic_offset_count() > 0 || self.has_dynamic_divisors()
-    }
-
-    /// Whether any coefficient is only known at runtime.
-    pub(crate) fn has_dynamic_scales(&self) -> bool {
-        self.physical.iter().any(|m| m.has_dynamic_scale())
-    }
-
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
     /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
     /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
@@ -435,8 +362,8 @@ impl Projection {
     /// where every physical axis is partitioned by the axes addressing it, so a position
     /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
     ///
-    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one —
-    /// one axis per physical axis, in order — and a [`Disjoint`] projection of higher logical rank
+    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one,
+    /// one axis per physical axis in order, and a [`Disjoint`] projection of higher logical rank
     /// answers the same for the same reason: nothing aliases, every window is a box.
     ///
     /// [`Disjoint`]: Composition::Disjoint

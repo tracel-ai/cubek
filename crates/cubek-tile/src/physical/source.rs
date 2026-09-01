@@ -23,7 +23,7 @@ pub struct Unset;
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a, R: Runtime> {
     /// The tensor this operand is served from, when there is one. `None` for a
-    /// destination that has no address — a fused store writes through a call, so
+    /// destination that has no address: a fused store writes through a call, so
     /// the launch has nothing to bind, and only the comptime half is derived
     /// ([`build_spec`](StridedTileSource::build_spec)).
     binding: Option<TensorBinding<R>>,
@@ -411,7 +411,7 @@ impl<R: Runtime> StridedOperand<R> {
 /// not always what the caller stated: the labeling step drops broadcast batch dims
 /// and folds the rank down to the projection's physical one. The kernel's
 /// [`Tile::of_sink`](crate::Tile::of_sink) addresses through exactly this
-/// geometry, so it is what comes back — re-deriving it at the call site is the
+/// geometry, so it is what comes back; re-deriving it at the call site is the
 /// drift `build_spec` exists to remove, and reaching for the stated one instead
 /// is the same mistake one step later.
 pub struct DerivedSpec {
@@ -533,11 +533,11 @@ impl<'a, Q, R: Runtime> StridedTileSource<'a, Set, Set, Q, R> {
         projection.validate(v);
         // The width against the *settled* geometry, which is the one the kernel re-expresses in
         // lines. `Launcher::vector_size` derives a width that divides; a caller that states one
-        // — a pinned width, a fused destination the negotiation never saw — reaches here, and
+        // (a pinned width, a fused destination the negotiation never saw) reaches here, and
         // the failure it prevents is silent: `stride / v` truncates in bounds and addresses a
         // fraction of the operand.
         if let Err(why) = geometry.serves_lines(v) {
-            panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide — {why}");
+            panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide: {why}");
         }
         let coords = projection.untiled();
         let coord_rank = projection.coordinate_rank();
@@ -743,12 +743,12 @@ impl<'a, R: Runtime> StridedTileSource<'a, Set, Set, Unset, R> {
     /// but the tensor argument itself.
     ///
     /// For a destination that has no address. A fused store writes through a
-    /// call, so the launch has no handle to bind — but the tile that walks it is
+    /// call, so the launch has no handle to bind, but the tile that walks it is
     /// projected, bounds-checked and staged exactly as a bound one is, and this
     /// is that same derivation rather than a restatement of it. Restating it is
     /// what drifts: the labeled mapping drops broadcast batch dims, folds the
     /// rest into a `ConcreteLayout` and rewrites the geometry around it, none of
-    /// which a caller should be reproducing — so the rewritten geometry comes
+    /// which a caller should be reproducing, so the rewritten geometry comes
     /// back too, rather than only the spec derived from it. See [`DerivedSpec`].
     pub fn build_spec(self) -> DerivedSpec {
         let Realized {
