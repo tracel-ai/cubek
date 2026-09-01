@@ -228,8 +228,8 @@ impl SourceWindow {
 
 #[cube]
 impl Window {
-    /// This window under `guard`: [`Guard::Proved`] drops the boundary machinery — no clamp for
-    /// an origin that can go negative, and no per-axis [`Boundary`] mode — which is work whose
+    /// This window under `guard`: [`Guard::Proved`] drops the boundary machinery (no clamp for
+    /// an origin that can go negative, and no per-axis [`Boundary`] mode), which is work whose
     /// answer the reader already knows and the window would otherwise pay for once per access.
     ///
     /// One path either way, differing only in comptime fields. A branch here would be a runtime

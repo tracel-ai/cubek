@@ -239,7 +239,7 @@ fn spec_derives_what_a_bound_operand_derives() {
 /// The knobs a bound operand tunes are the same knobs an unbound one tunes, which is why what
 /// comes back is the builder rather than a finished spec. A fused operand that knows its bounds
 /// better than the concrete overhang does, or that stages narrower than it reads, states it *on*
-/// the derivation — hand-building a spec beside it is the drift `build_spec` exists to remove.
+/// the derivation; hand-building a spec beside it is the drift `build_spec` exists to remove.
 #[test]
 fn spec_tunes_what_a_bound_operand_tunes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
@@ -265,8 +265,8 @@ fn spec_tunes_what_a_bound_operand_tunes() {
 }
 
 /// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
-/// re-deriving it at the call site is the drift `build_spec` removes. Nothing is dropped here —
-/// no batch axes are stated, so there is no broadcast dim to drop — and the caller still reads
+/// re-deriving it at the call site is the drift `build_spec` removes. Nothing is dropped here
+/// (no batch axes are stated, so there is no broadcast dim to drop), and the caller still reads
 /// the settled pair rather than assuming the stated one survived. See
 /// [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
 #[test]
@@ -343,8 +343,8 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 /// A width the operand cannot be served in is refused where it is stated, not left to truncate.
 ///
 /// The kernel re-expresses the geometry in lines: a coarser stride becomes `stride / v`. A `v`
-/// that does not divide it addresses a fraction of the operand — in bounds, no fault, wrong
-/// numbers — and the only reason a bound operand never sees it is that `Launcher::vector_size`
+/// that does not divide it addresses a fraction of the operand: in bounds, no fault, wrong
+/// numbers, and the only reason a bound operand never sees it is that `Launcher::vector_size`
 /// derives a width that divides. A stated one has nothing deriving it.
 #[test]
 #[should_panic(expected = "cannot be served 2 wide")]

@@ -608,12 +608,12 @@ impl<T: Numeric> MemData<T> {
             .with_vector_size_mut::<W>()
     }
 
-    /// The backing as a [`ViewMut`] addressed by `layout` — the write path, and
+    /// The backing as a [`ViewMut`] addressed by `layout`: the write path, and
     /// the only one a [`WriteCall`](Backing::WriteCall) serves.
     ///
     /// The layout is the same for every backing, which is the point: an erased
     /// destination is addressed by the tile's own `GmemLayout` exactly as a buffer
-    /// is, and what differs is only what happens at the end of the address — a
+    /// is, and what differs is only what happens at the end of the address: a
     /// store, or a call. So every mutable view above composes onto this and none
     /// of them has to know what it is writing to.
     fn write_view<W: Size>(&mut self, layout: GmemLayout) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
@@ -632,7 +632,7 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// The backing as a [`View`] addressed by `layout` — the read path, and the
+    /// The backing as a [`View`] addressed by `layout`: the read path, and the
     /// only one a [`ReadCall`](Backing::ReadCall) serves.
     ///
     /// The mirror of [`write_view`](MemData::write_view), and for the same

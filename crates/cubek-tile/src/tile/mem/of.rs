@@ -236,7 +236,7 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// A tile whose values come from `source` instead of from memory — the
+    /// A tile whose values come from `source` instead of from memory: the
     /// fuse-on-read twin of [`of_sink`](Tile::of_sink).
     ///
     /// The geometry is *stated* for the same reason it is there: a source with

@@ -17,7 +17,7 @@ use cubek_tile::{
 
 /// The three operands every one of these kernels contracts, threaded through the
 /// `Tiling::over` build so each level states where it puts them. Their residence
-/// column is the memory hierarchy — it is stated nowhere else.
+/// column is the memory hierarchy: it is stated nowhere else.
 struct Operands {
     lhs: Operand,
     rhs: Operand,
@@ -272,7 +272,7 @@ fn unit(edge: usize, spread: Spread, lanes: usize) -> Cut {
 }
 
 /// metabolic's cmma gemm: cube grid, plane partition, contraction step, fragment
-/// grid — with the residences it states, which are the memory hierarchy.
+/// grid, with the residences it states, which are the memory hierarchy.
 fn gemm_cmma(ops: &mut Operands) -> Space {
     let (m, n, k) = (2048, 2048, 2048);
     let (im, in_, ik) = (16, 16, 16);

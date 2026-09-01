@@ -90,8 +90,8 @@ impl ContractShape {
     /// Whether a 2-D reading describes both operands, and the axes it reads them over.
     ///
     /// The question the leaf routes on. A contraction the operand carries as one run of axes has a
-    /// `k` edge — one axis, several partitioning one, or a convolution's taps beside its channels
-    /// — and reads as a matrix. One it does not is read a cell at a time.
+    /// `k` edge (one axis, several partitioning one, or a convolution's taps beside its channels)
+    /// reads as a matrix. One it does not is read a cell at a time.
     pub(crate) fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
         let lhs_axes = MatrixAxes::find(lhs, self.mr, self.kc)?;
         let rhs_axes = match self.contracted_per_step > 1 {

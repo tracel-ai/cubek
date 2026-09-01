@@ -1,6 +1,6 @@
 //! An axis spelled as two: `x = xb · B + xi`, the axis partitioned into blocks.
 //!
-//! A *partition* of an axis is not a gather — the windows tile instead of overlapping, so a
+//! A *partition* of an axis is not a gather: the windows tile instead of overlapping, so a
 //! logical position still determines a cell and every window is still a dense box. An operand
 //! spanning `(KB, KI)` must therefore read exactly as one spanning `K` does, and cost the same.
 //!

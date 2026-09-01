@@ -1260,7 +1260,7 @@ fn resident_max_over_lane_split_k() {
 #[test]
 #[ignore = "known-failing reproducer: the segmented share is still wrong on this path, and \
             whether that is a cubek defect or an unsupported combination is not yet established \
-            — it is not what the walk fix addresses"]
+            , it is not what the walk fix addresses"]
 fn resident_max_over_lane_group_k() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let lanes = client.properties().hardware.plane_size_max as usize;

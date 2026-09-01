@@ -1,7 +1,7 @@
 //! `TileSpec::packed`: an operand whose values are fields of a stored word, said on its own.
 //!
-//! A packed tensor is *values*, stored small. Saying so takes one fact — how wide a field is and
-//! how it reads back — and that fact belongs to the values, not to a quantization scheme: there
+//! A packed tensor is *values*, stored small. Saying so takes one fact (how wide a field is and
+//! how it reads back), and that fact belongs to the values, not to a quantization scheme: there
 //! are no scales here, no block grid, no scale binding, nothing for a scheme to carry. The tile
 //! serves what the words hold ([`TileArg::tile_packed`]) and the read unpacks.
 //!
@@ -61,7 +61,7 @@ fn packed_matmul<E: Numeric>(
 }
 
 /// `c = x · (w ⊗ s)` with `w` packed along its columns: the q4 kernel with the *weights on the
-/// right*, which is the shape the shipped quant matmul has. Same verb, same body — only the
+/// right*, which is the shape the shipped quant matmul has. Same verb, same body: only the
 /// scales' axes differ, and that is what says which factor they meet.
 #[cube(launch)]
 fn packed_matmul_rhs<E: Numeric, V: Size>(
@@ -81,7 +81,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
 /// at all. The binding says `i8`, the tile serves `i8`, and the contraction casts each value into
-/// the accumulator's element as it always does — a value is whatever its tensor holds, for the
+/// the accumulator's element as it always does: a value is whatever its tensor holds, for the
 /// same reason a scale is.
 #[cube(launch)]
 fn native_matmul<E: Numeric>(
@@ -872,7 +872,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
 }
 
 /// A block covering both lines: several lines share a scale, which is the direction that is
-/// always sound. The other one — a block narrower than the line reading it — is refused by the
+/// always sound. The other one (a block narrower than the line reading it) is refused by the
 /// contraction (`mm_scaled: ... scale blocks must cover whole lines`), and that refusal is a
 /// comptime panic inside the kernel, so it lands on a worker thread rather than in a
 /// `should_panic` test.
@@ -1021,7 +1021,7 @@ fn several_lines_may_share_one_scale() {
 }
 
 /// **The native store needs no engine feature.** `i8` weights, their scales beside them, one
-/// contraction — the tile serves the element its binding names and the block casts it, so
+/// contraction: the tile serves the element its binding names and the block casts it, so
 /// `Packing::Native` never has to be *stated* for a store that carries no scales in its element.
 #[test]
 fn an_i8_operand_contracts_against_its_scales() {
@@ -1437,7 +1437,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
 ///
 /// [`a_packed_decode_gemv_runs_in_this_spelling`] runs this block with the scales folded in, and
-/// the two reach the same `block::contract` through the same `RegisterData` — so if a packed rhs
+/// the two reach the same `block::contract` through the same `RegisterData`, so if a packed rhs
 /// were what a promoted accumulator could not drain, the gemv could not be spelled either. What
 /// makes both work is the accumulator being declared at the *served* width (`V = factor`); a
 /// narrower one is refused by the width assert, and that is the only thing packing owes here.

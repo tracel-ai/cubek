@@ -1,6 +1,6 @@
 //! One operand's data in the kernel: the [`Tile`] itself ([`base`]), the backing stores it
 //! dispatches on (one file each), the views a leaf reads it through ([`view`]), and what a
-//! quantized store carries ([`quant`]). The launch surface — specs, deliveries, builder —
+//! quantized store carries ([`quant`]). The launch surface (specs, deliveries, builder)
 //! lives in `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
 
 mod atomic;

@@ -501,7 +501,7 @@ impl<T: Numeric> Tile<T> {
     ///
     /// Two spellings, one fact. An axis the tile's own space does not span it cannot vary over at
     /// all; an axis it spans but whose projection addresses nothing it cannot vary over either.
-    /// Both say the same thing — the operand distinguishes nothing there — and a consumer that
+    /// Both say the same thing (the operand distinguishes nothing there) and a consumer that
     /// wants to know how far out of a nest a read lifts wants both.
     ///
     /// The [gathered nest](crate::FactorReuse) asks this of a procedural factor through its

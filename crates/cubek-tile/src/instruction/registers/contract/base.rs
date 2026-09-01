@@ -68,8 +68,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
 /// stated: a scale over the accumulator's column axis is a fact about the rhs's columns and
 /// nothing else could fold it in; anything else scales the lhs.
 ///
-/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms — the scale
-/// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
+/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms, the scale
+/// being one more factor of each, and which operand it rides is only *where* it folds in cheapest:
 /// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum ScaleSide {

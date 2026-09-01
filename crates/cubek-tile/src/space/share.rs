@@ -245,11 +245,11 @@ impl Space {
     /// this space does not span.
     ///
     /// A projected space is the reason this exists. The instance index is a hardware fact and its
-    /// odometer belongs to the *partitioner* — [`Partitioner::axes`] "keeps every axis of the
+    /// odometer belongs to the *partitioner*: [`Partitioner::axes`] "keeps every axis of the
     /// operation, so an output space (`{M, N}`) still names its contraction". An operand that does
     /// not span a contracted axis still runs on an instance whose index encodes it, so it has to
     /// divide that axis out to find its own digit. Decoding over the spanned axes alone reads every
-    /// omitted inner axis as weight `1`, which aliases the outer digits onto one value — the same
+    /// omitted inner axis as weight `1`, which aliases the outer digits onto one value, the same
     /// list [`lane_share`](Self::lane_share) already reads, for the same reason.
     ///
     /// Panics where such an axis carries no comptime instance count: there is nothing to decode

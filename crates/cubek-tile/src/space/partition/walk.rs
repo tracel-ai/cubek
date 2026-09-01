@@ -84,7 +84,7 @@ impl Walk {
                 // space may be a projection of it: the axes here carry a possibly-runtime count,
                 // and the ones this space does not span a comptime one. Dropping the second half
                 // reads a contracted axis as weight `1` and aliases every outer digit onto a
-                // single value — see [`Space::inner_weight_unspanned`].
+                // single value; see [`Space::inner_weight_unspanned`].
                 let picks = comptime!(
                     ((p + 1)..rank)
                         .filter(|&q| {

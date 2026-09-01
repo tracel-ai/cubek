@@ -40,7 +40,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let rhs_provable = rhs.guard_provable();
     let provable = comptime!(lhs_provable && rhs_provable);
     // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
-    // extent — one past the far corner [`box_in_bounds`] proves, which counts whole lines. The
+    // extent: one past the far corner [`box_in_bounds`] proves, which counts whole lines. The
     // accumulator has [`block::seed`]/[`block::commit`]'s per-lane mask for those spare lanes; an
     // operand read that has dropped its guard has nothing, so keep the whole leaf checked.
     let spread_overhang = comptime!(block::spread_guard(
@@ -84,13 +84,13 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
 
         // A checked operand rolls the whole walk: every read re-proves its own bounds, and the
         // block cannot live in registers because its indices stop being comptime. Splitting the
-        // leaf is what stops an interior instance paying for the edge's guard — it proves the
+        // leaf is what stops an interior instance paying for the edge's guard: it proves the
         // whole box once and then reads through views with no guard left in them, while the
         // instances that really do straddle an edge take the masked walk unchanged.
         //
         // The *operands* only. The accumulator keeps its guard on both sides: it is written once
         // per cell against `kc` operand reads per cell, so dropping its guard buys a fraction of
-        // a percent, and what it would cost is the one thing a leaf must never get wrong — a
+        // a percent, and what it would cost is the one thing a leaf must never get wrong: a
         // write landing outside the output.
         if comptime!(split_operands) {
             let inside = operands_inside;
@@ -143,8 +143,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
 /// extents, the window's own bound (which is where padding shows up), and the buffer.
 ///
 /// The far corner is the operand's own extent in *whole* lines, so this proves only the reads a
-/// walk staying inside that box takes. A caller whose column count overhangs the extent — the
-/// spread block's rounded-up `nr` — reaches a line this never looked at, and must not act on a
+/// walk staying inside that box takes. A caller whose column count overhangs the extent (the
+/// spread block's rounded-up `nr`) reaches a line this never looked at, and must not act on a
 /// `true` from here.
 #[cube]
 #[allow(clippy::needless_range_loop)]

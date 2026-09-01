@@ -118,7 +118,7 @@ impl MatrixAxes {
     /// An accumulator's matrix, against the lhs it is contracted with.
     ///
     /// The innermost axis is a column edge by construction: it is what the sink lines along. How
-    /// far the group reaches is not, and is read off the lhs — an axis the lhs spans stops it,
+    /// far the group reaches is not, and is read off the lhs: an axis the lhs spans stops it,
     /// because an axis the lhs varies over has to be walked against the lhs rather than folded
     /// into a column. The row edge is the axis before the group, and anything above it is batch.
     ///

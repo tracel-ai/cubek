@@ -289,7 +289,7 @@ fn fold_scalar_odd_bound() {
 ///
 /// `split_inner` flips where the split axis sits on the row lanes, which is
 /// the one thing `merge_splits` reads off the space. Both orders run the same
-/// cuts and the same op and must give the same answer — a cross-cube merge
+/// cuts and the same op and must give the same answer; a cross-cube merge
 /// lays the split innermost so its drain can contract it, and nothing but a
 /// test here says that layout works.
 #[cube(launch)]
@@ -342,7 +342,7 @@ fn attention_fold_split_kernel<W: Size>(
             .build()
     );
     // The split outermost gives a team one contiguous run of rows; innermost
-    // gives it a strided column. Only the declared order differs — the cuts
+    // gives it a strided column. Only the declared order differs: the cuts
     // below are the same either way, and so is every op that reads them.
     let row_extents = comptime!(if split_inner {
         [(R, rows), (T, splits)]

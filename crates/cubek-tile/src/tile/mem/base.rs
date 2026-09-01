@@ -82,7 +82,7 @@ pub struct MemData<T: Numeric> {
 ///
 /// These are not three spellings of one thing. A [`Buffer`](Backing::Buffer) has
 /// an address: it can be read back, sliced, re-typed, staged into shared memory,
-/// handed to a tensor-map load. The erased two have none — the walk ends in a
+/// handed to a tensor-map load. The erased two have none: the walk ends in a
 /// *call*, which is what lets a kernel hand its values to a generated epilogue,
 /// or take them from a generated producer, instead of moving them through
 /// memory. So every address-shaped operation is a comptime panic rather than a
@@ -147,11 +147,11 @@ impl<T: Numeric> Store<T> {
             Backing::Buffer(buffer) => buffer,
             Backing::WriteCall(_) => panic!(
                 "Store::buffer: this tile's backing is written through a call, which has no \
-                 address — it can only be written through its layout"
+                 address, it can only be written through its layout"
             ),
             Backing::ReadCall(_) => panic!(
                 "Store::buffer: this tile's backing is read through a call, which has no \
-                 address — it can only be read through its layout (MemData::read_view), so the \
+                 address, it can only be read through its layout (MemData::read_view), so the \
                  slice-shaped paths (a dense run, a re-typed quant storage, a tensor-map load) \
                  are closed to it"
             ),
@@ -165,7 +165,7 @@ impl<T: Numeric> Store<T> {
             Backing::Buffer(buffer) => buffer,
             Backing::WriteCall(_) => panic!(
                 "Store::buffer_mut: this tile's backing is written through a call, which has no \
-                 address — it can only be written through its layout"
+                 address, it can only be written through its layout"
             ),
             Backing::ReadCall(_) => panic!(
                 "Store::buffer_mut: this tile's backing is read through a call, which is \

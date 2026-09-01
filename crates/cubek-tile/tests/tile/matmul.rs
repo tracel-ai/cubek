@@ -48,7 +48,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
 /// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the
 /// feature: a backend can advertise manual mma and offer only `16x16x16`
 /// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
-/// not have — it reads back zeros, which looks like a leaf bug and is a missing
+/// not have: it reads back zeros, which looks like a leaf bug and is a missing
 /// guard.
 fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
     let f32_ty = f32::elem_type_native();
@@ -3529,7 +3529,7 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // The shape, not just the feature — see `require_mma_8x8x8_f32`. The `f32`
+    // The shape, not just the feature; see `require_mma_8x8x8_f32`. The `f32`
     // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
     // the *walk*, cut `Cut::sequential(8)` deep, and `A` decodes at the read, so
     // the instruction this leaf reaches for is the same f32 `8x8x8` the plain
@@ -4952,7 +4952,7 @@ fn run_register_matmul_quant_rhs(
 
 /// The space a rows-in-flight gemv cuts: the plane splits into aligned groups of `GROUP_LANES`,
 /// each group owning one output row and its lanes interleaving `K` between them. Every lane holds
-/// a *partial* of its group's row, so the drain is a segmented reduction — `LaneShare::Group`,
+/// a *partial* of its group's row, so the drain is a segmented reduction: `LaneShare::Group`,
 /// where a whole-plane fold would be `LaneShare::Plane`.
 ///
 /// `groups == 1` is the same space at `LaneShare::Plane`, which is the case already covered; the
@@ -4978,7 +4978,7 @@ fn lane_group_fold_space(lanes: usize, group_lanes: usize, edge: usize, n: usize
         .build()
 }
 
-/// The memory-backed leaf over the segmented fold — the control for
+/// The memory-backed leaf over the segmented fold, the control for
 /// [`register_matmul_promoted_lane_group_fold`]. If this one fails the space itself is wrong and
 /// the promoted result proves nothing.
 #[test]
@@ -5017,7 +5017,7 @@ fn register_matmul_lane_group_fold() {
 ///
 /// This is the case no other test covers: every promoted test in this file folds either nothing
 /// (`Whole`) or the whole plane (`Plane`). A plane carrying one cell per group has to reduce
-/// within each group and let each group's first lane write *its own row* — and the rows a group
+/// within each group and let each group's first lane write *its own row*, and the rows a group
 /// owns are what the `M` cut hands it, which a block built before the walk descends has to be
 /// told rather than assume.
 #[test]
@@ -5101,8 +5101,8 @@ fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
 ///
 /// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
 /// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
-/// its own. What that is worth is only checkable against a reference the kernel had no hand in —
-/// built on the host from the quantized values and their scales — since a leaf that decoded
+/// its own. What that is worth is only checkable against a reference the kernel had no hand in,
+/// built on the host from the quantized values and their scales, since a leaf that decoded
 /// wrongly and a reference that decoded the same way wrongly would agree.
 #[test]
 fn register_matmul_promoted_accumulator_quant() {

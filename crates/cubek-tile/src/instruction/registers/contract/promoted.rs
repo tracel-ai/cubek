@@ -29,8 +29,8 @@ impl<T: Numeric> RegisterData<T> {
     /// a host reference built from the quantized values and their scales.
     ///
     /// The rhs may be packed too, and the width assert below is the whole of what governs it. A
-    /// packed operand's `vector_size` is the *served* width — the binding's times the packing
-    /// factor — and the rhs's width must be the block's, so a packed rhs is served exactly when
+    /// packed operand's `vector_size` is the *served* width (the binding's times the packing
+    /// factor), and the rhs's width must be the block's, so a packed rhs is served exactly when
     /// the accumulator is declared at that served width. A caller that declares it narrower is
     /// refused there, by an assert that names both widths; nothing packing-specific is left over
     /// to refuse on its own. `a_packed_rhs_drains_from_a_promoted_accumulator` runs the unscaled
@@ -123,7 +123,7 @@ impl<T: Numeric> RegisterData<T> {
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
         let sw = scales.vector_size();
-        // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
+        // As [`mma`](Self::mma): a packed rhs (the decode gemv's whole shape) serves its
         // packing factor, so this is the assert that asks the accumulator to be that wide.
         comptime!(assert!(
             vw == self.vector_size,

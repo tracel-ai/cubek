@@ -2,13 +2,13 @@
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
 //! is a fact about the rhs's columns and nothing else could fold it in; anything else scales the
-//! lhs. One verb, then, and the same kernel body serves both — `(a ⊗ s) · b` and `a · (b ⊗ s)` are
+//! lhs. One verb, then, and the same kernel body serves both: `(a ⊗ s) · b` and `a · (b ⊗ s)` are
 //! the same sum of terms, differing only in where the factor folds in cheapest.
 //!
 //! The point is what the kernel signature says. The values are a tensor of values, the scales are
 //! a tensor of scales, both are named at the call, and the arithmetic that folds one into the
 //! other is a verb the kernel writes. Nothing decodes behind a read and nothing rides a binding's
-//! side channel — so the scales' element type is just the type of the tensor bound, which is why
+//! side channel, so the scales' element type is just the type of the tensor bound, which is why
 //! `f16` scales work here without a widening pass anywhere.
 //!
 //! The scales resolve at their own granularity through their own projection: a plain `KB` for a
@@ -347,7 +347,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
 }
 
 /// **The one that pays for the design.** The scales are an `f16` tensor and the kernel reads
-/// them as one — no widening pass, no scheme saying otherwise, no way for the two to disagree.
+/// them as one: no widening pass, no scheme saying otherwise, no way for the two to disagree.
 /// A scale is whatever its tensor holds because it is a tensor. The values stay `f32`, and the
 /// halves in `s` are exact in both.
 #[test]
