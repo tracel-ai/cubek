@@ -87,7 +87,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 ///
 /// The only thing standing between this and the format itself is where the block scales are
 /// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything the design
-/// has to get right is here — the value decode, two levels in order, the coarser one spanning no
+/// has to get right is here: the value decode, two levels in order, the coarser one spanning no
 /// axis, and a block of sixteen against words of eight.
 ///
 /// Nothing in the kernel names the format, the block, or the number of levels.
