@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};
-use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
+use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -461,34 +461,38 @@ pub(super) fn combined_scales<'a, ES: Numeric, S: Size>(
 ) -> CombinedScales<'a, ES, S> {
     let inner = scales.index(0);
     let count = scales.len();
-    // One verb per coarser level. They read the same one until a level carries its own, which is
-    // what building a `ScaleLevel` per level gives.
-    let applies = comptime!(vec![level.apply; count - 1]);
-    let mut outer = Sequence::new();
+    let origin = (0u32.runtime(), 0u32.runtime());
+    let mut coarser = Vector::<ES, Const<1>>::cast_from(1);
     #[unroll]
     for k in 1..count {
-        let coarser = scales.index(k);
+        let level_above = scales.index(k);
         // Same axes at the same extents, so one `MatrixAxes` reads every level. What differs is
         // which of those axes each level's projection addresses, and that is what makes one cover
         // a tile of the other's tiles.
         comptime!(assert!(
-            coarser.space.axes().collect::<Vec<_>>() == inner.space.axes().collect::<Vec<_>>()
-                && (0..coarser.space.rank()).all(|p| {
-                    coarser.space.extent_at(p) == inner.space.extent_at(p)
+            level_above.space.axes().collect::<Vec<_>>() == inner.space.axes().collect::<Vec<_>>()
+                && (0..level_above.space.rank()).all(|p| {
+                    level_above.space.extent_at(p) == inner.space.extent_at(p)
                 }),
             "mm_scaled: a coarser scale level spans {:?} at extents {:?} where the level below it \
              spans {:?} at {:?}. Levels declare the same axes and differ by what their projections \
              address, which is what makes one cover a tile of the other's tiles",
-            coarser.space.axes().collect::<Vec<_>>(),
-            (0..coarser.space.rank()).map(|p| coarser.space.extent_at(p)).collect::<Vec<_>>(),
+            level_above.space.axes().collect::<Vec<_>>(),
+            (0..level_above.space.rank()).map(|p| level_above.space.extent_at(p)).collect::<Vec<_>>(),
             inner.space.axes().collect::<Vec<_>>(),
             (0..inner.space.rank()).map(|p| inner.space.extent_at(p)).collect::<Vec<_>>()
         ));
-        outer.push(coarser.matrix_packed::<Const<1>>(comptime!(level.axes), mat));
+        // Read once, here, which is once per region. A coarser level covers this whole region, so
+        // it has no position of its own inside it; that it does is what the assert above says.
+        let one = level_above
+            .matrix_packed::<Const<1>>(comptime!(level.axes), mat)
+            .read(origin);
+        match comptime!(level.apply) {
+            Apply::Product => coarser *= one,
+        }
     }
     CombinedScales::<ES, S>::new(
         inner.matrix_packed::<S>(comptime!(level.axes), mat),
-        outer,
-        comptime!(applies),
+        coarser,
     )
 }

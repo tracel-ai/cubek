@@ -12,7 +12,6 @@
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
-use crate::instruction::registers::contract::Apply;
 use crate::*;
 
 /// One operand's lines as the contraction reads them.
@@ -209,24 +208,21 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
 #[derive(CubeType)]
 pub struct CombinedScales<'a, S: Numeric, W: Size> {
     inner: MaskedView<'a, Vector<S, W>, Coords2d>,
-    outer: Sequence<MaskedView<'a, Vector<S, Const<1>>, Coords2d>>,
-    /// What each coarser level does to the line below it, in the order they are applied.
-    #[cube(comptime)]
-    applies: Vec<Apply>,
+    /// Every coarser level, already met and carried as one value.
+    ///
+    /// Read once when this source is built, which is once per region rather than once per value:
+    /// a coarser level does not change inside the region it covers, so there is nothing there for
+    /// a per-value read to discover. That is the whole reason depth is cheap.
+    coarser: Vector<S, Const<1>>,
 }
 
 #[cube]
 impl<'a, S: Numeric, W: Size> CombinedScales<'a, S, W> {
     pub fn new(
         inner: MaskedView<'a, Vector<S, W>, Coords2d>,
-        outer: Sequence<MaskedView<'a, Vector<S, Const<1>>, Coords2d>>,
-        #[comptime] applies: Vec<Apply>,
+        coarser: Vector<S, Const<1>>,
     ) -> Self {
-        CombinedScales::<'a, S, W> {
-            inner,
-            outer,
-            applies,
-        }
+        CombinedScales::<'a, S, W> { inner, coarser }
     }
 }
 
@@ -236,17 +232,7 @@ impl<'a, S: Numeric, W: Size> Lines for CombinedScales<'a, S, W> {
     type V = W;
 
     fn line(&self, pos: Coords2d, #[comptime] _run: usize) -> Vector<S, W> {
-        let mut line = self.inner.read(pos);
-        // Each coarser level meets the whole line: it is one value over a span at least as wide as
-        // this line, so it has no lane of its own to pick. What it *does* is its verb's to say.
-        #[unroll]
-        for k in 0..self.outer.len() {
-            let coarser = self.outer.index(k).read(pos);
-            match comptime!(self.applies[k]) {
-                Apply::Product => line *= Vector::<S, W>::cast_from(coarser.extract(0usize)),
-            }
-        }
-        line
+        self.inner.read(pos) * Vector::<S, W>::cast_from(self.coarser.extract(0usize))
     }
 
     fn reuse(&self) -> comptime_type!(Reuse) {
