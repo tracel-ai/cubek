@@ -894,6 +894,24 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The same cells under another `space`: same axes, same extents, different levels. What lets
+    /// a leaf window an operand whose partitioning is not the operand's own statement — the rhs of
+    /// a contraction is cut by the grid the contraction implies, and arrives whole.
+    ///
+    /// `Clone` on the store names the same storage, so a write through the result is a write
+    /// through this tile.
+    pub(crate) fn retiled(&self, #[comptime] space: Space) -> Tile<T> {
+        comptime!(assert!(
+            space.laid_out_like(&self.space),
+            "Tile::retiled: {space:?} holds other cells than {:?}",
+            self.space
+        ));
+        Tile::<T> {
+            tile_kind: self.tile_kind.clone(),
+            space,
+        }
+    }
+
     /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
     /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
     pub fn at(&self, region: &Region) -> Tile<T> {

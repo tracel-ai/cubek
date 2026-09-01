@@ -3271,6 +3271,125 @@ fn cmma_matmul<E: Numeric>(
     c.copy_from(&c_smem_tile);
 }
 
+/// `C = A · Bᵀ` where `B` is stored `{N, K}` row-major: the rhs fragment states
+/// [`ColMajor`](MatrixLayout::ColMajor) and reads the same buffer at the same row stride, the
+/// score matmul of attention (`Q · Kᵀ`, `K` stored `{S, D}`) in miniature. Tensor-core only.
+#[test]
+fn cmma_matmul_transposed_rhs_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let dtype = f32::elem_type_native();
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    // `{N, K}`: the rhs transposed, so `b[j, p] = j·8 + p`.
+    let b = TileInput::builder(&client, space.project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    cmma_matmul_transposed_rhs::launch::<TestRuntime>(
+        &client,
+        CubeCount::Static(1, 1, 1),
+        CubeDim::new_3d(32, 1, 1),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..8 * 8)
+        .map(|idx| {
+            let (i, j) = (idx / 8, idx % 8);
+            (0..8).map(|p| ((i * 8 + p) * (j * 8 + p)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// [`cmma_matmul`] with the rhs stored `{N, K}` and read through a col-major fragment.
+#[cube(launch)]
+fn cmma_matmul_transposed_rhs<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+
+    let mut a_smem = MemData::smem(
+        comptime!(a.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    a_smem.copy_from(&a);
+
+    let mut b_smem = MemData::smem(
+        comptime!(b.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    b_smem.copy_from(&b);
+    sync_cube();
+
+    let mut a_frag = CmmaData::<E>::fragment(
+        MatrixIdent::A,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(a.space.clone()),
+    );
+    a_frag.copy_from(&a_smem);
+
+    let mut b_frag = CmmaData::<E>::fragment(
+        MatrixIdent::B,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::ColMajor,
+        comptime!(b.space.clone()),
+    );
+    b_frag.copy_from(&b_smem);
+
+    let mut acc = CmmaData::<E>::fragment(
+        MatrixIdent::Accumulator,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(c.space.clone()),
+    );
+    acc.zero();
+
+    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
+
+    let mut c_smem = MemData::smem(
+        comptime!(c.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    c_smem.copy_from(&acc);
+    sync_cube();
+    c.copy_from(&c_smem);
+}
+
 /// Quantized `A`: gmem `I` (i8) dequantized into smem by the plain `copy_from`, which recovers
 /// the storage element from the scheme on its own; `B`/`C` plain `E`. The cmma path then runs
 /// entirely in `E`. Mirrors [`cmma_matmul`] otherwise.

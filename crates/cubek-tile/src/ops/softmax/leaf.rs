@@ -29,9 +29,12 @@ impl<EA: Float> Tile<EA> {
         scale: EA,
     ) -> Array<EA> {
         let rank = comptime!(self.space.rank());
+        // Rank, not finality: a score tile states the instruction its matmuls contract through,
+        // and that statement is a level. Every read here is a flat one over the whole tile, which
+        // is the same cells whatever cuts them.
         comptime!(assert!(
-            self.space.is_final() && rank == 2,
-            "softmax: a leaf op on final rank-2 score tiles"
+            rank == 2,
+            "softmax: a leaf op on rank-2 score tiles"
         ));
         comptime!(assert!(
             state.space.contains(self.space.axis_at(0))

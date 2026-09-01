@@ -6,10 +6,10 @@
 //! `q_rows` maps rows back to query positions for the causal predicate.
 
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Buffering, Cut, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold, TileArg,
-    TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
+    Axis, Buffering, Cut, Instruction, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
+    TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -36,7 +36,7 @@ fn attention_fold_kernel<W: Size>(
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
-    #[comptime] row_chunk: usize,
+    #[comptime] budget: usize,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -55,7 +55,10 @@ fn attention_fold_kernel<W: Size>(
         comptime!(StagePlan::in_place()),
     );
     q_s.copy_from(&q);
-    let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
+    // The instruction the two matmuls contract through, stated on the tiles they write: the
+    // software one, whose register budget caps the rows a visit keeps live.
+    let form = comptime!(Instruction::registers(budget));
+    let score_space = comptime!(Space::new(&[(R, rows), (C, block)]).with_instruction(form));
     let mut score = MemData::<f32>::smem(
         score_space.clone(),
         1usize,
@@ -65,7 +68,7 @@ fn attention_fold_kernel<W: Size>(
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors =
         MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
-    let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
+    let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]).with_instruction(form));
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
@@ -81,7 +84,7 @@ fn attention_fold_kernel<W: Size>(
 
         // Clip the ragged tail: no reads past the attended prefix.
         let cols_bound = max(bound_s, s0) - s0;
-        score.score_columns(&q_s, &kb, cols_bound, row_chunk);
+        score.score(&q_s, &kb, cols_bound);
         sync_cube();
 
         let probe = MaskProbe {
@@ -99,7 +102,7 @@ fn attention_fold_kernel<W: Size>(
 
         // The mix folds the rescale in; stale cache beyond the attended
         // prefix must not ride a zero probability into the accumulator.
-        acc.mix_columns(&p, &vb, &factors, cols_bound, row_chunk);
+        acc.mix(&p, &vb, &factors, cols_bound);
         sync_cube();
     }
 
@@ -135,8 +138,9 @@ fn run(
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
-    // The register-blocking knob a routine would size from the register budget.
-    let row_chunk = 4;
+    // The register budget a routine would size from the hardware: 4 rows of `vec`-wide
+    // accumulators live at once.
+    let budget = 4 * vec;
 
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -215,7 +219,7 @@ fn run(
         units,
         causal,
         block,
-        row_chunk,
+        budget,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -278,6 +282,288 @@ fn fold_scalar_odd_bound() {
     run((16, 4, 4, 24, 8, 8, 4), 13, true, 1);
 }
 
+/// The same fold with both matmuls on tensor cores: the score and mix leaves state
+/// [`Instruction::Cmma`] on the tiles they write, so a plane owns whole fragments where a unit
+/// owned columns, and the softmax between them is unchanged scalar shared-memory work.
+///
+/// The flow llama.cpp's `fa.metal` runs: Q@K into fragments stored straight to shared memory, the
+/// online softmax on plain floats, the running total rescaled where it lies, then P@V folding onto
+/// it through an accumulator fragment loaded back from shared memory. Nothing persists in a
+/// fragment across a barrier.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn attention_fold_cmma_kernel(
+    q: &TileArg<'_, f32, Const<1>>,    // {QP, D}
+    k: &TileArg<'_, f32, Const<1>>,    // {S, D}
+    v: &TileArg<'_, f32, Const<1>>,    // {S, V}
+    mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
+    out: &mut Tensor<f32>,             // [QP·V] flat
+    scale: f32,
+    bound: u32,
+    #[comptime] space: Space,
+    #[comptime] units: usize,
+    #[comptime] causal: bool,
+    #[comptime] block: usize,
+    #[comptime] frag: usize,
+) {
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(space);
+
+    let rows = comptime!(q.space.extent(QP));
+    let d = comptime!(q.space.extent(D));
+    let val_dim = comptime!(v.space.extent(V));
+    // The queries stage with the grid their lhs role reads: `frag` rows against `frag` of the
+    // contracted head dim. Both matmuls' accumulators state the instruction itself.
+    let q_space = comptime!(
+        Tiling::new()
+            .extents(&[(QP, rows), (D, d)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(QP, Cut::sequential(frag))
+                    .axis(D, Cut::sequential(frag))
+            })
+            .build()
+    );
+    let mut q_s = MemData::<f32>::smem(q_space, 1usize, comptime!(StagePlan::in_place()));
+    q_s.copy_from(&q);
+
+    let score_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, rows), (C, block)])
+            .instruction(Instruction::Cmma, |l| {
+                l.axis(R, Cut::sequential(frag))
+                    .axis(C, Cut::sequential(frag))
+            })
+            .build()
+    );
+    let mut score = MemData::<f32>::smem(
+        score_space.clone(),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    let mut p = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::in_place()));
+    let row_space = comptime!(Space::new(&[(R, rows)]));
+    let mut factors =
+        MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
+    let acc_space = comptime!(
+        Tiling::new()
+            .extents(&[(R, rows), (V, val_dim)])
+            .instruction(Instruction::Cmma, |l| {
+                l.axis(R, Cut::sequential(frag))
+                    .axis(V, Cut::sequential(frag))
+            })
+            .build()
+    );
+    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
+    acc.zero();
+    let mut state = RowState::<f32>::new(row_space, units);
+    let rpu = comptime!(state.rows_per_unit);
+    let bound_s = bound as usize;
+    sync_cube();
+
+    for region in Walk::over(k.runtime_space()) {
+        let kb = k.at(&region);
+        let vb = v.at(&region);
+        let s0 = region.coord(S) * block;
+
+        let cols_bound = max(bound_s, s0) - s0;
+        score.score(&q_s, &kb, cols_bound);
+        sync_cube();
+
+        let probe = MaskProbe {
+            origin_q: 0,
+            origin_s: s0,
+            bound_q: rows.runtime(),
+            bound_s,
+            q_rows: rows,
+            causal,
+            materialized: false,
+        };
+        let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
+        factors.store_rows(&corr, rpu);
+        sync_cube();
+
+        acc.mix(&p, &vb, &factors, cols_bound);
+        sync_cube();
+    }
+
+    let mut recip = Array::<f32>::new(rpu);
+    for ri in 0..rpu {
+        recip[ri] = state.recip_l(ri);
+    }
+    factors.store_rows(&recip, rpu);
+    sync_cube();
+    acc.scale_rows(&factors);
+    sync_cube();
+
+    let size!(W1) = 1usize;
+    let acc_flat = acc.flat::<W1>();
+    let total = comptime!(rows * val_dim);
+    let workers = CUBE_DIM as usize;
+    let mut i = UNIT_POS as usize;
+    while i < total {
+        out[i] = acc_flat.read(i).extract(0usize);
+        i += workers;
+    }
+}
+
+/// Launch the tensor-core fold and check against direct host math.
+fn run_cmma(
+    (units, rows, s_total, block, d, val_dim, frag): (
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ),
+    bound_s: usize,
+    causal: bool,
+) {
+    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let f32_ty = f32::elem_type_native();
+    let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
+        cfg.a_type == f32_ty
+            && cfg.b_type == f32_ty
+            && cfg.cd_type == f32_ty
+            && (cfg.m as usize, cfg.n as usize, cfg.k as usize) == (frag, frag, frag)
+    });
+    if !supported {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device has no {frag}x{frag}x{frag} f32 cmma fragment"
+        )))
+        .enforce();
+        return;
+    }
+    let scale = 1. / (d as f32).sqrt();
+
+    let u32_ty = u32::elem_type_native();
+    let wobble =
+        |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
+
+    let (q_handle, q_data) = TestInput::builder(client.clone(), Shape::new([rows, d]))
+        .dtype(f32_ty)
+        .custom((0..rows * d).map(|i| wobble(i, 1)).collect())
+        .generate_with_f32_host_data();
+    let (k_handle, k_data) = TestInput::builder(client.clone(), Shape::new([s_total, d]))
+        .dtype(f32_ty)
+        .custom((0..s_total * d).map(|i| wobble(i, 2)).collect())
+        .generate_with_f32_host_data();
+    let (v_handle, v_data) = TestInput::builder(client.clone(), Shape::new([s_total, val_dim]))
+        .dtype(f32_ty)
+        .custom((0..s_total * val_dim).map(|i| wobble(i, 3) / 2.).collect())
+        .generate_with_f32_host_data();
+    let mask_handle = TestInput::builder(client.clone(), Shape::new([1]))
+        .dtype(u32_ty)
+        .zeros()
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([rows, val_dim]))
+        .dtype(f32_ty)
+        .zeros()
+        .generate_without_host_data();
+
+    // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
+    // in blocks and nothing else.
+    let space = Tiling::new()
+        .extents(&[
+            (QP, rows),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            l.axis(QP, Cut::sequential(rows))
+                .axis(S, Cut::sequential(block))
+                .axis(D, Cut::sequential(d))
+                .axis(V, Cut::sequential(val_dim))
+                .axis(R, Cut::sequential(1))
+                .axis(C, Cut::sequential(1))
+        })
+        .build();
+
+    attention_fold_cmma_kernel::launch::<TestRuntime>(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_1d(units as u32),
+        TileArgLaunch::new(
+            q_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[QP, D]),
+        ),
+        TileArgLaunch::new(
+            k_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[S, D]),
+        ),
+        TileArgLaunch::new(
+            v_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[S, V]),
+        ),
+        TileArgLaunch::new(
+            mask_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[R, C]),
+        ),
+        out_handle.clone().binding().into_tensor_arg(),
+        scale,
+        bound_s as u32,
+        space,
+        units,
+        causal,
+        block,
+        frag,
+    );
+
+    let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+
+    for r in 0..rows {
+        let mut scores = Vec::new();
+        for j in 0..s_total {
+            let masked = j >= bound_s || (causal && j > r);
+            if !masked {
+                let dot: f32 = (0..d)
+                    .map(|p| q_data.get_f32(&[r, p]) * k_data.get_f32(&[j, p]))
+                    .sum();
+                scores.push((dot * scale, j));
+            }
+        }
+        let m = scores.iter().fold(f32::NEG_INFINITY, |m, (s, _)| m.max(*s));
+        let l: f32 = scores.iter().map(|(s, _)| (s - m).exp()).sum();
+        for vi in 0..val_dim {
+            let expected: f32 = scores
+                .iter()
+                .map(|(s, j)| (s - m).exp() / l * v_data.get_f32(&[*j, vi]))
+                .sum();
+            let got = out.get_f32(&[r, vi]);
+            assert!(
+                (got - expected).abs() <= 1e-4 * expected.abs().max(1.),
+                "row {r} v {vi}: out {got} vs direct {expected}"
+            );
+        }
+    }
+}
+
+/// One plane, one fragment per matmul, two KV blocks: the leaves' hardware arm end to end.
+#[test]
+fn fold_cmma_single_fragment() {
+    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false);
+}
+
+/// Two planes over a 2x2 fragment grid, the head dim and the block each two fragments deep:
+/// the plane spread, the multi-step contraction and the fragment-granular column bound.
+#[test]
+fn fold_cmma_fragment_grid() {
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false);
+}
+
+/// Causal, and a prefix ending inside the last block: the mask probe owns the ragged tail, so
+/// the fragments it straddles are still contracted whole.
+#[test]
+fn fold_cmma_causal_ragged_bound() {
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true);
+}
+
 /// The split fold: teams on the cube's y dim each fold a disjoint slice of
 /// the S walk with their own running state into their own window of
 /// split-wide smem tiles, then the states merge cross-team
@@ -305,7 +591,7 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] splits: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
-    #[comptime] row_chunk: usize,
+    #[comptime] budget: usize,
     #[comptime] split_inner: bool,
 ) {
     let q = q.tile(comptime!(space.clone()));
@@ -331,6 +617,7 @@ fn attention_fold_split_kernel<W: Size>(
     // `merge_splits` reads. The score and the accumulator stack it into their
     // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
+    let form = comptime!(Instruction::registers(budget));
     let score_space = comptime!(
         Tiling::new()
             .extents(&[(R, split_rows), (C, block)])
@@ -339,6 +626,7 @@ fn attention_fold_split_kernel<W: Size>(
                     .axis(C, Cut::sequential(block))
             })
             .build()
+            .with_instruction(form)
     );
     // The split outermost gives a team one contiguous run of rows; innermost
     // gives it a strided column. Only the declared order differs — the cuts
@@ -364,6 +652,7 @@ fn attention_fold_split_kernel<W: Size>(
                     .axis(V, Cut::sequential(val_dim))
             })
             .build()
+            .with_instruction(form)
     );
     let score_all = MemData::<f32>::smem(
         score_space.clone(),
@@ -411,7 +700,7 @@ fn attention_fold_split_kernel<W: Size>(
 
         if live {
             let kb = k.at(&region);
-            score.score_columns(&q_s, &kb, cols_bound, row_chunk);
+            score.score(&q_s, &kb, cols_bound);
         }
         sync_cube();
 
@@ -432,7 +721,7 @@ fn attention_fold_split_kernel<W: Size>(
 
         if live {
             let vb = v.at(&region);
-            acc.mix_columns(&p, &vb, &factors, cols_bound, row_chunk);
+            acc.mix(&p, &vb, &factors, cols_bound);
         }
         sync_cube();
     }
@@ -509,8 +798,9 @@ fn run_split_at(
     let team = team.min((cap / splits).max(1));
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
-    // The register-blocking knob a routine would size from the register budget.
-    let row_chunk = 4;
+    // The register budget a routine would size from the hardware: 4 rows of `vec`-wide
+    // accumulators live at once.
+    let budget = 4 * vec;
 
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -589,7 +879,7 @@ fn run_split_at(
         splits,
         causal,
         block,
-        row_chunk,
+        budget,
         split_inner,
     );
 
