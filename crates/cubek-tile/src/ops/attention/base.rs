@@ -20,11 +20,7 @@ impl<EA: Float> Tile<EA> {
     /// none, so its fragment is the box the level it sits on cuts.
     pub fn score<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
         match comptime!(instruction(&self.space, "score")) {
-            Instruction::Registers { config } => {
-                let width = q.vector_size();
-                let rows = comptime!(rows_per_visit(config, width, &self.space));
-                self.score_columns(q, k, cols_bound, rows)
-            }
+            Instruction::Registers { config } => self.score_columns(q, k, cols_bound, config),
             Instruction::Cmma => self.score_fragments(q, k, cols_bound),
             Instruction::Mma { .. } => comptime!(panic!(
                 "score: the manual-mma form reads its operands row-major, so it cannot read the \
@@ -53,9 +49,7 @@ impl<EA: Float> Tile<EA> {
     ) {
         match comptime!(instruction(&self.space, "mix")) {
             Instruction::Registers { config } => {
-                let width = val.vector_size();
-                let rows = comptime!(rows_per_visit(config, width, &self.space));
-                self.mix_columns(p, val, factors, cols_bound, rows)
+                self.mix_columns(p, val, factors, cols_bound, config)
             }
             Instruction::Cmma => self.mix_fragments(p, val, factors, cols_bound),
             Instruction::Mma { .. } => comptime!(panic!(
@@ -77,33 +71,4 @@ fn instruction(space: &Space, verb: &str) -> Instruction {
              the software one, so the level it is cut at says what runs on its cells"
         )
     })
-}
-
-/// The `rows × cols` box one visit covers: the edges of the level the space's instruction sits on,
-/// or the whole tile where that level cut nothing. Every axis above the innermost multiplies into
-/// the row edge, so a tile carrying its rows as several axes reads like the flat one it is laid
-/// out as.
-pub(super) fn visit_box(space: &Space) -> (usize, usize) {
-    let sub = space.sub_tile_space();
-    let rank = sub.rank();
-    (
-        (0..rank - 1).map(|p| sub.extent_at(p)).product(),
-        sub.extent_at(rank - 1),
-    )
-}
-
-/// How many rows one visit of the software instruction keeps live, out of its
-/// [`budget`](RegisterBlock::budget) of accumulator registers: the visit holds one `width`-wide
-/// line per row, so a wider line buys fewer rows, not more registers.
-///
-/// The largest such count that also *divides* the accumulator, so every visit is the same shape
-/// and none straddles the last row: a visit is what a worker picks up, and a ragged one has no
-/// comptime height to unroll over. Never zero, since a visit holding no row contracts nothing.
-fn rows_per_visit(config: RegisterBlock, width: usize, space: &Space) -> usize {
-    let rows = space.extent_at(space.rank() - 2);
-    let cap = (config.budget / width).max(1).min(rows);
-    (1..=cap)
-        .rev()
-        .find(|c| rows.is_multiple_of(*c))
-        .unwrap_or(1)
 }

@@ -16,14 +16,13 @@ use crate::{instruction::registers::horizontal, *};
 impl<EA: Float> Tile<EA> {
     /// [`score`](Tile::score) under the software instruction. Each unit streams whole `k` rows
     /// for its owned columns, so a gmem `k` is read once per team; `q` is read `cols` times over
-    /// and belongs in shared memory. `row_chunk` caps the live accumulators (that many vectors at
-    /// once), read off the instruction's register budget.
+    /// and belongs in shared memory.
     pub(crate) fn score_columns<EI: Numeric>(
         &mut self,
         q: &Tile<EI>,
         k: &Tile<EI>,
         cols_bound: usize,
-        #[comptime] row_chunk: usize,
+        #[comptime] config: RegisterBlock,
     ) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
@@ -45,6 +44,7 @@ impl<EA: Float> Tile<EA> {
             "score_columns: k's trailing axis is the contracted head dim"
         ));
         let lines = comptime!(d / wq);
+        let row_chunk = comptime!(rows_per_visit(config, wq, rows));
         let size!(W) = w;
         let size!(WI) = wq;
 
@@ -85,21 +85,19 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`mix`](Tile::mix) under the software instruction. A unit owns one `(row chunk, value
-    /// line)` pair at a time, cyclically: adjacent units still read adjacent lines of `val`, so a
-    /// gmem `val` is read once per team and coalesced, while the rows now spread too. Spreading
-    /// the value lines alone would put the whole leaf on the axis vectorization divides, where
-    /// widening starves the grid and narrowing starves the bus.
+    /// line)` pair at a time, cyclically: the line is the inner digit, so adjacent units read
+    /// adjacent lines of `val` and a gmem `val` is read once per team, coalesced. The rows are the
+    /// other digit because a leaf spread over the value lines alone would sit entirely on the axis
+    /// vectorization divides, where widening starves the grid and narrowing starves the bus.
     ///
-    /// The rescale rides the same visit because each cell has exactly one owner here. `row_chunk`
-    /// as in [`score_columns`](Tile::score_columns), and it must divide the rows: a chunk is a
-    /// visit, and a runtime visit has no ragged one to fold into a comptime height.
+    /// The rescale rides the same visit because each cell has exactly one owner here.
     pub(crate) fn mix_columns<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
         factors: &Tile<EA>,
         cols_bound: usize,
-        #[comptime] row_chunk: usize,
+        #[comptime] config: RegisterBlock,
     ) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
@@ -117,6 +115,7 @@ impl<EA: Float> Tile<EA> {
             "mix_columns: val's line width divides the value dim"
         ));
         let v_lines = comptime!(val_dim / wv);
+        let row_chunk = comptime!(rows_per_visit(config, wv, rows));
         let size!(W) = w;
         let size!(WP) = wp;
         let size!(WV) = wv;
@@ -129,10 +128,6 @@ impl<EA: Float> Tile<EA> {
         let ff = factors.flat::<WF>();
         let mut out = self.flat_mut::<W>();
 
-        comptime!(assert!(
-            rows.is_multiple_of(row_chunk),
-            "mix_columns: the visit's {row_chunk} rows do not divide the accumulator's {rows}"
-        ));
         let bound = min(cols_bound, cols);
         let height = comptime!(row_chunk);
         // One visit is a `(row chunk, value line)` pair; the line is the inner digit, so the
@@ -169,4 +164,19 @@ impl<EA: Float> Tile<EA> {
             visit += workers;
         }
     }
+}
+
+/// How many rows one visit keeps live, out of the instruction's [`budget`](RegisterBlock::budget)
+/// of accumulator registers: the visit holds one `width`-wide line per row, so a wider line buys
+/// fewer rows, not more registers.
+///
+/// The largest such count that also *divides* `rows`, so every visit is the same shape and none
+/// straddles the last row: a visit is what a worker picks up, and a ragged one has no comptime
+/// height to unroll over. Never zero, since a visit holding no row contracts nothing.
+fn rows_per_visit(config: RegisterBlock, width: usize, rows: usize) -> usize {
+    let cap = (config.budget / width).max(1).min(rows);
+    (1..=cap)
+        .rev()
+        .find(|c| rows.is_multiple_of(*c))
+        .unwrap_or(1)
 }

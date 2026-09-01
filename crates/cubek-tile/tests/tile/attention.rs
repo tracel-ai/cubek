@@ -544,21 +544,26 @@ fn run_cmma(
     }
 }
 
-/// One plane, one fragment per matmul, two KV blocks: the leaves' hardware arm end to end.
+/// The hardware arm folds the same attention the scalar one does: one plane, one fragment per
+/// matmul, two KV blocks. A fragment that never ran, or a running total that lost what the block
+/// before it folded in, reads back here as zeros or as one block's answer.
 #[test]
 fn fold_cmma_single_fragment() {
     run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false);
 }
 
-/// Two planes over a 2x2 fragment grid, the head dim and the block each two fragments deep:
-/// the plane spread, the multi-step contraction and the fragment-granular column bound.
+/// Fragments are owned, not shared, and a contraction deeper than one fragment closes: two planes
+/// over a 2x2 grid, the head dim and the block each two steps deep. A plane taking the wrong share
+/// leaves whole fragments stale; a step dropped leaves half a dot product.
 #[test]
 fn fold_cmma_fragment_grid() {
     run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false);
 }
 
-/// Causal, and a prefix ending inside the last block: the mask probe owns the ragged tail, so
-/// the fragments it straddles are still contracted whole.
+/// The attended prefix may end inside a block: the mask probe owns the tail, so score fragments
+/// that straddle the bound are still contracted whole and only whole value steps past it are
+/// skipped. Splitting that the other way lets stale cache ride a zero probability into the
+/// accumulator.
 #[test]
 fn fold_cmma_causal_ragged_bound() {
     run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true);
