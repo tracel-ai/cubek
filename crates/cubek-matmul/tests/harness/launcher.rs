@@ -49,15 +49,31 @@ pub(crate) fn run_with_strides(
     problem: MatmulProblem,
     strategy: Strategy,
 ) -> TestOutcome {
+    run_with_strides_using(client, problem, move |c, lhs, rhs, out, dtypes| {
+        launch_ref(&strategy, c, lhs, rhs, out, dtypes)
+    })
+}
+
+/// [`run_with_strides`] with an arbitrary launch closure, for entry points other
+/// than the plain [`launch_ref`].
+#[allow(unused)]
+pub(crate) fn run_with_strides_using<F>(
+    client: ComputeClient<TestRuntime>,
+    problem: MatmulProblem,
+    launch: F,
+) -> TestOutcome
+where
+    F: FnOnce(
+        &ComputeClient<TestRuntime>,
+        InputBinding<TestRuntime>,
+        InputBinding<TestRuntime>,
+        TensorBinding<TestRuntime>,
+        &mut MatmulElems,
+    ) -> Result<(), MatmulSetupError>,
+{
     let lhs_layout = StridedLayout::Explicit(problem.lhs_strides.to_vec()).into();
     let rhs_layout = StridedLayout::Explicit(problem.rhs_strides.to_vec()).into();
-    run_outcome(
-        client,
-        problem,
-        lhs_layout,
-        rhs_layout,
-        move |c, lhs, rhs, out, dtypes| launch_ref(&strategy, c, lhs, rhs, out, dtypes),
-    )
+    run_outcome(client, problem, lhs_layout, rhs_layout, launch)
 }
 
 /// Build the lhs/rhs inputs under the given layouts, launch via `launch`, and

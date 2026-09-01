@@ -8,7 +8,7 @@ use cubek_std::MatrixLayout;
 
 use crate::harness::{
     assert_batch_broadcast, client, f16_elems, f32_elems, f64_elems, passed, rect,
-    run_with_strides, square, test_matmul_strategy,
+    run_with_strides, run_with_strides_using, square, test_matmul_strategy,
 };
 
 #[test]
@@ -82,4 +82,48 @@ fn reported_m_broadcast() {
         passed(&outcome),
         "reported M-broadcast repro gave {outcome:?}"
     );
+}
+
+/// Folding a batched problem with a shared rhs into one GEMM
+/// ([`LaunchOptions::collapse_broadcast_rhs_batches`]) must give the same answer
+/// as launching it batched. Both runs are checked against the CPU reference, on
+/// the decode shape (`[16, 1, k] × [1, k, n]`) and on a stride-0 rhs batch.
+#[test]
+fn collapsing_broadcast_rhs_batches_matches_batched_launch() {
+    use cubek_matmul::launch::{LaunchOptions, launch_ref, launch_ref_with_options};
+
+    let client = TestRuntime::client(&Default::default());
+    let problem = |rhs_batches: usize| {
+        MatmulProblem::from_parameters(
+            1,
+            64,
+            64,
+            shape![16],
+            shape![rhs_batches],
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            f32_elems(),
+            AddressType::U32,
+        )
+    };
+    let mut stride_zero = problem(16);
+    stride_zero.rhs_strides[0] = 0;
+
+    for problem in [problem(1), stride_zero] {
+        let batched = run_with_strides_using(client.clone(), problem.clone(), |c, l, r, o, d| {
+            launch_ref(&Strategy::Auto, c, l, r, o, d)
+        });
+        assert!(passed(&batched), "batched launch gave {batched:?}");
+
+        let options = LaunchOptions {
+            collapse_broadcast_rhs_batches: true,
+        };
+        let collapsed = run_with_strides_using(client.clone(), problem, |c, l, r, o, d| {
+            launch_ref_with_options(&Strategy::Auto, c, l, r, o, d, options)
+        });
+        assert!(passed(&collapsed), "collapsed launch gave {collapsed:?}");
+    }
 }
