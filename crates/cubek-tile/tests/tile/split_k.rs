@@ -330,8 +330,8 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .dtype(dtype)
         .custom(b)
         .generate_with_f32_host_data();
-    // Zeroed, and the launch's own precondition: the first cube to arrive folds onto what is
-    // here rather than replacing it, so this is the fold's identity and not a convenience.
+    // Zeroed, and this is where `mm`'s init went: the operation states `c = a·b`, so something
+    // has to put the identity there, and under a split that something is the launch.
     let out = TestInput::builder(client.clone(), shape![m, n])
         .dtype(dtype)
         .zeros()
@@ -598,13 +598,14 @@ fn an_atomic_drain_folds_across_planes() {
     }
 }
 
-/// The output as something that may already hold contributions, contracted *in place* with the
-/// accumulating verb and no register accumulator at all.
+/// The output contracted *in place*, with no register accumulator at all.
 ///
-/// The shape a split wants once ownership stops being claimed: `out` is never read, because
-/// folding is itself the read-modify-write, so a cube adds its slice to whatever is there and
-/// never learns who else wrote it. What phase two needed `Residence::Register` for was the drain;
-/// this needs no drain, because every commit is one.
+/// The verb is still `mm`, and it is still true: across all the cubes the operation is `c = a·b`.
+/// What the split moves is the *init* it owns. A cell belongs to several cubes, so none of them
+/// may seed it, and the buffer instead arrives holding the fold's identity: zeroed before the
+/// launch rather than in the kernel. Every write is then a `+=` into a cell that already holds
+/// what the other cubes contracted, and nothing is ever read back, because folding is itself the
+/// read-modify-write.
 #[cube(launch)]
 fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -621,12 +622,11 @@ fn atomic_split_matmul_in_place<E: Numeric>(
         comptime!(space.clone()),
         comptime!(out_spec.clone()),
     );
-    // `mma`, not `mm`: nothing here may state what the cell *is*.
-    c.mma(&a, &b, Semiring::SUM_PROD);
+    c.mm(&a, &b, Semiring::SUM_PROD);
 }
 
 #[test]
-fn a_folding_output_contracts_in_place_with_the_accumulating_verb() {
+fn a_folding_output_contracts_in_place() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     if !client
         .properties()

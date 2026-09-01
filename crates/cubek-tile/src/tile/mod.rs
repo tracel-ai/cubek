@@ -660,12 +660,22 @@ impl<T: Numeric> Tile<T> {
     ///
     /// Asking rather than deciding is what keeps a kind that cannot take the request from having
     /// to be listed anywhere else.
+    ///
+    /// A destination that folds always answers [`Identity`](InitFrom::Identity), whatever is
+    /// asked. Its cells belong to several instances, so no one of them may seed the cell, and the
+    /// seed has happened already: the buffer arrives holding the fold's identity, which is the
+    /// launch's obligation and the price of the split. Answering `Cell` instead would have this
+    /// instance write the identity into a cell its siblings are already folding into.
     pub(crate) fn request_init_from(
         &mut self,
         #[comptime] init_from: InitFrom,
     ) -> comptime_type!(InitFrom) {
         match &mut self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => {
+                let init_from = comptime!(match d.access.write {
+                    Write::Fold => InitFrom::Identity,
+                    Write::Replace => init_from,
+                });
                 d.set_init_from(comptime!(init_from));
                 comptime!(init_from)
             }

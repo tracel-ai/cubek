@@ -222,29 +222,6 @@ pub enum Write {
 }
 
 impl Write {
-    /// Refuse a verb that claims the destination's cells are its own.
-    ///
-    /// A destination that folds is one several instances write, so a cell may already hold their
-    /// contributions and no verb may state what it *is*: `c = a·b` would be a lie about a cell
-    /// that ends up holding more than this instance contracted. The accumulating verb says the
-    /// true thing, `c += a·b`, and needs no ownership to say it.
-    ///
-    /// Only asked where the accumulation happens in the destination itself. A register-resident
-    /// accumulator states `c = a·b` about its own registers, which nothing else writes, and its
-    /// drain folds that whole contribution in one go.
-    pub(crate) fn validate_owning_verb(self, site: &str) {
-        match self {
-            Write::Replace => {}
-            Write::Fold => panic!(
-                "{site}: this output folds into its destination, so a cell may already hold other \
-                 instances' contributions and this verb cannot state what it is. Use the \
-                 accumulating verb (`mma` rather than `mm`), which folds onto what is there, or \
-                 state Residence::Register so the contraction runs in registers and the drain \
-                 folds the whole contribution in one write."
-            ),
-        }
-    }
-
     /// Refuse a fold from a drain that cannot elect one writer for it.
     ///
     /// A hardware fragment stores through its own intrinsic, over a slice of the destination or
