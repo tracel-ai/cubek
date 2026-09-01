@@ -5,16 +5,11 @@ use cubecl::{
     future,
     prelude::*,
     std::tensor::TensorHandle,
-    std::throughput::measure_peak_throughput,
-    throughput::{ThroughputKey, ThroughputMode},
     zspace::Shape,
 };
 use cubek_test_utils::{RunSamples, TestInput};
 
-use crate::{
-    definition::{InterpolateCost, InterpolateProblem},
-    interpolate, interpolate_backward,
-};
+use crate::{definition::InterpolateProblem, interpolate, interpolate_backward};
 
 use crate::InterpolateStrategy;
 
@@ -42,25 +37,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    let work = InterpolateCost::new(problem.clone(), dtype).work();
-
-    Ok(RunSamples::new(durations)
-        .with_flops(work.compute_ops as f64, None)
-        .with_bytes(work.bytes, memory_peak_bytes_per_s(&client)))
-}
-
-/// The device's measured copy peak, in bytes/s, for the resampling to be judged against.
-///
-/// [`ThroughputMode::Memory`] is a copy, which is the access interpolation performs: it
-/// reads one tensor and writes another. `measure_peak_throughput` caches per device, so
-/// this does not need to as well.
-fn memory_peak_bytes_per_s(client: &ComputeClient<TestRuntime>) -> Option<f64> {
-    let key = ThroughputKey {
-        mode: ThroughputMode::Memory,
-    };
-    let peak = measure_peak_throughput(client, key).bytes_per_s(&key);
-
-    (peak > 0.0).then_some(peak)
+    Ok(RunSamples::new(durations))
 }
 
 struct InterpolateBench {

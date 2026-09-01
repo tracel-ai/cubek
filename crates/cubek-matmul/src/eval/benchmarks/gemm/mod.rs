@@ -8,8 +8,10 @@ pub use correctness::GemmCorrectness;
 pub use problem::{GemmProblem, Precision, problems};
 pub use strategy::strategies;
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, client};
 
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use crate::strategy::Strategy;
 
 pub struct Category;
@@ -47,5 +49,35 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = GemmProblem, Strategy = Strategy>>
     {
         Some(&GemmCorrectness)
+    }
+
+    fn work(&self, problem: &GemmProblem) -> Option<CategoryWork> {
+        let dtype = match problem.precision {
+            Precision::F32 => f32::elem_type_native(),
+            Precision::F16 => half::f16::elem_type_native(),
+        };
+
+        let cost = MatmulCost {
+            batches: problem.b,
+            m: problem.m,
+            n: problem.n,
+            k: problem.k,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+
+        let (bytes_read, bytes_written) = cost.traffic();
+
+        Some(CategoryWork {
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
+            bytes_read,
+            bytes_written,
+        })
     }
 }

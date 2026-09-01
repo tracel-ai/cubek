@@ -23,10 +23,54 @@ pub struct AttentionCost {
 }
 
 impl AttentionCost {
-    /// Calculates the compute operations and compulsory memory traffic for the attention pass.
+    /// Score entries the kernel visits, and the query rows that visit any.
     ///
-    /// Includes both matmuls (`Q@K^T` and `S@V`) and memory traffic for compulsory input/output operands.
-    pub fn work(&self) -> Work {
+    /// Causal masking drops a score when `j + seq_q > i + seq_kv`, which aligns the
+    /// diagonal on the bottom right: query `i` visits `i + seq_kv - seq_q + 1` keys,
+    /// the full rectangle minus the triangle above the diagonal. This is not a flat
+    /// halving: a decode step (`seq_q = 1`) still visits the whole cache. Rows above
+    /// the diagonal visit nothing, so they contract over nothing either.
+    fn visited(&self) -> (usize, usize) {
+        let AttentionDims { seq_q, seq_kv, .. } = self.dims;
+        let diagonal = seq_q.min(seq_kv);
+
+        match self.causal {
+            true => (
+                diagonal * seq_kv - diagonal * diagonal.saturating_sub(1) / 2,
+                diagonal,
+            ),
+            false => (seq_q * seq_kv, seq_q),
+        }
+    }
+
+    /// Operations both matmuls perform, `Q@K^T` and `S@V`.
+    pub fn compute_ops(&self) -> usize {
+        let AttentionDims {
+            batch,
+            num_heads,
+            head_dim,
+            val_dim,
+            ..
+        } = self.dims;
+
+        let batch_heads = batch * num_heads;
+        let (visited, rows) = self.visited();
+
+        // `2n - 1` ops per output element: n multiplies and n - 1 adds. Saturating so a
+        // degenerate extent (an empty KV cache) yields zero instead of underflowing.
+        let qk_ops = batch_heads * visited * (2 * head_dim).saturating_sub(1);
+        // Every row contracts over the keys it visited, so summing `2 * visited_i - 1`
+        // over the rows that visited any gives the adds and multiplies per output column.
+        let sv_ops = batch_heads * val_dim * (2 * visited).saturating_sub(rows);
+
+        qk_ops + sv_ops
+    }
+
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
+    ///
+    /// Attention bias is excluded, as fast paths do not read one.
+    pub fn traffic(&self) -> (usize, usize) {
         let AttentionDims {
             batch,
             num_heads,
@@ -37,44 +81,32 @@ impl AttentionCost {
         } = self.dims;
 
         let batch_heads = batch * num_heads;
-
-        // Causal masking drops a score when `j + seq_q > i + seq_kv`, which aligns the
-        // diagonal on the bottom right: query `i` visits `i + seq_kv - seq_q + 1` keys,
-        // the full rectangle minus the triangle above the diagonal. This is not a flat
-        // halving: a decode step (`seq_q = 1`) still visits the whole cache.
-        let diagonal = seq_q.min(seq_kv);
-        let visited = match self.causal {
-            true => diagonal * seq_kv - diagonal * diagonal.saturating_sub(1) / 2,
-            false => seq_q * seq_kv,
-        };
-        // Rows above the diagonal visit nothing, so they contract over nothing either.
-        let rows = match self.causal {
-            true => diagonal,
-            false => seq_q,
-        };
-
-        // `2n - 1` ops per output element: n multiplies and n - 1 adds. Saturating so a
-        // degenerate extent (an empty KV cache) yields zero instead of underflowing.
-        let qk_ops = batch_heads * visited * (2 * head_dim).saturating_sub(1);
-        // Every row contracts over the keys it visited, so summing `2 * visited_i - 1`
-        // over the rows that visited any gives the adds and multiplies per output column.
-        let sv_ops = batch_heads * val_dim * (2 * visited).saturating_sub(rows);
-
+        let (visited, _) = self.visited();
         let elements = |seq: usize, dim: usize| batch_heads * seq * dim;
+
         // Only the mask entries the kernel actually visits are read.
         let mask_bytes = match self.masked {
             true => batch_heads * visited * self.types.mask.size(),
             false => 0,
         };
 
+        let read = elements(seq_q, head_dim) * self.types.query.size()
+            + elements(seq_kv, head_dim) * self.types.key.size()
+            + elements(seq_kv, val_dim) * self.types.value.size()
+            + mask_bytes;
+
+        (read, elements(seq_q, val_dim) * self.types.out.size())
+    }
+
+    /// Calculates the compute operations and compulsory memory traffic for the attention pass.
+    ///
+    /// Includes both matmuls (`Q@K^T` and `S@V`) and memory traffic for compulsory input/output operands.
+    pub fn work(&self) -> Work {
+        let (read, written) = self.traffic();
+
         Work {
-            compute_ops: qk_ops + sv_ops,
-            // Exclude attention bias as fast paths do not read one.
-            bytes: elements(seq_q, head_dim) * self.types.query.size()
-                + elements(seq_kv, head_dim) * self.types.key.size()
-                + elements(seq_kv, val_dim) * self.types.value.size()
-                + mask_bytes
-                + elements(seq_q, val_dim) * self.types.out.size(),
+            compute_ops: self.compute_ops(),
+            bytes: read + written,
         }
     }
 

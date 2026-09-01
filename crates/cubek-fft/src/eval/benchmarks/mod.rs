@@ -10,7 +10,10 @@ pub use correctness::FftCorrectness;
 pub use problem::{FftProblem, problems};
 pub use strategy::{FftStrategy, strategies};
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
+
+use crate::FftMode;
 
 pub struct Category;
 
@@ -47,5 +50,30 @@ impl cubek_test_utils::Category for Category {
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = FftProblem, Strategy = FftStrategy>>
     {
         Some(&FftCorrectness)
+    }
+
+    /// No honest op count across algorithms/radices, so this declares reads and
+    /// writes only. The real (`Forward`) side is the full signal length; the
+    /// spectrum side is the one-sided `len/2 + 1` complex layout, so its two planes
+    /// (real, imaginary) together move less than a same-length real buffer.
+    fn work(&self, problem: &FftProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let elem_size = dtype.size();
+
+        let signal_elems: usize = problem.shape.iter().product();
+        let last = problem.shape.len() - 1;
+        let spectrum_elems: usize =
+            signal_elems / problem.shape[last] * (problem.shape[last] / 2 + 1);
+
+        let (read_elems, written_elems) = match problem.mode {
+            FftMode::Forward => (signal_elems, 2 * spectrum_elems),
+            FftMode::Inverse => (2 * spectrum_elems, signal_elems),
+        };
+
+        Some(CategoryWork {
+            compute: None,
+            bytes_read: read_elems * elem_size,
+            bytes_written: written_elems * elem_size,
+        })
     }
 }

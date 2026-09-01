@@ -11,7 +11,10 @@ mod problem;
 pub use benchmark::bench;
 pub use problem::{DepthwiseProblem, blocks_running, problems, strategies};
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
+
+use crate::definition::DepthwiseCost;
 
 use crate::DepthwiseStrategy;
 
@@ -44,5 +47,27 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    fn work(&self, problem: &DepthwiseProblem) -> Option<CategoryWork> {
+        let cost = DepthwiseCost {
+            batch: problem.batch,
+            channels: problem.channels,
+            size: problem.size,
+            out_size: problem.out_size(),
+            kernel: problem.kernel,
+            dtype: f32::elem_type_native(),
+        };
+
+        let (bytes_read, bytes_written) = cost.traffic();
+
+        Some(CategoryWork {
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(),
+            }),
+            bytes_read,
+            bytes_written,
+        })
     }
 }

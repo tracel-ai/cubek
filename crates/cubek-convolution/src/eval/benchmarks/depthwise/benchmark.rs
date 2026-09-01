@@ -36,7 +36,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(problem.flops(), None))
+    Ok(RunSamples::new(durations))
 }
 
 struct DepthwiseBench {

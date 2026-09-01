@@ -17,7 +17,7 @@ use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
-    definition::{MatmulElems, MatmulGlobalElems, compute_peak_ops_per_s},
+    definition::{MatmulElems, MatmulGlobalElems},
     launch::launch_ref as matmul_launch_ref,
     multi_level::eval::quantized_matmul::problem::{
         Layout, Mode, QuantSide, QuantizedMatmulProblem,
@@ -34,8 +34,6 @@ pub fn bench(
     let client = <TestRuntime as Runtime>::client(&device);
 
     validate_spec(problem)?;
-
-    let flops = 2.0 * problem.b as f64 * problem.m as f64 * problem.n as f64 * problem.k as f64;
     let elems = matmul_elems::<f32>();
 
     let bench = QuantMatmulBench {
@@ -60,7 +58,7 @@ pub fn bench(
         }
     };
 
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 struct QuantMatmulBench {
@@ -122,7 +120,7 @@ struct QuantMatmulInputs {
     out: TensorHandle<TestRuntime>,
 }
 
-fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
+pub(super) fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
     if scheme.num_levels() > 1 {
         unimplemented!("two-level quantization is not supported here, got {scheme:?}");
     }

@@ -44,24 +44,6 @@ impl DepthwiseProblem {
         let out = self.out_size();
         [self.batch, out, out, self.channels]
     }
-
-    /// Multiply-accumulates, counted as two flops each.
-    pub fn flops(&self) -> f64 {
-        let out = self.out_size();
-        2.0 * (self.batch * out * out * self.channels * self.kernel * self.kernel) as f64
-    }
-
-    /// What the convolution must move at least once: both maps and the filter. The ratio of
-    /// this to the measured time is the number to read — a depthwise pass has too little
-    /// arithmetic per byte to be anything but bandwidth-bound, so its ceiling is the device's
-    /// copy rate and not its flop rate.
-    pub fn bytes(&self, elem_size: usize) -> usize {
-        let out = self.out_size();
-        let elems = self.batch * self.size * self.size * self.channels
-            + self.batch * out * out * self.channels
-            + self.channels * self.kernel * self.kernel;
-        elems * elem_size
-    }
 }
 
 /// Every distinct depthwise convolution EfficientNet-B4 runs at a 768px input and an output

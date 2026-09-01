@@ -20,7 +20,6 @@ const INSTRUCTION: Instruction = Instruction::Registers {
     config: RegisterBlock::new(64),
 };
 use super::strategy::StageDepth;
-use crate::definition::{MatmulElems, compute_peak_ops_per_s};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -43,6 +42,15 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     c.mma(&a, &b, Semiring::SUM_PROD);
 }
 
+/// The packed-weight scheme this bench quantizes `B` under: `Q8S`, block size `1 × bn`
+/// (no blocking along `k`, `bn` along `n`), packed into `u32` words.
+pub(super) fn quant_scheme(bn: usize) -> QuantScheme {
+    QuantScheme::default()
+        .per_block([1, bn as u8], ScaleDtype::F32)
+        .with_store(QuantStore::PackedU32(0))
+        .with_value(QuantValue::Q8S)
+}
+
 pub fn bench(
     strategy: &StageDepth,
     problem: &TileQuantStageProblem,
@@ -51,10 +59,7 @@ pub fn bench(
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
 
-    let scheme = QuantScheme::default()
-        .per_block([1, problem.bn as u8], ScaleDtype::F32)
-        .with_store(QuantStore::PackedU32(0))
-        .with_value(QuantValue::Q8S);
+    let scheme = quant_scheme(problem.bn);
     let pack = scheme.num_quants();
     let max_width = client.properties().hardware.max_vector_size;
     if pack > max_width {
@@ -84,13 +89,10 @@ pub fn bench(
         .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
-
-    let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
     // The mma contracts in f32; the packed u32 is how the RHS is stored, not what the
     // arithmetic runs at.
-    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 struct TileQuantStageBench {

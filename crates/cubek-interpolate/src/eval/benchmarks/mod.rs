@@ -10,9 +10,13 @@ pub use problem::{problems, problems_scaled};
 pub use strategy::{BenchTarget, BenchTier, every_strategy, strategies, strategies_at};
 
 use cubecl::benchmark::TimingMethod;
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
-use crate::{InterpolateStrategy, definition::InterpolateProblem};
+use crate::{
+    InterpolateStrategy,
+    definition::{InterpolateCost, InterpolateProblem},
+};
 
 pub struct Category;
 
@@ -113,5 +117,20 @@ impl cubek_test_utils::Category for CpuCategory {
         >,
     > {
         Some(&InterpolateCorrectness)
+    }
+
+    fn work(&self, problem: &InterpolateProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let cost = InterpolateCost::new(problem.clone(), dtype);
+        let (bytes_read, bytes_written) = cost.traffic();
+
+        Some(CategoryWork {
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(),
+            }),
+            bytes_read,
+            bytes_written,
+        })
     }
 }

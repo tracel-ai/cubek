@@ -6,7 +6,8 @@ pub use benchmark::bench;
 pub use problem::{ContiguousProblem, problems};
 pub use strategy::{ContiguousStrategy, strategies};
 
-use cubek_test_utils::{CatalogEntry, RunSamples};
+use cubecl::prelude::*;
+use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
 pub struct Category;
 
@@ -41,5 +42,18 @@ impl cubek_test_utils::Category for Category {
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
+    }
+
+    /// A layout copy: reads the strided input and writes a fresh contiguous
+    /// buffer of the same element count. No compute beyond addressing.
+    fn work(&self, problem: &ContiguousProblem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let elems = problem.shape.iter().product::<usize>() * dtype.size();
+
+        Some(CategoryWork {
+            compute: None,
+            bytes_read: elems,
+            bytes_written: elems,
+        })
     }
 }

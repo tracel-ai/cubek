@@ -52,18 +52,31 @@ pub struct MatmulCost {
 }
 
 impl MatmulCost {
-    /// Calculates the compute operations and compulsory memory traffic for the matmul.
-    ///
-    /// Computes operations as `2 * k - 1` ops per output element and compulsory byte traffic
-    /// for reading inputs and writing outputs once.
-    pub fn work(&self) -> Work {
+    /// Compute operations, `2 * k - 1` per output element: `k` multiplies and
+    /// the `k - 1` adds that join them.
+    pub fn compute_ops(&self) -> usize {
+        self.batches * self.m * self.n * (2 * self.k).saturating_sub(1)
+    }
+
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
+    pub fn traffic(&self) -> (usize, usize) {
         let elements = |rows: usize, cols: usize| self.batches * rows * cols;
 
+        let read = elements(self.m, self.k) * self.elems.lhs.size()
+            + elements(self.k, self.n) * self.elems.rhs.size();
+        let written = elements(self.m, self.n) * self.elems.out.size();
+
+        (read, written)
+    }
+
+    /// Calculates the compute operations and compulsory memory traffic for the matmul.
+    pub fn work(&self) -> Work {
+        let (read, written) = self.traffic();
+
         Work {
-            compute_ops: elements(self.m, self.n) * (2 * self.k).saturating_sub(1),
-            bytes: elements(self.m, self.k) * self.elems.lhs.size()
-                + elements(self.k, self.n) * self.elems.rhs.size()
-                + elements(self.m, self.n) * self.elems.out.size(),
+            compute_ops: self.compute_ops(),
+            bytes: read + written,
         }
     }
 

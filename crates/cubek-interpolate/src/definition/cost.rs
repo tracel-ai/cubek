@@ -4,10 +4,7 @@ use cubecl::{
     tune::Work,
 };
 
-use crate::definition::{
-    InterpolateBackwardProblem, InterpolateForwardProblem, InterpolateMode, InterpolateProblem,
-    mode_properties,
-};
+use crate::definition::{InterpolateMode, InterpolateProblem, mode_properties};
 
 /// Minimal representation of interpolate cost dependencies: the shapes the resampling maps
 /// between and the element type its traffic is counted in.
@@ -33,9 +30,64 @@ impl InterpolateCost {
     /// selects and comparisons included, so a mode that spends its time choosing between
     /// branches is not scored as free.
     pub fn work(&self) -> Work {
+        let (read, written) = self.traffic();
+
+        Work {
+            compute_ops: self.compute_ops(),
+            bytes: read + written,
+        }
+    }
+
+    /// Operations the filter emits, selects and comparisons included.
+    pub fn compute_ops(&self) -> usize {
         match &self.problem {
-            InterpolateProblem::Forward(prob) => self.forward_work(prob),
-            InterpolateProblem::Backward(prob) => self.backward_work(prob),
+            InterpolateProblem::Forward(prob) => {
+                prob.batch
+                    * prob.channels
+                    * prob.output_height
+                    * prob.output_width
+                    * ops_per_output(prob.options.mode)
+            }
+            // The gather windows tile the gradient plane: consecutive output positions
+            // start where the previous one ended, so the window sizes telescope to the
+            // gradient extent and every gradient element is summed exactly once,
+            // whichever direction the forward pass resampled in.
+            InterpolateProblem::Backward(prob) => {
+                let [batch, grad_height, grad_width, channels] = prob.out_grad_shape;
+
+                batch * channels * grad_height * grad_width
+            }
+        }
+    }
+
+    /// Compulsory global traffic in bytes, split by direction, which
+    /// [`work`](Self::work) sums.
+    pub fn traffic(&self) -> (usize, usize) {
+        let size = self.dtype.size();
+
+        match &self.problem {
+            InterpolateProblem::Forward(prob) => {
+                let planes = prob.batch * prob.channels;
+                let outputs = planes * prob.output_height * prob.output_width;
+                let taps = mode_properties(prob.options.mode).taps;
+                // Each output position pulls a `halo`-wide window, so the windows together
+                // span `halo` times the output extent. An upsample re-reads rows the previous
+                // window already covered, which the input extent caps; a downsample coarse
+                // enough to outrun the window skips the rows no window reaches, which the
+                // product caps.
+                let rows_read = prob.input_height.min(prob.output_height * taps);
+                let cols_read = prob.input_width.min(prob.output_width * taps);
+
+                (planes * rows_read * cols_read * size, outputs * size)
+            }
+            InterpolateProblem::Backward(prob) => {
+                let [batch, grad_height, grad_width, channels] = prob.out_grad_shape;
+                let planes = batch * channels;
+                let grads = planes * grad_height * grad_width;
+                let outputs = planes * prob.input_size[0] * prob.input_size[1];
+
+                (grads * size, outputs * size)
+            }
         }
     }
 
@@ -44,40 +96,6 @@ impl InterpolateCost {
     pub fn compute_key(&self) -> ThroughputKey {
         ThroughputKey {
             mode: ThroughputMode::ComputeDirect { dtype: self.dtype },
-        }
-    }
-
-    fn forward_work(&self, prob: &InterpolateForwardProblem) -> Work {
-        let planes = prob.batch * prob.channels;
-        let outputs = planes * prob.output_height * prob.output_width;
-        let taps = mode_properties(prob.options.mode).taps;
-
-        // Each output position pulls a `halo`-wide window, so the windows together span
-        // `halo` times the output extent. An upsample re-reads rows the previous window
-        // already covered, which the input extent caps; a downsample coarse enough to
-        // outrun the window skips the rows no window reaches, which the product caps.
-        let rows_read = prob.input_height.min(prob.output_height * taps);
-        let cols_read = prob.input_width.min(prob.output_width * taps);
-
-        Work {
-            compute_ops: outputs * ops_per_output(prob.options.mode),
-            bytes: (planes * rows_read * cols_read + outputs) * self.dtype.size(),
-        }
-    }
-
-    fn backward_work(&self, prob: &InterpolateBackwardProblem) -> Work {
-        let [batch, grad_height, grad_width, channels] = prob.out_grad_shape;
-        let planes = batch * channels;
-        let grads = planes * grad_height * grad_width;
-        let outputs = planes * prob.input_size[0] * prob.input_size[1];
-
-        Work {
-            // The gather windows tile the gradient plane: consecutive output positions
-            // start where the previous one ended, so the window sizes telescope to the
-            // gradient extent and every gradient element is summed exactly once,
-            // whichever direction the forward pass resampled in.
-            compute_ops: grads,
-            bytes: (grads + outputs) * self.dtype.size(),
         }
     }
 }
@@ -151,7 +169,9 @@ mod tests {
     use super::*;
     use cubecl::ir::FloatKind;
 
-    use crate::definition::{InterpolateOptions, NearestMode};
+    use crate::definition::{
+        InterpolateBackwardProblem, InterpolateForwardProblem, InterpolateOptions, NearestMode,
+    };
 
     const F32: ElemType = ElemType::Float(FloatKind::F32);
 

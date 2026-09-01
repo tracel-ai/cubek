@@ -12,7 +12,7 @@ use cubek_std::InputBinding;
 use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::{
-    definition::{MatmulElems, compute_peak_ops_per_s},
+    definition::MatmulElems,
     launch::launch_ref,
     multi_level::eval::gemv::problem::{GemvProblem, ProblemKind},
     strategy::Strategy,
@@ -25,8 +25,6 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = <TestRuntime as Runtime>::Device::default();
     let client = <TestRuntime as Runtime>::client(&device);
-
-    let flops = 2.0 * problem.batches as f64 * problem.out_dim as f64 * problem.k_dim as f64;
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = GemvBench {
@@ -48,7 +46,7 @@ pub fn bench(
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 struct GemvBench {
