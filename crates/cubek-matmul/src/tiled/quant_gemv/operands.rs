@@ -34,11 +34,19 @@ pub(super) struct QuantGemvOperands {
 
 impl QuantGemvOperands {
     /// `served` is the element the packed words decode to and the contraction runs in.
-    pub fn new(served: ElemType, x: ElemType, scales: ElemType, levels: usize, out: ElemType) -> Self {
+    pub fn new(
+        served: ElemType,
+        x: ElemType,
+        scales: ElemType,
+        levels: usize,
+        out: ElemType,
+    ) -> Self {
         QuantGemvOperands {
             w: Operand::new(&[M, KB, KI], served),
             x: Operand::new(&[N, KB, KI], x),
-            scales: (0..levels).map(|_| Operand::new(&[M, KB], scales)).collect(),
+            scales: (0..levels)
+                .map(|_| Operand::new(&[M, KB], scales))
+                .collect(),
             out: Operand::new(&[M, N], out),
         }
     }

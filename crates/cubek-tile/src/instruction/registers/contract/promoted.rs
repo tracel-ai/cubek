@@ -9,9 +9,9 @@
 
 use cubecl::prelude::*;
 
+use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::instruction::registers::block;
 use crate::instruction::registers::contract::scale_side;
-use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::instruction::registers::lines::{CombinedScales, ScaledLines};
 use crate::*;
 

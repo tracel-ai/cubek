@@ -16,9 +16,9 @@ use cubecl::{
     Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
     std::tensor::TensorHandle, zspace::shape,
 };
+use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
-use cubecl_common::e2m1;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);

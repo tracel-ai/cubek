@@ -14,6 +14,6 @@ mod promoted;
 mod scale;
 mod shape;
 
-pub use scale::{Apply, ScaleSide};
 pub(crate) use base::{memory, memory_scaled};
 pub(crate) use scale::scale_side;
+pub use scale::{Apply, ScaleSide};

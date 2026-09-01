@@ -53,7 +53,10 @@ pub struct Reuse {
 
 impl Reuse {
     /// An operand with nothing to reuse: it reads what it needs, every step.
-    pub const PER_STEP: Reuse = Reuse { per_load: 1, steps: 1 };
+    pub const PER_STEP: Reuse = Reuse {
+        per_load: 1,
+        steps: 1,
+    };
 
     /// Steps walked before the pattern repeats.
     pub fn span(&self) -> usize {
@@ -188,11 +191,13 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
 
     fn reuse(&self) -> comptime_type!(Reuse) {
         let above = self.scales.reuse();
-        comptime!(Reuse {
-            per_load: self.lanes,
-            steps: self.lines_per_scale,
-        }
-        .compose(above, self.lines_per_scale * self.lanes))
+        comptime!(
+            Reuse {
+                per_load: self.lanes,
+                steps: self.lines_per_scale,
+            }
+            .compose(above, self.lines_per_scale * self.lanes)
+        )
     }
 }
 

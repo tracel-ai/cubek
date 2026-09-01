@@ -2,10 +2,10 @@
 
 use cubecl::prelude::*;
 
+use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};
-use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -401,7 +401,16 @@ fn nest_scaled<
                     comptime!(level.lines_per_scale),
                     comptime!(level.lanes),
                 );
-                body::<E, EL, L, ER, V, A, ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>, MatrixView<Vector<ER, V>>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>,
+                    MatrixView<Vector<ER, V>>,
+                >(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
@@ -427,7 +436,16 @@ fn nest_scaled<
                     comptime!(level.lines_per_scale),
                     comptime!(level.lanes),
                 );
-                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    MatrixView<Vector<EL, L>>,
+                    ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>,
+                >(
                     &mut acc_view,
                     &lhs_mat,
                     &rhs_mat,
@@ -471,16 +489,19 @@ pub(super) fn combined_scales<'a, ES: Numeric, S: Size>(
         // a tile of the other's tiles.
         comptime!(assert!(
             level_above.space.axes().collect::<Vec<_>>() == inner.space.axes().collect::<Vec<_>>()
-                && (0..level_above.space.rank()).all(|p| {
-                    level_above.space.extent_at(p) == inner.space.extent_at(p)
-                }),
+                && (0..level_above.space.rank())
+                    .all(|p| { level_above.space.extent_at(p) == inner.space.extent_at(p) }),
             "mm_scaled: a coarser scale level spans {:?} at extents {:?} where the level below it \
              spans {:?} at {:?}. Levels declare the same axes and differ by what their projections \
              address, which is what makes one cover a tile of the other's tiles",
             level_above.space.axes().collect::<Vec<_>>(),
-            (0..level_above.space.rank()).map(|p| level_above.space.extent_at(p)).collect::<Vec<_>>(),
+            (0..level_above.space.rank())
+                .map(|p| level_above.space.extent_at(p))
+                .collect::<Vec<_>>(),
             inner.space.axes().collect::<Vec<_>>(),
-            (0..inner.space.rank()).map(|p| inner.space.extent_at(p)).collect::<Vec<_>>()
+            (0..inner.space.rank())
+                .map(|p| inner.space.extent_at(p))
+                .collect::<Vec<_>>()
         ));
         // Read once, here, which is once per region. A coarser level covers this whole region, so
         // it has no position of its own inside it; that it does is what the assert above says.

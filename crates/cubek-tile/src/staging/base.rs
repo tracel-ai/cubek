@@ -166,7 +166,11 @@ impl<T: CubeType> Staging<T> {
         pipeline: Pipeline,
         #[comptime] plans: Vec<OperandPlan>,
     ) -> Staging<T> {
-        Staging::<T> { data, pipeline, plans }
+        Staging::<T> {
+            data,
+            pipeline,
+            plans,
+        }
     }
 
     /// The resolved plan for `operand`. Asking a slot for an operand it does not carry is a bug,
