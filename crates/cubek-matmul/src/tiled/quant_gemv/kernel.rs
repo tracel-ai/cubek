@@ -28,7 +28,7 @@ pub fn quant_gemv_kernel<
 >(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
-    scales: &TileArg<'_, ES, Const<1>>,
+    scales: &Sequence<TileArg<'_, ES, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
     #[comptime] space: Space,
     #[define(EC)] _served_dtype: ElemType,
@@ -39,7 +39,10 @@ pub fn quant_gemv_kernel<
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut levels = Sequence::new();
-    levels.push(scales.tile(comptime!(space.clone())));
+    #[unroll]
+    for k in 0..scales.len() {
+        levels.push(scales.index(k).tile(comptime!(space.clone())));
+    }
     let mut out = out.tile(space);
     out.mm_scaled(&w, &x, &levels, Semiring::SUM_PROD);
 }

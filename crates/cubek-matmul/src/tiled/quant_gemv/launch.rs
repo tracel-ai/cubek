@@ -50,8 +50,10 @@ pub struct QuantGemvBindings<R: Runtime> {
     pub x: TensorBinding<R>,
     /// The packed weight, `[d_out, d_in]` in values over a buffer of `u32` words.
     pub weights: TensorBinding<R>,
-    /// The scales, `[d_out, d_in / block]`, at whatever element they are stored in.
-    pub scales: TensorBinding<R>,
+    /// The scale levels, innermost first, each at whatever element it is stored in. What a level
+    /// covers is read off its own shape: `[d_out, d_in / block]` distinguishes every block, a
+    /// single element covers the tensor. Nothing states how many there are.
+    pub scales: Vec<TensorBinding<R>>,
     /// The result, `[d_out, rows]` — the weight's rows are the output's, this orientation
     /// putting them on the buffer's outer dim.
     pub out: TensorBinding<R>,
@@ -92,7 +94,13 @@ pub fn launch_ref<R: Runtime>(
         out,
     } = bindings;
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
-    let mut ops = QuantGemvOperands::new(dtypes.served, dtypes.x, dtypes.scales, dtypes.out);
+    let mut ops = QuantGemvOperands::new(
+        dtypes.served,
+        dtypes.x,
+        dtypes.scales,
+        scales.len(),
+        dtypes.out,
+    );
 
     let extents = [
         (M, problem.d_out),
@@ -168,7 +176,39 @@ pub fn launch_ref<R: Runtime>(
         // step, unpacks the word's other values and discards them.
         .vectorize(factor)
         .build();
-    let s_op = launch.bind(&ops.scales, scales).build();
+    // One operand per level, each addressing exactly the axes its own shape distinguishes. An
+    // extent of one is a level that does not vary there, which is what makes it cover a tile of
+    // the tiles below it.
+    let mut s_args = SequenceArg::new();
+    for (op, binding) in ops.scales.iter().zip(scales) {
+        let dims: Vec<usize> = binding.shape.iter().copied().collect();
+        let full = [(M, problem.d_out), (KB, blocks)];
+        if dims.len() != full.len() {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "QuantGemv: a scale level has rank {} where its axes are {:?}",
+                dims.len(),
+                full.map(|(axis, _)| axis)
+            ))));
+        }
+        // An axis at its full extent is one the level distinguishes; an axis of one is one it does
+        // not, and that is the whole of "this level covers a tile of the tiles below it".
+        let mut maps = Vec::new();
+        for (extent, (axis, whole)) in dims.iter().zip(full) {
+            match extent {
+                e if *e == whole => maps.push(PhysicalAxisMap::of(axis)),
+                1 => maps.push(PhysicalAxisMap::broadcast()),
+                other => {
+                    return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                        "QuantGemv: a scale level spans {other} of {axis:?}, which is neither its \
+                         {whole} tiles nor one covering them all"
+                    ))));
+                }
+            }
+        }
+        let projection = Projection::new(&[M, KB], &maps);
+        let level = launch.arg(binding).gathered(projection).operand(op).build();
+        s_args.push(level.arg());
+    }
     // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
     let out_op = launch.bind(&ops.out, out).build();
@@ -181,7 +221,7 @@ pub fn launch_ref<R: Runtime>(
         out_op.vector_size,
         w_op.arg(),
         x_op.arg(),
-        s_op.arg(),
+        s_args,
         out_op.arg(),
         launch.space().clone(),
         dtypes.served,
