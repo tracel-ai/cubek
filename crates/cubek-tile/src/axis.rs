@@ -14,7 +14,6 @@ pub const MAX_LEVELS: usize = 6;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Axis(pub u8);
 
-
 /// A comptime map from [`Axis`] to a value, in declared order. This is the
 /// canonical axis order and the order a [`Region`](crate::Region)'s coordinates come in.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

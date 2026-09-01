@@ -56,7 +56,6 @@ fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
     total
 }
 
-
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
 pub struct Launcher<'c, R: Runtime> {
