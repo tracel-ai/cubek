@@ -41,9 +41,8 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
 ///
 /// A space that distributes nothing at `Unit` scope still launches a full plane
 /// ([`Space::cube_dim`](crate::Space::cube_dim) sizes it at the hardware `plane_size`), and every
-/// lane of it then runs the same code over the same cells. The writes are identical, so a store
-/// lands the same value however many lanes make it, which is why nothing has had to know this
-/// until now.
+/// lane of it then runs the same code over the same cells. Identical stores land the same value
+/// however many lanes make them, so only a write that accumulates has to count the writers.
 ///
 /// A fold is not idempotent. `Repeated` lanes folding one cell add their contribution
 /// `plane_size` times, so a folding drain elects one of them. Distinct from [`LaneShare`], which
@@ -325,8 +324,9 @@ mod tests {
     use super::*;
     use crate::Write;
 
-    /// A destination that replaces cannot take a cell several instances hold slices of: the
-    /// refusal is the whole of phase zero, since the alternative is a wrong number.
+    /// A destination that replaces cannot take a cell several instances hold slices of. The
+    /// guard is the only thing between that mistake and a wrong number: nothing about it shows up
+    /// at compile time or in a crash.
     #[test]
     #[should_panic(expected = "split across planes or cubes")]
     fn a_partial_cell_may_not_be_stored() {

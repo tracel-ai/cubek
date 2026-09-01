@@ -15,7 +15,6 @@ mod register;
 mod tma;
 mod view;
 
-pub use atomic::*;
 pub use cmma::*;
 pub use geometry::*;
 pub use mem::*;

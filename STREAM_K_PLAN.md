@@ -166,7 +166,7 @@ mapping already knows: it overrides `CubeDim::new_single()` rather than waste th
 
 That is a pre-existing waste, but the fold made it a *correctness* question, twice: repeated lanes
 storing the same value land it once, and folding it land it once each. Both write paths needed a
-lane-zero election (`Drain::LaneZero`), which is silent adaptation to a mis-specified space, and
+lane-zero election (`Drain::LaneZero`), which is silent adaptation to a misconfigured space, and
 the house rule is the opposite: refuse, and let the caller put something on the lanes.
 
 Measured, it matters more than the split does. On `m=1 n=32 k=8192`, cutting each cube's slice of

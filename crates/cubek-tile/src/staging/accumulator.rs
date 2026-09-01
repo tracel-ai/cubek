@@ -296,7 +296,7 @@ impl<Acc: Numeric> Tile<Acc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+    use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
     use cubecl::ir::Scope;
 
     const M: Axis = Axis(0);

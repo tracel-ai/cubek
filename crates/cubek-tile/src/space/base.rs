@@ -5,8 +5,8 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, SplitShare, Distribution, Instruction, LaneShare, LaneWork, Lanes,
-    LevelRole, MAX_AXES, Partitioner, join_lane_share,
+    Axis, ComputeScope, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole, MAX_AXES,
+    Partitioner, SplitShare, join_lane_share,
 };
 
 use super::ByAxis;
@@ -946,7 +946,7 @@ mod contraction_tests {
     /// it, exactly as an operand's own space is read at launch.
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
-        use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
         let space = Tiling::new()
             .extents(&[(M, 4), (N, 4), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -983,7 +983,7 @@ mod contraction_tests {
     /// of one, and refusing that would refuse the control it is compared against.
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
-        use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
         let space = Tiling::new()
             .extents(&[(M, 4), (N, 4), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
@@ -999,7 +999,7 @@ mod contraction_tests {
     /// its columns outright and there is nothing to combine.
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
-        use crate::{Buffering, Cut, CubeAxis, Tiling, WalkOrder};
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
         let space = Tiling::new()
             .extents(&[(M, 4), (N, 8), (K, 4)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {

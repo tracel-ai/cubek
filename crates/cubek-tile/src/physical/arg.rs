@@ -263,7 +263,11 @@ impl<'a, E: Numeric> AccumulateArg<'a, E> {
     /// Serve the output as a [`Tile`] that accumulates into it. [`TileArg::tile`]'s twin, and the same
     /// call: the kernel's one `space` projected onto this operand's `spec` axes.
     pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        Tile::<E>::of_atomic_accumulate::<Const<1>>(self.tensor, space, comptime!(self.spec.clone()))
+        Tile::<E>::of_atomic_accumulate::<Const<1>>(
+            self.tensor,
+            space,
+            comptime!(self.spec.clone()),
+        )
     }
 }
 

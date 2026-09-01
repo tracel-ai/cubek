@@ -13,40 +13,67 @@
 //! is [`Atomic::fetch_add`] rather than an assignment.
 //!
 //! Two things the caller owns, neither checkable here. The buffer holds the monoid's identity
-//! before the launch, since the first cube to arrive adds onto what is there. And the order the adds
-//! land in is the order the cubes run in, so the sum is not bit-identical run to run: a launch
-//! that needs reproducibility wants the split spelled as an axis instead (`tests/tile/split_k.rs`).
+//! before the launch, since the first cube to arrive adds onto what is there. And the order the
+//! adds land in is the order the cubes run in, so the sum is not bit-identical run to run; a
+//! launch that needs reproducibility gives the output an axis for the split instead, which makes
+//! every instance's slice a cell of its own and needs no combine at all.
 
 use core::marker::PhantomData;
 
 use cubecl::ir::{ExpandValue, VectorSize};
-use cubecl::unexpanded;
 use cubecl::prelude::*;
 use cubecl::std::tensor::{
     ErasedTensor, ErasedTensorExpand, ErasedTensorOperationsExpand, WriteOnly, WritesLines,
 };
+use cubecl::unexpanded;
 
 use crate::*;
 
-/// Accumulate one line into the buffer: `N` scalar adds at the line's own offset.
-///
-/// Scalar because an atomic is: `Atomic<E>` is one element wide whatever the tile serves its
-/// lines at, so the width the walk works in is undone here and nowhere else. The tile above keeps
-/// addressing whole lines, which is what keeps this a backing rather than a second drain.
 #[cube]
-fn accumulate_line<E: Numeric, N: Size>(values: &Tensor<Atomic<E>>, index: usize, value: Vector<E, N>) {
-    let base = index * N::value();
-    #[unroll]
-    for k in 0..N::value() {
-        values[base + k].fetch_add(value.extract(k));
+impl<T: Numeric> Tile<T> {
+    /// A tile whose writes accumulate into `values` instead of replacing, at served width `N`.
+    ///
+    /// The constructor behind [`AccumulateArg`], which is the surface a kernel binds. See
+    /// [`Tile::of_accumulating_sink`] for what the caller owns.
+    pub(crate) fn of_atomic_accumulate<N: Size>(
+        values: &Tensor<Atomic<T>>,
+        #[comptime] space: Space,
+        #[comptime] spec: TileSpec,
+    ) -> Tile<T> {
+        // The geometry a sink cannot be asked for, taken off the buffer behind it. An atomic
+        // element is scalar, so these strides are already in the scalars the layout wants.
+        let geometry = RuntimeGeometry::of_tensor::<Atomic<T>>(
+            values,
+            comptime!(spec.projection.physical_rank()),
+        );
+        let sink = ErasedTensor::<T, WriteOnly>::of_atomic_accumulate::<N>(values);
+        Tile::<T>::of_accumulating_sink(sink, geometry, comptime!(N::value()), space, spec)
     }
 }
 
-/// The backing's length in lines of `N`, off a buffer counted in scalars.
-#[cube]
-fn lines_of(scalars: usize, #[comptime] width: usize) -> usize {
-    scalars / width.runtime()
+/// The erased tensor over an atomic buffer, accumulating at width `N`.
+///
+/// A constructor here rather than in cubecl for the reason the backing is here: what a write
+/// *means* is this crate's statement, and cubecl's own backings all replace. Reached only through
+/// [`Tile::of_atomic_accumulate`], which is why it is not part of the crate's surface.
+pub(crate) trait AtomicAccumulateSink<E: Numeric> {
+    /// The sink that accumulates into `values` at width `N`.
+    fn of_atomic_accumulate<N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor<E, WriteOnly> {
+        unexpanded!()
+    }
+
+    fn __expand_of_atomic_accumulate<N: Size>(
+        _scope: &Scope,
+        values: &<Tensor<Atomic<E>> as CubeType>::ExpandType,
+    ) -> ErasedTensorExpand<E, WriteOnly> {
+        ErasedTensorExpand::new(AtomicAccumulate::<E, N> {
+            values: ExpandTypeClone::clone_unchecked(values),
+            _n: PhantomData,
+        })
+    }
 }
+
+impl<E: Numeric> AtomicAccumulateSink<E> for ErasedTensor<E, WriteOnly> {}
 
 /// A backing that accumulates into an `Atomic<E>` buffer. Writes and never reads, so it declares
 /// [`WritesLines`] alone: a partial that could be read back is one a cube could seed from, which
@@ -79,45 +106,26 @@ impl<E: Numeric, N: Size> ErasedTensorOperationsExpand<E> for AtomicAccumulate<E
 
 impl<E: Numeric, N: Size> WritesLines<E> for AtomicAccumulate<E, N> {}
 
-#[cube]
-impl<T: Numeric> Tile<T> {
-    /// A tile whose writes accumulate into `values` instead of replacing, at served width `N`.
-    ///
-    /// The constructor behind [`AccumulateArg`], which is the surface a kernel binds. See
-    /// [`Tile::of_accumulating_sink`] for what the caller owns.
-    pub(crate) fn of_atomic_accumulate<N: Size>(
-        values: &Tensor<Atomic<T>>,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> Tile<T> {
-        // The geometry a sink cannot be asked for, taken off the buffer behind it. An atomic
-        // element is scalar, so these strides are already in the scalars the layout wants.
-        let geometry =
-            RuntimeGeometry::of_tensor::<Atomic<T>>(values, comptime!(spec.projection.physical_rank()));
-        let sink = ErasedTensor::<T, WriteOnly>::of_atomic_accumulate::<N>(values);
-        Tile::<T>::of_accumulating_sink(sink, geometry, comptime!(N::value()), space, spec)
-    }
-}
-
-/// The erased tensor over an atomic buffer, accumulating at width `N`.
+/// Accumulate one line into the buffer: `N` scalar adds at the line's own offset.
 ///
-/// A constructor here rather than in cubecl for the reason the backing is here: what a write
-/// *means* is this crate's statement, and cubecl's own backings all replace.
-pub trait AtomicAccumulateSink<E: Numeric> {
-    /// The sink that accumulates into `values` at width `N`.
-    fn of_atomic_accumulate<N: Size>(_values: &Tensor<Atomic<E>>) -> ErasedTensor<E, WriteOnly> {
-        unexpanded!()
-    }
-
-    fn __expand_of_atomic_accumulate<N: Size>(
-        _scope: &Scope,
-        values: &<Tensor<Atomic<E>> as CubeType>::ExpandType,
-    ) -> ErasedTensorExpand<E, WriteOnly> {
-        ErasedTensorExpand::new(AtomicAccumulate::<E, N> {
-            values: ExpandTypeClone::clone_unchecked(values),
-            _n: PhantomData,
-        })
+/// Scalar because an atomic is: `Atomic<E>` is one element wide whatever the tile serves its
+/// lines at, so the width the walk works in is undone here and nowhere else. The tile above keeps
+/// addressing whole lines, which is what keeps this a backing rather than a second drain.
+#[cube]
+fn accumulate_line<E: Numeric, N: Size>(
+    values: &Tensor<Atomic<E>>,
+    index: usize,
+    value: Vector<E, N>,
+) {
+    let base = index * N::value();
+    #[unroll]
+    for k in 0..N::value() {
+        values[base + k].fetch_add(value.extract(k));
     }
 }
 
-impl<E: Numeric> AtomicAccumulateSink<E> for ErasedTensor<E, WriteOnly> {}
+/// The backing's length in lines of `N`, off a buffer counted in scalars.
+#[cube]
+fn lines_of(scalars: usize, #[comptime] width: usize) -> usize {
+    scalars / width.runtime()
+}

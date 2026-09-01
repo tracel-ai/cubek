@@ -33,9 +33,9 @@ use cubecl::{
 };
 use cubek_test_utils::{CatalogEntry, HostData, HostDataType, RunSamples, TileInput};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, Monoid, PhysicalAxisMap, Projection, RegisterBlock,
-    AccumulateArg, AccumulateArgLaunch, Residence, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
-    Tiling, WalkOrder,
+    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Cut, Instruction, Monoid,
+    PhysicalAxisMap, Projection, RegisterBlock, Residence, Semiring, Space, TileArg, TileArgLaunch,
+    TileSpec, Tiling, WalkOrder,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -271,14 +271,13 @@ struct Bound {
     out_spec: TileSpec,
 }
 
+/// The operand seeds. Fixed rather than passed: only the shape varies between the run that
+/// verifies a mapping and the run that times it, and two `u64`s at a call site say nothing.
+const LHS_SEED: u64 = 0;
+const RHS_SEED: u64 = 1;
+
 impl Bound {
-    fn new(
-        client: &ComputeClient<TestRuntime>,
-        mapping: Mapping,
-        problem: Problem,
-        seed: u64,
-        samples: usize,
-    ) -> Self {
+    fn new(client: &ComputeClient<TestRuntime>, mapping: Mapping, problem: Problem) -> Self {
         let lanes = client.properties().hardware.plane_size_max as usize;
         let Problem { m, n, k } = problem;
         let splits = mapping.splits();
@@ -288,10 +287,10 @@ impl Bound {
 
         let a = TileInput::builder(client, Space::new(&[(M, m), (K, k)]))
             .untiled()
-            .uniform(seed, 0.0, 1.0);
+            .uniform(LHS_SEED, 0.0, 1.0);
         let b = TileInput::builder(client, Space::new(&[(K, k), (N, n)]))
             .untiled()
-            .uniform(seed + 1, 0.0, 1.0);
+            .uniform(RHS_SEED, 0.0, 1.0);
         // The contraction's destination: `[KB, M, N]` where the split is an axis of it, the plain
         // output otherwise. Zeroed either way, which the atomic drain needs and the others do not
         // mind.
@@ -312,7 +311,8 @@ impl Bound {
         Bound {
             client: client.clone(),
             mapping,
-            samples,
+            // The verifying run never times anything; `bench` states the count it wants.
+            samples: 1,
             cube_count: space.cube_count(),
             cube_dim: space.cube_dim(client),
             fold_cube_count: fold_space.cube_count(),
@@ -327,6 +327,13 @@ impl Bound {
             rhs_spec: mapping.rhs_spec(inside),
             out_spec: TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
         }
+    }
+
+    /// How many timed samples this takes. Named rather than passed to
+    /// [`new`](Bound::new), where it would be one of two bare numbers at every call site.
+    fn samples(mut self, samples: usize) -> Self {
+        self.samples = samples;
+        self
     }
 
     /// One full run of the mapping: the contraction, and the fold pass where there is one. Both
@@ -431,7 +438,7 @@ fn verify(client: &ComputeClient<TestRuntime>, mapping: Mapping) -> Result<(), S
     // being cut again across the plane.
     let (m, n, k) = (2usize, FOLD_COLS, mapping.splits() * lanes * 2);
     let problem = Problem { m, n, k };
-    let bound = Bound::new(client, mapping, problem, 7, 1);
+    let bound = Bound::new(client, mapping, problem);
     bound.launch();
 
     let a = HostData::from_tensor_handle(client, bound.a.handle(), HostDataType::F32);
@@ -439,7 +446,9 @@ fn verify(client: &ComputeClient<TestRuntime>, mapping: Mapping) -> Result<(), S
     let got = HostData::from_tensor_handle(client, bound.result().handle(), HostDataType::F32);
     for i in 0..m {
         for j in 0..n {
-            let want: f32 = (0..k).map(|p| a.get_f32(&[i, p]) * b.get_f32(&[p, j])).sum();
+            let want: f32 = (0..k)
+                .map(|p| a.get_f32(&[i, p]) * b.get_f32(&[p, j]))
+                .sum();
             let have = got.get_f32(&[i, j]);
             if (have - want).abs() > want.abs() * 1e-3 + 1e-3 {
                 return Err(format!(
@@ -484,17 +493,19 @@ pub fn bench(
             problem.n
         ));
     }
-    if matches!(mapping, Mapping::Atomic { .. } | Mapping::AtomicLanes { .. })
-        && !client
-            .properties()
-            .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
-            .contains(AtomicUsage::Add)
+    if matches!(
+        mapping,
+        Mapping::Atomic { .. } | Mapping::AtomicLanes { .. }
+    ) && !client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add)
     {
         return Err("device has no f32 atomic add".to_string());
     }
     verify(&client, mapping)?;
 
-    let bound = Bound::new(&client, mapping, *problem, 0, num_samples);
+    let bound = Bound::new(&client, mapping, *problem).samples(num_samples);
     let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
     let durations = bound
@@ -508,9 +519,21 @@ pub fn bench(
 /// the contraction. `n` is the cube count without a split (`COLS = 1`), so `n = 32` starts well
 /// under any GPU's core count and `n = 512` starts above it.
 const SHAPES: &[(&str, &str, usize, usize, usize)] = &[
-    ("m1_n32_k8192", "m=1 n=32 k=8192 (32 cubes unsplit)", 1, 32, 8192),
+    (
+        "m1_n32_k8192",
+        "m=1 n=32 k=8192 (32 cubes unsplit)",
+        1,
+        32,
+        8192,
+    ),
     ("m1_n128_k8192", "m=1 n=128 k=8192", 1, 128, 8192),
-    ("m1_n512_k8192", "m=1 n=512 k=8192 (already wide)", 1, 512, 8192),
+    (
+        "m1_n512_k8192",
+        "m=1 n=512 k=8192 (already wide)",
+        1,
+        512,
+        8192,
+    ),
     ("m8_n128_k4096", "m=8 n=128 k=4096", 8, 128, 4096),
 ];
 
