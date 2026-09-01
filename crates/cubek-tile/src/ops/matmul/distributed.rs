@@ -33,6 +33,10 @@ pub(crate) fn distributed_mm<EA: Numeric, Out: Numeric, Lhs: Numeric, Rhs: Numer
     comptime!(refuse_a_stage(lhs_stage.head(), "lhs"));
     comptime!(refuse_a_stage(rhs_stage.head(), "rhs"));
 
+    // Nothing under this reads a second statement: the share's regions are walked here and the
+    // level below runs through the ordinary schedule, which deals every axis on its own.
+    comptime!(refuse_work_below(&sink.space));
+
     let rides = comptime!(distributed_scope(&sink.space));
     let instances = comptime!(distributed_instances(&sink.space));
     // How many steps one region of this level costs. Comptime: a divided space is fully static
@@ -97,6 +101,19 @@ fn refuse_a_stage(residence: Residence, operand: &str) {
     );
 }
 
+/// A second distribution one level down, which the schedule under a share never reads. Two
+/// scopes sharing one contraction is a real thing to want and is not this: cut an axis across the
+/// inner scope instead, which the walk under a share honours like any other.
+fn refuse_work_below(space: &Space) {
+    let child = space.divide();
+    assert!(
+        child.is_final() || child.partitioner().work().is_none(),
+        "distributed_mm: the level under this one distributes work too, and a share's own walk \
+         deals every axis on its own. Cut an axis across that scope (`Cut::plane`, `Cut::unit`) \
+         instead."
+    );
+}
+
 fn work(space: &Space) -> &Work {
     space
         .partitioner()
@@ -106,7 +123,60 @@ fn work(space: &Space) -> &Work {
 
 /// How many steps the level under this one walks, which is what one region of this level costs
 /// the share.
+///
+/// One instance's steps, not the grid's: an axis that level cuts across planes or lanes is
+/// covered by the instances of a *cube*, which all step together, so the share is counted in the
+/// steps they take together rather than in the tiles they cover between them.
 fn steps_below(space: &Space) -> usize {
     let child = space.divide();
-    child.axes().map(|axis| child.count(axis)).product()
+    child
+        .axes()
+        .map(|axis| {
+            let grid = child.count(axis);
+            match child.partitioner().distribution(axis) {
+                Distribution::Sequential => grid,
+                Distribution::Spatial { coverage, .. } => grid / coverage.instances(grid),
+            }
+        })
+        .product()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refuse_work_below;
+    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder, cubes};
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    // Host-side, because a comptime panic raised in a kernel lands on a worker thread where
+    // `#[should_panic]` never sees it and the launch returns zeros.
+
+    fn space(twice: bool) -> Space {
+        Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3))
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| match twice {
+                true => l.distribute(&[(M, 4), (N, 4), (K, 4)], cubes(CubeAxis::Y).instances(2)),
+                false => l
+                    .axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4)),
+            })
+            .build()
+    }
+
+    #[test]
+    #[should_panic = "distributes work too"]
+    fn a_second_distribution_under_a_share_is_refused() {
+        refuse_work_below(&space(true));
+    }
+
+    #[test]
+    fn an_ordinary_level_under_a_share_is_the_walk_it_always_was() {
+        refuse_work_below(&space(false));
+    }
 }

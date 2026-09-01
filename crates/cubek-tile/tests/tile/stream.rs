@@ -433,3 +433,88 @@ fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
         }
     }
 }
+
+/// Two scopes sharing one contraction: the cubes take shares of the work, and inside a cube the
+/// plane's lanes cut `K` between them and meet in registers. The share is counted in the steps
+/// the lanes take *together*, so a cube's slice of the work is the same size however many lanes
+/// cover one step of it.
+#[test]
+fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !folds_atomically() {
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    // Two steps of `K` per lane, so a cube's share is counted in something longer than one.
+    let (m, n, k) = (8usize, 8usize, 2 * lanes);
+    let want = reference(m, n, k);
+
+    // 4 output tiles of 2 steps each: 8 steps of work, and 3 shares of it straddle tiles.
+    for runs in [1usize, 3, 5] {
+        let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+        let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+        let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+            .dtype(dtype)
+            .custom(a)
+            .generate_with_f32_host_data();
+        let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+            .dtype(dtype)
+            .custom(b)
+            .generate_with_f32_host_data();
+        let out = TestInput::builder(client.clone(), shape![m, n])
+            .dtype(dtype)
+            .zeros()
+            .generate_without_host_data();
+
+        let space = Tiling::new()
+            .extents(&[(MM, m), (NN, n), (KK, k)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.distribute(
+                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
+                    cubes(CubeAxis::X).instances(runs),
+                )
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.axis(MM, Cut::sequential(TILE_M))
+                    .axis(NN, Cut::sequential(TILE_N))
+                    .axis(KK, Cut::unit(1))
+            })
+            .build()
+            .resolve_lanes(lanes)
+            .with_instruction(Instruction::registers(16));
+
+        stream_matmul::launch::<TestRuntime>(
+            &client,
+            space.cube_count(),
+            space.cube_dim(&client),
+            TileArgLaunch::new(
+                a_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[MM, KK]),
+            ),
+            TileArgLaunch::new(
+                b_handle.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[KK, NN]),
+            ),
+            AccumulateArgLaunch::new(
+                out.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[MM, NN]).residence(&[Residence::Register, Residence::InPlace]),
+            ),
+            space,
+            dtype,
+        );
+
+        let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+        for i in 0..m {
+            for j in 0..n {
+                let have = got.get_f32(&[i, j]);
+                let want = want[i * n + j];
+                assert!(
+                    (have - want).abs() < 1e-2,
+                    "{runs} shares over cubes, K over {lanes} lanes: at ({i}, {j}): got {have}, \
+                     want {want}"
+                );
+            }
+        }
+    }
+}
