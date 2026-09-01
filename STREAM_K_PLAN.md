@@ -4,9 +4,9 @@ Cutting the contraction so a cube does not do the whole of it. The `Tiling::over
 worked; the feature was one missing concept on the drain, and that concept was one the DSL already
 had at a finer scope.
 
-Status: phases 0 to 3 landed and measured. Phase 4 (the linear assignment, which is what makes it
-stream-K rather than split-K) is not started, and section "Phase 4" below says what it now looks
-like it costs, which is more than the original plan assumed.
+Status: phases 0 to 3 landed and measured, plus the `mma`-not-`mm` correction that removes most of
+what phase 4 looked like it would cost. Phase 4 itself (the linear assignment, which is what makes
+it stream-K rather than split-K) is not started.
 
 ## What a caller writes
 
@@ -118,46 +118,59 @@ host-side off the concrete space, the way bounds checks are already derived.
 returns zeros. Every refusal here is tested host-side instead, and `tests/tile/matmul.rs` carries the
 note.
 
-## Phase 4: the linear assignment, and what it costs
+## Phase 4: the linear assignment
 
-Split-K is stream-K whose runs never straddle a tile boundary, so the drain built above is the drain
-stream-K needs and none of it is throwaway. Two things remain, and the second is larger than the
-plan assumed.
+Split-K is stream-K whose runs never straddle a tile boundary, so the drain built above is the one
+stream-K needs and none of it is throwaway.
 
-**The assignment stops factoring per axis.** `Coverage`/`Spread` are per-axis today and
-`Walk::from_counts` gives each cube a product of per-axis runs, which is a rectangular block. A
-contiguous run of the flattened grid is not one. `Coverage` has to move from the axis to the level,
-and `Walk` needs to decode from a linear cursor rather than an odometer, which is a variant of the
-mixed-radix decode it already does. Settle the surface before writing it: a `Distribution::Streamed`
-per axis plus an all-or-none assert reads as a bool in a trench coat.
+**The accumulator-lifetime problem was overstated, and is now mostly gone.** The earlier reading
+was that a cube's run crossing an output tile would force a mid-loop re-seed on a runtime check,
+which meant `AccumulatorScope` giving up its lexical scope. What actually removes it is not
+claiming ownership: an output that folds is *maybe prefilled*, every contraction into it is `mma`
+rather than `mm`, and nothing has to prove a cube is the only contributor. `CellRead` answers
+`Never` for a folding destination and the store's `fetch_add` is the read-modify-write, so a cube
+adds its slice to whatever is there. Landed in `dc26fa6c`, with a test contracting in place into an
+atomic output with no register accumulator at all.
 
-**The accumulator's scope stops being lexical.** This is the real cost, and it is not in the
-original plan. A `Residence` is a lexical scope: stated at a level, materialized when the region
-opens, released when it closes, and `AccumulatorScope` drains on the op that exhausts it. Under a
-streamed level one cube's run spans several output regions, so the accumulator has to be drained and
-re-seeded *inside* the loop, when the output tile changes. That is a runtime condition in a design
-where every drain decision so far is comptime.
+A contiguous run over `(tile, k-block)` with `K` innermost is then a nest: a partial first tile,
+whole middle tiles, a partial last tile. If the walk yields it that way, the accumulator stays
+lexically scoped to the tile level and only the inner trip count becomes runtime. What remains:
 
-Three ways out, in the order they should be considered:
+- **The assignment stops factoring per axis.** `Coverage`/`Spread` are per-axis today and
+  `Walk::from_counts` gives each cube a product of per-axis runs, which is a rectangular block. A
+  contiguous run of the flattened grid is not one. `Coverage` has to move from the axis to the
+  level, and `Walk` needs to decode from a linear cursor rather than an odometer, which is a
+  variant of the mixed-radix decode it already does. Settle the surface first: a
+  `Distribution::Streamed` per axis plus an all-or-none assert reads as a bool in a trench coat.
+- **A runtime trip count on the inner loop**, which the walk already half-supports (`steps` folds
+  to a constant only when the grid is comptime).
 
-1. **Drain every step.** No accumulator lifetime problem at all: each step folds one k-block's
-   contribution atomically. Costs one atomic per output cell per k-block instead of per cube-run,
-   which is the output traffic multiplied by the k-block count. Almost certainly too expensive at
-   real tile sizes, but it is a two-day version that would work and would give a number.
-2. **Drain on the tile boundary.** Order the flattening with `K` innermost, so the condition is
-   "the K digit wrapped", and seed/drain under it. Needs `AccumulatorScope` to admit a dynamic
-   scope, which is the design question worth Louis's input.
-3. **Two-tier**: a stream-K first wave for the ragged part and a plain data-parallel launch for the
-   rest, which is what CUTLASS ships. Sidesteps the dynamic scope by keeping every cube's run inside
-   one tile in the common case, and confines the ragged handling to a separate, smaller kernel.
+## The lane question, which is Louis's and is not settled
 
-The numbers above are what says whether this is worth it: split-K already takes the narrow shapes
-from 856us to 97us, and stream-K's remaining win over split-K is the wave-quantization tail, not the
-underutilization. That tail is largest exactly where the tile grid is an awkward multiple of the
-core count, which none of the shapes above are.
+A cube launches a full plane whatever the space says. A space that rides no `Unit` axis therefore
+runs `plane_size` copies of one lane's work and throws all but one away, and `split_k`'s `seq_k`
+mapping already knows: it overrides `CubeDim::new_single()` rather than waste them.
+
+That is a pre-existing waste, but the fold made it a *correctness* question, twice: repeated lanes
+storing the same value land it once, and folding it land it once each. Both write paths needed a
+lane-zero election (`Drain::LaneZero`), which is silent adaptation to a mis-specified space, and
+the house rule is the opposite: refuse, and let the caller put something on the lanes.
+
+Measured, it matters more than the split does. On `m=1 n=32 k=8192`, cutting each cube's slice of
+`K` again across the plane (`atomic_lanes`) is **53us**, against 97us for the best mapping that
+leaves the lanes idle and 475us unsplit. Most of what phase 5 first read as the cube split's win
+was the lanes waking up.
+
+What blocks turning the election into a refusal: `LaneWork` is derived from the space at comptime
+and cannot see `plane_size`, so `Repeated` is genuinely correct on the CPU runtime (one lane) and
+wasteful on a GPU (32). A refusal therefore belongs host-side, at launch, where `Space::cube_dim`
+already asks the client for `plane_size` and already asserts about `Unit` counts. It would need to
+know the destination folds, which is the operand's statement rather than the space's. Louis's call.
 
 ## Still open
 
+- The lane-zero election above is silent adaptation, and probably wants to be a launch-side
+  refusal instead.
 - Reproducibility is not yet a stated launch property. The atomic drain reorders, so its result is
   not bit-identical run to run, and nothing says so at the call site.
 - `f16`/`bf16` outputs take the workspace path: their atomic add exists only on CUDA. Unenforced;
