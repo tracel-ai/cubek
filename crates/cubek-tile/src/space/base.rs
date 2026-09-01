@@ -5,11 +5,9 @@ use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, ComputeScope, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole, MAX_AXES,
+    Axis, ByAxis, ComputeScope, Distribution, Instruction, LaneShare, LaneWork, Lanes, LevelRole, MAX_AXES,
     Partitioner, SplitShare, join_lane_share,
 };
-
-use super::ByAxis;
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
