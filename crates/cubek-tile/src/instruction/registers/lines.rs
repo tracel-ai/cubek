@@ -30,63 +30,62 @@ pub trait Lines: CubeType {
     /// constant.
     fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<Self::E, Self::V>;
 
-    /// How this operand's fold repeats across its lines ([`FoldRun`]).
-    fn fold_run(&self) -> comptime_type!(FoldRun);
+    /// How this operand's fold repeats across its lines ([`Reuse`]).
+    fn reuse(&self) -> comptime_type!(Reuse);
 }
 
-/// How an operand's fold repeats across the lines it is read at: `folds` of them arrive per read,
-/// and each covers `lines` consecutive value lines.
+/// How a loaded value is reused across the walk.
 ///
 /// The two travel together because a caller needs both to walk correctly: it may roll a run of
-/// `lines`, since every line in one takes the same fold, but it must walk the `folds` themselves
-/// under a *constant* ordinal, because a fold is a lane of the read it arrived in and a lane index
-/// is not addressable at runtime.
+/// `steps`, since every step in one takes the same value, but it must walk the values themselves
+/// under a *constant* ordinal, because each is a lane of the read it arrived in and a lane index is
+/// not addressable at runtime.
 ///
-/// [`ONE`](FoldRun::ONE) is an operand with nothing to fold in: one fold, covering one line, so a
-/// caller walking it needs no constant at all.
+/// [`PER_STEP`](Reuse::PER_STEP) is an operand with nothing to reuse: it reads what it needs, every
+/// step, so a caller walking it needs no constant at all.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct FoldRun {
-    /// Folds one read serves, which is the operand's line width where it has one.
-    pub folds: usize,
-    /// Value lines one fold covers.
-    pub lines: usize,
+pub struct Reuse {
+    /// Values one read brings back, which is the operand's line width where it has one.
+    pub per_load: usize,
+    /// Steps one value serves before the next is wanted.
+    pub steps: usize,
 }
 
-impl FoldRun {
-    /// An operand that folds nothing in.
-    pub const ONE: FoldRun = FoldRun { folds: 1, lines: 1 };
+impl Reuse {
+    /// An operand with nothing to reuse: it reads what it needs, every step.
+    pub const PER_STEP: Reuse = Reuse { per_load: 1, steps: 1 };
 
-    /// Lines walked before the folds repeat.
+    /// Steps walked before the pattern repeats.
     pub fn span(&self) -> usize {
-        self.folds * self.lines
+        self.per_load * self.steps
     }
 
     /// This level's run against the one its own scales carry, in value lines.
     ///
-    /// A level whose read serves a single fold constrains no walk: every line takes the same lane
+    /// A level whose read serves a single value constrains no walk: every step takes the same lane
     /// whatever its ordinal, so it drops out here rather than widening the run its caller has to
-    /// unroll. That is what keeps a coarse outer level free — and a per-tensor scale, which is one
-    /// fold covering everything, entirely invisible to the walk.
+    /// unroll. That is what keeps a coarse outer level free, and a per-tensor scale, which is one
+    /// value covering everything, entirely invisible to the walk.
     ///
     /// `per_line` is how many value lines one line of *these* scales covers, which is what carries
     /// the level above into value-line units.
-    pub fn compose(self, above: FoldRun, per_line: usize) -> FoldRun {
-        let here = (self.folds > 1).then_some(self);
-        let above = (above.folds > 1).then_some(FoldRun {
-            folds: above.folds,
-            lines: above.lines * per_line,
+    pub fn compose(self, above: Reuse, per_line: usize) -> Reuse {
+        let here = (self.per_load > 1).then_some(self);
+        let above = (above.per_load > 1).then_some(Reuse {
+            per_load: above.per_load,
+            steps: above.steps * per_line,
         });
         match (here, above) {
-            (None, None) => FoldRun::ONE,
+            (None, None) => Reuse::PER_STEP,
             (Some(only), None) | (None, Some(only)) => only,
             // The finer run is the one a caller must hold constant, and the coarser is a multiple
             // of it, so they repeat together at the wider span.
             (Some(here), Some(above)) => {
-                let lines = here.lines.min(above.lines);
+                let steps = here.steps.min(above.steps);
                 let span = lcm(here.span(), above.span());
-                FoldRun {
-                    folds: span / lines,
-                    lines,
+                Reuse {
+                    per_load: span / steps,
+                    steps,
                 }
             }
         }
@@ -104,9 +103,9 @@ fn gcd(a: usize, b: usize) -> usize {
     }
 }
 
-// `folds` alone decides how a caller must walk: at one, every line takes the same lane whatever
-// its ordinal, so `lines` is the caller's own business. Only past one does the ordinal have to be
-// a constant, which is what the walks below branch on.
+// `per_load` alone decides how a caller must walk: at one, every step takes the same lane
+// whatever its ordinal, so `steps` is the caller's own business. Only past one does the ordinal have
+// to be a constant, which is what the walks below branch on.
 
 #[cube]
 impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
@@ -117,8 +116,8 @@ impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
         self.read(pos)
     }
 
-    fn fold_run(&self) -> comptime_type!(FoldRun) {
-        FoldRun::ONE
+    fn reuse(&self) -> comptime_type!(Reuse) {
+        Reuse::PER_STEP
     }
 }
 
@@ -178,7 +177,7 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
         let per_line = comptime!(self.lines_per_scale * self.lanes);
         // One line of these scales covers `per_line` value lines, so that is both the column it
         // sits at and the ordinal it is read under: the level above indexes scale lines, not value
-        // lines, and folds its own scale in on the way back.
+        // lines, and per_load its own scale in on the way back.
         let scale = self.scales.line(
             (row, col / comptime!(per_line as u32)),
             comptime!(run / per_line),
@@ -187,11 +186,11 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
         value * Vector::<V::E, V::V>::cast_from(scale.extract(lane))
     }
 
-    fn fold_run(&self) -> comptime_type!(FoldRun) {
-        let above = self.scales.fold_run();
-        comptime!(FoldRun {
-            folds: self.lanes,
-            lines: self.lines_per_scale,
+    fn reuse(&self) -> comptime_type!(Reuse) {
+        let above = self.scales.reuse();
+        comptime!(Reuse {
+            per_load: self.lanes,
+            steps: self.lines_per_scale,
         }
         .compose(above, self.lines_per_scale * self.lanes))
     }
