@@ -204,6 +204,14 @@ impl Space {
     pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
         let mut level = self.clone();
         while !level.is_final() {
+            // Work distributed as one is not an axis: a share of it covers part of a cell
+            // whenever the index runs over an axis the operand does not span, and which part is
+            // not something the level's per-axis distributions record.
+            if let Some(work) = level.partitioner().work()
+                && work.axes().iter().any(|axis| !axes.contains(axis))
+            {
+                return SplitShare::Partial;
+            }
             let split = level.partitioner().axes().into_iter().any(|axis| {
                 // An axis the operand spans is carried, not split: it gives each instance a cell
                 // of its own rather than a slice of one.

@@ -43,5 +43,3 @@ serde = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-attention = { path = ".", features = ["benchmarks"] }
 cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
-pretty_assertions = { workspace = true }
-trybuild = "1"

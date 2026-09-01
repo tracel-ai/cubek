@@ -184,9 +184,23 @@ pub struct PhysicalAxisMap {
     composition: Composition,
 }
 
+/// What a physical axis is addressed by.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Addressed {
+    /// The leading logical axis of this map's terms, which identifies the coordinate group the
+    /// physical axis belongs to.
+    By(Axis),
+    /// Nothing. Every position resolves to the same element, so this axis carries no coordinate.
+    Broadcast,
+}
+
 impl PhysicalAxisMap {
     /// The identity map: this physical axis *is* `axis`, coefficient `1`, offset `0`. What every
     /// operand of a non-gather operation uses on every physical axis.
+    pub fn broadcast() -> Self {
+        PhysicalAxisMap::scaled(&[])
+    }
+
     pub fn of(axis: Axis) -> Self {
         PhysicalAxisMap {
             terms: SmallVec::from_slice(&[AxisTerm {
@@ -326,6 +340,19 @@ impl PhysicalAxisMap {
         self.offset = Offset::Static(o.div_euclid(d as isize));
         self.divisor = Divisor::Static(1);
         self
+    }
+
+    /// What this physical axis is addressed by.
+    ///
+    /// A map with no terms resolves every position to the same element, which is how an operand
+    /// says it does not distinguish this buffer axis at all. That is a real state — a per-tensor
+    /// scale is exactly it — and not a degenerate one, so it is named rather than read off an
+    /// empty list by whoever asks.
+    pub fn addressed(&self) -> Addressed {
+        match self.terms().first() {
+            Some(term) => Addressed::By(term.axis),
+            None => Addressed::Broadcast,
+        }
     }
 
     pub fn terms(&self) -> &[AxisTerm] {

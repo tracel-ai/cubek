@@ -21,7 +21,7 @@ use cubek_tile::{Semiring, Space, TileArg};
 pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
-    scales: &TileArg<'_, ES, Const<1>>,
+    scales: &Sequence<TileArg<'_, ES, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
     #[comptime] space: Space,
     #[define(EC)] _served_dtype: ElemType,
@@ -31,7 +31,11 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
 ) {
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
+    let mut scale_tiles = Sequence::new();
+    #[unroll]
+    for k in 0..scales.len() {
+        scale_tiles.push(scales.index(k).tile(comptime!(space.clone())));
+    }
     let mut out = out.tile(space);
-    out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    out.mm_scaled(&w, &x, &scale_tiles, Semiring::SUM_PROD);
 }

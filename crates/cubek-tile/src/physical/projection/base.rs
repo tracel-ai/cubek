@@ -1,6 +1,7 @@
 //! An operand's logical axes mapped onto its buffer's physical axes: the affine combination the
 //! module doc derives, assembled from one [`PhysicalAxisMap`] per physical axis.
 
+use crate::Addressed;
 use cubecl::zspace::SmallVec;
 
 use crate::{
@@ -107,11 +108,19 @@ impl Projection {
         let physical: Vec<PhysicalAxisMap> = self
             .physical
             .iter()
-            .map(|map| {
-                let at = carried
-                    .iter()
-                    .position(|&pa| self.physical[pa].terms()[0].axis == map.terms()[0].axis)
-                    .expect("collected above");
+            .enumerate()
+            .map(|(pa, map)| {
+                // A broadcast axis is its own group, so it finds itself; every other finds the
+                // group its leading logical axis names. The layout addresses the buffer by
+                // position, so both come back as an identity on a synthetic axis: what makes the
+                // one a broadcast is the operand's own map onto it, not the layout's.
+                let at = match map.addressed() {
+                    Addressed::Broadcast => carried.iter().position(|&q| q == pa),
+                    Addressed::By(axis) => carried
+                        .iter()
+                        .position(|&q| self.physical[q].addressed() == Addressed::By(axis)),
+                }
+                .expect("collected above");
                 PhysicalAxisMap::of(axes[at])
             })
             .collect();
@@ -136,12 +145,19 @@ impl Projection {
         );
         let mut carried: Vec<usize> = Vec::new();
         for (pa, map) in self.physical.iter().enumerate() {
-            let axis = map.terms()[0].axis;
-            if !carried
-                .iter()
-                .any(|&q| self.physical[q].terms()[0].axis == axis)
-            {
-                carried.push(pa);
+            match map.addressed() {
+                // Carrying no logical axis, it can share a coordinate with nothing: it is its own
+                // group. Still a buffer axis, so dropping it here would lose a dimension the
+                // layout has to describe.
+                Addressed::Broadcast => carried.push(pa),
+                Addressed::By(axis) => {
+                    if !carried
+                        .iter()
+                        .any(|&q| self.physical[q].addressed() == Addressed::By(axis))
+                    {
+                        carried.push(pa);
+                    }
+                }
             }
         }
         carried
@@ -194,7 +210,10 @@ impl Projection {
                 == self
                     .physical
                     .iter()
-                    .map(|m| m.terms()[0].axis)
+                    .filter_map(|m| match m.addressed() {
+                        Addressed::By(axis) => Some(axis),
+                        Addressed::Broadcast => None,
+                    })
                     .collect::<Vec<_>>()
     }
 

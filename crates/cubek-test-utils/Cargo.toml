@@ -31,5 +31,3 @@ serde = { workspace = true }
 rand = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = { workspace = true }
-trybuild = "1"

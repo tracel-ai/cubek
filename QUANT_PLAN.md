@@ -467,3 +467,460 @@ arithmetic are exactly what the second and third rows still use.
   a scheme, which is the only thing that mints it.
 - The old machinery is untouched and still shipping. Both spellings compile; nothing is deleted
   until item 4.
+
+## The scale chain: making depth sayable, and clean
+
+The leaf recursion landed (`4342c6f4`): the scales are read through `Lines`, the same trait the
+values are, so a scaled operand's scales may carry scales of their own. What did not land is a way
+to *say* so, and three debts came with it.
+
+- `FoldRun::compose` states the rule for two levels and nothing can reach its second branch. Every
+  call site still builds `ScaledLines<.., MatrixView<..>>`, so `above` is always `FoldRun::ONE`.
+- What a level *is* — the scales' matrix axes, the edge they share with the values, the width that
+  edge is served at, the lines one scale covers — is derived twice, in `direct.rs` and in
+  `promoted.rs`. The two have already drifted: one takes the edge from `shape.reduce_edge()`, the
+  other from `operands.contracting(&out)`.
+- What a level may be *served at* is two asserts in two files: `sw == 1 || contracted_per_step == 1`
+  in the memory nest, `sw == 1 || side == ScaleSide::Rhs` in the promoted block. One rule, two
+  exceptions, and neither says what the rule is.
+- One test covers a wide scale line, on one of the two accumulators.
+
+### The rule this follows
+
+A scale is a tile that spans fewer axes than the values it multiplies. That sentence is recursive:
+the scales are a tile, so they take scales the same way, and one scale for a tile of values makes a
+tile of scales for a tile of tiles of values. Two things follow, and the phases below are only these
+two applied.
+
+**Nothing in the engine counts levels.** How many there are is a fact about the type the kernel
+wrote, never a number the engine holds.
+
+**No call site re-derives what a level is.** A duplicated decision is the bug, whatever the copies
+currently agree on.
+
+### Phase 1: one owner for what a level is
+
+`ScaleLevel` — one level of the hierarchy, against the tile below it.
+
+```rust
+/// One level of a scale hierarchy, against the values it covers.
+pub(crate) struct ScaleLevel {
+    /// The scales' own matrix, as the level below reads it.
+    axes: MatrixAxes,
+    /// Lines of the level below that one scale covers, along the edge they share.
+    lines_per_scale: usize,
+    /// Scales one read of them serves.
+    lanes: usize,
+}
+```
+
+Built by one function, which reads the count off the axes the way both copies already do: the scale
+is constant along every edge axis it does not distinguish, so one read serves every position of
+them, and nothing divides an extent.
+
+What stays with each accumulator is what genuinely differs: which edge it walks, and the
+`ScaleSide` it reads off the axes. What a level *is* stops being two derivations.
+
+*Proves it:* the ten `scaled` tests, unchanged. Any drift between the two derivations surfaces as a
+failure rather than as a difference nobody compares.
+
+### Phase 2: one statement of the servable width
+
+The rule the two asserts are both circling: *a scale line wider than one scale needs each value
+line's ordinal along the shared edge to be a constant.* Whether it is, is a fact about how the
+caller walks — so the caller states it, and the rule lives once.
+
+```rust
+/// Whether the caller walks the shared edge under an ordinal it knows at comptime.
+pub(crate) enum EdgeOrdinal {
+    /// Each line's position along the edge is a constant, so a lane of a wide scale read is
+    /// addressable and the scales may be served several at a time.
+    Constant,
+    /// The edge is stepped at runtime, so only a scalar read is addressable.
+    Runtime,
+}
+```
+
+Each accumulator answers for itself, once: the memory nest is `Constant` where a step folds one
+contracted value, the promoted block where the scales ride the rhs. `ScaleLevel` takes the answer
+and refuses a wide binding under `Runtime`. No predicate anywhere — the enum is the state, and the
+refusal reads off it rather than off a `bool` each site reconstructs.
+
+*Proves it:* `rhs_scales_are_served_several_at_a_time` on the promoted accumulator, which today's
+assert permits and nothing exercises.
+
+### Phase 3: depth becomes sayable
+
+```rust
+out.mm_scaled(&w, &x, &blocks.scale(&global), Semiring::SUM_PROD);
+```
+
+```rust
+/// A scales tile that itself carries scales. Its own `.scale()` returns another, so depth is
+/// however many times the kernel said it.
+pub struct Scaled<'a, S: Numeric, Above: ScaleOperand> { tile: &'a Tile<S>, above: Above }
+
+/// What the leaf asks of a scales operand: its space, and the reader for everything above it.
+#[cube]
+pub trait ScaleOperand: CubeType {
+    type Above: Lines;
+    fn space(&self) -> comptime_type!(Space);
+    fn above(&self, #[comptime] levels: Vec<ScaleLevel>) -> Self::Above;
+}
+```
+
+`Tile<S>` implements it with nothing above; `Scaled` implements it by wrapping one. `mm_scaled`
+becomes generic over `ScaleOperand`. The leaf builds level 0 exactly as it does now, with `size!`
+minting the binding's width locally, and asks the operand for the rest.
+
+**Levels above the first are served scalar, and that is a property of the hierarchy rather than a
+concession.** One line of a level-1 scale already covers `lines_per_scale × lanes` lines of level 0;
+a wide read of it fetches scales that will not be wanted for many iterations, buys no bandwidth, and
+costs the caller a longer constant-ordinal run to unroll. It is also what makes the reader type
+nameable outside the leaf, where `size!` does not reach. The constraint and the right answer are the
+same answer.
+
+This is what gives `FoldRun::compose` a caller that reaches its second branch. If the phase slips,
+the branch comes out rather than waiting for one.
+
+*Proves it:* `a_scale_of_scales_folds_both_levels_in` — block scales under a per-tensor factor,
+`nvfp4`'s own shape, against a reference that multiplies both. And the per-tensor level, spanning no
+axis, must leave the walk untouched: the golden is the one-level kernel plus one multiply.
+
+### Phase 4: `mm_scaled` disappears
+
+```rust
+out.mm(&w.scale(&blocks.scale(&global)), &x, Semiring::SUM_PROD);
+```
+
+One verb again. Reachable now and not before: the ring already carries three operands
+(`ed9f9f9e`), so a scaled lhs unwraps to values-plus-chain and takes a slot that exists.
+`mma_scaled`, `mma_leaf_scaled` and `MmaScaledWalk` fold back into their plain twins, and
+`contract_scaled` becomes `contract` reading a `Lines` that happens to scale.
+
+Stated rather than assumed: `mm`'s walk touches its operands for regions, staging and the op space,
+so the operand trait has to carry those too. This is the phase to stop at if it grows. Phases 1-3
+stand alone and leave nothing speculative behind.
+
+### Out of scope, deliberately
+
+- The fragment accumulator. A scaled contraction there is a different instruction, not this one
+  under a flag; see **Deferred**.
+- The N-D gather nest, whose step has no single scalar `k` to address a scale with.
+- The decode gemv reading its scales one at a time. That is a fact about the row orientation's
+  layout, not about the engine; see **Known gaps**.
+
+### The rule for reviewing this
+
+**No phase may add a number.** If a phase lands and something in the engine says `2`, or asks how
+many levels there are, or derives what a level is at more than one call site, it is not done.
+
+### Phases 1 and 2: landed
+
+`e9128d87` and `bb7b22fa`, with `184cbff6` under them.
+
+`ScaleLevel::of` reads what a level is, once. The two derivations it replaced had already drifted —
+one took the shared edge from `shape.reduce_edge()`, the other rebuilt it from
+`operands.contracting(&out)` — and nothing compared them. `ContractEdges` is what each accumulator
+states about its own geometry, which genuinely differs, and it decides nothing.
+
+`EdgeOrdinal` is the one statement of the width scales may be served at. The two asserts it replaced
+said the same rule with different exceptions and neither said the rule; `Runtime` carries what about
+a walk makes it so, so the message did not get vaguer for being shared. With it came
+`rhs_scales_are_served_several_at_a_time`, the promoted block's half of that rule, which nothing had
+exercised.
+
+`ScaledLines` now takes a [`Lines`] on **both** sides, so one type serves every level: the values are
+an operand's own lines at the level nearest them, and the level below's scales at any level above.
+
+### Phase 3: two findings, and it does not start where this plan said
+
+**The lifetime is not a problem, which was not obvious.** A chain's reader type has to be nameable
+outside the leaf, and the first attempt tied it to a borrow of the chain — which needs either a
+generic associated type or a higher-ranked bound, neither of which is a safe bet through `#[cube]`.
+It is avoidable: an upper level **owns its tile and builds its view inside the read**, so no borrow
+escapes, the associated type is plain, and a chain can be stored in a walk and staged like any other
+operand. `PlainScales` on `wip/scale-chain-and-broadcast` is that, and `ScaleChain` compiles over it
+— `Tile` a chain of one, `Scaled` one more, `Tile::scale` building it.
+
+**But phase 3 cannot start at the surface, because its base case does not work.** A scales operand
+spanning *no* axis — the per-tensor level, the base of the hierarchy, and the second level of
+`nvfp4` — is refused by the engine in two places, and refused the worst way:
+
+- `Projection::carried_groups` identifies a physical axis by its first term and indexes an empty
+  term list. Naming the state it had no word for (`Addressed::Broadcast`, on the wip branch) fixes
+  that one.
+- `Tile::of`'s `top_window` then computes `rank - 1` on a rank it derives as zero.
+
+Both panic on a worker thread, and the launch returns **zeros** beside them. A per-tensor scale
+therefore reads today as a fast wrong answer, not as an error — the failure mode this whole design
+exists to avoid.
+
+So phase 3's order is:
+
+1. ~~**A broadcast operand works, and is tested.**~~ **Done.** `a_scale_over_no_axis_covers_everything`
+   passes. A physical axis carrying no logical one is its own coordinate group — it shares one with
+   nothing, and it is still a buffer axis, so dropping it lost a dimension the layout had to
+   describe. That was the second panic; the first was reading a group's identity off an empty term
+   list.
+2. Then the surface — **and it does not work as written above.** The chain threads through every
+   scaled signature and the library compiles (`wip/scale-chain-threaded`), but kernels do not:
+   cubecl's `CubeType::ExpandType` has no inverse, so from a `&TileExpand<S>` argument nothing can
+   solve `Ch = Tile<S>` and every call site has to name the chain itself.
+
+   ```rust
+   c.mm_scaled::<E, E, Scaled<S, Tile<G>>>(&a, &b, &blocks.scale(&global), ..)
+   ```
+
+   That states the depth twice — once in the type, once in the value — and reads worse than the
+   arity it replaces. **Type-carried depth is right for the leaf and wrong for the surface.** The
+   way out worth trying first: let the *kernel* name the chain once, as a type parameter of its
+   own, and have the launch pick it, so the turbofish sits where types are already spelled rather
+   than at every verb. Decide this before threading anything further.
+3. Then each level's coverage in the units its consumer reads — `ScaleLevel::of` measures in value
+   lines, and a level above the first is read in the level below's *scale* lines. This is the piece
+   with real subtlety left in it, and it is why the surface was not landed blind.
+
+Nothing speculative was left on `cubek-paul`: the chain compiles but is unwired, so it sits on
+`wip/scale-chain-and-broadcast` until step 1 makes it safe to land.
+
+## The scale list: the plan that replaces the chain
+
+Supersedes the surface described above.
+
+### What changed, in three lines
+
+`ScaleChain` is dead: `CubeType::ExpandType` has no inverse, so nothing solves `Ch = Tile<S>` from a
+`&TileExpand<S>` argument and every call site would state the depth twice. It is replaced by an
+ordered `Sequence` of scale tiles, which is concrete at the call site. Order is preserved and no
+algebra is assumed: a verb says what each level does, and what the engine may do follows from it.
+
+### Step 0 — confirm the row mapping
+
+Read `Cut::unit(rows_per_lane, Spread::Contiguous, groups)` and confirm group `g` owns rows
+`[g * rows_per_lane, ..)`. Every address argument in step 11 assumes it, taken off the name.
+
+**Proves:** nothing yet. It is a prerequisite, and it is minutes.
+
+### Step 1 — `FoldRun` becomes `Reuse`
+
+`instruction/registers/lines.rs`.
+
+```rust
+/// How a loaded value is reused across the walk.
+pub struct Reuse {
+    /// Values one read brings back. Past one, which of them a step takes has to be a constant,
+    /// so the caller unrolls: picking a lane of a read is not addressable at runtime.
+    pub per_load: usize,
+    /// Steps one value serves before the next is wanted.
+    pub steps: usize,
+}
+```
+
+`fold_run()` becomes `reuse()`, which is a question rather than a noun nobody can read.
+
+**Proves:** the 12 `scaled` tests, unchanged. Pure rename.
+
+### Step 2 — `tile_as::<O>`
+
+`physical/arg.rs`, beside `tile_packed::<O>`.
+
+```rust
+/// [`tile`](Self::tile) served at a stated element rather than the binding's, cast at the read.
+/// Levels of a scale list have different storage and must share one list, so the served type is
+/// stated at the call, as it is for a packed operand.
+pub fn tile_as<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O>
+```
+
+**Proves:** a `ue4m3`/`f16` buffer served as `f32` reads back the same values as an `f32` buffer.
+
+### Step 3 — scales become a list
+
+`ops/matmul/lower.rs`, `instruction/registers/contract/`.
+
+```rust
+pub enum Apply { Product }                 // the verb, named not assumed
+pub enum Fold  { Combined, InTurn }        // what the verbs license, read off them
+
+fn mm_scaled<Lhs: Numeric, Rhs: Numeric>(.., scales: &Sequence<Tile<ES>>, ..)
+```
+
+Applied innermost first, in push order. `Fold::Combined` merges the levels at their own loads only
+because every `Apply` is `Product`; `Fold::InTurn` applies them one at a time otherwise. Lifting the
+*loads* needs no verb: a level does not change along the axes it omits.
+
+**Proves:** `two_levels_fold_in_order` — block scales under a per-tensor factor on q4, against a
+reference that multiplies both.
+**Deletes:** nothing yet.
+
+### Step 4 — `per_load` comes from the cut
+
+```rust
+let lanes = scales.vector_size();     // before: a width the binding guessed
+let reuse = level.reuse_under(cut);   // after: the walk sizes it
+```
+
+**Proves:** the two wide-scale tests keep passing with no binding width stated.
+**Deletes:** `EdgeOrdinal`, whose only job is reconciling that guess.
+
+### Step 5 — a level against the tile below it
+
+```rust
+fn of(scales: &Space, edges: &ContractEdges, side: ScaleSide, ..)   // before: mr/kc/cols, level 0 only
+fn of(level: &Space, below: &Space, walk: &Space, apply: Apply)     // after
+```
+
+so level 1 against level 0 is the same call as level 0 against the values.
+
+**Proves:** the levels of a list are built by one `map`, with no arm that knows the depth.
+**Deletes:** `ContractEdges`.
+
+### Step 6 — nvfp4 mimic, tier 1: the structure
+
+e2m1 values, block scales at **f16**, block 16, per-tensor f32. Same axes, same order, same two
+levels; only the block dtype differs from nvfp4. `inside_lanes = 16/8 = 2`, which the blueprint
+admits.
+
+**Proves:** `nvfp4_shaped_decode_gemv` against `e2m1_decode(code) × block × global`.
+
+### Step 7 — the claims, read off the kernel
+
+Golden the emitted source and assert two things the clock cannot show clearly:
+
+1. the global appears as **one** load, outside every loop
+2. there is **one** multiply per value, not two
+
+**Proves:** the load-placement story. If either fails, steps 3-5 are wrong regardless of timings.
+
+### Step 8 — nvfp4 mimic, tier 2: the bytes
+
+Store block scales as `u8`, decode `e4m3` in software at the scale load — what metabolic already does
+for e2m1 *values*, and cheap here for the same reason the design is cheap: once per load, not per
+value.
+
+**Proves:** true traffic, one byte per scale, correct range. Likely how it ships on any backend
+without native ue4m3, so not throwaway.
+
+### Step 9 — measure
+
+Tier 2 against a one-level f16-scale variant, on the qwen3-8b decode shapes the routine is pinned at.
+Isolates what a second level costs.
+
+### Step 10 — the scale layout
+
+> **The innermost axis is the fastest axis lanes differ along, and the load width along it is the
+> extent one lane owns of that axis.**
+
+| operand | innermost | load width |
+|---|---|---|
+| weight `[M, KB, KI]` | `KI`, lanes take different words | `factor` values = one `u32` |
+| scales `[M, KB]`, omitting `KI` | `M`, groups take different rows | `rows_per_lane` |
+
+The weight row is what the shipped code already does, which is the sanity check. The scales row is
+`[KB][M]` rather than `[M][KB]`. With the Q4 blueprint (plane 32, `inside_lanes` 4, `block_lanes` 2,
+`groups` 4, `rows_per_lane` 2): today gives four pairs `2 * blocks` apart, the transpose alone gives
+stride 2, and the transpose read `rows_per_lane` wide gives one contiguous eight-element run. Only
+the second half of the rule turns the layout into a coalesced read.
+
+**Do:** the transpose in metabolic's re-quantization walk. Then derive the rule in the plan and
+*check* it at launch; a mismatch is a rejection, never a kernel quietly running at a fraction of its
+speed.
+
+**Gate:** measure first. Of the decode gemv's 9.85 ms win, ~8.5 ms was deleting the widening pass and
+~1.4 ms the gemv itself; scales are about an eighth of the weight bytes, and the memory-backed
+accumulator is nearer a fifth of the kernel. The bigger fish for speed remains the promoted
+accumulator taking a `K`-lined rhs (see **Known gaps**).
+
+### Step 11 — tier 3, when the device arrives
+
+Swap the software decode for a native `ue4m3` binding behind `supports_type`. A substitution: layout,
+traffic and structure are unchanged.
+
+### Reviewing this
+
+**No phase may add a number.** Unchanged from above.
+
+**No phase may assume an algebra.** If the engine reorders, reassociates or merges levels, something
+must have *said* it could. A rewrite licensed by a comment is not licensed.
+
+### What building it changed
+
+Steps 1, 3, 6 and the load placement landed. Three of the remaining steps were wrong as written, and
+contact with the code is what said so.
+
+**Step 4 was wrong: the width is a binding choice, and `EdgeOrdinal` stays.** "The walk sizes the
+scale line" does not hold. What the axes determine is how many *distinct* scales a region holds
+(`edge / lines_per_scale`); how many to read at once is bounded by that but not fixed by it, and a
+narrower binding is correct, just more reads. `EdgeOrdinal` answers a different question, which
+survives untouched: whether the caller can hold a constant ordinal at all. What the cut really
+determines is the *best* width, which is a coalescing statement and belongs with the layout rule.
+**Merged into step 10. `EdgeOrdinal` is not deleted.**
+
+**Step 5 largely dissolved.** It existed so a level above the first could compute its own
+`ScaleLevel` against the level below. It does not need to: every level is read at the *same* logical
+position and resolves it to its own granularity through its own projection, so one `MatrixAxes`
+serves the whole list and no level needs geometry of its own. `ContractEdges` stays.
+
+What looked like the remainder of step 5 was giving each level its own `Apply` rather than reading
+the innermost's. It is not worth building yet, and the reason is the point: there is nowhere to
+*state* a per-level verb. No operand, spec or scheme carries one, so the plumbing would thread a
+constant to the same place it already reaches. The verb becomes per-level when something can say it,
+and not before.
+
+**Step 7 is not mechanized.** There is no golden harness in this repo, and `CUBECL_DEBUG_LOG` emitted
+nothing for this runtime. The claim it was meant to check is instead structural and readable in the
+source: `combined_scales` reads each coarser level once, outside `line`, and `line` is
+`inner.read(pos) * coarser`. Worth mechanizing when a harness exists; not worth blocking on.
+
+### Where that leaves the plan
+
+Done: 0, 1, 3, 6, and the load placement. Dissolved or merged: 4, 5 (down to a per-level verb).
+Open: 2 (`tile_as`, needed only for tier 2, since tier 1 shares one dtype), 8, 9, 10, 11.
+
+**Step 2 also moved.** It is not needed for tier 1, whose levels share a dtype, and it is bigger than
+"small": a narrow buffer served wide is `Packing::Native` today, which is `i8`-only, cannot be
+stated on a spec, and would need the stored type to reach the read site inside `MemData<T>`. It
+belongs with step 8, where the byte counts are the point.
+
+### Steps 4 and 10 collapse into one, and it belongs to the selector
+
+Three questions were running together. They are not the same question and they do not have the same
+owner.
+
+| | asks | owner |
+|---|---|---|
+| correctness | can a step pick one scale out of a batch at all | `EdgeOrdinal`, in the engine |
+| **quality** | **does the batch match the tiles the unit owns** | **the selector** |
+| layout | are the batch's scales adjacent in memory | model load, once |
+
+**If a unit loads four scales it should be doing the four tiles they cover.** Nothing makes that
+true: the width comes from the binding, the tiles come from the cuts, and they are two decisions
+that merely have to agree. A plan where they do not still computes the right answer. It is just a
+bad kernel, and plan quality is the selector's business.
+
+**So the engine states an invariant instead of a check.** It must be correct for *any* plan the
+selector picks: no assert tying the scale width to `rows_per_lane`, no refusal because a plan is
+merely wasteful. Reading fewer scales than a unit could use is more reads, not a wrong answer.
+`EdgeOrdinal` stays because it guards something else entirely, which is whether the batch can be
+indexed at all.
+
+**The layout and the width decouple, which is what makes the selector's job tractable.** With scales
+laid `[KB][M]`, the scales for consecutive output rows at one block are adjacent, and that holds for
+*any* `rows_per_lane`. So the layout can be baked at model-load time, before any selector runs, and
+stays right whatever the selector later chooses. That matters because the layout is the part that
+cannot be revisited per shape: it is in the file. Had it depended on `rows_per_lane`, a knob would
+have to be fixed at conversion time for every shape and device the weights might ever meet.
+
+What is left coupled is one number: **the scale line width must equal the tiles a unit owns**,
+decided per plan, in the blueprint, beside where `rows_per_lane` is already chosen. That is a real
+constraint. `rows_per_lane` is picked today for register pressure and would now also drive scale
+traffic, so the knob has to know about scales. But it is one knob against one number rather than a
+layout decision entangled with everything.
+
+**Step 10, restated.** Two pieces, in this order:
+
+1. `[KB][M]` in metabolic's load-time re-quantization walk. Independent of every later choice.
+2. The blueprint derives the scale line width from the tiles a unit owns, and a test asserts the two
+   agree for each plan it produces. Not an engine assert: a plan test.
+
+Gated on step 9 as before, for the reason recorded there.

@@ -4,9 +4,10 @@ Cutting the contraction so a cube does not do the whole of it. The `Tiling::over
 worked; the feature was one missing concept on the drain, and that concept was one the DSL already
 had at a finer scope.
 
-Status: phases 0 to 3 landed and measured, plus the `mma`-not-`mm` correction that removes most of
-what phase 4 looked like it would cost. Phase 4 itself (the linear assignment, which is what makes
-it stream-K rather than split-K) is not started.
+Status: phases 0 to 3 landed and measured, and phase 4 (the linear assignment, which is what makes
+it stream-K rather than split-K) now runs and is tested. What it does not yet have is anything
+choosing the run count: the space is told how many, and the launch-side selector that would read it
+off the device is parked behind the selector work.
 
 ## What a caller writes
 
@@ -131,12 +132,88 @@ host-side off the concrete space, the way bounds checks are already derived.
 returns zeros. Every refusal here is tested host-side instead, and `tests/tile/matmul.rs` carries the
 note.
 
-## Phase 4: the linear assignment
+## Phase 4: the linear assignment, landed
+
+A caller distributes a level's work as one, and states nothing else:
+
+```rust
+let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
+    // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
+    // region of this level is one output tile and the index reaches through the level below.
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        l.distribute(
+            &[(M, bm), (N, bn), (K, k)],
+            cubes(CubeAxis::X).instances(cubes_count),   // the whole feature
+        );
+        o.out.stage(Residence::Register);
+    })
+    // One step of a share, which is what the shares are counted in.
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        l.axis(M, Cut::sequential(bm))
+            .axis(N, Cut::sequential(bn))
+            .axis(K, Cut::sequential(bk));
+        o.rhs.stage(Residence::Smem);
+    })
+    .build()
+    .with_instruction(Instruction::registers(64));
+```
+
+The kernel is the one split-K writes, down to the argument types: `AccumulateArg` on the output,
+`c.accumulate(..)` and `mm` through the scope. No axis rides the cubes.
+
+**The vocabulary, which is where most of the design went.** Dealing each axis on its own always
+gives an instance a box of the grid, and a share that begins inside one region and ends inside
+another is not a box: no box of a four by two grid holds three regions. So the statement cannot be
+per axis. What it *can* be is the same statement one granularity up, and that is what `distribute`
+is: `Spatial` (built by `cubes`, `planes`, `lanes`) says who runs the tiles, how many of them,
+and which ones each takes, and it names no axis. Hand it to one axis with an edge and it is a
+`Cut`; hand it to several and they are read as one index. `Cut::cube(X, e)` is exactly the
+one-axis case, so every existing call site is unchanged.
+
+The two knobs that value carries were unreachable before: `Cut::cube`, `Cut::plane` and
+`Cut::unit` froze `Spread::Contiguous` and their coverage, so anything else fell out of the API
+into a hand-built `Distribution::Spatial { .. }`. Two crates had written the same private helper
+to get at them; both are gone, and `.interleaved()`, `.instances(n)` and `.tiles_each(t)` say it
+instead. They live on a builder rather than on `Cut`, so `Cut::sequential(4).interleaved()` does
+not compile: one instance walking the whole axis has nobody to take turns with.
+
+**Four pieces, and the first is most of it.**
+
+`Walk::window(base, steps)` is a walk over a range of its level's flat step space rather than all
+of it from zero. It needed nothing: with every axis `Sequential` the counts are already the whole
+grid and the flat index already carries every coordinate, so the mixed-radix decode the odometer
+does *is* the linear decode. Both bounds are runtime.
+
+`Work` on the level is the axes read as one index plus the `Spatial` that shares them out.
+`cube_count` launches the instances, and `split_share_of` answers `Partial` for an output the
+index contracts, which is what puts the destination under the same refusal a cut does.
+
+`distributed_mm` is the nest, and the nest is the point. A share is decoded as: the output regions
+it touches, and for each of them the part of that region's contraction the share holds, whole in
+the middle and clipped at either end. A register accumulator opens per region, folds that part,
+and drains once. Both trip counts are runtime and no drain is a runtime decision, so the
+accumulator keeps the lexical scope every other residence has. `AccumulatorScope::Distributed` is
+the scope that opens per region rather than per instance, chosen by `accumulate` from the level.
+
+`Tile::mma` refuses a level that distributes work. Walked as if every axis were dealt on its own
+it would hand each instance the whole grid, which is the wrong answer computed once per instance.
+
+**The refusals**, each where the wrong sentence would otherwise be silent: work distributed across
+`lanes` (they combine in registers, which needs lockstep, and lanes on different shares never
+have it); an axis both cut and distributed at one level; an operand staged at the distributing
+level, where nothing would stage it, rather than at the level below, where the ring is; an output
+contracting in place under a share, which would fold once per step instead of once per region.
+
+**What is not built.** No selector: `instances` is stated. Scaled contractions and reductions over
+a share are refused rather than lowered. Only `cubes` and `planes` distribute; `lanes` is the
+refusal above.
+
+## Why the assignment was worth it
 
 Split-K is stream-K whose runs never straddle a tile boundary, so the drain built above is the one
 stream-K needs and none of it is throwaway.
 
-**The accumulator-lifetime problem was overstated, and is now mostly gone.** The earlier reading
+**The accumulator-lifetime problem was overstated, and is now gone.** The earlier reading
 was that a cube's run crossing an output tile would force a mid-loop re-seed on a runtime check,
 which meant `AccumulatorScope` giving up its lexical scope. What actually removes it is not
 claiming ownership: an output that folds is *maybe prefilled*, every contraction into it is `mma`
@@ -145,18 +222,9 @@ rather than `mm`, and nothing has to prove a cube is the only contributor. `Cell
 adds its slice to whatever is there. Landed in `dc26fa6c`, with a test contracting in place into an
 atomic output with no register accumulator at all.
 
-A contiguous run over `(tile, k-block)` with `K` innermost is then a nest: a partial first tile,
-whole middle tiles, a partial last tile. If the walk yields it that way, the accumulator stays
-lexically scoped to the tile level and only the inner trip count becomes runtime. What remains:
-
-- **The assignment stops factoring per axis.** `Coverage`/`Spread` are per-axis today and
-  `Walk::from_counts` gives each cube a product of per-axis runs, which is a rectangular block. A
-  contiguous run of the flattened grid is not one. `Coverage` has to move from the axis to the
-  level, and `Walk` needs to decode from a linear cursor rather than an odometer, which is a
-  variant of the mixed-radix decode it already does. Settle the surface first: a
-  `Distribution::Streamed` per axis plus an all-or-none assert reads as a bool in a trench coat.
-- **A runtime trip count on the inner loop**, which the walk already half-supports (`steps` folds
-  to a constant only when the grid is comptime).
+A contiguous run over `(tile, k-block)` with `K` innermost is a nest: a partial first tile, whole
+middle tiles, a partial last tile. That is what `stream_mm` walks, so the accumulator stays
+lexically scoped to the tile level and only the trip counts become runtime.
 
 ## The lane question, which is Louis's and is not settled
 
@@ -182,6 +250,13 @@ know the destination folds, which is the operand's statement rather than the spa
 
 ## Still open
 
+- **Nothing chooses the instance count.** `.instances(n)` takes it, and what it wants is the
+  width of the device. That is the launch-side decision the selector work owns, and it is the
+  one thing between this and a stream-K a caller does not have to tune by hand. `Coverage` already
+  has the shape for it: a deferred count stamped at launch, the way `PlaneLanes` is.
+- Nothing measures it. `split_cubes` is all `m = 1`, where the answer is always to split harder and
+  a run buys nothing a cut does not; the shape a stream wins on is a gemm whose tile count sits
+  just past a wave, and the category has none.
 - The lane-zero election above is silent adaptation, and probably wants to be a launch-side
   refusal instead.
 - Reproducibility is not yet a stated launch property. The atomic drain reorders, so its result is

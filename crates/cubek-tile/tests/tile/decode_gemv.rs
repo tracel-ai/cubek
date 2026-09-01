@@ -43,16 +43,17 @@ fn unit(edge: usize, spread: Spread, lanes: usize) -> Cut {
 fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, VX>,
-    s: &TileArg<'_, S, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let s = s.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
-    out.mm_scaled(&w, &x, &s, Semiring::SUM_PROD);
+    out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 /// The same, with the partials living in registers for the whole `K` walk: `out` states
@@ -66,17 +67,18 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, VX>,
-    s: &TileArg<'_, S, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let s = s.tile(comptime!(space.clone()));
+    let mut scales = Sequence::new();
+    scales.push(scale.tile(comptime!(space.clone())));
     let out = out.tile(space);
     let mut acc = out.accumulate::<E, _>(&w, Monoid::Sum);
-    acc.mm_scaled(&w, &x, &s, Semiring::SUM_PROD);
+    acc.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
 }
 
 #[test]

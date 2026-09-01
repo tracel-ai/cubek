@@ -27,10 +27,10 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 [dependencies]
 cubecl = { workspace = true }
 cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false, optional = true }
-num-complex = { version = "0.4.6", optional = true }
+num-complex = { workspace = true, optional = true }
 
 [dev-dependencies]
-num-complex = "0.4.6"
+num-complex = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
 cubek-fft = { path = ".", features = ["cpu-reference"] }

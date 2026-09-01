@@ -21,7 +21,7 @@
 //! price of the atomics; the gap from `data_parallel` is what either of them buys. The split that
 //! wins at `splits = 1` is not a split at all, which is the control.
 
-use crate::definition::{MatmulElems, compute_peak_ops_per_s};
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -31,7 +31,9 @@ use cubecl::{
     ir::{ElemType, FloatKind, Type},
     prelude::*,
 };
-use cubek_test_utils::{CatalogEntry, HostData, HostDataType, RunSamples, TileInput};
+use cubek_test_utils::{
+    CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
+};
 use cubek_tile::{
     AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Cut, Instruction, Monoid,
     PhysicalAxisMap, Projection, RegisterBlock, Residence, Semiring, Space, TileArg, TileArgLaunch,
@@ -506,13 +508,11 @@ pub fn bench(
     verify(&client, mapping)?;
 
     let bound = Bound::new(&client, mapping, *problem).samples(num_samples);
-    let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
-    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
     let durations = bound
         .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 /// Shapes with too few output tiles to fill a device, which is the whole reason to spend cubes on
@@ -595,6 +595,33 @@ impl cubek_test_utils::Category for Category {
 
     fn strategies(&self) -> Vec<CatalogEntry<Strategy>> {
         strategies()
+    }
+
+    /// The contraction itself, which every mapping of it performs alike. The workspace mapping's
+    /// second buffer and second pass are not counted: they are what that mapping costs to reach
+    /// the same answer, and the row's duration already carries them.
+    fn work(&self, problem: &Problem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let size = dtype.size();
+        let cost = MatmulCost {
+            batches: 1,
+            m: problem.m,
+            n: problem.n,
+            k: problem.k,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+        Some(CategoryWork {
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
+            bytes_read: (problem.m * problem.k + problem.k * problem.n) * size,
+            bytes_written: problem.m * problem.n * size,
+        })
     }
 
     fn bench(

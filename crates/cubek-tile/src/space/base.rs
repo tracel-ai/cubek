@@ -770,6 +770,46 @@ mod contraction_tests {
         assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
     }
 
+    /// Work distributed as one is not an axis, and the index runs over the contraction: a share
+    /// of it can start and end inside a cell's contraction, so the output is partial even though
+    /// no axis of the level rides the cubes.
+    #[test]
+    fn distributed_work_is_partial_to_the_output() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3));
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4));
+            })
+            .build();
+        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+        // An operand spanning every axis of the work holds whole cells of its own, the same way
+        // it does under a cut.
+        assert_eq!(space.split_share_of(&[M, N, K]), SplitShare::Whole);
+    }
+
+    /// The shares ride the cubes even though no axis does, so the launch grid is their count.
+    #[test]
+    fn distributed_work_launches_its_instances() {
+        use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder, cubes};
+        use cubecl::CubeCount;
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3));
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.axis(M, Cut::sequential(4))
+                    .axis(N, Cut::sequential(4))
+                    .axis(K, Cut::sequential(4));
+            })
+            .build();
+        assert!(matches!(space.cube_count(), CubeCount::Static(3, 1, 1)));
+    }
+
     /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
     /// The case a projected space cannot answer, and the reason the question is asked of the
     /// whole one: a mapping parameterised by its split count writes the same cut with `splits`

@@ -52,7 +52,7 @@ impl<Acc: Numeric> Tile<Acc> {
                 self.reduce_buffered(
                     input,
                     monoid,
-                    op_space,
+                    Walk::over(op_space),
                     comptime!(level.buffering().depth()),
                 );
             }

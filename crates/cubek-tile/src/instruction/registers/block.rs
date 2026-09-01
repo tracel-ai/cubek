@@ -9,7 +9,7 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
-use crate::instruction::registers::lines::{FoldRun, Lines, LinesExpand};
+use crate::instruction::registers::lines::{Lines, LinesExpand, Reuse};
 use crate::*;
 
 /// `c += lhs · rhs` over the block: `kc / contracted_per_step` steps into the `mr × nr` lines of `c`.
@@ -26,8 +26,8 @@ pub(crate) fn contract<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -66,8 +66,8 @@ pub(crate) fn contract<
         // The lhs's fold repeats over a run of its lines. An operand with nothing to fold in walks
         // line by line; one whose fold picks a lane of a wide read needs each fold's ordinal as a
         // constant, so the run is unrolled around a rolled walk of the lines it covers.
-        let fold = lhs.fold_run();
-        match comptime!(fold == FoldRun::ONE) {
+        let reuse = lhs.reuse();
+        match comptime!(reuse == Reuse::PER_STEP) {
             true => lane_walk::<E, EL, L, ER, V, Lhs, Rhs>(
                 lhs,
                 rhs,
@@ -86,7 +86,7 @@ pub(crate) fn contract<
                 rhs,
                 c,
                 &mut b,
-                fold,
+                reuse,
                 contracted_per_step,
                 lw,
                 mr,
@@ -97,9 +97,9 @@ pub(crate) fn contract<
             ),
         }
     } else {
-        let flat_fold = lhs.fold_run();
+        let flat_reuse = lhs.reuse();
         comptime!(assert!(
-            flat_fold.folds == 1,
+            flat_reuse.per_load == 1,
             "block::contract: a scalar walk reads one contracted value at a time and has no line \
              ordinal to fold under; an operand folding several per read needs lines to walk"
         ));
@@ -135,8 +135,8 @@ fn lane_walk<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -215,14 +215,14 @@ fn folded_lane_walk<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
-    #[comptime] fold: FoldRun,
+    #[comptime] reuse: Reuse,
     #[comptime] contracted_per_step: usize,
     #[comptime] lw: usize,
     #[comptime] mr: usize,
@@ -232,7 +232,7 @@ fn folded_lane_walk<
     #[comptime] semiring: Semiring,
 ) {
     let k_lines = comptime!(kc / lw);
-    let span = comptime!(fold.span());
+    let span = comptime!(reuse.span());
     comptime!(assert!(
         k_lines.is_multiple_of(span),
         "block::contract: {k_lines} lines of a contraction do not divide into runs of {span}, so \
@@ -241,9 +241,9 @@ fn folded_lane_walk<
 
     for run in 0..comptime!(k_lines / span) {
         #[unroll]
-        for f in 0..comptime!(fold.folds) {
-            for j in 0..comptime!(fold.lines) {
-                let line = run * comptime!(span) + comptime!(f * fold.lines) + j;
+        for f in 0..comptime!(reuse.per_load) {
+            for j in 0..comptime!(reuse.steps) {
+                let line = run * comptime!(span) + comptime!(f * reuse.steps) + j;
                 #[unroll]
                 for lane in 0..lw {
                     rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
@@ -254,7 +254,7 @@ fn folded_lane_walk<
                         line * lw + lane,
                         line as u32,
                         comptime!(Some(lane)),
-                        comptime!(f * fold.lines),
+                        comptime!(f * reuse.steps),
                         contracted_per_step,
                         lw,
                         mr,
@@ -286,8 +286,8 @@ fn rank1_update<
     L: Size,
     ER: Numeric,
     V: Size,
-    Lhs: Lines<EL, L>,
-    Rhs: Lines<ER, V>,
+    Lhs: Lines<E = EL, V = L>,
+    Rhs: Lines<E = ER, V = V>,
 >(
     lhs: &Lhs,
     rhs: &Rhs,
@@ -307,8 +307,8 @@ fn rank1_update<
     // A rhs whose fold is indexed per column needs each line's real ordinal, which only an
     // unconditionally unrolled walk gives; one fold per read does not care, and keeps the walk the
     // block's own budget decided.
-    let fold = rhs.fold_run();
-    if comptime!(fold.folds > 1) {
+    let reuse = rhs.reuse();
+    if comptime!(reuse.per_load > 1) {
         #[unroll]
         for n in 0..nr {
             b[n] =
