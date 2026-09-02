@@ -13,7 +13,7 @@ mod quant;
 pub(crate) use accumulate::*;
 // Crate-internal helpers, so this re-export carries no public item.
 pub(crate) use coords::*;
-pub(crate) use flat::*;
+pub use flat::*;
 pub use masked::*;
 pub use matrix::*;
 pub(crate) use packed::*;

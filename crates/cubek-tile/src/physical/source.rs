@@ -258,7 +258,9 @@ impl<'a, Sp, Sub, R: Runtime> StridedTileSource<'a, Sp, Sub, Unset, R> {
     /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)): each stored field indexes
     /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits` f32
     /// entries, unchecked here: the unpack's mask bounds every index to that range.
-    pub(crate) fn quantized_lookup(
+    /// Public for the same reason [`quantized`](Self::quantized) is: it is the only way to
+    /// declare a lookup operand, since the table has no other binding point.
+    pub fn quantized_lookup(
         mut self,
         scales: TensorArg<R>,
         table: BufferArg<R>,

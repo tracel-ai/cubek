@@ -12,9 +12,9 @@ use cubecl::{
 use crate::*;
 
 /// A masked 1-D ([`FlatLayout`]) view: a flat row-major scan over a [`Tile`].
-pub(crate) type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
+pub type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
-pub(crate) type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
+pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 
 /// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
@@ -80,7 +80,12 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+    /// The mutable twin of [`flat`](Tile::flat). Public because a consumer's kernel is where
+    /// an elementwise write lives: cubek's own leaves write through the staging, but a routine
+    /// outside this crate that computes its cells (a fold's drain, a delta applied in place) has
+    /// no other verb for "each unit writes its own flat positions" — [`copy_from`](Tile::copy_from),
+    /// [`zero`](Tile::zero) and [`init`](Tile::init) all write a value it does not choose per cell.
+    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

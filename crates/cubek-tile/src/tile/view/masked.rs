@@ -66,7 +66,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
 /// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching
 /// the masked reads.
 #[derive(CubeType)]
-pub(crate) struct MaskedViewMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
+pub struct MaskedViewMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: ViewMut<'a, T, C>,
     #[cube(comptime)]
     pub(crate) check: bool,
