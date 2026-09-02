@@ -294,8 +294,7 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
     Tiling::new()
         .extents(&[(a0, space.extent_at(0)), (a1, space.extent_at(1))])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(a0, Cut::sequential(e0))
-                .axis(a1, Cut::sequential(e1))
+            l.walk(&[(a0, e0), (a1, e1)])
         })
         .build()
 }

@@ -6,9 +6,9 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Boundary, Buffering, CubeAxis, Cut, DequantAt, Divisor, Geometry, Offset, Operand,
+    Axis, Boundary, Buffering, CubeAxis, DequantAt, Divisor, Geometry, Offset, Operand,
     PhysicalAxisMap, Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling,
-    WalkOrder,
+    WalkOrder, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -99,20 +99,20 @@ fn binding(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBindin
 /// A cpu_gemm-shaped scheme: two batch axes riding one-per-cube on Z, 16×32 cube tiles on
 /// X/Y, 8×8 plane leaves with `leaf_k = 4`.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_tile::Space {
-    let batches = [B0, B1];
+    let batches = [(B0, 1), (B1, 1)];
     Tiling::new()
         .extents(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axes(&batches, Cut::cube(CubeAxis::Z, 1))
-                .axis(M, Cut::cube(CubeAxis::X, 16))
-                .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(k))
+            l.distribute(cubes(CubeAxis::Z), &batches)
+                .distribute(cubes(CubeAxis::X), &[(M, 16)])
+                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
+                .walk(&[(K, k)])
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axes(&batches, Cut::sequential(1))
-                .axis(M, Cut::plane(8))
-                .axis(N, Cut::plane(8))
-                .axis(K, Cut::sequential(4))
+            l.distribute(planes(), &[(M, 8)])
+                .distribute(planes(), &[(N, 8)])
+                .walk(&batches)
+                .walk(&[(K, 4)])
         })
         .build()
 }
@@ -545,9 +545,9 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, 16))
-                .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
+                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
+                .walk(&[(K, 16)])
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -574,9 +574,9 @@ fn arg_gathered_rational_stages() {
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, 16))
-                .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
+                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
+                .walk(&[(K, 16)])
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -601,9 +601,9 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, 16))
-                .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
+                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
+                .walk(&[(K, 16)])
         })
         .build()
         .launcher_over(&client, &[N]);
@@ -628,9 +628,9 @@ fn arg_gathered_cancelling_divisor_stages() {
     let staged = Tiling::new()
         .extents(&[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, 16))
-                .axis(N, Cut::cube(CubeAxis::Y, 32))
-                .axis(K, Cut::sequential(16))
+            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
+                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
+                .walk(&[(K, 16)])
         })
         .build()
         .launcher_over(&client, &[N]);

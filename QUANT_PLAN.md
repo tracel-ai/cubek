@@ -363,7 +363,7 @@ level is:
 ```rust
 Tiling::over((values, scales, rhs, out), &[(M, m), (NB, blocks), (NI, bn), (K, k)])
     .level(order, buffering, |cuts, o| {
-        cuts.axis(NB, Cut::sequential(8));   // this unit takes 8 column blocks
+        cuts.walk(&[(NB, 8)]);   // this unit takes 8 column blocks
         o.1.stage(Residence::Register);      // and reads its 8 scales here, once
     })
 ```
@@ -697,7 +697,7 @@ algebra is assumed: a verb says what each level does, and what the engine may do
 
 ### Step 0 — confirm the row mapping
 
-Read `Cut::unit(rows_per_lane, Spread::Contiguous, groups)` and confirm group `g` owns rows
+Read `distribute(lanes().instances(groups), &[(M, rows_per_lane)])` and confirm group `g` owns rows
 `[g * rows_per_lane, ..)`. Every address argument in step 11 assumes it, taken off the name.
 
 **Proves:** nothing yet. It is a prerequisite, and it is minutes.

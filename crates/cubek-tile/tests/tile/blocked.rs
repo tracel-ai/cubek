@@ -86,9 +86,7 @@ fn one_contracted_axis_is_the_reference() {
     let space = Tiling::new()
         .extents(&[(M, rows), (N, cols), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(K, Cut::sequential(block))
+            l.walk(&[(M, rows), (N, cols), (K, block)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -148,10 +146,7 @@ fn a_partitioned_axis_contracts_the_same() {
     let space = Tiling::new()
         .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(block))
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -236,10 +231,7 @@ fn scales_omit_the_axis_inside_the_block() {
     let space = Tiling::new()
         .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(block))
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -335,10 +327,7 @@ fn a_split_output_axis_contracts_the_same() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -424,10 +413,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -525,10 +511,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -630,10 +613,7 @@ fn scales_are_served_several_at_a_time() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -733,10 +713,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -840,10 +817,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -955,10 +929,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
     let space = Tiling::new()
         .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(NB, Cut::sequential(blocks))
-                .axis(NI, Cut::sequential(inside))
-                .axis(K, Cut::sequential(depth))
+            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
         })
         .build()
         .with_instruction(Instruction::registers(16));

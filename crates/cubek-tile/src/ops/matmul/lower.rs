@@ -12,6 +12,18 @@ use cubecl::prelude::*;
 use crate::instruction::registers::contract;
 use crate::*;
 
+/// A level that distributes work as one, walked as if every axis were dealt on its own, would
+/// give each instance the whole grid: the wrong answer computed once per instance. The share is
+/// the accumulator scope's ([`Tile::accumulate`]), because the scope is what changes.
+fn refuse_distributed_work(space: &Space) {
+    assert!(
+        space.partitioner().work().is_none(),
+        "Tile::mma: this level distributes its axes' work as one, so a contraction here is an \
+         instance's share of it rather than the whole grid's. Open the output's accumulator \
+         scope (`c.accumulate(..)`) and contract through it."
+    );
+}
+
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing
@@ -54,11 +66,44 @@ impl<Acc: Numeric> Tile<Acc> {
         match comptime!(partitioner) {
             Partitioner::Final => mma_leaf(self, lhs, rhs, semiring),
             Partitioner::Level(level) => {
+                comptime!(refuse_distributed_work(&self.space));
                 let op_space = self.op_space(lhs, rhs);
                 self.mma_buffered(
                     lhs,
                     rhs,
-                    op_space,
+                    Walk::over(op_space),
+                    comptime!(level.buffering().depth()),
+                    semiring,
+                );
+            }
+        }
+    }
+
+    /// [`mma`](Tile::mma) over `steps` of this level's regions starting at `base`, rather than
+    /// all of them.
+    ///
+    /// What a streamed instance runs on one output tile: its share of that tile's contraction is
+    /// a range of the line rather than the whole of it, and the walk is where a range is said
+    /// ([`Walk::window`]). Everything under it is the contraction a whole region gets.
+    pub(crate) fn mma_window<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        base: usize,
+        steps: usize,
+        #[comptime] semiring: Semiring,
+    ) {
+        let partitioner = comptime!(self.space.partitioner().clone());
+        match comptime!(partitioner) {
+            Partitioner::Final => {
+                panic!("Tile::mma_window: a final tile has no walk to take a range of")
+            }
+            Partitioner::Level(level) => {
+                let op_space = self.op_space(lhs, rhs);
+                self.mma_buffered(
+                    lhs,
+                    rhs,
+                    Walk::over(op_space).window(base, steps),
                     comptime!(level.buffering().depth()),
                     semiring,
                 );
@@ -123,7 +168,7 @@ impl<Acc: Numeric> Tile<Acc> {
                     lhs,
                     rhs,
                     scales,
-                    op_space,
+                    Walk::over(op_space),
                     comptime!(level.buffering().depth()),
                     semiring,
                 );
@@ -160,7 +205,11 @@ impl<Acc: Numeric> Tile<Acc> {
     ///
     /// It is asked first for the same reason: an axis it spans is one it writes, so its bound is
     /// the extent the walk must cover, whatever an input's buffer reaches over.
-    fn op_space<Lhs: Numeric, Rhs: Numeric>(&self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Space {
+    pub(crate) fn op_space<Lhs: Numeric, Rhs: Numeric>(
+        &self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+    ) -> Space {
         let merged = comptime!({
             let merged = Space::merge(&[&lhs.space, &rhs.space]);
             assert!(
@@ -366,4 +415,47 @@ fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compt
         lhs.space.contracting(&out),
         rhs.space.contracting(&out)
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refuse_distributed_work;
+    use crate::{Axis, Buffering, CubeAxis, Space, Tiling, WalkOrder, cubes};
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    // Host-side, because a comptime panic raised in a kernel lands on a worker thread where
+    // `#[should_panic]` never sees it and the launch returns zeros.
+
+    fn space(distributed: bool) -> Space {
+        Tiling::new()
+            .extents(&[(M, 8), (N, 8), (K, 8)])
+            .level(
+                WalkOrder::RowMajor,
+                Buffering::SINGLE,
+                |l| match distributed {
+                    true => {
+                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
+                    }
+                    false => l.walk(&[(M, 4), (N, 4), (K, 8)]),
+                },
+            )
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                l.walk(&[(M, 4), (N, 4), (K, 4)])
+            })
+            .build()
+    }
+
+    #[test]
+    #[should_panic = "distributes its axes' work as one"]
+    fn contracting_distributed_work_whole_is_refused() {
+        refuse_distributed_work(&space(true));
+    }
+
+    #[test]
+    fn contracting_a_level_dealt_per_axis_is_the_walk_it_always_was() {
+        refuse_distributed_work(&space(false));
+    }
 }

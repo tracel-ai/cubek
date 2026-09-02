@@ -479,9 +479,7 @@ mod tests {
         let space = Tiling::new()
             .extents(&[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(4))
+                l.walk(&[(M, 4), (N, 4), (K, 4)])
             })
             .build();
         let lhs = space.project(&[M, K]);

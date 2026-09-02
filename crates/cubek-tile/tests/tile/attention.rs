@@ -8,7 +8,7 @@
 use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Buffering, Cut, Instruction, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
+    Axis, Buffering, Instruction, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
     TileArg, TileArgLaunch, TileSpec, Tiling, Walk, WalkOrder,
 };
 
@@ -181,13 +181,15 @@ fn run(
             (C, 1),
         ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(qp))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-                .axis(R, Cut::sequential(1))
-                .axis(C, Cut::sequential(1))
+            l.walk(&[
+                (G, g),
+                (QP, qp),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ])
         })
         .build();
 
@@ -320,8 +322,7 @@ fn attention_fold_cmma_kernel(
         Tiling::new()
             .extents(&[(QP, rows), (D, d)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(QP, Cut::sequential(frag))
-                    .axis(D, Cut::sequential(frag))
+                l.walk(&[(QP, frag), (D, frag)])
             })
             .build()
     );
@@ -331,10 +332,7 @@ fn attention_fold_cmma_kernel(
     let score_space = comptime!(
         Tiling::new()
             .extents(&[(R, rows), (C, block)])
-            .instruction(Instruction::Cmma, |l| {
-                l.axis(R, Cut::sequential(frag))
-                    .axis(C, Cut::sequential(frag))
-            })
+            .instruction(Instruction::Cmma, |l| { l.walk(&[(R, frag), (C, frag)]) })
             .build()
     );
     let mut score = MemData::<f32>::smem(
@@ -349,10 +347,7 @@ fn attention_fold_cmma_kernel(
     let acc_space = comptime!(
         Tiling::new()
             .extents(&[(R, rows), (V, val_dim)])
-            .instruction(Instruction::Cmma, |l| {
-                l.axis(R, Cut::sequential(frag))
-                    .axis(V, Cut::sequential(frag))
-            })
+            .instruction(Instruction::Cmma, |l| { l.walk(&[(R, frag), (V, frag)]) })
             .build()
     );
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
@@ -476,12 +471,7 @@ fn run_cmma(
             (C, 1),
         ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(QP, Cut::sequential(rows))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-                .axis(R, Cut::sequential(1))
-                .axis(C, Cut::sequential(1))
+            l.walk(&[(QP, rows), (S, block), (D, d), (V, val_dim), (R, 1), (C, 1)])
         })
         .build();
 
@@ -627,8 +617,7 @@ fn attention_fold_split_kernel<W: Size>(
         Tiling::new()
             .extents(&[(R, split_rows), (C, block)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(R, Cut::sequential(rows))
-                    .axis(C, Cut::sequential(block))
+                l.walk(&[(R, rows), (C, block)])
             })
             .build()
             .with_instruction(form)
@@ -645,7 +634,7 @@ fn attention_fold_split_kernel<W: Size>(
         Tiling::new()
             .extents(&row_extents)
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(T, Cut::sequential(1)).axis(R, Cut::sequential(rows))
+                l.walk(&[(T, 1), (R, rows)])
             })
             .build()
     );
@@ -653,8 +642,7 @@ fn attention_fold_split_kernel<W: Size>(
         Tiling::new()
             .extents(&[(R, split_rows), (V, val_dim)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(R, Cut::sequential(rows))
-                    .axis(V, Cut::sequential(val_dim))
+                l.walk(&[(R, rows), (V, val_dim)])
             })
             .build()
             .with_instruction(form)
@@ -845,13 +833,15 @@ fn run_split_at(
             (C, 1),
         ])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(qp))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
-                .axis(R, Cut::sequential(1))
-                .axis(C, Cut::sequential(1))
+            l.walk(&[
+                (G, g),
+                (QP, qp),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ])
         })
         .build();
 
@@ -1047,11 +1037,7 @@ fn run_stream(
     let space = Tiling::new()
         .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(G, Cut::sequential(g))
-                .axis(QP, Cut::sequential(1))
-                .axis(S, Cut::sequential(block))
-                .axis(D, Cut::sequential(d))
-                .axis(V, Cut::sequential(val_dim))
+            l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)])
         })
         .build();
 

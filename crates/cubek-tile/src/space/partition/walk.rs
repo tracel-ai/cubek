@@ -24,9 +24,14 @@ pub struct Walk {
     /// Per-axis spread factor combining a step with its position: the instance's tile
     /// share (`Contiguous`) or the instance count (`Interleaved`); `1` for `Sequential`.
     scales: Coords<usize>,
+    /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
+    /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
+    base: usize,
     steps: usize,
+    /// The space the regions are cut from, which is also what a schedule sizes its slots to
+    /// ([`pipelined_walk`](crate::pipelined_walk)).
     #[cube(comptime)]
-    space: Space,
+    pub(crate) space: Space,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
@@ -119,6 +124,7 @@ impl Walk {
             counts,
             positions,
             scales,
+            base: 0usize,
             steps,
             space,
             unroll: comptime!(false),
@@ -138,9 +144,33 @@ impl Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
+            base: self.base,
             steps: self.steps,
             space: comptime!(self.space.clone()),
             unroll: comptime!(unroll),
+        }
+    }
+
+    /// This walk over the `steps` regions starting at flat step `base`, rather than all of its
+    /// own from zero.
+    ///
+    /// The window is how a level deals its grid out as contiguous runs instead of as a
+    /// rectangular block per axis: every axis stays `Sequential`, so the counts are the whole
+    /// grid and the flat index already carries every coordinate, and an instance's share is a
+    /// range of that index. `base` and `steps` are runtime values, so a run whose length only
+    /// the launch knows walks the same loop a static one does.
+    ///
+    /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
+    /// reads coordinates that are not in the grid, and nothing here can check it.
+    pub fn window(self, base: usize, steps: usize) -> Walk {
+        Walk {
+            counts: self.counts,
+            positions: self.positions,
+            scales: self.scales,
+            base,
+            steps,
+            space: comptime!(self.space.clone()),
+            unroll: comptime!(self.unroll),
         }
     }
 
@@ -151,7 +181,11 @@ impl Walk {
 
     /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
-        let idx = walk_index(i, self.steps, comptime!(self.space.partitioner().order()));
+        let idx = self.base.fadd(walk_index(
+            i,
+            self.steps,
+            comptime!(self.space.partitioner().order()),
+        ));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
@@ -257,7 +291,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
 /// it through the axis's shared-dim stride to the per-axis instance coordinate.
 #[cube]
-fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
+pub(crate) fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     match comptime!(unit) {
         ComputeScope::Cube(dim) => {
             let cube_pos = match comptime!(dim) {

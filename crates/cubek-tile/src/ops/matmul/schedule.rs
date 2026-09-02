@@ -76,25 +76,28 @@ impl<Acc: Numeric, Lhs: Numeric, Rhs: Numeric> Pipelined for MmaWalk<Acc, Lhs, R
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// The level's regions through a ring of `depth` [`Staging`] slots: depth 1 fills a slot and
+    /// `walk`'s regions through a ring of `depth` [`Staging`] slots: depth 1 fills a slot and
     /// consumes it per region, deeper rings overlap each region's fill with an earlier region's
     /// compute. [`pipelined_walk`] owns that schedule.
+    ///
+    /// The walk rather than the space it is over, so a caller holding only part of this level's
+    /// grid ([`Walk::window`]) hands that in and nothing else changes.
     pub(crate) fn mma_buffered<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        op_space: Space,
+        walk: Walk,
         #[comptime] depth: usize,
         #[comptime] semiring: Semiring,
     ) {
         let out = comptime!(self.space.clone());
-        let mut walk = MmaWalk::<Acc, Lhs, Rhs> {
+        let mut op = MmaWalk::<Acc, Lhs, Rhs> {
             acc: self.clone(),
             lhs: lhs.clone(),
             rhs: rhs.clone(),
             semiring,
         };
-        pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut walk, op_space, out, depth);
+        pipelined_walk::<MmaWalk<Acc, Lhs, Rhs>>(&mut op, walk, out, depth);
     }
 }
 
@@ -186,7 +189,7 @@ impl<Acc: Numeric> Tile<Acc> {
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         scales: &Sequence<Tile<S>>,
-        op_space: Space,
+        walk: Walk,
         #[comptime] depth: usize,
         #[comptime] semiring: Semiring,
     ) {
@@ -204,13 +207,13 @@ impl<Acc: Numeric> Tile<Acc> {
                  more than once"
             ));
         }
-        let mut walk = MmaScaledWalk::<Acc, Lhs, Rhs, S> {
+        let mut op = MmaScaledWalk::<Acc, Lhs, Rhs, S> {
             acc: self.clone(),
             lhs: lhs.clone(),
             rhs: rhs.clone(),
             scales: scales.clone(),
             semiring,
         };
-        pipelined_walk::<MmaScaledWalk<Acc, Lhs, Rhs, S>>(&mut walk, op_space, out, depth);
+        pipelined_walk::<MmaScaledWalk<Acc, Lhs, Rhs, S>>(&mut op, walk, out, depth);
     }
 }

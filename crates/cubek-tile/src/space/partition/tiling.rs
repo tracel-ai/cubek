@@ -1,46 +1,34 @@
 //! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
-//! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering,
-//! and the per-axis [`Cut`]. Each [`level`](LeveledTiling::level) maps 1:1 to the
+//! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering, and
+//! who works on which axes ([`LevelCuts`]). Each [`level`](LeveledTiling::level) maps 1:1 to the
 //! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose.
 //! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
 //! closure, so an operand states where it lives at the level that cuts it.
 
 use crate::{Axis, ByAxis, Instruction, Space};
 
-use super::{Buffering, CubeAxis, Distribution, OperandSet, Partitioner, WalkOrder};
+use super::{
+    Buffering, ComputeScope, Distribution, Handout, OperandSet, Partitioner, Spatial, Spread,
+    WalkOrder, Work,
+};
 
-/// How one axis is cut at one level: the sub-tile `edge` and how that level hands the
-/// tiles out. Constructors name the common distributions; [`Cut::new`] takes any.
+/// How one axis is cut at one level: the sub-tile `edge` and how that level hands the tiles out.
+///
+/// What a level ends up holding, not what a caller writes: the two verbs on [`LevelCuts`] build
+/// these, and nothing outside this module states one.
 #[derive(Clone, Copy, Debug)]
-pub struct Cut {
-    pub edge: usize,
-    pub dist: Distribution,
+struct Cut {
+    edge: usize,
+    dist: Distribution,
 }
 
 impl Cut {
-    pub fn new(edge: usize, dist: Distribution) -> Self {
+    fn new(edge: usize, dist: Distribution) -> Self {
         Cut { edge, dist }
     }
 
-    /// `edge`-sized tiles dealt one-per-cube along `axis`.
-    pub fn cube(axis: CubeAxis, edge: usize) -> Self {
-        Cut::new(edge, Distribution::cube(axis))
-    }
-
-    /// `edge`-sized tiles dealt one-per-plane (worker thread).
-    pub fn plane(edge: usize) -> Self {
-        Cut::new(edge, Distribution::plane())
-    }
-
-    /// `edge`-sized tiles spread across the plane's lanes. The lane count is the hardware
-    /// `plane_size`, stamped at launch by [`Space::launcher`]; the cut carries only the
-    /// intent (see [`Distribution::unit`]).
-    pub fn unit(edge: usize) -> Self {
-        Cut::new(edge, Distribution::unit())
-    }
-
-    /// `edge`-sized tiles walked sequentially by one instance.
-    pub fn sequential(edge: usize) -> Self {
+    /// `edge`-sized tiles walked by every worker the level runs on.
+    fn sequential(edge: usize) -> Self {
         Cut::new(edge, Distribution::Sequential)
     }
 }
@@ -49,6 +37,8 @@ impl Cut {
 struct LevelSpec {
     order: WalkOrder,
     buffering: Buffering,
+    /// The axes this level distributes as one, if any ([`LevelCuts::distribute`]).
+    work: Option<Work>,
     cuts: Vec<(Axis, Cut)>,
     /// Whether any operand stated a residence here ([`Tiling::over`] only). A level that cuts
     /// nothing but moves an operand is not null, so it is not droppable.
@@ -107,8 +97,8 @@ pub struct OperandTiling<'o, O> {
 }
 
 impl<O: OperandSet> OperandTiling<'_, O> {
-    /// Add a decomposition level (coarse to fine): `f` hangs the per-axis [`Cut`]s off the
-    /// collector and states, per operand it materializes, where it lives here
+    /// Add a decomposition level (coarse to fine): `f` states who works on which axes, on the
+    /// collector, and states, per operand it materializes, where it lives here
     /// ([`Operand::stage`](crate::Operand::stage)).
     pub fn level(
         mut self,
@@ -116,7 +106,7 @@ impl<O: OperandSet> OperandTiling<'_, O> {
         buffering: Buffering,
         f: impl FnOnce(&mut LevelCuts, &mut O),
     ) -> Self {
-        let mut cuts = LevelCuts { cuts: Vec::new() };
+        let mut cuts = LevelCuts::new();
         let index = self.tiling.levels.len();
         f(&mut cuts, self.operands);
         let moves_an_operand = self.operands.each().any(|o| o.stated_at(index));
@@ -124,7 +114,7 @@ impl<O: OperandSet> OperandTiling<'_, O> {
             operand.close_level(index);
         }
         self.tiling
-            .push(order, buffering, cuts.cuts, moves_an_operand);
+            .push(order, buffering, cuts.cuts, cuts.work, moves_an_operand);
         self
     }
 
@@ -161,7 +151,7 @@ impl Default for Tiling {
 }
 
 /// Builds a [`Space`] one level at a time: add levels with [`level`](LeveledTiling::level),
-/// each configured by a closure that hangs the per-axis [`Cut`]s off a [`LevelCuts`], then
+/// each configured by a closure that states, on a [`LevelCuts`], who works on which axes, then
 /// end the chain with [`build`](LeveledTiling::build).
 pub struct LeveledTiling {
     extents: Vec<(Axis, usize)>,
@@ -171,7 +161,7 @@ pub struct LeveledTiling {
 
 impl LeveledTiling {
     /// Add a decomposition level (coarse to fine) with its walk order and buffering; `cuts`
-    /// hangs the per-axis [`Cut`]s off the [`LevelCuts`]. Where each operand *lives* at this
+    /// states who works on which axes, on the [`LevelCuts`]. Where each operand *lives* at this
     /// level is stated by the operand, not here ([`Residence`](crate::Residence)).
     pub fn level(
         mut self,
@@ -179,9 +169,9 @@ impl LeveledTiling {
         buffering: Buffering,
         cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
     ) -> Self {
-        let mut level = LevelCuts { cuts: Vec::new() };
+        let mut level = LevelCuts::new();
         cuts(&mut level);
-        self.push(order, buffering, level.cuts, false);
+        self.push(order, buffering, level.cuts, level.work, false);
         self
     }
 
@@ -192,8 +182,20 @@ impl LeveledTiling {
         order: WalkOrder,
         buffering: Buffering,
         cuts: Vec<(Axis, Cut)>,
+        work: Option<Work>,
         moves_an_operand: bool,
     ) {
+        // Per axis first: it names the one that is wrong, where the count only says the total
+        // is off.
+        for &(axis, _) in &self.extents {
+            let stated = cuts.iter().filter(|&&(a, _)| a == axis).count();
+            assert!(stated > 0, "LeveledTiling::level: axis {axis:?} has no cut");
+            assert!(
+                stated == 1,
+                "LeveledTiling::level: axis {axis:?} is cut {stated} times; a level states each \
+                 of its axes once, by `walk` or `distribute`"
+            );
+        }
         assert_eq!(
             cuts.len(),
             self.extents.len(),
@@ -201,15 +203,10 @@ impl LeveledTiling {
             cuts.len(),
             self.extents.len()
         );
-        for &(axis, _) in &self.extents {
-            assert!(
-                cuts.iter().any(|&(a, _)| a == axis),
-                "LeveledTiling::level: axis {axis:?} has no cut"
-            );
-        }
         self.levels.push(LevelSpec {
             order,
             buffering,
+            work,
             cuts,
             moves_an_operand,
         });
@@ -242,8 +239,9 @@ impl LeveledTiling {
     /// A level whose edges are the extents handed to it cuts nothing: [`Space::count`] is 1 on
     /// every axis. Drop it: the level is part of the [`Space`], and the [`Space`] is the
     /// kernel-cache key, so keeping it compiles the same program twice. Four things a level
-    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, an operand
-    /// moving here, the instruction it carries, and being the only level left. That last one is
+    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, work it
+    /// distributes as one, an operand moving here, the instruction it carries, and being the only
+    /// level left. That last one is
     /// not a fallback: a partitioned space separates a tile from the cells it is walked in, and
     /// a space with no level at all *is* its cell, which is a different space entirely.
     fn kept_levels(&self) -> Vec<bool> {
@@ -262,6 +260,7 @@ impl LeveledTiling {
                 let last_standing = index == last && !kept_any;
                 let keep = edges != parent
                     || level.buffering != parent_buffering
+                    || level.work.is_some()
                     || level.moves_an_operand
                     || (self.instruction.is_some() && index == last)
                     || last_standing;
@@ -304,7 +303,8 @@ impl LeveledTiling {
                     Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
                 }
             };
-            space = space.with_partitioner(builder.buffered(level.buffering));
+            space =
+                space.with_partitioner(builder.distributing(level.buffering, level.work.clone()));
         }
         match self.instruction {
             Some(instruction) => space.with_instruction(instruction),
@@ -313,24 +313,96 @@ impl LeveledTiling {
     }
 }
 
-/// Collects one level's per-axis [`Cut`]s, via [`axis`](Self::axis) for a single axis and
-/// [`axes`](Self::axes) to hand a whole group the same cut. `&mut` receivers, so in a
-/// [`Tiling::over`] closure the cuts and the operands' [`stage`](crate::Operand::stage)
-/// statements read as peer lines.
+/// Collects what one level says, in two verbs: [`distribute`](Self::distribute) hands some axes'
+/// regions to a hardware scope's workers, [`walk`](Self::walk) leaves the rest to every one of
+/// them. Between them they name each of the space's axes exactly once.
+///
+/// `&mut` receivers, so in a [`Tiling::over`] closure the two read as peer lines beside the
+/// operands' [`stage`](crate::Operand::stage) statements.
 pub struct LevelCuts {
     cuts: Vec<(Axis, Cut)>,
+    work: Option<Work>,
 }
 
 impl LevelCuts {
-    /// One axis gets `cut`.
-    pub fn axis(&mut self, axis: Axis, cut: Cut) -> &mut Self {
-        self.cuts.push((axis, cut));
+    fn new() -> Self {
+        LevelCuts {
+            cuts: Vec::new(),
+            work: None,
+        }
+    }
+
+    /// Nobody owns these axes: every worker on this level covers all of their tiles, walking them
+    /// one at a time. `axes` pairs each axis with its tile edge.
+    ///
+    /// The contraction of a matmul is the everyday one. So is any axis a level leaves alone,
+    /// which is most of them at most levels.
+    pub fn walk(&mut self, axes: &[(Axis, usize)]) -> &mut Self {
+        self.cuts.extend(
+            axes.iter()
+                .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+        );
         self
     }
 
-    /// Every axis in `axes` gets the same `cut` (e.g. all batch axes pinned alike).
-    pub fn axes(&mut self, axes: &[Axis], cut: Cut) -> &mut Self {
-        self.cuts.extend(axes.iter().map(|&a| (a, cut)));
+    /// Hand these axes' regions to `dist`'s workers, in order: as many workers as regions means
+    /// one each, fewer means each takes a run. `axes` pairs each axis with its tile edge, and
+    /// `dist` says who runs the tiles and how many of them there are ([`cubes`](crate::cubes),
+    /// [`planes`](crate::planes), [`lanes`](crate::lanes) and their knobs).
+    ///
+    /// One axis, or one region each, is a box of the grid, so every axis gets a dial of its own
+    /// and two lines make a two-dimensional box. Several axes sharing a stated count are read as a
+    /// single index instead, so a worker takes a share of the whole rather than a box of it: a
+    /// dial per axis always yields a box, and a share that begins inside one region and ends
+    /// inside another is not one.
+    ///
+    /// That index runs over these axes' tiles at this level and one region of the level below, so
+    /// a share can end part way through a region's own work. Where that region is an output tile
+    /// and the level below walks the contraction, several workers end up holding pieces of the
+    /// same cell, and the destination folds them exactly as it does under a dial
+    /// ([`SplitShare`](crate::SplitShare)).
+    ///
+    /// An axis named here is not named by [`walk`](Self::walk): a level states each of its axes
+    /// once.
+    pub fn distribute(&mut self, dist: Spatial, axes: &[(Axis, usize)]) -> &mut Self {
+        match dist.handout(axes.len()) {
+            Handout::Dial => self.cuts.extend(
+                axes.iter()
+                    .map(|&(axis, edge)| (axis, Cut::new(edge, dist.into()))),
+            ),
+            Handout::OneIndex => {
+                assert!(
+                    self.work.is_none(),
+                    "LevelCuts::distribute: this level already distributes work; state it once"
+                );
+                // A share is a range of one index, and lanes that reduce in registers have to
+                // reach their reduction together. Ranges put them on different regions, so they
+                // never would.
+                assert!(
+                    dist.scope() != ComputeScope::Unit,
+                    "LevelCuts::distribute: the plane's lanes combine in registers, which needs \
+                     them in lockstep, and lanes holding different shares never are. Distribute \
+                     one axis at a time across them instead."
+                );
+                // A share is walked as a nest: consecutive steps of one region under one
+                // accumulator, then the next region. Turns would put a different region under it
+                // at every step.
+                assert!(
+                    dist.spread() == Spread::Contiguous,
+                    "LevelCuts::distribute: a share is a run of the index, so its steps are \
+                     consecutive; instances taking turns would leave no region long enough to \
+                     accumulate in. Distribute one interleaved axis instead."
+                );
+                self.cuts.extend(
+                    axes.iter()
+                        .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+                );
+                self.work = Some(Work::new(
+                    axes.iter().map(|&(axis, _)| axis).collect(),
+                    dist,
+                ));
+            }
+        }
         self
     }
 }

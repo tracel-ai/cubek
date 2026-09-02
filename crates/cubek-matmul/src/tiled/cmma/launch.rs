@@ -7,8 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand},
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Geometry, Instruction, Launcher, Operand, Residence, Space,
-    Strided, Tiling, Tma, TmaTileArgLaunch, WalkOrder,
+    Axis, Buffering, CubeAxis, Geometry, Instruction, Launcher, Operand, Residence, Space, Strided,
+    Tiling, Tma, TmaTileArgLaunch, WalkOrder, cubes, planes,
 };
 
 use crate::{
@@ -163,7 +163,8 @@ fn tile_space(
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
 
-    let batch_axes: Vec<_> = batch.iter().map(|&(a, _)| a).collect();
+    // One tile of every batch axis, which is what each level states of them.
+    let batch_tiles: Vec<_> = batch.iter().map(|&(a, _)| (a, 1)).collect();
     let extents: Vec<_> = batch
         .iter()
         .copied()
@@ -173,33 +174,28 @@ fn tile_space(
     let mut ops = MatmulOperands::new(dtypes);
     let space = Tiling::over(&mut ops, &extents)
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-            l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
-                .axis(M, Cut::cube(CubeAxis::X, stage_m))
-                .axis(N, Cut::cube(CubeAxis::Y, stage_n))
-                .axis(K, Cut::sequential(stage_k));
+            l.distribute(cubes(CubeAxis::Z), &batch_tiles)
+                .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
+                .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
+                .walk(&[(K, stage_k)]);
             o.a.stage_as(Residence::Smem, dtypes.lhs_stage);
             o.b.stage_as(Residence::Smem, dtypes.rhs_stage);
             o.out.stage_as(Residence::Register, acc);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axes(&batch_axes, Cut::sequential(1))
-                .axis(M, Cut::plane(c.m * i.m))
-                .axis(N, Cut::plane(c.n * i.n))
-                .axis(K, Cut::sequential(stage_k));
+            l.distribute(planes(), &[(M, c.m * i.m)])
+                .distribute(planes(), &[(N, c.n * i.n)])
+                .walk(&batch_tiles)
+                .walk(&[(K, stage_k)]);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axes(&batch_axes, Cut::sequential(1))
-                .axis(M, Cut::sequential(c.m * i.m))
-                .axis(N, Cut::sequential(c.n * i.n))
-                .axis(K, Cut::sequential(i.k));
+            l.walk(&batch_tiles)
+                .walk(&[(M, c.m * i.m), (N, c.n * i.n), (K, i.k)]);
             o.a.stage_as(Residence::Register, dtypes.lhs_register);
             o.b.stage_as(Residence::Register, dtypes.rhs_register);
         })
         .instruction(Instruction::Cmma, |l, _| {
-            l.axes(&batch_axes, Cut::sequential(1))
-                .axis(M, Cut::sequential(i.m))
-                .axis(N, Cut::sequential(i.n))
-                .axis(K, Cut::sequential(i.k));
+            l.walk(&batch_tiles).walk(&[(M, i.m), (N, i.n), (K, i.k)]);
         })
         .build();
     (space, ops)

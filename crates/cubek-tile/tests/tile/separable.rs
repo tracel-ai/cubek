@@ -134,11 +134,13 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             (TAP[2], TAPS[2]),
         ])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(COLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
+            l.walk(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])
         })
         .build();
 
@@ -219,11 +221,13 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             (TAP[2], TAPS[2]),
         ])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(COLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
+            l.walk(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])
         })
         .build();
 
@@ -336,11 +340,13 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             (TAP[2], TAPS[2]),
         ])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(QCOLS))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
+            l.walk(&[
+                (ROW, ROWS),
+                (COL, QCOLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])
         })
         .build();
 
@@ -427,11 +433,13 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             (TAP[2], TAPS[2]),
         ])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(ROWS))
-                .axis(COL, Cut::sequential(pack))
-                .axis(TAP[0], Cut::sequential(TAPS[0]))
-                .axis(TAP[1], Cut::sequential(TAPS[1]))
-                .axis(TAP[2], Cut::sequential(TAPS[2]))
+            l.walk(&[
+                (ROW, ROWS),
+                (COL, pack),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])
         })
         .build();
 
@@ -575,9 +583,7 @@ fn check_resampling(normalized: bool) {
     let space = Tiling::new()
         .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(RROWS))
-                .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         })
         .build();
 
@@ -667,9 +673,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
     let space = Tiling::new()
         .extents(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(1))
-                .axis(COL, Cut::sequential(1))
-                .axis(TAP[0], Cut::sequential(2))
+            l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])
         })
         .build();
 
@@ -733,9 +737,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
     let space = Tiling::new()
         .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(RROWS))
-                .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         })
         .build();
 
@@ -812,9 +814,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
     let space = Tiling::new()
         .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(RROWS))
-                .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         })
         .build();
 
@@ -915,9 +915,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
     let space = Tiling::new()
         .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(RROWS))
-                .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         })
         .build();
 
@@ -999,9 +997,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
     let space = Tiling::new()
         .extents(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(RROWS))
-                .axis(COL, Cut::sequential(RCOLS))
-                .axis(TAP[0], Cut::sequential(RTAPS))
+            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         })
         .build();
 
@@ -1100,10 +1096,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
     let space = Tiling::new()
         .extents(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
         .instruction(Instruction::registers(16), |l| {
-            l.axis(ROW, Cut::sequential(1))
-                .axis(COL, Cut::sequential(1))
-                .axis(TAP[0], Cut::sequential(2))
-                .axis(TAP[1], Cut::sequential(2))
+            l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
         })
         .build();
 

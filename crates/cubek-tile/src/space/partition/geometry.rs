@@ -33,11 +33,19 @@ impl Space {
     }
 }
 
-/// Product of instance counts over every axis riding `scope`, across the whole partitioner tree
+/// Product of instance counts over every axis riding `scope`, across the whole partitioner tree,
+/// times the instance count of any work a level distributes as one on it ([`Work`]).
 fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
     let mut total = 1u32;
     let mut level = space.clone();
     while !level.is_final() {
+        // Work distributed as one rides its scope whole rather than through any one of its
+        // axes, so its instance count is the dim's and no axis of it contributes.
+        if let Some(work) = level.partitioner().work()
+            && work.scope() == scope
+        {
+            total *= work.instances() as u32;
+        }
         for axis in level.axes() {
             let dist = level.partitioner().distribution(axis);
             if dist.scope() == Some(scope) {

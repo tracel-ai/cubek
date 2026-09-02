@@ -6,10 +6,10 @@
 //!
 //! - `seq_k`: nothing on the lanes, so one lane per cube walks the whole K. The literal "no
 //!   split-K" baseline, launched at `CubeDim::new_single()` so it really is one lane.
-//! - `n_spread`: `Cut::unit` on N: each lane owns disjoint output columns and still walks the
+//! - `n_spread`: `lanes()` on N: each lane owns disjoint output columns and still walks the
 //!   whole K. No combine (the columns are disjoint): today's strategy, the
 //!   `GemvUnitPerpendicular` mapping. Needs `n ≥ plane_size · cols` *per cube* to fill the lanes.
-//! - `split_k`: `Cut::unit` on K: each lane contracts a disjoint K-slice and the plane
+//! - `split_k`: `lanes()` on K: each lane contracts a disjoint K-slice and the plane
 //!   `plane_sum`-combines, one lane writing. Works however small N gets.
 //!
 //! All three solve the same `(m, n, k)`; only the mapping differs, so the comparison is total time
@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Instruction, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Instruction, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
+    Tiling, WalkOrder, cubes, lanes,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -83,9 +83,9 @@ fn launch_split_k_matmul<E: Numeric>(
 pub enum Mapping {
     /// Nothing on the lanes: one lane walks the whole K.
     SeqK,
-    /// `Cut::unit` on N: `cols` disjoint columns per lane, whole K each, no combine.
+    /// `lanes()` on N: `cols` disjoint columns per lane, whole K each, no combine.
     NSpread { cols: usize },
-    /// `Cut::unit` on K: a K-slice per lane over `cols` shared columns per cube,
+    /// `lanes()` on K: a K-slice per lane over `cols` shared columns per cube,
     /// `plane_sum` combine, one lane writes.
     SplitK { cols: usize },
     /// [`SplitK`](Mapping::SplitK) on its home layout: the rhs buffer stored K-contiguous
@@ -119,29 +119,26 @@ impl Mapping {
     /// The space for this mapping. N always rides the cubes, so every mapping loads the grid the
     /// same way and only the intra-plane split differs; each spread takes the columns per cube its
     /// `cols` implies (`plane_size · cols` for `n_spread`, `cols` for `split_k`), `seq_k` takes one.
-    fn space(self, problem: SplitKProblem, lanes: usize) -> Space {
+    fn space(self, problem: SplitKProblem, plane_size: usize) -> Space {
         let SplitKProblem { m, n, k } = problem;
-        let seq = Cut::sequential;
         match self {
             // One column per cube, one lane, whole K walked serially.
             Mapping::SeqK => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, 1))
-                        .axis(K, seq(k))
+                    l.distribute(cubes(CubeAxis::X), &[(N, 1)])
+                        .walk(&[(M, m), (K, k)])
                 })
                 .build(),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, lanes * cols))
-                        .axis(K, seq(k))
+                    l.distribute(cubes(CubeAxis::X), &[(N, plane_size * cols)])
+                        .walk(&[(M, m), (K, k)])
                 })
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m)).axis(N, Cut::unit(cols)).axis(K, seq(k))
+                    l.distribute(lanes(), &[(N, cols)]).walk(&[(M, m), (K, k)])
                 })
                 .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
@@ -149,13 +146,13 @@ impl Mapping {
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Tiling::new()
                 .extents(&[(M, m), (N, n), (K, k)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, seq(m))
-                        .axis(N, Cut::cube(CubeAxis::X, cols))
-                        .axis(K, Cut::unit(k / lanes))
+                    l.distribute(cubes(CubeAxis::X), &[(N, cols)])
+                        .distribute(lanes(), &[(K, k / plane_size)])
+                        .walk(&[(M, m)])
                 })
                 .build(),
         }
-        .resolve_lanes(lanes)
+        .resolve_lanes(plane_size)
     }
 
     fn rhs_layout(self) -> RhsLayout {
@@ -335,7 +332,7 @@ impl Benchmark for SplitKBench {
 
 /// A mapping that computes the wrong answer would still time fast, so every strategy proves itself
 /// on a small shape before it is measured. Guards the whole family of silent-zero traps: a
-/// wrongly sized `Cut::unit`, an unresolved lane count, a combine that never fires.
+/// wrongly sized lane distribution, an unresolved lane count, a combine that never fires.
 fn verify(
     client: &ComputeClient<TestRuntime>,
     mapping: Mapping,

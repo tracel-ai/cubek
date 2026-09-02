@@ -104,13 +104,131 @@ impl SplitShare {
                 "{site}: this accumulator's cells are split across planes or cubes and its \
                  destination replaces rather than accumulates, so every partial but one would be \
                  lost. \
-                 A contracted axis cut at plane or cube scope (`Cut::plane`, `Cut::cube`) gives \
-                 each instance a slice of the contraction, and none of them holds a whole cell. \
-                 Drain into an accumulating destination (bind it as an `AccumulateArg`), cut the \
-                 contraction \
-                 at unit scope (`Cut::unit`, combined in the plane's registers), or give the \
+                 A contracted axis distributed across planes or cubes gives each instance a \
+                 slice of the contraction, and none of them holds a whole cell. \
+                 Drain into an accumulating destination (bind it as an `AccumulateArg`), \
+                 distribute the contraction across the plane's lanes instead \
+                 (`distribute(lanes(), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),
+        }
+    }
+}
+
+/// A spatial distribution under construction: who runs the tiles, how many of them, and which
+/// ones each takes.
+///
+/// The value [`cubes`], [`planes`] and [`lanes`] build. It names no axis, which is what lets one
+/// value describe a single axis's tiles or several axes' work at once, whichever the level it is
+/// handed to names ([`LevelCuts::distribute`](crate::LevelCuts::distribute)).
+///
+/// The knobs live here rather than on [`Distribution`] so they cannot be reached from
+/// [`Sequential`](Distribution::Sequential): one instance walking the whole axis has nobody to
+/// share with and nothing to take turns with.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Spatial {
+    scope: ComputeScope,
+    spread: Spread,
+    coverage: Coverage,
+}
+
+/// The tiles ride the cubes of `axis`, one each.
+pub fn cubes(axis: CubeAxis) -> Spatial {
+    Spatial {
+        scope: ComputeScope::Cube(axis),
+        spread: Spread::Contiguous,
+        coverage: Coverage::TilesEach(1),
+    }
+}
+
+/// The tiles ride the cube's planes, one each.
+pub fn planes() -> Spatial {
+    Spatial {
+        scope: ComputeScope::Plane,
+        spread: Spread::Contiguous,
+        coverage: Coverage::TilesEach(1),
+    }
+}
+
+/// The tiles ride the plane's lanes. How many lanes is the hardware's `plane_size`, unknown until
+/// launch, so the count is deferred ([`Coverage::PlaneLanes`]) and stamped by
+/// [`Space::launcher`](crate::Space::launcher). State [`instances`](Spatial::instances) to take a
+/// subset, which is what carving one plane between several axes needs.
+pub fn lanes() -> Spatial {
+    Spatial {
+        scope: ComputeScope::Unit,
+        spread: Spread::Contiguous,
+        coverage: Coverage::PlaneLanes,
+    }
+}
+
+impl Spatial {
+    /// Instances take turns rather than each taking a contiguous run, so neighbouring instances
+    /// touch neighbouring tiles. What a read wants whenever those tiles are neighbouring words.
+    pub fn interleaved(mut self) -> Self {
+        self.spread = Spread::Interleaved;
+        self
+    }
+
+    /// Pin the instance count; each walks `grid / n` tiles. Replaces whatever count stood:
+    /// `instances · tiles_each = grid`, so stating either states the other.
+    pub fn instances(mut self, n: usize) -> Self {
+        self.coverage = Coverage::Instances(n);
+        self
+    }
+
+    /// Pin each instance's share; `grid / t` instances run. The twin of
+    /// [`instances`](Spatial::instances), and the same field.
+    pub fn tiles_each(mut self, t: usize) -> Self {
+        self.coverage = Coverage::TilesEach(t);
+        self
+    }
+
+    pub fn scope(self) -> ComputeScope {
+        self.scope
+    }
+
+    pub fn coverage(self) -> Coverage {
+        self.coverage
+    }
+
+    pub fn spread(self) -> Spread {
+        self.spread
+    }
+
+    /// How this distribution hands `axes` axes' regions out.
+    ///
+    /// Not a knob: it follows from what was stated. One axis's runs are boxes of the grid, and so
+    /// is one region each whatever the axes, so both get a dial per axis. Only several axes
+    /// sharing a stated count need an index no box can describe.
+    pub(crate) fn handout(self, axes: usize) -> Handout {
+        match (axes, self.coverage) {
+            (0 | 1, _) | (_, Coverage::TilesEach(1)) => Handout::Dial,
+            _ => Handout::OneIndex,
+        }
+    }
+}
+
+/// How a level hands the axes it distributes to their scope's workers.
+///
+/// [`Spatial::handout`]'s answer, read once where a level is stated
+/// ([`LevelCuts::distribute`](crate::LevelCuts::distribute)).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Handout {
+    /// A dial on each axis: its tiles ride the scope on their own, and several dials make a box
+    /// of the grid.
+    Dial,
+    /// One index over every named axis, whose runs the workers take a share of each
+    /// ([`Work`](crate::Work)).
+    OneIndex,
+}
+
+impl From<Spatial> for Distribution {
+    fn from(spatial: Spatial) -> Distribution {
+        Distribution::Spatial {
+            scope: spatial.scope,
+            spread: spatial.spread,
+            coverage: spatial.coverage,
         }
     }
 }
@@ -166,33 +284,19 @@ pub enum ComputeScope {
 }
 
 impl Distribution {
-    /// One tile per cube on `axis`, contiguous
+    /// One tile per cube on `axis`, contiguous: [`cubes`] with nothing else stated.
     pub fn cube(axis: CubeAxis) -> Self {
-        Distribution::Spatial {
-            scope: ComputeScope::Cube(axis),
-            spread: Spread::Contiguous,
-            coverage: Coverage::TilesEach(1),
-        }
+        cubes(axis).into()
     }
 
-    /// One tile per plane, contiguous
+    /// One tile per plane, contiguous: [`planes`] with nothing else stated.
     pub fn plane() -> Self {
-        Distribution::Spatial {
-            scope: ComputeScope::Plane,
-            spread: Spread::Contiguous,
-            coverage: Coverage::TilesEach(1),
-        }
+        planes().into()
     }
 
-    /// Spread across the plane's lanes, contiguous. The lane count is the hardware
-    /// `plane_size`, unknown until launch; [`PlaneLanes`](Coverage::PlaneLanes) is a
-    /// deferred count [`resolve_lanes`](Self::resolve_lanes) fills in.
+    /// Spread across the plane's lanes: [`lanes`] with nothing else stated.
     pub fn unit() -> Self {
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread: Spread::Contiguous,
-            coverage: Coverage::PlaneLanes,
-        }
+        lanes().into()
     }
 
     /// Resolve a deferred [`PlaneLanes`](Coverage::PlaneLanes) count to
