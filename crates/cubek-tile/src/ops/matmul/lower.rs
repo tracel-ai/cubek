@@ -398,7 +398,7 @@ fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compt
 #[cfg(test)]
 mod tests {
     use super::refuse_distributed_work;
-    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder, cubes};
+    use crate::{Axis, Buffering, CubeAxis, Space, Tiling, WalkOrder, cubes};
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -414,19 +414,15 @@ mod tests {
                 Buffering::SINGLE,
                 |l, _| match distributed {
                     true => {
-                        l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3));
+                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
                     }
                     false => {
-                        l.axis(M, Cut::sequential(4))
-                            .axis(N, Cut::sequential(4))
-                            .axis(K, Cut::sequential(8));
+                        l.walk(&[(M, 4), (N, 4), (K, 8)]);
                     }
                 },
             )
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::sequential(4))
-                    .axis(K, Cut::sequential(4));
+                l.walk(&[(M, 4), (N, 4), (K, 4)]);
             })
             .build()
     }

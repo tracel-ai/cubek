@@ -94,9 +94,7 @@ macro_rules! output_arg {
 fn space() -> Space {
     Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(3));
+            level.walk(&[(ROW, 2), (COL, 3)]);
         })
         .build()
 }
@@ -494,9 +492,7 @@ const MASKED_ROWS: usize = 5;
 fn masked_space() -> Space {
     Tiling::over(&mut (), &[(ROW, MASKED_ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(2));
+            level.walk(&[(ROW, 2), (COL, 2)]);
         })
         .build()
 }

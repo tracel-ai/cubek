@@ -224,10 +224,7 @@ impl Conv1d {
             &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
         )
         .level(WalkOrder::RowMajor, buffering, |l, _| {
-            l.axis(OH, Cut::sequential(tile_oh))
-                .axis(CO, Cut::sequential(tile_co))
-                .axis(RH, Cut::sequential(self.rh))
-                .axis(CI, Cut::sequential(self.ci));
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
         })
         .build();
 
@@ -369,10 +366,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(3))
-                .axis(CO, Cut::sequential(4))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -447,10 +441,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(3))
-                .axis(CO, Cut::sequential(4))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -521,10 +512,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(3))
-                .axis(CO, Cut::sequential(4))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -697,10 +685,7 @@ impl Conv1d {
             &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
         )
         .level(WalkOrder::RowMajor, buffering, |l, _| {
-            l.axis(OH, Cut::sequential(tile_oh))
-                .axis(CO, Cut::sequential(tile_co))
-                .axis(RH, Cut::sequential(self.rh))
-                .axis(CI, Cut::sequential(self.ci));
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
         })
         .build();
 
@@ -935,10 +920,7 @@ impl Conv1d {
             &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
         )
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(tile_oh))
-                .axis(CO, Cut::sequential(tile_co))
-                .axis(RH, Cut::sequential(self.rh))
-                .axis(CI, Cut::sequential(self.ci));
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
         })
         .build();
 
@@ -1136,10 +1118,7 @@ impl Conv1d {
             &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
         )
         .level(WalkOrder::RowMajor, buffering, |l, _| {
-            l.axis(OH, Cut::sequential(tile_oh))
-                .axis(CO, Cut::sequential(tile_co))
-                .axis(RH, Cut::sequential(self.rh))
-                .axis(CI, Cut::sequential(self.ci));
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
         })
         .build();
 
@@ -1370,12 +1349,14 @@ impl Conv2d {
             ],
         )
         .level(WalkOrder::RowMajor, buffering, |l, _| {
-            l.axis(OH, Cut::sequential(tile_oh))
-                .axis(OW, Cut::sequential(tile_ow))
-                .axis(CO, Cut::sequential(tile_co))
-                .axis(RH, Cut::sequential(self.rh))
-                .axis(RW, Cut::sequential(self.rw))
-                .axis(CI, Cut::sequential(self.ci));
+            l.walk(&[
+                (OH, tile_oh),
+                (OW, tile_ow),
+                (CO, tile_co),
+                (RH, self.rh),
+                (RW, self.rw),
+                (CI, self.ci),
+            ]);
         })
         .build();
 
@@ -1757,11 +1738,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(oh))
-                .axis(OW, Cut::sequential(ow))
-                .axis(RH, Cut::sequential(rh))
-                .axis(RW, Cut::sequential(rw))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
         })
         .build();
 
@@ -1984,10 +1961,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(oh))
-                .axis(CO, Cut::sequential(co))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -2116,10 +2090,7 @@ impl Resize1d {
         for (i, &edge) in oh_edges.iter().enumerate() {
             let sched = if i == 0 { buffering } else { Buffering::SINGLE };
             tiling = tiling.level(WalkOrder::RowMajor, sched, |l, _| {
-                l.axis(OH, Cut::sequential(edge))
-                    .axis(CO, Cut::sequential(self.co))
-                    .axis(RH, Cut::sequential(self.rh))
-                    .axis(CI, Cut::sequential(self.ci));
+                l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
             });
         }
         tiling.build()
@@ -2522,10 +2493,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(3))
-                .axis(CO, Cut::sequential(4))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -2597,10 +2565,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
 
     let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(OH, Cut::sequential(3))
-                .axis(CO, Cut::sequential(4))
-                .axis(RH, Cut::sequential(rh))
-                .axis(CI, Cut::sequential(ci));
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 

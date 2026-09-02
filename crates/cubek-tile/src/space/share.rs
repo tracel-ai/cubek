@@ -89,11 +89,11 @@ impl SplitShare {
                 "{site}: this accumulator's cells are split across planes or cubes and its \
                  destination replaces rather than accumulates, so every partial but one would be \
                  lost. \
-                 A contracted axis cut at plane or cube scope (`Cut::plane`, `Cut::cube`) gives \
-                 each instance a slice of the contraction, and none of them holds a whole cell. \
-                 Drain into an accumulating destination (bind it as an `AccumulateArg`), cut the \
-                 contraction \
-                 at unit scope (`Cut::unit`, combined in the plane's registers), or give the \
+                 A contracted axis distributed across planes or cubes gives each instance a \
+                 slice of the contraction, and none of them holds a whole cell. \
+                 Drain into an accumulating destination (bind it as an `AccumulateArg`), \
+                 distribute the contraction across the plane's lanes instead \
+                 (`distribute(lanes(), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),
         }

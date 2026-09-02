@@ -147,10 +147,7 @@ fn nvfp4_shaped_decode() {
 
     let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(factor));
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -636,10 +633,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     // A region sits inside one block, and the packed line is one word of it.
     let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(factor));
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -755,10 +749,7 @@ fn eight_bit_fields_contract_against_their_scales() {
 
     let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(factor));
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -888,11 +879,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::sequential(rows))
-            .axis(NB, Cut::sequential(blocks_n))
-            .axis(NI, Cut::sequential(bn))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block_k));
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
     .build()
     .with_instruction(Instruction::registers(16));
@@ -1032,11 +1019,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::sequential(rows))
-            .axis(NB, Cut::sequential(blocks_n))
-            .axis(NI, Cut::sequential(bn))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block_k));
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
     .build()
     .with_instruction(Instruction::registers(16));
@@ -1181,11 +1164,7 @@ fn several_lines_may_share_one_scale() {
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::sequential(rows))
-            .axis(NB, Cut::sequential(blocks_n))
-            .axis(NI, Cut::sequential(bn))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block_k));
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
     .build()
     .with_instruction(Instruction::registers(16));
@@ -1299,10 +1278,7 @@ fn an_i8_operand_contracts_against_its_scales() {
 
     let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(rows))
-                .axis(N, Cut::sequential(cols))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(block));
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -1433,11 +1409,12 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::sequential(1))
-            .axis(NB, Cut::cube(CubeAxis::X, 1))
-            .axis(NI, Cut::sequential(bn))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block_k));
+        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+            (M, 1),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ]);
     })
     .build()
     .with_instruction(Instruction::registers(16));
@@ -1578,11 +1555,12 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.axis(M, Cut::sequential(1))
-            .axis(NB, Cut::cube(CubeAxis::X, 1))
-            .axis(NI, Cut::sequential(bn))
-            .axis(KB, Cut::sequential(1))
-            .axis(KI, Cut::sequential(block_k));
+        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+            (M, 1),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ]);
     })
     .build()
     .with_instruction(Instruction::registers(16));
@@ -1729,10 +1707,8 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
 
     let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(1))
-                .axis(N, Cut::cube(CubeAxis::X, bn))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, Cut::sequential(block_k));
+            l.distribute(cubes(CubeAxis::X), &[(N, bn)])
+                .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));

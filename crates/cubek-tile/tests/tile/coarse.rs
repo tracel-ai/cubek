@@ -60,9 +60,7 @@ fn coarse_spec() -> TileSpec {
 fn space(cut: usize) -> Space {
     Tiling::over(&mut (), &[(M, ROWS), (N, COLS), (K, DEPTH)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(ROWS))
-                .axis(N, Cut::sequential(COLS))
-                .axis(K, Cut::sequential(cut));
+            l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
         })
         .build()
         .with_instruction(Instruction::registers(16))

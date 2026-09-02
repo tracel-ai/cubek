@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
-    TileArgLaunch, TileSpec, Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
+    TileArgLaunch, TileSpec, Tiling, WalkOrder, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -54,11 +54,11 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let launch = Tiling::over(&mut (), &[(M, m), (N, n)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::cube(CubeAxis::Y, 1))
-                .axis(N, Cut::cube(CubeAxis::X, 128));
+            l.distribute(cubes(CubeAxis::Y), &[(M, 1)])
+                .distribute(cubes(CubeAxis::X), &[(N, 128)]);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(1)).axis(N, Cut::plane(32));
+            l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)]);
         })
         .build()
         .launcher_over(&client, &[]);
@@ -722,7 +722,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
     // A space that tiles into `bm×bn` blocks, one cube walking them.
     let space = Tiling::over(&mut (), &[(M, m), (N, n)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(bm)).axis(N, Cut::sequential(bn));
+            l.walk(&[(M, bm), (N, bn)]);
         })
         .build();
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.

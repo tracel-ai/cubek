@@ -353,9 +353,7 @@ impl Harness {
             dtype: f32::elem_type_native(),
             space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-                    level
-                        .axis(ROW, Cut::sequential(2))
-                        .axis(COL, Cut::sequential(3));
+                    level.walk(&[(ROW, 2), (COL, 3)]);
                 })
                 .build(),
         }
@@ -647,9 +645,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
     let dtype = f32::elem_type_native();
     let space = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(4));
+            level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -678,9 +674,7 @@ fn divided_direct_copy_preserves_the_parent_bound() {
     let dtype = f32::elem_type_native();
     let concrete = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-            level
-                .axis(ROW, Cut::sequential(2))
-                .axis(COL, Cut::sequential(4));
+            level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
     let space = concrete.clone().with_dynamic(&[ROW]);

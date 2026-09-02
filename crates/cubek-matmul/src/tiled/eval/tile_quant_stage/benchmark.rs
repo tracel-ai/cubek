@@ -113,9 +113,9 @@ impl TileQuantStageBench {
     /// their shared stage where L0 is declared: L0 fills it, L1 reads windows of it, which is
     /// the staging this bench measures. The output stages nothing.
     fn space(&self) -> (Space, (Operand, Operand, Operand)) {
-        let lanes = self.client.properties().hardware.plane_size_max as usize;
+        let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
-        let tn = lanes * un;
+        let tn = plane_size * un;
         let f32t = f32::elem_type_native();
         let mut operands = (
             Operand::new(&[M, K], f32t),
@@ -124,16 +124,14 @@ impl TileQuantStageBench {
         );
         let space = Tiling::over(&mut operands, &[(M, self.m), (N, self.n), (K, self.k)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-                l.axis(M, Cut::sequential(self.m))
-                    .axis(N, Cut::cube(CubeAxis::X, tn))
-                    .axis(K, Cut::sequential(self.tk));
+                l.distribute(cubes(CubeAxis::X), &[(N, tn)])
+                    .walk(&[(M, self.m), (K, self.tk)]);
                 o.0.stage(Residence::Smem);
                 o.1.stage(Residence::Smem);
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.axis(M, Cut::sequential(self.m))
-                    .axis(N, Cut::unit(un))
-                    .axis(K, Cut::sequential(self.tk));
+                l.distribute(lanes(), &[(N, un)])
+                    .walk(&[(M, self.m), (K, self.tk)]);
             })
             .build();
         (space, operands)

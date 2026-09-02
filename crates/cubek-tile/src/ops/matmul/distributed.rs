@@ -109,8 +109,9 @@ fn refuse_work_below(space: &Space) {
     assert!(
         child.is_final() || child.partitioner().work().is_none(),
         "distributed_mm: the level under this one distributes work too, and a share's own walk \
-         deals every axis on its own. Cut an axis across that scope (`Cut::plane`, `Cut::unit`) \
-         instead."
+         deals every axis on its own. Distribute one axis across that scope instead \
+         (`distribute(planes(), ..)`, `distribute(lanes(), ..)`), which the walk under a share \
+         honours like any other."
     );
 }
 
@@ -144,7 +145,7 @@ fn steps_below(space: &Space) -> usize {
 #[cfg(test)]
 mod tests {
     use super::refuse_work_below;
-    use crate::{Axis, Buffering, CubeAxis, Cut, Space, Tiling, WalkOrder, cubes};
+    use crate::{Axis, Buffering, CubeAxis, Space, Tiling, WalkOrder, cubes};
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -156,16 +157,14 @@ mod tests {
     fn space(twice: bool) -> Space {
         Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.distribute(&[(M, 4), (N, 4), (K, 8)], cubes(CubeAxis::X).instances(3));
+                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| match twice {
                 true => {
-                    l.distribute(&[(M, 4), (N, 4), (K, 4)], cubes(CubeAxis::Y).instances(2));
+                    l.distribute(cubes(CubeAxis::Y).instances(2), &[(M, 4), (N, 4), (K, 4)]);
                 }
                 false => {
-                    l.axis(M, Cut::sequential(4))
-                        .axis(N, Cut::sequential(4))
-                        .axis(K, Cut::sequential(4));
+                    l.walk(&[(M, 4), (N, 4), (K, 4)]);
                 }
             })
             .build()

@@ -91,9 +91,7 @@ impl Harness {
             dtype: f32::elem_type_native(),
             space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-                    level
-                        .axis(ROW, Cut::sequential(TILE_ROWS))
-                        .axis(COL, Cut::sequential(TILE_COLS));
+                    level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
                 })
                 .build(),
         }
@@ -284,15 +282,13 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> Ho
         // region of this level is one output tile and the index reaches through the level below.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(
-                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                 cubes(CubeAxis::X).instances(runs),
+                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
             );
         })
         // One tile's contraction, which is what a run counts in.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(MM, Cut::sequential(TILE_M))
-                .axis(NN, Cut::sequential(TILE_N))
-                .axis(KK, Cut::sequential(BLOCK_K));
+            l.walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -443,9 +439,9 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
         return;
     }
     let dtype = f32::elem_type_native();
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let plane_size = client.properties().hardware.plane_size_max as usize;
     // Two steps of `K` per lane, so a cube's share is counted in something longer than one.
-    let (m, n, k) = (8usize, 8usize, 2 * lanes);
+    let (m, n, k) = (8usize, 8usize, 2 * plane_size);
     let want = reference(m, n, k);
 
     // 4 output tiles of 2 steps each: 8 steps of work, and 3 shares of it straddle tiles.
@@ -468,17 +464,16 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
         let space = Tiling::over(&mut (), &[(MM, m), (NN, n), (KK, k)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(
-                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                     cubes(CubeAxis::X).instances(runs),
+                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
                 );
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.axis(MM, Cut::sequential(TILE_M))
-                    .axis(NN, Cut::sequential(TILE_N))
-                    .axis(KK, Cut::unit(1));
+                l.distribute(lanes(), &[(KK, 1)])
+                    .walk(&[(MM, TILE_M), (NN, TILE_N)]);
             })
             .build()
-            .resolve_lanes(lanes)
+            .resolve_lanes(plane_size)
             .with_instruction(Instruction::registers(16));
 
         stream_matmul::launch::<TestRuntime>(
@@ -508,7 +503,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 let want = want[i * n + j];
                 assert!(
                     (have - want).abs() < 1e-2,
-                    "{runs} shares over cubes, K over {lanes} lanes: at ({i}, {j}): got {have}, \
+                    "{runs} shares over cubes, K over {plane_size} plane_size: at ({i}, {j}): got {have}, \
                      want {want}"
                 );
             }

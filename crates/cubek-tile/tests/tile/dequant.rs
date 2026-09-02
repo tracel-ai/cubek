@@ -75,10 +75,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
     );
     let space = Tiling::over(&mut operands, &[(ROW, rows), (CB, blocks), (CI, inside)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-            level
-                .axis(ROW, Cut::sequential(rows))
-                .axis(CB, Cut::sequential(blocks))
-                .axis(CI, Cut::sequential(inside));
+            level.walk(&[(ROW, rows), (CB, blocks), (CI, inside)]);
         })
         .build();
 

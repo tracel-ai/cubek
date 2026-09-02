@@ -13,7 +13,8 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_tile::{
-    Buffering, CubeAxis, Cut, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder,
+    Buffering, CubeAxis, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder, cubes, lanes,
+    planes,
 };
 
 use crate::{
@@ -95,43 +96,37 @@ pub fn launch_ref<R: Runtime>(
         // A strip of output rows per cube, walking all of `K`. Nothing is staged: the weight is
         // read exactly once, so there is no reuse for a stage to amortize.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::cube(CubeAxis::X, blueprint.rows_per_cube))
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(cubes(CubeAxis::X), &[(M, blueprint.rows_per_cube)])
+                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
         })
         // One plane per group of rows.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::plane(blueprint.rows_per_plane))
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(planes(), &[(M, blueprint.rows_per_plane)])
+                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
         })
         // The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving
         // the contraction between them. Each takes one stored word of `KI`, and where a group
-        // reaches past one block it takes whole blocks of `KB` — a cut cuts one axis or the
-        // other and cannot straddle two. The partials the lanes hold drain inside the plane.
+        // reaches past one block it takes whole blocks of `KB` — a distribution deals one axis
+        // or the other and cannot straddle two. The partials the lanes hold drain inside the plane.
         .instruction(
             Instruction::registers(blueprint.rows_per_lane * factor),
             |l, _| {
                 // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words.
                 // The lane counts are the blueprint's, derived on the host from the plane width:
                 // their product with the row groups is exactly it.
-                l.axis(
-                    M,
-                    Cut::unit(blueprint.rows_per_lane).instances(blueprint.groups()),
+                l.distribute(
+                    lanes().instances(blueprint.groups()),
+                    &[(M, blueprint.rows_per_lane)],
                 )
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(
-                    KB,
-                    Cut::unit(1).instances(blueprint.block_lanes).interleaved(),
+                .distribute(
+                    lanes().instances(blueprint.block_lanes).interleaved(),
+                    &[(KB, 1)],
                 )
-                .axis(
-                    KI,
-                    Cut::unit(factor)
-                        .instances(blueprint.inside_lanes)
-                        .interleaved(),
-                );
+                .distribute(
+                    lanes().instances(blueprint.inside_lanes).interleaved(),
+                    &[(KI, factor)],
+                )
+                .walk(&[(N, problem.rows)]);
             },
         )
         .build();
