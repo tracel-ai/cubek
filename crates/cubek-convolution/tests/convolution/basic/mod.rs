@@ -8,6 +8,7 @@
 //! in `extended/`. The full per-axis cartesian lives in `full/`.
 
 mod common;
+mod narrow_bias;
 
 mod simple_async;
 mod simple_cyclic;

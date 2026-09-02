@@ -35,16 +35,25 @@ pub fn mma_load_strided<
 
     let transposed = comptime![as_cmma_layout(layout) != vector_layout];
 
-    match config.load_method(ident) {
-        LoadMethod::Manual => {
-            if transposed {
-                load_manual_transposed(tile, fragment, def, ident, layout);
-            } else {
-                load_manual_plain(tile, fragment, def, ident, layout);
-            }
+    // ldmatrix requires distinct physical rows; a zero stride represents a broadcast.
+    if tile.unvectorized_stride() == 0 {
+        if transposed {
+            load_manual_transposed(tile, fragment, def, ident, layout);
+        } else {
+            load_manual_plain(tile, fragment, def, ident, layout);
         }
-        LoadMethod::LoadMatrix => {
-            load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
+    } else {
+        match config.load_method(ident) {
+            LoadMethod::Manual => {
+                if transposed {
+                    load_manual_transposed(tile, fragment, def, ident, layout);
+                } else {
+                    load_manual_plain(tile, fragment, def, ident, layout);
+                }
+            }
+            LoadMethod::LoadMatrix => {
+                load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
+            }
         }
     }
 }
