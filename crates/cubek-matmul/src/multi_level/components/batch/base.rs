@@ -37,15 +37,15 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_mapping: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_mapping: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
@@ -58,8 +58,8 @@ pub trait BatchMatmulFamily<RC: RuntimeConfig>: 'static + Send + Sync {
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

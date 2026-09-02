@@ -10,7 +10,6 @@ use crate::{
 };
 
 use cubecl::{
-    Runtime,
     client::ComputeClient,
     ir::{ElemType, VectorSize},
 };
@@ -60,8 +59,8 @@ pub struct UnitTilingBlueprintOptions {
 }
 
 /// Computes a [BatchMatmulBlueprint] depending on the problem kind
-pub fn infer_blueprint_unit<R: Runtime>(
-    client: &ComputeClient<R>,
+pub fn infer_blueprint_unit(
+    client: &ComputeClient,
     problem: &MatmulProblem,
     plane_dim: u32,
     double_buffering: bool,

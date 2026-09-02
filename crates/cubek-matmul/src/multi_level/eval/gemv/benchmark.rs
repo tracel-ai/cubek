@@ -58,25 +58,25 @@ struct GemvBench {
     rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 #[derive(Clone)]
 struct GemvInputs {
-    lhs: TensorHandle<TestRuntime>,
-    rhs: TensorHandle<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    lhs: TensorHandle,
+    rhs: TensorHandle,
+    out: TensorHandle,
 }
 
 fn make_tensor_with_layout(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     row_major_shape: [usize; 3],
     layout: MatrixLayout,
     dtype: ElemType,
     seed: u64,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     match layout {
         MatrixLayout::RowMajor => TestInput::builder(client.clone(), Shape::new(row_major_shape))
             .dtype(dtype)

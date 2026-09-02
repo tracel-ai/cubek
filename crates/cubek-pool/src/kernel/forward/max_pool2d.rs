@@ -7,7 +7,7 @@ use super::{
 };
 use crate::definition::{MaxPoolOptions, PoolError};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::tensor::ViewMut,
@@ -110,10 +110,10 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
     }
 }
 
-pub(crate) fn max_pool2d_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn max_pool2d_launch(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
     options: MaxPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -132,7 +132,7 @@ pub(crate) fn max_pool2d_launch<R: Runtime>(
         .required_address_type(dtype.size())
         .max(output.required_address_type(dtype.size()));
 
-    pool2d_direct::launch::<MaxPoolStrategy, R>(
+    pool2d_direct::launch::<MaxPoolStrategy>(
         client,
         cube_count,
         cube_dim,
@@ -162,11 +162,11 @@ pub(crate) fn max_pool2d_launch<R: Runtime>(
     Ok(())
 }
 
-pub(crate) fn max_pool2d_with_indices_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    indices: TensorBinding<R>,
+pub(crate) fn max_pool2d_with_indices_launch(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
+    indices: TensorBinding,
     options: MaxPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -186,7 +186,7 @@ pub(crate) fn max_pool2d_with_indices_launch<R: Runtime>(
         .max(output.required_address_type(dtype.size()))
         .max(indices.required_address_type(dtype.size()));
 
-    pool2d_direct::launch::<MaxPoolWithIndicesStrategy, R>(
+    pool2d_direct::launch::<MaxPoolWithIndicesStrategy>(
         client,
         cube_count,
         cube_dim,

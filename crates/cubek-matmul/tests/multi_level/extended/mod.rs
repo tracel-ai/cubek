@@ -23,7 +23,7 @@ mod tiling_scheme;
 /// public `Strategy` enum stays lean.
 #[allow(unused)]
 pub fn test_matmul_test_strategy(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: MatmulProblem,
     strategy: TestStrategy,
 ) {

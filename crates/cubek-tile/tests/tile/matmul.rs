@@ -26,7 +26,7 @@ use super::references;
 /// fragment shapes they advertise, and an unsupported shape is rejected at
 /// compile time. Returns `false` (after enforcing a skip outcome) when the
 /// device doesn't advertise the exact configuration.
-fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+fn require_cmma_8x8x8_f32(client: &ComputeClient) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -50,7 +50,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
 /// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
 /// not have: it reads back zeros, which looks like a leaf bug and is a missing
 /// guard.
-fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+fn require_mma_8x8x8_f32(client: &ComputeClient) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -310,7 +310,7 @@ fn matmul_padded_rhs_stage_into_scalar_sink() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -370,7 +370,7 @@ fn matmul_padded_rhs_stage_single_row_sink() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -430,7 +430,7 @@ fn matmul_padded_rhs_stage_multi_line() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -496,7 +496,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
     let b_op = launcher.bind(&operands.1, b.handle().binding()).build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -552,7 +552,7 @@ fn matmul_cpu_dynamic_k() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -796,7 +796,7 @@ fn check_matmul_batched(
     let cube_count = space.cube_count();
     let cube_dim = CubeDim::new_single();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         cube_count,
         cube_dim,
@@ -878,7 +878,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
     let cube_count = out.cube_count();
     let cube_dim = CubeDim::new_single();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         cube_count,
         cube_dim,
@@ -922,7 +922,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .tile(&[tile_edge, tile_edge])
         .uniform(4242, 10., 100.);
 
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1135,7 +1135,7 @@ fn matmul_staged_invariant_lhs() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1218,7 +1218,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1279,7 +1279,7 @@ fn register_matmul_unit_spread_n() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1384,7 +1384,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1476,7 +1476,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1559,7 +1559,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1627,7 +1627,7 @@ fn check_matmul_multilevel(
         .tile(&[final_edge, final_edge])
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1680,7 +1680,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1744,7 +1744,7 @@ fn mma_folds_onto_what_c_holds() {
         .tile(&[tile_edge, tile_edge])
         .arange();
 
-    launch_staged_matmul_accumulate::launch::<TestRuntime>(
+    launch_staged_matmul_accumulate::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1915,7 +1915,7 @@ fn register_matmul_promoted_accumulator() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1992,7 +1992,7 @@ fn tropical_matmul_in_place() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_tropical_matmul::launch::<TestRuntime>(
+    launch_tropical_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2054,7 +2054,7 @@ fn tropical_matmul_promoted() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_tropical_matmul::launch::<TestRuntime>(
+    launch_tropical_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2121,7 +2121,7 @@ fn register_matmul_promoted_cube_plane() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2233,7 +2233,7 @@ fn register_matmul_lined_lhs() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_cpu_matmul_lined::launch::<TestRuntime>(
+    launch_cpu_matmul_lined::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2275,7 +2275,7 @@ fn register_matmul_promoted_lined_lhs() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_promoted_matmul_lined::launch::<TestRuntime>(
+    launch_promoted_matmul_lined::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2349,7 +2349,7 @@ fn register_matmul_folded_step() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2391,7 +2391,7 @@ fn register_matmul_folded_step_rolled() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2438,7 +2438,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2498,7 +2498,7 @@ fn register_matmul_folded_step_quant_q4() {
 
 /// Drive [`launch_matmul_folded_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[j,p]`.
 fn run_folded_step_quant(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     value: QuantValue,
     (m, n, k): (usize, usize, usize),
     bm: usize,
@@ -2530,7 +2530,7 @@ fn run_folded_step_quant(
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_matmul_folded_quant::launch::<TestRuntime>(
+    launch_matmul_folded_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2590,7 +2590,7 @@ fn cmma_fragment_roundtrip() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    cmma_roundtrip::launch::<TestRuntime>(
+    cmma_roundtrip::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2670,7 +2670,7 @@ fn cmma_matmul_8x8x8() {
         .untiled()
         .zeros();
 
-    cmma_matmul::launch::<TestRuntime>(
+    cmma_matmul::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2735,7 +2735,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2839,7 +2839,7 @@ fn matmul_leaf_stated_by_operands() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -2905,7 +2905,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2975,7 +2975,7 @@ fn mma_matmul_8x8x8() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3050,7 +3050,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3130,7 +3130,7 @@ fn cmma_matmul_multi_fragment_partition() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3254,7 +3254,7 @@ fn cmma_matmul_transposed_rhs_8x8x8() {
         .untiled()
         .zeros();
 
-    cmma_matmul_transposed_rhs::launch::<TestRuntime>(
+    cmma_matmul_transposed_rhs::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3470,7 +3470,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3554,7 +3554,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3669,7 +3669,7 @@ fn mma_matmul_quant_until_read() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3759,7 +3759,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3853,7 +3853,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3947,7 +3947,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -4041,7 +4041,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -4158,7 +4158,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -4295,7 +4295,7 @@ fn check_matmul_dims_vectorized(
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -4502,7 +4502,7 @@ fn register_matmul_quant_packed_q4() {
 
 /// Build a packed `A` spanning the scheme's signed range and run the register matmul.
 fn run_register_matmul_quant_packed(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     (m, n, k): (usize, usize, usize),
     tk: usize,
     value: QuantValue,
@@ -4552,14 +4552,14 @@ fn run_register_matmul_quant_packed(
 /// stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     residence: &[Residence],
-    a_arg: TensorArg<TestRuntime>,
+    a_arg: TensorArg,
     a_dtype: ElemType,
     scheme: QuantScheme,
-    scales_arg: TensorArg<TestRuntime>,
+    scales_arg: TensorArg,
     scale_vals: Vec<f32>,
     bm: usize,
     q: Vec<f32>,
@@ -4579,7 +4579,7 @@ fn run_register_matmul_quant(
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_staged_matmul_quant::launch::<TestRuntime>(
+    launch_staged_matmul_quant::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -4890,7 +4890,7 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
 /// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant_rhs(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     value: QuantValue,
@@ -4966,7 +4966,7 @@ fn run_register_matmul_quant_rhs(
         .vectorize(pack)
         .build();
     let b_arg = b_op.arg();
-    launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
+    launch_staged_matmul_quant_rhs::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -5049,7 +5049,7 @@ fn register_matmul_lane_group_fold() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -5089,7 +5089,7 @@ fn register_matmul_promoted_lane_group_fold() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -5106,8 +5106,8 @@ fn register_matmul_promoted_lane_group_fold() {
 
 /// `c == a·b` for the two `arange` operands the fold tests share.
 fn assert_matmul_arange(
-    client: &ComputeClient<TestRuntime>,
-    handle: TensorHandle<TestRuntime>,
+    client: &ComputeClient,
+    handle: TensorHandle,
     m: usize,
     n: usize,
     k: usize,
@@ -5196,7 +5196,7 @@ fn register_matmul_promoted_accumulator_quant() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul_quant::launch::<TestRuntime>(
+    launch_promoted_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

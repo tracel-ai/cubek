@@ -5,7 +5,7 @@ use super::{
 };
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -74,10 +74,10 @@ fn end_index(output_size_index: usize, output_size: usize, input_size: usize) ->
     }
 }
 
-pub(crate) fn adaptive_avg_pool2d_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn adaptive_avg_pool2d_launch(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
     _options: AdaptiveAvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {

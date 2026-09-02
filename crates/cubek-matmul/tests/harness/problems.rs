@@ -8,7 +8,7 @@ use cubecl::{
 use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
 use cubek_std::MatrixLayout;
 
-pub(crate) fn client() -> ComputeClient<TestRuntime> {
+pub(crate) fn client() -> ComputeClient {
     TestRuntime::client(&Default::default())
 }
 

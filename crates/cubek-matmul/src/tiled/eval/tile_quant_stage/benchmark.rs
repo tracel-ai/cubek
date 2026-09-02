@@ -102,7 +102,7 @@ struct TileQuantStageBench {
     tk: usize,
     scheme: QuantScheme,
     pack: usize,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
 }
 
@@ -174,7 +174,7 @@ impl Benchmark for TileQuantStageBench {
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
-        staged_matmul_quant_rhs::launch::<TestRuntime>(
+        staged_matmul_quant_rhs::launch(
             &self.client,
             launcher.cube_count(),
             launcher.cube_dim(),
@@ -198,7 +198,7 @@ impl Benchmark for TileQuantStageBench {
     fn name(&self) -> String {
         format!(
             "tile-quant-stage-{}-m{}-n{}-k{}-tk{}",
-            <TestRuntime as Runtime>::name(&self.client),
+            &self.client.name(),
             self.m,
             self.n,
             self.k,

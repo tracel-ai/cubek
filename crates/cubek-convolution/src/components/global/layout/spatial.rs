@@ -257,14 +257,14 @@ pub struct NhwcLayoutCompilationArg {
 }
 
 impl ViewLayoutLaunchArg for NhwcLayout {
-    type RuntimeArg<R: Runtime> = NhwcLayoutLaunch;
+    type RuntimeArg = NhwcLayoutLaunch;
     type CompilationArg = NhwcLayoutCompilationArg;
 
-    fn register<R: Runtime, B: MemoryArg>(
-        arg: Self::RuntimeArg<R>,
+    fn register<B: MemoryArg>(
+        arg: Self::RuntimeArg,
         buffer: &B,
         _: Type,
-        launcher: &mut KernelLauncher<R>,
+        launcher: &mut KernelLauncher,
     ) -> Self::CompilationArg {
         let shape = buffer.shape();
         let strides = buffer.strides();

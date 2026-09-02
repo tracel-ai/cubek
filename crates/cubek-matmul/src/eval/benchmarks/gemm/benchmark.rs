@@ -68,19 +68,19 @@ struct GemmBench {
     rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 fn make_uniform(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: [usize; 3],
     dtype: ElemType,
     seed: u64,
     lo: f32,
     hi: f32,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .uniform(seed, lo, hi)
@@ -88,7 +88,7 @@ fn make_uniform(
 }
 
 impl Benchmark for GemmBench {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -153,7 +153,7 @@ impl Benchmark for GemmBench {
         let client = <TestRuntime as Runtime>::client(&self.device);
         format!(
             "{}-matmul-Lhs<{}-{}-{}>-Rhs<{}-{}-{}>-{}-{}-{}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             self.dtypes.lhs_global,
             self.dtypes.lhs_stage,
             self.dtypes.lhs_register,

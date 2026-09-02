@@ -43,12 +43,12 @@ struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
     strategy: PrngStrategy,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
 }
 
 impl Benchmark for RandomBench {
-    type Input = TensorHandle<TestRuntime>;
+    type Input = TensorHandle;
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -82,7 +82,7 @@ impl Benchmark for RandomBench {
     fn name(&self) -> String {
         format!(
             "random-{}-{}-{:?}",
-            <TestRuntime as Runtime>::name(&self.client),
+            &self.client.name(),
             self.distribution.name(),
             self.shape,
         )

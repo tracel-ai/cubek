@@ -1,5 +1,5 @@
 use cubecl::{
-    CubeElement, TestRuntime,
+    CubeElement,
     client::ComputeClient,
     frontend::Scalar,
     ir::{ElemType, FloatKind},
@@ -123,8 +123,8 @@ impl HostDataVec {
 
 impl HostData {
     pub fn from_tensor_handle(
-        client: &ComputeClient<TestRuntime>,
-        mut tensor_handle: TensorHandle<TestRuntime>,
+        client: &ComputeClient,
+        mut tensor_handle: TensorHandle,
         host_data_type: HostDataType,
     ) -> Self {
         let shape = tensor_handle.shape().clone();

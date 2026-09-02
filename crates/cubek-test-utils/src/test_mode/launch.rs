@@ -15,7 +15,7 @@
 //! classification is [`ServerError::is_refusal`](cubecl::server::ServerError::is_refusal)'s
 //! to make, and not a formatted string's.
 
-use cubecl::{TestRuntime, prelude::ComputeClient, server::Handle};
+use cubecl::{prelude::ComputeClient, server::Handle};
 
 use crate::{ExecutionOutcome, TestOutcome, ValidationResult};
 
@@ -36,12 +36,12 @@ use crate::{ExecutionOutcome, TestOutcome, ValidationResult};
 /// accept.
 #[track_caller]
 pub fn launch_and_capture_outcome<F>(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     outputs: &[&Handle],
     launch: F,
 ) -> ExecutionOutcome
 where
-    F: FnOnce(&ComputeClient<TestRuntime>) -> ExecutionOutcome,
+    F: FnOnce(&ComputeClient) -> ExecutionOutcome,
 {
     debug_assert!(
         !outputs.is_empty(),
@@ -73,7 +73,7 @@ impl Unrun {
     ///
     /// `None` when every output checks clean, which is the kernel having run.
     /// The check is one lookup per handle — no read, no barrier.
-    fn of(client: &ComputeClient<TestRuntime>, outputs: &[&Handle]) -> Option<Self> {
+    fn of(client: &ComputeClient, outputs: &[&Handle]) -> Option<Self> {
         let error = client.check(outputs.iter().copied()).err()?;
         let reason = format!("{error:?}");
         Some(match error.is_refusal() {

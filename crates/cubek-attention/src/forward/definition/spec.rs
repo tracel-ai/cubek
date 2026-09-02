@@ -286,10 +286,10 @@ pub mod launch_types {
 pub use launch_types::{InputArg, OutputArg};
 
 /// Input runtime argument
-pub type InputRuntimeArg<AA, R> = <InputArg<AA> as LaunchArg>::RuntimeArg<R>;
+pub type InputRuntimeArg<AA> = <InputArg<AA> as LaunchArg>::RuntimeArg;
 
 /// Output runtime argument
-pub type OutputRuntimeArg<AA, R> = <OutputArg<AA> as LaunchArg>::RuntimeArg<R>;
+pub type OutputRuntimeArg<AA> = <OutputArg<AA> as LaunchArg>::RuntimeArg;
 
 pub mod attention_types {
     use cubecl::prelude::*;

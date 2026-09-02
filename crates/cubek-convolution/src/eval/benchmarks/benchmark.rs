@@ -53,17 +53,17 @@ struct Conv2dBench<MP> {
     problem: Conv2dProblem,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _phantom: PhantomData<MP>,
 }
 
 fn make_uniform_4d(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: [usize; 4],
     dtype: ElemType,
     seed: u64,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .uniform(seed, 0.0, 1.0)
@@ -71,11 +71,7 @@ fn make_uniform_4d(
 }
 
 impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
-    type Input = (
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-    );
+    type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -115,10 +111,10 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
 
         let elems = MatmulElems::new_deprecated::<MP>();
 
-        let out: TensorHandle<TestRuntime> =
+        let out: TensorHandle =
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
 
-        launch_ref::<TestRuntime, 2>(
+        launch_ref::<2>(
             &self.strategy,
             &self.client,
             ConvolutionInputs::Forward {
@@ -142,7 +138,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
         let client = <TestRuntime as Runtime>::client(&self.device);
         format!(
             "{}-conv2d-{}-{}-{}-{}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             LhsG::<MP>::elem_type_native(),
             LhsS::<MP>::elem_type_native(),
             AccR::<MP>::elem_type_native(),

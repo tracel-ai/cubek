@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     prelude::*,
     std::tensor::{
         TensorHandle, ViewOperations, ViewOperationsExpand, ViewOperationsMut,
@@ -30,10 +29,10 @@ fn cast_inner<From: Numeric, To: Numeric, N: Size>(
 }
 
 pub fn copy_casted(
-    client: &ComputeClient<TestRuntime>,
-    original: TensorHandle<TestRuntime>,
+    client: &ComputeClient,
+    original: TensorHandle,
     target_type: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     if target_type == original.dtype {
         return TensorHandle::new_contiguous(
             original.shape().clone(),
@@ -63,7 +62,7 @@ pub fn copy_casted(
 
     let dtype = original.dtype;
 
-    cast_launch::launch::<TestRuntime>(
+    cast_launch::launch(
         client,
         CubeCount::Static(cube_count, 1, 1),
         cube_dim,

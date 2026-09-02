@@ -10,7 +10,7 @@
 //! dV doesn't need `V` or `D` so its binding set is naturally smaller; dK
 //! drops `dv` instead.
 
-use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
@@ -162,16 +162,16 @@ fn flash_attention_backward_dk_kernel<E: Float>(
 /// - `dk`:      `[B, H, N, d]`: written cleanly.
 /// - `dv`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
-pub fn flash_attention_backward_dkdv<R: Runtime>(
-    client: &ComputeClient<R>,
-    q: TensorBinding<R>,
-    k: TensorBinding<R>,
-    v: TensorBinding<R>,
-    do_: TensorBinding<R>,
-    lse: TensorBinding<R>,
-    d: TensorBinding<R>,
-    dk: TensorBinding<R>,
-    dv: TensorBinding<R>,
+pub fn flash_attention_backward_dkdv(
+    client: &ComputeClient,
+    q: TensorBinding,
+    k: TensorBinding,
+    v: TensorBinding,
+    do_: TensorBinding,
+    lse: TensorBinding,
+    d: TensorBinding,
+    dk: TensorBinding,
+    dv: TensorBinding,
     _global_dtypes: &AttentionGlobalTypes,
     config: BackwardConfig,
 ) -> Result<(), AttentionSetupError> {
@@ -194,7 +194,7 @@ pub fn flash_attention_backward_dkdv<R: Runtime>(
         .max(dk.required_address_type(dtype.size()))
         .max(dv.required_address_type(dtype.size()));
 
-    flash_attention_backward_dv_kernel::launch::<R>(
+    flash_attention_backward_dv_kernel::launch(
         client,
         cube_count.clone(),
         cube_dim,
@@ -211,7 +211,7 @@ pub fn flash_attention_backward_dkdv<R: Runtime>(
         dtype,
     );
 
-    flash_attention_backward_dk_kernel::launch::<R>(
+    flash_attention_backward_dk_kernel::launch(
         client,
         cube_count,
         cube_dim,

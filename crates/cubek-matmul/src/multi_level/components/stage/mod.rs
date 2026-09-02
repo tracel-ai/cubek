@@ -240,9 +240,9 @@ impl StageMatmulKind {
         }
     }
 
-    pub fn validate_blueprint<R: Runtime>(
+    pub fn validate_blueprint(
         &self,
-        client: &ComputeClient<R>,
+        client: &ComputeClient,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

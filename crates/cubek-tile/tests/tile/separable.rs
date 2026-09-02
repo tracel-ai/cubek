@@ -146,7 +146,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
     })
     .build();
 
-    separable_kernel::launch::<TestRuntime>(
+    separable_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -239,7 +239,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .residence(&[Residence::Smem])
         .stage_width(4);
 
-    separable_kernel::launch::<TestRuntime>(
+    separable_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -370,7 +370,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    separable_quant_kernel::launch::<TestRuntime>(
+    separable_quant_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -470,7 +470,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
         .build();
 
-    separable_quant_kernel::launch::<TestRuntime>(
+    separable_quant_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -602,7 +602,7 @@ fn check_resampling(normalized: bool) {
         ],
     ));
 
-    resample_kernel::launch::<TestRuntime>(
+    resample_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -683,7 +683,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         })
         .build();
 
-    procedural_mask_kernel::launch::<TestRuntime>(
+    procedural_mask_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -755,7 +755,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
     ))
     .checked(true);
 
-    resample_kernel_masked::launch::<TestRuntime>(
+    resample_kernel_masked::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -832,7 +832,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
     .checked(true)
     .residence(&[Residence::Smem]);
 
-    resample_kernel_masked::launch::<TestRuntime>(
+    resample_kernel_masked::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -930,7 +930,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         ],
     ));
 
-    column_spanning_resample_kernel::launch::<TestRuntime>(
+    column_spanning_resample_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1012,7 +1012,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
     ))
     .checked(true);
 
-    column_spanning_resample_kernel_masked::launch::<TestRuntime>(
+    column_spanning_resample_kernel_masked::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1101,7 +1101,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         })
         .build();
 
-    zero_sum_fallback_kernel::launch::<TestRuntime>(
+    zero_sum_fallback_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

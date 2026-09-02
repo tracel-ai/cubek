@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     prelude::*,
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
     zspace::{Shape, Strides},
@@ -31,14 +30,14 @@ fn eye_launch<T: Numeric, N: Size>(
 
 #[allow(unused)]
 fn new_eyed(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Shape,
     rows: usize,
     cols: usize,
     total_batches: usize,
     dtype: ElemType,
     strides: Strides,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     // Performance is not important here and this simplifies greatly the problem
     let vector_size = 1;
 
@@ -58,7 +57,7 @@ fn new_eyed(
         dtype,
     );
 
-    eye_launch::launch::<TestRuntime>(
+    eye_launch::launch(
         client,
         cube_count,
         cube_dim,
@@ -70,7 +69,7 @@ fn new_eyed(
     out
 }
 
-pub(crate) fn build_eye(spec: BaseInputSpec) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_eye(spec: BaseInputSpec) -> TensorHandle {
     let (batches, matrix) = spec.shape.split_at(spec.shape.len() - 2);
     let rows = matrix[0];
     let cols = matrix[1];

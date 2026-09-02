@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     prelude::*,
     std::tensor::{TensorHandle, ViewOperationsMut, ViewOperationsMutExpand},
     zspace::{Shape, Strides},
@@ -33,12 +32,12 @@ fn arange_launch<T: Numeric>(
 }
 
 fn new_arange(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Shape,
     strides: Strides,
     dtype: ElemType,
     scale: f32,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let num_elems = shape.iter().product::<usize>();
 
     // Performance is not important here and this simplifies greatly the problem
@@ -55,7 +54,7 @@ fn new_arange(
         dtype,
     );
 
-    arange_launch::launch::<TestRuntime>(
+    arange_launch::launch(
         client,
         CubeCount::new_1d(cube_count),
         cube_dim,
@@ -67,7 +66,7 @@ fn new_arange(
     out
 }
 
-pub(crate) fn build_arange(spec: BaseInputSpec, scale: Option<f32>) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_arange(spec: BaseInputSpec, scale: Option<f32>) -> TensorHandle {
     new_arange(
         &spec.client,
         spec.shape.clone(),

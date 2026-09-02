@@ -42,7 +42,7 @@ pub fn bench(
 struct PoolBench {
     problem: PoolProblem,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtype: ElemType,
     indices_dtype: ElemType,
     samples: usize,
@@ -50,17 +50,17 @@ struct PoolBench {
 
 #[derive(Clone)]
 enum PoolBenchInput {
-    Forward(TensorHandle<TestRuntime>),
+    Forward(TensorHandle),
     Backward {
-        input: TensorHandle<TestRuntime>,
-        out_grad: TensorHandle<TestRuntime>,
-        indices: Option<TensorHandle<TestRuntime>>,
+        input: TensorHandle,
+        out_grad: TensorHandle,
+        indices: Option<TensorHandle>,
     },
 }
 
 impl Benchmark for PoolBench {
     type Input = PoolBenchInput;
-    type Output = TensorHandle<TestRuntime>;
+    type Output = TensorHandle;
 
     fn prepare(&self) -> Self::Input {
         match &self.problem {
@@ -121,7 +121,7 @@ impl Benchmark for PoolBench {
         }
     }
 
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
+    fn execute(&self, input: Self::Input) -> Result<TensorHandle, String> {
         match (&self.problem, input) {
             (PoolProblem::Forward(PoolForward::D2(prob)), PoolBenchInput::Forward(input)) => {
                 let output_shape = &input.shape();

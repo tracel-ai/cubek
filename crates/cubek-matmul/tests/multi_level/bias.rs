@@ -136,12 +136,12 @@ fn add_bias_to_reference(reference: &mut HostData, bias: &HostData) {
 }
 
 fn launch_with_bias<A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     problem: &MatmulProblem,
-    lhs: &TensorHandle<TestRuntime>,
-    rhs: &TensorHandle<TestRuntime>,
-    bias: &TensorHandle<TestRuntime>,
-    out: &TensorHandle<TestRuntime>,
+    lhs: &TensorHandle,
+    rhs: &TensorHandle,
+    bias: &TensorHandle,
+    out: &TensorHandle,
     dtypes: &MatmulElems,
 ) -> Result<(), String> {
     let vector_sizes = AvailableVectorSizes::from_type_sizes(
@@ -231,7 +231,7 @@ fn launch_with_bias<A: BatchMatmulRoutine<()>>(
     );
     let output = TensorOutputLaunch::new(out_view, out_batch);
 
-    A::launch::<TensorArgs, TestRuntime>(
+    A::launch::<TensorArgs>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

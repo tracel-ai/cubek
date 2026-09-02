@@ -251,7 +251,7 @@ pub struct Strategy {
 
 /// Everything one mapping needs to launch, built once so only the launches are timed.
 struct Bound {
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     mapping: Mapping,
     samples: usize,
     space: Space,
@@ -277,7 +277,7 @@ const LHS_SEED: u64 = 0;
 const RHS_SEED: u64 = 1;
 
 impl Bound {
-    fn new(client: &ComputeClient<TestRuntime>, mapping: Mapping, problem: Problem) -> Self {
+    fn new(client: &ComputeClient, mapping: Mapping, problem: Problem) -> Self {
         let lanes = client.properties().hardware.plane_size_max as usize;
         let Problem { m, n, k } = problem;
         let splits = mapping.splits();
@@ -342,7 +342,7 @@ impl Bound {
         let dtype = f32::elem_type_native();
         match self.mapping {
             Mapping::Atomic { .. } | Mapping::AtomicLanes { .. } => {
-                atomic_matmul::launch::<TestRuntime>(
+                atomic_matmul::launch(
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
@@ -354,7 +354,7 @@ impl Bound {
                 );
             }
             Mapping::DataParallel => {
-                plain_matmul::launch::<TestRuntime>(
+                plain_matmul::launch(
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
@@ -366,7 +366,7 @@ impl Bound {
                 );
             }
             Mapping::Workspace { .. } => {
-                plain_matmul::launch::<TestRuntime>(
+                plain_matmul::launch(
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,
@@ -376,7 +376,7 @@ impl Bound {
                     self.space.clone(),
                     dtype,
                 );
-                fold_splits::launch::<TestRuntime>(
+                fold_splits::launch(
                     &self.client,
                     self.fold_cube_count.clone(),
                     self.fold_cube_dim,
@@ -432,7 +432,7 @@ impl Benchmark for Bound {
 /// A mapping that computes the wrong answer still times fast, so each proves itself on a small
 /// shape first. The trap this one is really guarding is the atomic drain onto a buffer that was
 /// not zeroed, which reads as a plausible number rather than as garbage.
-fn verify(client: &ComputeClient<TestRuntime>, mapping: Mapping) -> Result<(), String> {
+fn verify(client: &ComputeClient, mapping: Mapping) -> Result<(), String> {
     let lanes = client.properties().hardware.plane_size_max as usize;
     // Big enough that every mapping's cuts divide it: each cube's slice of `K` has to survive
     // being cut again across the plane.

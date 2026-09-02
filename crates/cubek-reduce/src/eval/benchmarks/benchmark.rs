@@ -74,7 +74,7 @@ struct ReduceBench<E> {
     kind: ReduceBenchKind,
     strategy: ReduceStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _e: PhantomData<E>,
 }
@@ -83,11 +83,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     /// `(input, values, indices)`. The index tensor is allocated for every kind so
     /// that allocation never lands inside the timed section, but only the
     /// two-launch and fused kinds write to it.
-    type Input = (
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-    );
+    type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -124,7 +120,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     | ReduceOperationConfig::ArgTopK(_) => index_dtype,
                     _ => value_dtype,
                 };
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.binding(),
                     out.binding(),
@@ -143,7 +139,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
                 let (values_config, indices_config) = two_launch_configs(self.config);
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.clone().binding(),
                     out.binding(),
@@ -157,7 +153,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     },
                 )
                 .map_err(|err| format!("{err}"))?;
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.binding(),
                     indices.binding(),
@@ -173,7 +169,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                 .map_err(|err| format!("{err}"))?;
             }
             ReduceBenchKind::Fused => {
-                crate::reduce_with_indices::<TestRuntime>(
+                crate::reduce_with_indices(
                     &self.client,
                     input.binding(),
                     out.binding(),

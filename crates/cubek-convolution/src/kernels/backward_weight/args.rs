@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime,
     client::ComputeClient,
     prelude::*,
     std::tensor::{
@@ -46,8 +45,8 @@ pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
         Config = RuntimeArgs,
     >
 {
-    fn adjust_problem<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn adjust_problem(
+        client: &ComputeClient,
         problem: ConvolutionProblem,
         selection: &A::Blueprint,
         dtypes: &MatmulElems,
@@ -55,8 +54,8 @@ pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
 }
 
 impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
-    fn adjust_problem<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn adjust_problem(
+        client: &ComputeClient,
         mut problem: ConvolutionProblem,
         _blueprint: &A::Blueprint,
         dtypes: &MatmulElems,
@@ -76,8 +75,8 @@ impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeA
 impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> ConcreteArgs<A>
     for TensorMapArgs<RuntimeArgs>
 {
-    fn adjust_problem<R: Runtime>(
-        _client: &ComputeClient<R>,
+    fn adjust_problem(
+        _client: &ComputeClient,
         mut problem: ConvolutionProblem,
         blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
@@ -100,35 +99,35 @@ impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> Concr
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
-    fn create<R: Runtime>(
-        input: InputBinding<R>,
-        out_grad: InputBinding<R>,
+    fn create(
+        input: InputBinding,
+        out_grad: InputBinding,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>);
+    ) -> (Self::RuntimeArg, RuntimeArgsLaunch);
 }
 
 /// Create the output runtime arguments for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteOutputFactory<A: BatchMatmulRoutine<RuntimeArgs>>: LaunchArg {
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-    ) -> Self::RuntimeArg<R>;
+    ) -> Self::RuntimeArg;
 }
 
 impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, EO>
 {
-    fn create<R: Runtime>(
-        input: InputBinding<R>,
-        out_grad: InputBinding<R>,
+    fn create(
+        input: InputBinding,
+        out_grad: InputBinding,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
         _dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
+    ) -> (Self::RuntimeArg, RuntimeArgsLaunch) {
         type LhsLayout = Chain<NhwcLayout, Transpose<OutLayout>>;
         type RhsLayout = Chain<NhwcLayout, Im2colLayout>;
 
@@ -178,11 +177,11 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
 impl<EG: CubePrimitive, A: BatchMatmulRoutine<RuntimeArgs>> ConcreteOutputFactory<A>
     for TensorOutput<EG>
 {
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         blueprint: &A::Blueprint,
         problem: &ConvolutionProblem,
-    ) -> Self::RuntimeArg<R> {
+    ) -> Self::RuntimeArg {
         // Weight layout assumes col-major so it's technically "transposed" when it's row-major.
         // Should look into maybe inverting this and using `Transpose` for forward instead.
         type Layout = Chain<NhwcLayout, Transpose<WeightLayout>>;
@@ -207,13 +206,13 @@ impl<
     A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>,
 > ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
-    fn create<R: Runtime>(
-        input: InputBinding<R>,
-        out_grad: InputBinding<R>,
+    fn create(
+        input: InputBinding,
+        out_grad: InputBinding,
         blueprint: &BatchMatmulBlueprint,
         problem: &ConvolutionProblem,
         dtypes: &MatmulElems,
-    ) -> (Self::RuntimeArg<R>, RuntimeArgsLaunch<R>) {
+    ) -> (Self::RuntimeArg, RuntimeArgsLaunch) {
         type LhsLayout = Transpose<TmaOutGradLayout>;
         type RhsLayout = TmaIm2colLayout;
 

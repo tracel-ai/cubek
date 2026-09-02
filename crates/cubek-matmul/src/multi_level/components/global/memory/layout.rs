@@ -163,9 +163,9 @@ impl Layout for GlobalLayout {
     }
 }
 
-impl<R: Runtime> GlobalLayoutLaunch<R> {
+impl GlobalLayoutLaunch {
     pub fn from_handle(
-        handle: &TensorBinding<R>,
+        handle: &TensorBinding,
         vector_size: VectorSize,
         config: GlobalLayoutConfig,
     ) -> Self {
@@ -188,7 +188,7 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
     }
 
     pub fn from_handle_batched(
-        handle: &TensorBinding<R>,
+        handle: &TensorBinding,
         problem: &MatmulProblem,
         vector_size: VectorSize,
         config: GlobalLayoutConfig,
@@ -215,14 +215,14 @@ impl<R: Runtime> GlobalLayoutLaunch<R> {
 
     #[allow(clippy::too_many_arguments)]
     pub fn from_quantized_handle(
-        values: &TensorBinding<R>,
-        scales: &TensorBinding<R>,
+        values: &TensorBinding,
+        scales: &TensorBinding,
         shape: &Shape,
         problem: &MatmulProblem,
         scheme: QuantScheme,
         vector_size: VectorSize,
         config: GlobalLayoutConfig,
-    ) -> (GlobalLayoutLaunch<R>, GlobalScaleLayoutArgs<R>) {
+    ) -> (GlobalLayoutLaunch, GlobalScaleLayoutArgs) {
         let rank = values.shape.len();
         let (rows, cols) = (shape[rank - 2], shape[rank - 1]);
         let values_layout = {
@@ -367,8 +367,8 @@ impl Layout for NoopLayout {
     }
 }
 
-impl<R: Runtime> BatchLayoutLaunch<R> {
-    pub fn from_handle(handle: &TensorBinding<R>, problem: &MatmulProblem) -> Self {
+impl BatchLayoutLaunch {
+    pub fn from_handle(handle: &TensorBinding, problem: &MatmulProblem) -> Self {
         let rank = handle.shape.len();
         let batch_shape = problem
             .out_batches

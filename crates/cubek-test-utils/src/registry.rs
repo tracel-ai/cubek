@@ -23,7 +23,7 @@ use crate::{HostData, Progress};
 /// The client every category scores against: `measure_peak_throughput` is
 /// always run on `<TestRuntime as Runtime>::Device::default()`, so the
 /// process-wide peak memo below can key on [`ThroughputKey`] alone.
-pub fn client() -> ComputeClient<TestRuntime> {
+pub fn client() -> ComputeClient {
     let device = <TestRuntime as Runtime>::Device::default();
     <TestRuntime as Runtime>::client(&device)
 }

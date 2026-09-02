@@ -117,13 +117,12 @@ impl Case {
         weight.shape = Shape::new(w_shape);
         // Zeroed, not empty: the kernel writes every cell it owns, so a cell left untouched by a
         // buggy walk shows up as the zero it started as rather than as whatever was there.
-        let out: TensorHandle<TestRuntime> =
-            TestInput::builder(client.clone(), Shape::new(out_shape))
-                .dtype(dtype)
-                .zeros()
-                .generate_without_host_data();
+        let out: TensorHandle = TestInput::builder(client.clone(), Shape::new(out_shape))
+            .dtype(dtype)
+            .zeros()
+            .generate_without_host_data();
 
-        launch_depthwise::<TestRuntime>(
+        launch_depthwise(
             &client,
             DepthwiseTensors {
                 input: input.binding(),
@@ -304,7 +303,7 @@ fn depthwise_rejects_mismatched_weight_shape() {
             .dtype(dtype)
             .zeros()
             .generate_without_host_data();
-        let result = launch_depthwise::<TestRuntime>(
+        let result = launch_depthwise(
             &client,
             DepthwiseTensors {
                 input: input.clone().binding(),

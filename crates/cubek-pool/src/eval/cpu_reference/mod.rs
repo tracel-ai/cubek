@@ -17,7 +17,6 @@ use crate::{
     },
 };
 use cubecl::{
-    TestRuntime,
     client::ComputeClient,
     prelude::*,
     std::tensor::TensorHandle,
@@ -34,20 +33,20 @@ pub(crate) fn i32_elem_type() -> ElemType {
 }
 
 pub(crate) fn make_random_f32_host(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Vec<usize>,
     seed: u64,
-) -> (TensorHandle<TestRuntime>, HostData) {
+) -> (TensorHandle, HostData) {
     TestInput::builder(client.clone(), shape)
         .uniform(seed, -1., 1.)
         .generate_with_f32_host_data()
 }
 
 pub(crate) fn make_zero_handle(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Vec<usize>,
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
         .zeros()
@@ -55,7 +54,7 @@ pub(crate) fn make_zero_handle(
 }
 
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolProblem,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -70,7 +69,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolProblem,
     seed: u64,
     progress: Option<&Progress>,

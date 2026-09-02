@@ -20,7 +20,7 @@ use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
 };
 
-pub(crate) fn client() -> ComputeClient<TestRuntime> {
+pub(crate) fn client() -> ComputeClient {
     TestRuntime::client(&Default::default())
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn tiling_scheme(
 }
 
 pub(crate) fn plane_blueprint(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     problem: &MatmulProblem,
     tile: TileSize,
     partition: PartitionSize,
@@ -114,7 +114,7 @@ pub(crate) fn plane_blueprint(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_blueprint_with(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     problem: &MatmulProblem,
     tile: TileSize,
     partition: PartitionSize,

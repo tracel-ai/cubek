@@ -20,7 +20,7 @@ use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, launch_and_capture_outcome,
 };
 
-fn f16_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f16_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),

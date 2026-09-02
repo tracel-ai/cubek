@@ -8,8 +8,8 @@ use cubecl::{
 
 use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
 
-pub(super) fn check_types_available<R: Runtime>(
-    client: &ComputeClient<R>,
+pub(super) fn check_types_available(
+    client: &ComputeClient,
     dtypes: &MatmulElems,
     require_plane_ops: bool,
 ) -> Result<(), MatmulSetupError> {

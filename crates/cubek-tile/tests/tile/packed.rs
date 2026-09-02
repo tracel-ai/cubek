@@ -123,7 +123,7 @@ fn nvfp4_shaped_decode() {
     let g = vec![0.25f32];
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -152,7 +152,7 @@ fn nvfp4_shaped_decode() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    nvfp4_shaped_matmul::launch::<TestRuntime>(
+    nvfp4_shaped_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -311,7 +311,7 @@ fn eight_bit_fields_unpack_on_read() {
         })
         .collect();
     // Shape and strides count values; the packing says how many share a stored word.
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -324,7 +324,7 @@ fn eight_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -384,7 +384,7 @@ fn four_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -397,7 +397,7 @@ fn four_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -459,7 +459,7 @@ fn fp4_codes_unpack_on_read() {
                 .fold(0u32, |acc, (j, &c)| acc | (c << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -472,7 +472,7 @@ fn fp4_codes_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -532,7 +532,7 @@ fn two_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -545,7 +545,7 @@ fn two_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -612,7 +612,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -638,7 +638,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -729,7 +729,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -754,7 +754,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -854,7 +854,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -884,7 +884,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -994,7 +994,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1024,7 +1024,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1139,7 +1139,7 @@ fn several_lines_may_share_one_scale() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1169,7 +1169,7 @@ fn several_lines_may_share_one_scale() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1283,7 +1283,7 @@ fn an_i8_operand_contracts_against_its_scales() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    native_matmul::launch::<TestRuntime>(
+    native_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1384,7 +1384,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1423,7 +1423,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1530,7 +1530,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1568,7 +1568,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1695,7 +1695,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1717,7 +1717,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    packed_gemv_unscaled::launch::<TestRuntime>(
+    packed_gemv_unscaled::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

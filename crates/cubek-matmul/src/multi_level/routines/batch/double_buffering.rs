@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
@@ -101,22 +101,22 @@ macro_rules! double_buffering_impl {
             RC: RuntimeConfig,
         {
             #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-            fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-                client: &ComputeClient<R>,
+            fn launch<MA: MatmulArgs<Config = RC>>(
+                client: &ComputeClient,
                 cube_dim: CubeDim,
                 cube_count: CubeCount,
                 address_type: AddressType,
-                input: InputRuntimeArg<MA, R>,
-                output: OutputRuntimeArg<MA, R>,
-                config: ConfigRuntimeArg<MA, R>,
-                cube_count_input: CubeMappingLaunch<R>,
+                input: InputRuntimeArg<MA>,
+                output: OutputRuntimeArg<MA>,
+                config: ConfigRuntimeArg<MA>,
+                cube_count_input: CubeMappingLaunch,
                 blueprint: Self::Blueprint,
                 dtypes: &MatmulElems,
                 vector_sizes: &MatmulVectorSizes,
             ) -> Result<(), MatmulSetupError> {
                 {
                     unsafe {
-                        <$batch>::launch_unchecked::<MA, R>(
+                        <$batch>::launch_unchecked::<MA>(
                             client,
                             cube_dim,
                             cube_count,
@@ -135,14 +135,14 @@ macro_rules! double_buffering_impl {
             }
 
             #[allow(clippy::result_large_err)]
-            fn validate_blueprint<R: Runtime>(
-                client: &ComputeClient<R>,
+            fn validate_blueprint(
+                client: &ComputeClient,
                 blueprint: &Self::Blueprint,
                 problem: &MatmulProblem,
                 dtypes: &MatmulElems,
                 vector_sizes: &MatmulVectorSizes,
             ) -> Result<(), MatmulSetupError> {
-                batch_validate_blueprint::<$batch, RC, R>(
+                batch_validate_blueprint::<$batch, RC>(
                     client,
                     blueprint,
                     problem,
@@ -155,9 +155,9 @@ macro_rules! double_buffering_impl {
                 <$batch>::num_stages()
             }
 
-            fn expand_blueprint<R: Runtime>(
+            fn expand_blueprint(
                 problem: &MatmulProblem,
-                device_settings: &DeviceSettings<R>,
+                device_settings: &DeviceSettings,
                 strategy: &BlueprintStrategy<RC, Self>,
             ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
                 let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -173,7 +173,7 @@ macro_rules! double_buffering_impl {
 
                 let (blueprint, dtypes) = match strategy {
                     BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-                    BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<R>(
+                    BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane(
                         tile_matmul,
                         &device_settings.client,
                         problem,
@@ -194,9 +194,9 @@ macro_rules! double_buffering_impl {
                 Ok(ExpandInfo { blueprint, dtypes })
             }
 
-            fn prepare<R: Runtime>(
+            fn prepare(
                 problem: &MatmulProblem,
-                device_settings: &DeviceSettings<R>,
+                device_settings: &DeviceSettings,
                 expand_info: ExpandInfo<Self::Blueprint>,
             ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
                 let ExpandInfo { blueprint, dtypes } = expand_info;

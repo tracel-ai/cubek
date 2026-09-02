@@ -220,7 +220,7 @@ impl Depthwise {
         let w_spec = TileSpec::direct(&[RH, RW, C]).residence(&in_spec.residence);
         let out_spec = TileSpec::direct(&[B, OH, OW, C]);
 
-        depthwise_kernel::launch::<TestRuntime>(
+        depthwise_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),

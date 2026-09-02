@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 
 use cubecl::{
-    Runtime,
     client::ComputeClient,
     tensor_vector_size_parallel,
     zspace::{Shape, Strides},
@@ -21,10 +20,7 @@ pub struct AttentionVectorSizes {
 }
 
 impl AttentionVectorSizes {
-    pub fn new_max<R: Runtime>(
-        client: &ComputeClient<R>,
-        global_dtypes: &AttentionGlobalTypes,
-    ) -> Self {
+    pub fn new_max(client: &ComputeClient, global_dtypes: &AttentionGlobalTypes) -> Self {
         AttentionVectorSizes {
             query: client
                 .io_optimized_vector_sizes(global_dtypes.query.size())
@@ -47,8 +43,8 @@ impl AttentionVectorSizes {
         }
     }
 
-    pub(crate) fn new_max_for_problem<R: Runtime>(
-        client: &ComputeClient<R>,
+    pub(crate) fn new_max_for_problem(
+        client: &ComputeClient,
         problem: &AttentionProblem,
     ) -> AttentionVectorSizes {
         AttentionVectorSizes {
@@ -77,11 +73,7 @@ impl AttentionVectorSizes {
         }
     }
 
-    fn find_vector_size<R: Runtime>(
-        client: &ComputeClient<R>,
-        shape: &[usize; 4],
-        dtype_size: usize,
-    ) -> usize {
+    fn find_vector_size(client: &ComputeClient, shape: &[usize; 4], dtype_size: usize) -> usize {
         let supported_vector_sizes = client.io_optimized_vector_sizes(dtype_size);
 
         let n = shape.len();

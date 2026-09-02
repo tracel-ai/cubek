@@ -131,7 +131,7 @@ fn two_levels_fold_in_order() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    two_level_scaled_matmul::launch::<TestRuntime>(
+    two_level_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -228,7 +228,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -320,7 +320,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -416,7 +416,7 @@ fn a_scale_over_no_axis_covers_everything() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -506,7 +506,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -601,7 +601,7 @@ fn f16_scales_are_read_as_f16() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -693,7 +693,7 @@ fn scales_over_the_columns_scale_the_rhs() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -785,7 +785,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -876,7 +876,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -974,7 +974,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    scaled_matmul_promoted::launch::<TestRuntime>(
+    scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1097,7 +1097,7 @@ fn rhs_scales_are_served_several_at_a_time() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    wide_rhs_scaled_matmul_promoted::launch::<TestRuntime>(
+    wide_rhs_scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1218,7 +1218,7 @@ fn lhs_scales_are_served_several_at_a_time() {
             config: RegisterBlock::new(64).lane_fanout(),
         });
 
-    wide_lhs_scaled_matmul::launch::<TestRuntime>(
+    wide_lhs_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

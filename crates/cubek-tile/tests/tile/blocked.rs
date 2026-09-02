@@ -90,7 +90,7 @@ fn one_contracted_axis_is_the_reference() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    matmul::launch::<TestRuntime>(
+    matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -149,7 +149,7 @@ fn a_partitioned_axis_contracts_the_same() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    matmul::launch::<TestRuntime>(
+    matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -233,7 +233,7 @@ fn scales_omit_the_axis_inside_the_block() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -331,7 +331,7 @@ fn a_split_output_axis_contracts_the_same() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    matmul::launch::<TestRuntime>(
+    matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -419,7 +419,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -519,7 +519,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    wide_matmul::launch::<TestRuntime>(
+    wide_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -623,7 +623,7 @@ fn scales_are_served_several_at_a_time() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    wide_scaled_matmul::launch::<TestRuntime>(
+    wide_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -728,7 +728,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    promoted_matmul::launch::<TestRuntime>(
+    promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -834,7 +834,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    wide_scaled_promoted::launch::<TestRuntime>(
+    wide_scaled_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -945,7 +945,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
     .build()
     .with_instruction(Instruction::registers(16));
 
-    wide_typed_scaled_matmul::launch::<TestRuntime>(
+    wide_typed_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

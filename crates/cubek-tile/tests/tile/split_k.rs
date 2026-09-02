@@ -101,7 +101,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
-    split_partials::launch::<TestRuntime>(
+    split_partials::launch(
         &client,
         split_space.cube_count(),
         split_space.cube_dim(&client),
@@ -141,7 +141,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .build()
         .with_instruction(Instruction::registers(16));
 
-    reduce_splits::launch::<TestRuntime>(
+    reduce_splits::launch(
         &client,
         fold_space.cube_count(),
         fold_space.cube_dim(&client),
@@ -266,7 +266,7 @@ fn the_device_folds_floats_atomically_across_cubes() {
         .zeros()
         .generate_without_host_data();
 
-    atomic_add_probe::launch::<TestRuntime>(
+    atomic_add_probe::launch(
         &client,
         CubeCount::new_1d(cubes),
         CubeDim::new_single(),
@@ -335,7 +335,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -475,7 +475,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .resolve_lanes(plane_size)
         .with_instruction(Instruction::registers(16));
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -555,7 +555,7 @@ fn an_atomic_drain_folds_across_planes() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -651,7 +651,7 @@ fn a_folding_output_contracts_in_place() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    atomic_split_matmul_in_place::launch::<TestRuntime>(
+    atomic_split_matmul_in_place::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

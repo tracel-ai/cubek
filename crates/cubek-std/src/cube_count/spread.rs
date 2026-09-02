@@ -1,7 +1,7 @@
-use cubecl::{CubeCount, Runtime, client::ComputeClient};
+use cubecl::{CubeCount, client::ComputeClient};
 
-pub fn cube_count_spread_with_total<R: Runtime>(
-    client: &ComputeClient<R>,
+pub fn cube_count_spread_with_total(
+    client: &ComputeClient,
     num_cubes: usize,
 ) -> (CubeCount, usize) {
     let cube_count = cube_count_spread(&client.properties().hardware.max_cube_count, num_cubes);

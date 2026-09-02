@@ -14,10 +14,10 @@ use cubecl::{
     tensor_vector_size_parallel,
 };
 
-pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    out_grad: TensorBinding<R>,
-    input_grad: TensorBinding<R>,
+pub(crate) fn interpolate_nearest_backward_launch(
+    client: &ComputeClient,
+    out_grad: TensorBinding,
+    input_grad: TensorBinding,
     nearest_mode: NearestMode,
     dtype: ElemType,
 ) -> Result<(), crate::definition::InterpolateError> {
@@ -54,7 +54,7 @@ pub(crate) fn interpolate_nearest_backward_launch<R: Runtime>(
     Ok(())
 }
 
-fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDivmod<usize>> {
+fn shape_divmod(binding: &TensorBinding) -> SequenceArg<FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for dim in binding.shape.iter() {
         out_seq.push(*dim);
@@ -62,10 +62,7 @@ fn shape_divmod<R: Runtime>(binding: &TensorBinding<R>) -> SequenceArg<R, FastDi
     out_seq
 }
 
-fn linear_layout<R: Runtime>(
-    binding: &TensorBinding<R>,
-    vector_size: usize,
-) -> LinearLayoutLaunch<R> {
+fn linear_layout(binding: &TensorBinding, vector_size: usize) -> LinearLayoutLaunch {
     LinearLayoutLaunch::from_shape_strides(
         binding.shape.clone(),
         binding.strides.clone(),

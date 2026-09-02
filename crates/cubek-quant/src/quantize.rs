@@ -283,12 +283,12 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 }
 
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    scales: &[TensorBinding<R>],
-    out_scales: &[TensorBinding<R>],
+pub fn launch_ref(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
+    scales: &[TensorBinding],
+    out_scales: &[TensorBinding],
     scheme: &QuantScheme,
     input_elem: ElemType,
 ) -> Result<(), LaunchError> {
@@ -351,15 +351,15 @@ pub fn launch_ref<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn quantize_native<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
+fn quantize_native(
+    client: &ComputeClient,
+    input: TensorBinding,
     scheme: &QuantScheme,
-    scale: TensorBinding<R>,
-    global: Option<TensorBinding<R>>,
-    out_scale: TensorBinding<R>,
-    out_global: Option<TensorBinding<R>>,
-    output: TensorBinding<R>,
+    scale: TensorBinding,
+    global: Option<TensorBinding>,
+    out_scale: TensorBinding,
+    out_global: Option<TensorBinding>,
+    output: TensorBinding,
     input_dtype: ElemType,
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -424,15 +424,15 @@ fn quantize_native<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn quantize_packed<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
+fn quantize_packed(
+    client: &ComputeClient,
+    input: TensorBinding,
     scheme: &QuantScheme,
-    scale: TensorBinding<R>,
-    global: Option<TensorBinding<R>>,
-    out_scale: TensorBinding<R>,
-    out_global: Option<TensorBinding<R>>,
-    output: TensorBinding<R>,
+    scale: TensorBinding,
+    global: Option<TensorBinding>,
+    out_scale: TensorBinding,
+    out_global: Option<TensorBinding>,
+    output: TensorBinding,
     input_dtype: ElemType,
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {

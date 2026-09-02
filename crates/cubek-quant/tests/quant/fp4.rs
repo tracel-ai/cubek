@@ -206,7 +206,7 @@ mod mx {
     /// one — the software codec converts it, but something has to *address* it. WGSL has no 8-bit
     /// type, so it packs fp8 four lanes to a `u32` and a scalar has no representation there; the
     /// `ue4m3` test in `two_level.rs` sits out the same backends for the same reason.
-    fn addressable(client: &ComputeClient<TestRuntime>) -> bool {
+    fn addressable(client: &ComputeClient) -> bool {
         if u8::supported_uses(client).contains(TypeUsage::Conversion) {
             return true;
         }

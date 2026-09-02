@@ -1,4 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::ComputeClient, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::{
@@ -14,12 +14,12 @@ use crate::{
 /// The matmul elements may get changed during selection for improved performance when
 /// the hardware supports it.
 /// Only the inner element types may change such as the stage or register element types.
-pub fn launch_ref<R: Runtime>(
+pub fn launch_ref(
     strategy: &Strategy,
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+    client: &ComputeClient,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     strategy.launch_ref(client, lhs, rhs, out, dtypes)

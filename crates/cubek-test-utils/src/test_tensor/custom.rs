@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     client::ComputeClient,
     ir::{ElemType, FloatKind},
     prelude::*,
@@ -11,12 +10,12 @@ use crate::BaseInputSpec;
 use crate::test_tensor::strides::physical_extent;
 
 fn new_custom_data(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Shape,
     strides: Strides,
     dtype: ElemType,
     contiguous_data: Vec<f32>,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let num_logical = shape.iter().product::<usize>();
     assert_eq!(
         contiguous_data.len(),
@@ -87,10 +86,7 @@ pub(crate) fn cast_f32_to_dtype(data: &[f32], dtype: ElemType) -> Vec<u8> {
     }
 }
 
-pub(crate) fn build_custom(
-    base_spec: BaseInputSpec,
-    contiguous_data: Vec<f32>,
-) -> TensorHandle<TestRuntime> {
+pub(crate) fn build_custom(base_spec: BaseInputSpec, contiguous_data: Vec<f32>) -> TensorHandle {
     new_custom_data(
         &base_spec.client,
         base_spec.shape.clone(),

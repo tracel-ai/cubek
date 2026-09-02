@@ -31,20 +31,20 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     type Config = SimpleBatchConfig<GA::Config>;
     type Blueprint = AttentionBlueprint;
 
-    unsafe fn launch_unchecked<AA: AttentionArgs, R: cubecl::Runtime>(
-        client: &cubecl::prelude::ComputeClient<R>,
+    unsafe fn launch_unchecked<AA: AttentionArgs>(
+        client: &cubecl::prelude::ComputeClient,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<AA, R>,
-        output: OutputRuntimeArg<AA, R>,
-        cube_mapping: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<AA>,
+        output: OutputRuntimeArg<AA>,
+        cube_mapping: CubeMappingLaunch,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
         blueprint: Self::Blueprint,
     ) -> Result<(), LaunchError> {
         unsafe {
-            attention::launch_unchecked::<AA, QG, QGS, KG, KGS, VG, VGS, MSK, MSKS, OG, OGS, Self, R>(
+            attention::launch_unchecked::<AA, QG, QGS, KG, KGS, VG, VGS, MSK, MSKS, OG, OGS, Self>(
                 client,
                 cube_count,
                 cube_dim,

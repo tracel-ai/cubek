@@ -157,11 +157,11 @@ impl InnerLayout {
     /// The raw [`TensorArg`] (strides preserved) plus the [`StorageTiling`] a launch pairs with the
     /// operand's axes into the `TileSpec` of its `TileArg`. `vector_size > 1` lines the innermost
     /// (`cols`) axis (only valid for a row-major operand; tiled passes `1`).
-    pub fn tensor_arg<R: Runtime>(
+    pub fn tensor_arg(
         &self,
-        mut binding: TensorBinding<R>,
+        mut binding: TensorBinding,
         vector_size: usize,
-    ) -> (TensorArg<R>, StorageTiling) {
+    ) -> (TensorArg, StorageTiling) {
         match self {
             InnerLayout::Tiled { tiles } => {
                 // Only the trailing matrix pair is split; the batch dims ahead of it pass through.

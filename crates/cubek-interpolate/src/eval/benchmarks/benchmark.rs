@@ -44,14 +44,14 @@ struct InterpolateBench {
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtype: ElemType,
     samples: usize,
 }
 
 impl Benchmark for InterpolateBench {
-    type Input = TensorHandle<TestRuntime>;
-    type Output = TensorHandle<TestRuntime>;
+    type Input = TensorHandle;
+    type Output = TensorHandle;
 
     fn prepare(&self) -> Self::Input {
         let shape = match &self.problem {
@@ -64,7 +64,7 @@ impl Benchmark for InterpolateBench {
             .generate_without_host_data()
     }
 
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
+    fn execute(&self, input: Self::Input) -> Result<TensorHandle, String> {
         match &self.problem {
             InterpolateProblem::Forward(prob) => {
                 let output = TensorHandle::empty(&self.client, prob.output_shape(), self.dtype);

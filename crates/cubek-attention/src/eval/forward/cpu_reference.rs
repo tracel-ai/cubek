@@ -9,7 +9,7 @@
 
 use core::f32;
 
-use cubecl::{TestRuntime, client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::{client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     ValidationResult, assert_equals_approx, launch_and_capture_outcome,
@@ -26,7 +26,7 @@ use crate::{
 /// Inputs are generated via `TestInput::uniform`/`bernoulli` so the same
 /// `(problem, seeds)` pair produces the same bits on every run.
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: AttentionProblem,
     strategy: Strategy,
     seed_lhs: u64,
@@ -70,7 +70,7 @@ pub fn strategy_result(
 ///
 /// Slow on bench-scale problems by design: only useful as a ground truth.
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: AttentionProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -96,19 +96,19 @@ pub fn flash_attention_v2_reference_total(problem: &AttentionProblem) -> u64 {
 }
 
 struct SeededInputs {
-    query: TensorHandle<TestRuntime>,
+    query: TensorHandle,
     query_data: HostData,
-    key: TensorHandle<TestRuntime>,
+    key: TensorHandle,
     key_data: HostData,
-    value: TensorHandle<TestRuntime>,
+    value: TensorHandle,
     value_data: HostData,
-    mask: Option<TensorHandle<TestRuntime>>,
+    mask: Option<TensorHandle>,
     mask_data: Option<HostData>,
-    out: TensorHandle<TestRuntime>,
+    out: TensorHandle,
 }
 
 fn seed_inputs(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     problem: &AttentionProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -187,8 +187,8 @@ pub fn assert_result(
     value: &HostData,
     mask: Option<&HostData>,
     problem: &AttentionProblem,
-    client: &ComputeClient<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    client: &ComputeClient,
+    out: TensorHandle,
     elems: AttentionElems,
 ) -> ValidationResult {
     let epsilon = attention_epsilon(&elems, 0.01);
@@ -204,8 +204,8 @@ pub fn assert_result_with_epsilon(
     value: &HostData,
     mask: Option<&HostData>,
     problem: &AttentionProblem,
-    client: &ComputeClient<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    client: &ComputeClient,
+    out: TensorHandle,
     epsilon: f32,
 ) -> ValidationResult {
     let expected = flash_attention_v2_reference(query, key, value, mask, problem, None);

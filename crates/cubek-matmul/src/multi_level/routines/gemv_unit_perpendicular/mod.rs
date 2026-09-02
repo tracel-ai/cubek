@@ -5,7 +5,7 @@ use std::{
     fmt::Display,
 };
 
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
@@ -49,22 +49,22 @@ impl Routine<()> for GemvUnitPerpendicularRoutine {
 
 impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = ()>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = ()>>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <VecMatUnitPerpendicularFamily>::launch_unchecked::<MA, R>(
+                <VecMatUnitPerpendicularFamily>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -83,14 +83,14 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<VecMatUnitPerpendicularFamily, (), R>(
+        batch_validate_blueprint::<VecMatUnitPerpendicularFamily, ()>(
             client,
             blueprint,
             problem,
@@ -103,9 +103,9 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
         VecMatUnitPerpendicularFamily::num_stages()
     }
 
-    fn expand_blueprint<R: cubecl::Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<(), Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -159,9 +159,9 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
         }
     }
 
-    fn prepare<R: cubecl::Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;

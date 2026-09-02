@@ -28,10 +28,10 @@ pub fn calculate_plane_count_per_cube(
     plane_count.min(max_plane_per_cube)
 }
 
-pub fn generate_vector_size<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: &TensorBinding<R>,
-    output: &TensorBinding<R>,
+pub fn generate_vector_size(
+    client: &ComputeClient,
+    input: &TensorBinding,
+    output: &TensorBinding,
     axis: usize,
     dtype: ElemType,
     vectorization_mode: VectorizationMode,

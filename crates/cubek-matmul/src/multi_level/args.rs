@@ -43,13 +43,13 @@ pub type OutputArg<MA> = <MA as MatmulArgs>::Output<Vector<Acc, AccSize>>;
 pub type ConfigArg<MA> = <MA as MatmulArgs>::Config;
 
 /// Input runtime argument
-pub type InputRuntimeArg<MA, R> = <InputArg<MA> as LaunchArg>::RuntimeArg<R>;
+pub type InputRuntimeArg<MA> = <InputArg<MA> as LaunchArg>::RuntimeArg;
 
 /// Config runtime argument
-pub type ConfigRuntimeArg<MA, R> = <ConfigArg<MA> as LaunchArg>::RuntimeArg<R>;
+pub type ConfigRuntimeArg<MA> = <ConfigArg<MA> as LaunchArg>::RuntimeArg;
 
 /// Output runtime argument
-pub type OutputRuntimeArg<MA, R> = <OutputArg<MA> as LaunchArg>::RuntimeArg<R>;
+pub type OutputRuntimeArg<MA> = <OutputArg<MA> as LaunchArg>::RuntimeArg;
 
 pub type BatchedCoords = (usize, u32, u32);
 
@@ -57,27 +57,27 @@ pub type BatchedCoords = (usize, u32, u32);
 /// output (not fused).
 pub trait ConcreteInputsFactory<A: BatchMatmulRoutine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
-    fn create<R: Runtime>(
-        lhs: InputBinding<R>,
-        rhs: InputBinding<R>,
+    fn create(
+        lhs: InputBinding,
+        rhs: InputBinding,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<R>;
+    ) -> Self::RuntimeArg;
 }
 
 /// Create the output runtime argument for a matmul kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteOutputFactory<A: BatchMatmulRoutine<()>>: LaunchArg {
     #[allow(clippy::too_many_arguments)]
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<R>;
+    ) -> Self::RuntimeArg;
 }
 
 #[cube]
@@ -191,15 +191,15 @@ pub struct TensorInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimiti
 impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: BatchMatmulRoutine<()>>
     ConcreteInputsFactory<A> for TensorInputs<Lhs, Rhs, Acc>
 {
-    fn create<R: Runtime>(
-        lhs: InputBinding<R>,
-        rhs: InputBinding<R>,
+    fn create(
+        lhs: InputBinding,
+        rhs: InputBinding,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<R> {
-        let view = |handle: InputBinding<R>, config: GlobalLayoutConfig, vector_size| match handle {
+    ) -> Self::RuntimeArg {
+        let view = |handle: InputBinding, config: GlobalLayoutConfig, vector_size| match handle {
             InputBinding::Normal(handle, _dtype) => {
                 let layout = GlobalLayoutLaunch::from_handle(&handle, vector_size, config);
                 ViewArg::new_tensor::<GlobalLayout>(handle.into_tensor_arg(), layout)
@@ -229,7 +229,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, Acc: CubePrimitive, A: BatchMatmulR
                 ViewArg::new_quantized(data_view, ScaleBindings::one(scales_view), scheme)
             }
         };
-        let batch_layout = |handle: &InputBinding<R>| match handle {
+        let batch_layout = |handle: &InputBinding| match handle {
             InputBinding::Normal(handle, _dtype) => {
                 let layout = BatchLayoutLaunch::from_handle(handle, problem);
                 VirtualLayoutLaunch::new::<BatchLayout>(layout)
@@ -258,13 +258,13 @@ pub struct TensorOutput<EG: CubePrimitive> {
 }
 
 impl<EG: CubePrimitive, A: BatchMatmulRoutine<()>> ConcreteOutputFactory<A> for TensorOutput<EG> {
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         vector_sizes: &MatmulVectorSizes,
         _dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<R> {
+    ) -> Self::RuntimeArg {
         let layout = GlobalLayoutLaunch::from_handle(
             &out,
             vector_sizes.out,
@@ -384,14 +384,14 @@ pub struct TensorMapInputs<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimi
 impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRoutine<()>>
     ConcreteInputsFactory<A> for TensorMapInputs<Lhs, Rhs, EO>
 {
-    fn create<R: Runtime>(
-        lhs_handle: InputBinding<R>,
-        rhs_handle: InputBinding<R>,
+    fn create(
+        lhs_handle: InputBinding,
+        rhs_handle: InputBinding,
         blueprint: &A::Blueprint,
         problem: &MatmulProblem,
         _vector_sizes: &MatmulVectorSizes,
         dtypes: &MatmulElems,
-    ) -> Self::RuntimeArg<R> {
+    ) -> Self::RuntimeArg {
         let lhs = lhs_handle.into_data();
         let rhs = rhs_handle.into_data();
 
@@ -424,7 +424,7 @@ impl<Lhs: CubePrimitive, Rhs: CubePrimitive, EO: CubePrimitive, A: BatchMatmulRo
         };
 
         // Logical (batches, rows, cols), read before `tma_operand` consumes the bindings.
-        let dims = |binding: &TensorBinding<R>, batches: &[usize]| {
+        let dims = |binding: &TensorBinding, batches: &[usize]| {
             let rank = binding.shape.len();
             (
                 batches.iter().product::<usize>(),

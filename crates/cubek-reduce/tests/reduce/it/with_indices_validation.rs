@@ -71,7 +71,7 @@ fn try_launch_config(
         accumulation: input_dtype,
     };
 
-    reduce_with_indices::<TestRuntime>(
+    reduce_with_indices(
         &client,
         input.binding(),
         values.binding(),

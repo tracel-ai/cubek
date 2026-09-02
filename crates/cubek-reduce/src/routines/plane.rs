@@ -7,7 +7,7 @@ use crate::{
     launch::{calculate_plane_count_per_cube, support_plane},
     routines::{BlueprintStrategy, PlaneMergeStrategy, PlaneReduceBlueprint, Routine},
 };
-use cubecl::{CubeCount, CubeDim, Runtime, features::Plane, prelude::ComputeClient};
+use cubecl::{CubeCount, CubeDim, features::Plane, prelude::ComputeClient};
 use cubek_std::cube_count::cube_count_spread_with_total;
 
 #[derive(Debug, Clone)]
@@ -23,9 +23,9 @@ impl Routine for PlaneRoutine {
     type Strategy = PlaneStrategy;
     type Blueprint = PlaneReduceBlueprint;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         &self,
-        client: &ComputeClient<R>,
+        client: &ComputeClient,
         problem: ReduceProblem,
         settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,
@@ -66,7 +66,7 @@ impl Routine for PlaneRoutine {
             }
             BlueprintStrategy::Inferred(strategy) => {
                 let (blueprint, cube_dim, cube_count) =
-                    generate_blueprint::<R>(client, problem, &settings, strategy)?;
+                    generate_blueprint(client, problem, &settings, strategy)?;
                 (blueprint, cube_dim, cube_count)
             }
         };
@@ -82,8 +82,8 @@ impl Routine for PlaneRoutine {
     }
 }
 
-fn generate_blueprint<R: Runtime>(
-    client: &ComputeClient<R>,
+fn generate_blueprint(
+    client: &ComputeClient,
     problem: ReduceProblem,
     settings: &ReduceVectorSettings,
     strategy: PlaneStrategy,

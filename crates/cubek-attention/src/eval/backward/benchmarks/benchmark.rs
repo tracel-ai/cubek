@@ -55,22 +55,22 @@ struct BackwardBench<AP> {
     problem: AttentionProblem,
     strategy: BackwardStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _phantom: std::marker::PhantomData<AP>,
 }
 
 struct BackwardInputs {
-    q: TensorHandle<TestRuntime>,
-    k: TensorHandle<TestRuntime>,
-    v: TensorHandle<TestRuntime>,
-    o: TensorHandle<TestRuntime>,
-    lse: TensorHandle<TestRuntime>,
-    do_: TensorHandle<TestRuntime>,
-    dq: TensorHandle<TestRuntime>,
-    dk: TensorHandle<TestRuntime>,
-    dv: TensorHandle<TestRuntime>,
-    d: TensorHandle<TestRuntime>,
+    q: TensorHandle,
+    k: TensorHandle,
+    v: TensorHandle,
+    o: TensorHandle,
+    lse: TensorHandle,
+    do_: TensorHandle,
+    dq: TensorHandle,
+    dk: TensorHandle,
+    dv: TensorHandle,
+    d: TensorHandle,
 }
 
 impl Clone for BackwardInputs {
@@ -90,31 +90,21 @@ impl Clone for BackwardInputs {
     }
 }
 
-fn make_uniform<T: Numeric>(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 4],
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn make_uniform<T: Numeric>(client: &ComputeClient, shape: [usize; 4], seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(T::elem_type_native())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
 }
 
-fn make_zeros<T: Numeric>(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 4],
-) -> TensorHandle<TestRuntime> {
+fn make_zeros<T: Numeric>(client: &ComputeClient, shape: [usize; 4]) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(T::elem_type_native())
         .zeros()
         .generate_without_host_data()
 }
 
-fn make_zeros_row(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 3],
-) -> TensorHandle<TestRuntime> {
+fn make_zeros_row(client: &ComputeClient, shape: [usize; 3]) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(f32::elem_type_native())
         .zeros()
@@ -211,7 +201,7 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
         let client = <TestRuntime as Runtime>::client(&self.device);
         format!(
             "{}-attention-backward-{:?}-{}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             self.strategy,
             QG::<AP>::elem_type_native(),
         )

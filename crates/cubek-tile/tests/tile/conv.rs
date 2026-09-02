@@ -110,7 +110,7 @@ fn run(
     let w_spec = TileSpec::direct(w_axes).residence(&in_spec.residence);
     let out_binding = out_handle.clone().binding();
     match in_v {
-        1 => conv_kernel::launch::<TestRuntime>(
+        1 => conv_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -120,7 +120,7 @@ fn run(
             space.with_instruction(instruction),
             f32_ty,
         ),
-        2 => conv_kernel_lined::launch::<TestRuntime>(
+        2 => conv_kernel_lined::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -747,7 +747,7 @@ impl Conv1d {
             .subspace(&[OH, CO])
             .build();
 
-        conv_kernel::launch::<TestRuntime>(
+        conv_kernel::launch(
             &client,
             launch.cube_count(),
             launch.cube_dim(),
@@ -953,7 +953,7 @@ impl Conv1d {
             .zeros()
             .generate_without_host_data();
 
-        conv_kernel_dynamic::launch::<TestRuntime>(
+        conv_kernel_dynamic::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -1167,7 +1167,7 @@ impl Conv1d {
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
         if dynamic_scales {
-            conv_kernel_all_dynamic::launch::<TestRuntime>(
+            conv_kernel_all_dynamic::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -1184,7 +1184,7 @@ impl Conv1d {
                 f32_ty,
             );
         } else {
-            conv_kernel_dynamic_padding::launch::<TestRuntime>(
+            conv_kernel_dynamic_padding::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -1727,7 +1727,7 @@ struct Conv2dViewSetup {
     space: Space,
     in_spec: TileSpec,
     in_data: Vec<f32>,
-    in_handle: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    in_handle: cubecl::std::tensor::TensorHandle,
 }
 
 fn setup_conv2d_view() -> Conv2dViewSetup {
@@ -1792,7 +1792,7 @@ fn conv2d_projected_matrix_view() {
         .zeros()
         .generate_without_host_data();
 
-    projected_matrix_kernel::launch::<TestRuntime>(
+    projected_matrix_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1869,7 +1869,7 @@ fn conv2d_fragment_matrix_view() {
         .zeros()
         .generate_without_host_data();
 
-    fragment_matrix_kernel::launch::<TestRuntime>(
+    fragment_matrix_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1991,7 +1991,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         .zeros()
         .generate_without_host_data();
 
-    conv_mma_kernel::launch::<TestRuntime>(
+    conv_mma_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2375,7 +2375,7 @@ fn resize1d_rational_dynamic() {
         .zeros()
         .generate_without_host_data();
 
-    conv_kernel_rational_dynamic::launch::<TestRuntime>(
+    conv_kernel_rational_dynamic::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2465,7 +2465,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         .custom(ramp(resize.in_len * resize.ci, 7))
         .generate_with_f32_host_data();
 
-    conv_kernel_rational_dynamic_stage_read::launch::<TestRuntime>(
+    conv_kernel_rational_dynamic_stage_read::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

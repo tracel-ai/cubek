@@ -1,6 +1,6 @@
 //! Launch wiring for the CpuGemm routine.
 
-use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubecl::{client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
@@ -27,19 +27,19 @@ pub struct WithLayout<B> {
     pub levels: usize,
 }
 
-impl<R: Runtime> WithLayout<InputBinding<R>> {
+impl WithLayout<InputBinding> {
     /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
     #[allow(clippy::result_large_err)]
-    pub fn strided_input(binding: InputBinding<R>) -> Result<Self, MatmulSetupError> {
+    pub fn strided_input(binding: InputBinding) -> Result<Self, MatmulSetupError> {
         validate_strided(&binding.data().strides)?;
         Ok(Self { binding, levels: 0 })
     }
 }
 
-impl<R: Runtime> WithLayout<TensorBinding<R>> {
+impl WithLayout<TensorBinding> {
     /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
     #[allow(clippy::result_large_err)]
-    pub fn strided_output(binding: TensorBinding<R>) -> Result<Self, MatmulSetupError> {
+    pub fn strided_output(binding: TensorBinding) -> Result<Self, MatmulSetupError> {
         validate_strided(&binding.strides)?;
         Ok(Self { binding, levels: 0 })
     }
@@ -96,11 +96,11 @@ fn fold_logical(shape: &[usize], levels: usize) -> (Vec<usize>, usize, usize) {
 }
 
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: WithLayout<InputBinding<R>>,
-    rhs: WithLayout<InputBinding<R>>,
-    out: WithLayout<TensorBinding<R>>,
+pub fn launch_ref(
+    client: &ComputeClient,
+    lhs: WithLayout<InputBinding>,
+    rhs: WithLayout<InputBinding>,
+    out: WithLayout<TensorBinding>,
     strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -254,7 +254,7 @@ pub fn launch_ref<R: Runtime>(
         .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
         .build();
-    cpu_gemm_kernel::launch::<R>(
+    cpu_gemm_kernel::launch(
         client,
         launch.cube_count(),
         launch.cube_dim(),

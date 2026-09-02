@@ -12,7 +12,7 @@ use cubek_test_utils::{
 
 use cubek_fft::eval::cpu_reference::irfft_ref;
 
-fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, dim: usize) {
+fn test_launch(client: ComputeClient, spectrum_shape: Vec<usize>, dim: usize) {
     let dtype = f32::elem_type_native();
     let mut signal_shape = spectrum_shape.clone();
     signal_shape[dim] = (spectrum_shape[dim] - 1) * 2;
@@ -39,7 +39,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     let signal_binding = signal_handle.clone().binding();
 
     let outcome = launch_and_capture_outcome(&client, &[&signal_handle.handle], |c| {
-        irfft_launch::<TestRuntime>(c, re_binding, im_binding, signal_binding, dim, dtype).into()
+        irfft_launch(c, re_binding, im_binding, signal_binding, dim, dtype).into()
     });
 
     match outcome {
@@ -56,12 +56,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     .enforce();
 }
 
-fn test_launch_padded(
-    client: ComputeClient<TestRuntime>,
-    spectrum_shape: Vec<usize>,
-    dim: usize,
-    n_fft: usize,
-) {
+fn test_launch_padded(client: ComputeClient, spectrum_shape: Vec<usize>, dim: usize, n_fft: usize) {
     let dtype = f32::elem_type_native();
     let spec_bins = spectrum_shape[dim];
     let n_freq = n_fft / 2 + 1;
@@ -110,7 +105,7 @@ fn test_launch_padded(
         &client,
         &[&virtual_signal.handle, &padded_signal.handle],
         |c| {
-            if let Err(e) = irfft_launch_padded::<TestRuntime>(
+            if let Err(e) = irfft_launch_padded(
                 c,
                 virtual_re_binding,
                 virtual_im_binding,
@@ -121,7 +116,7 @@ fn test_launch_padded(
             ) {
                 return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
             }
-            irfft_launch::<TestRuntime>(
+            irfft_launch(
                 c,
                 padded_re_binding,
                 padded_im_binding,
@@ -145,10 +140,10 @@ fn test_launch_padded(
 }
 
 fn assert_irfft_result(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     spectrum_re: HostData,
     spectrum_im: HostData,
-    signal: TensorHandle<TestRuntime>,
+    signal: TensorHandle,
     dim: usize,
 ) -> ValidationResult {
     let epsilon = 0.01;
@@ -199,25 +194,17 @@ fn padded_data(shape: &[usize], dim: usize, target_len: usize) -> Vec<f32> {
 }
 
 fn tensor_from_data(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Vec<usize>,
     data: &[f32],
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
-    TensorHandle::<TestRuntime>::new_contiguous(
-        shape,
-        client.create_from_slice(f32::as_bytes(data)),
-        dtype,
-    )
+) -> TensorHandle {
+    TensorHandle::new_contiguous(shape, client.create_from_slice(f32::as_bytes(data)), dtype)
 }
 
-fn empty_tensor(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+fn empty_tensor(client: &ComputeClient, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
     let elems = shape.iter().product::<usize>();
-    TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
+    TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }
 
 #[test]

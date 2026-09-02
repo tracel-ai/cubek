@@ -1,6 +1,6 @@
 use core::result::Result;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubecl::{client::ComputeClient, prelude::TensorBinding, prelude::*};
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
@@ -23,10 +23,10 @@ use crate::kernel::{
 /// Pool2d public wrapper
 ///
 /// Expects input in NHWC layout.
-pub fn pool2d<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn pool2d(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -45,11 +45,11 @@ pub fn pool2d<R: Runtime>(
 /// Pool2d with indices public wrapper
 ///
 /// Expects input in NHWC layout. Output indices are expected to be in the same layout as well.
-pub fn pool2d_with_indices<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    indices: TensorBinding<R>,
+pub fn pool2d_with_indices(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
+    indices: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -71,11 +71,11 @@ pub fn pool2d_with_indices<R: Runtime>(
 /// Pool2d backward public wrapper
 ///
 /// Expects input and output gradients in NHWC layout.
-pub fn pool2d_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    in_grad: TensorBinding<R>,
+pub fn pool2d_backward(
+    client: &ComputeClient,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    in_grad: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -106,12 +106,12 @@ pub fn pool2d_backward<R: Runtime>(
 ///
 /// Expects input and output gradients in NHWC layout. Output indices are expected to be in the same layout as well.
 #[allow(clippy::too_many_arguments)]
-pub fn pool2d_with_indices_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    indices: TensorBinding<R>,
-    in_grad: TensorBinding<R>,
+pub fn pool2d_with_indices_backward(
+    client: &ComputeClient,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    indices: TensorBinding,
+    in_grad: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
     indices_dtype: ElemType,

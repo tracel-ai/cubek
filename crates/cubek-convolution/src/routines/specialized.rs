@@ -1,6 +1,4 @@
-use cubecl::{
-    Runtime, client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError,
-};
+use cubecl::{client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError};
 use cubek_matmul::multi_level::tile::ColMajorTilingOrder;
 use cubek_matmul::{
     definition::AvailableVectorSizes,
@@ -43,12 +41,12 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L>
     type Args = TensorArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
-    fn correct_layout<R: Runtime>(
-        client: &ComputeClient<R>,
-        handle: TensorBinding<R>,
+    fn correct_layout(
+        client: &ComputeClient,
+        handle: TensorBinding,
         dtype: ElemType,
         _operation: ConvolutionOperation,
-    ) -> Result<TensorBinding<R>, LaunchError> {
+    ) -> Result<TensorBinding, LaunchError> {
         contiguous_pitched_layout(client, handle, dtype)
     }
 }
@@ -60,12 +58,12 @@ impl Routine for SpecializedTmaConv {
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
 
-    fn correct_layout<R: Runtime>(
-        client: &ComputeClient<R>,
-        handle: TensorBinding<R>,
+    fn correct_layout(
+        client: &ComputeClient,
+        handle: TensorBinding,
         dtype: ElemType,
         operation: ConvolutionOperation,
-    ) -> Result<TensorBinding<R>, LaunchError> {
+    ) -> Result<TensorBinding, LaunchError> {
         into_tensor_handle_tma(client, handle, dtype, operation)
     }
 

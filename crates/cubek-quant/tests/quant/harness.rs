@@ -9,18 +9,14 @@ use cubecl::{
     client::ComputeClient,
     ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
-    {TestRuntime, zspace::Shape, zspace::shape},
+    {zspace::Shape, zspace::shape},
 };
 use cubek_quant::scheme::QuantScheme;
 use cubek_test_utils::{TestInput, quant_layout};
 
 /// `data` on the device as an f32 tensor: what these tests hand the kernels for an input, an
 /// inner scale grid, or a one-element global scale.
-pub(crate) fn f32_tensor(
-    client: &ComputeClient<TestRuntime>,
-    data: &[f32],
-    shape: Shape,
-) -> TensorHandle<TestRuntime> {
+pub(crate) fn f32_tensor(client: &ComputeClient, data: &[f32], shape: Shape) -> TensorHandle {
     TestInput::builder(client.clone(), shape)
         .custom(data.to_vec())
         .generate_without_host_data()
@@ -36,10 +32,10 @@ pub(crate) fn scale_shape(scheme: &QuantScheme, shape: &Shape) -> Shape {
 /// The pair quantize writes over a tensor of `shape`. Allocated rather than launched, so a test
 /// can hand them to a launch it expects to be refused.
 pub(crate) fn quant_outputs(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     scheme: &QuantScheme,
     shape: &Shape,
-) -> (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>) {
+) -> (TensorHandle, TensorHandle) {
     let dims: Vec<usize> = shape.iter().copied().collect();
     let values = TensorHandle::zeros(
         client,
@@ -63,17 +59,13 @@ pub(crate) fn quant_outputs(
 ///
 /// The input is always f32 here, which is what [`f32_tensor`] builds.
 pub(crate) fn quantize(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     scheme: &QuantScheme,
-    input: &TensorHandle<TestRuntime>,
-    scale: &TensorHandle<TestRuntime>,
-    global: Option<&TensorHandle<TestRuntime>>,
+    input: &TensorHandle,
+    scale: &TensorHandle,
+    global: Option<&TensorHandle>,
     shape: &Shape,
-) -> (
-    TensorHandle<TestRuntime>,
-    TensorHandle<TestRuntime>,
-    Option<TensorHandle<TestRuntime>>,
-) {
+) -> (TensorHandle, TensorHandle, Option<TensorHandle>) {
     let (values, scales) = quant_outputs(client, scheme, shape);
     let out_global =
         global.map(|_| TensorHandle::zeros(client, shape![1], ElemType::Float(FloatKind::F32)));
@@ -102,14 +94,14 @@ pub(crate) fn quantize(
 /// Reconstruct `values` into a fresh `out_dtype` tensor, a buffer of its own so an element the
 /// kernel never wrote reads as a mismatch rather than as whatever was there before.
 pub(crate) fn dequantize(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     scheme: &QuantScheme,
-    values: &TensorHandle<TestRuntime>,
-    scales: &TensorHandle<TestRuntime>,
-    global: Option<&TensorHandle<TestRuntime>>,
+    values: &TensorHandle,
+    scales: &TensorHandle,
+    global: Option<&TensorHandle>,
     shape: &Shape,
     out_dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let out = TensorHandle::zeros(client, shape.clone(), out_dtype);
 
     let mut bindings = vec![scales.clone().binding()];

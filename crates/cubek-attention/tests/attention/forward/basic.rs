@@ -15,14 +15,14 @@ use cubek_attention::{
     forward::routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
 };
 
-fn f16_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f16_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }
 
-fn f32_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f32_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         f32::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),

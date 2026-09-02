@@ -11,7 +11,6 @@ use crate::definition::{PoolBackwardProblem, PoolMode};
 use crate::eval::cpu_reference::{cpu_reference_max_pool_indices, cpu_reference_pool_backward};
 use crate::{pool2d_backward, pool2d_with_indices, pool2d_with_indices_backward};
 use cubecl::{
-    TestRuntime,
     client::ComputeClient,
     zspace::{Shape, Strides},
 };
@@ -20,7 +19,7 @@ use cubek_test_utils::{
 };
 
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolBackwardProblem<2>,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -51,7 +50,7 @@ pub fn strategy_result(
             &client,
             &[&output_handle.handle, &indices_handle.handle],
             |c| {
-                pool2d_with_indices::<TestRuntime>(
+                pool2d_with_indices(
                     c,
                     input_handle.clone().binding(),
                     output_handle.clone().binding(),
@@ -73,7 +72,7 @@ pub fn strategy_result(
 
     let outcome = launch_and_capture_outcome(&client, &[&input_grad_handle.handle], |c| {
         if let Some(indices) = &indices_handle {
-            pool2d_with_indices_backward::<TestRuntime>(
+            pool2d_with_indices_backward(
                 c,
                 input_handle.clone().binding(),
                 out_grad_handle.clone().binding(),
@@ -85,7 +84,7 @@ pub fn strategy_result(
             )
             .into()
         } else {
-            pool2d_backward::<TestRuntime>(
+            pool2d_backward(
                 c,
                 input_handle.clone().binding(),
                 out_grad_handle.clone().binding(),
@@ -108,7 +107,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolBackwardProblem<2>,
     seed: u64,
     progress: Option<&Progress>,

@@ -1,6 +1,4 @@
-use cubecl::{
-    TestRuntime, client::ComputeClient, ir::ElemType, std::tensor::TensorHandle, zspace::Shape,
-};
+use cubecl::{client::ComputeClient, ir::ElemType, std::tensor::TensorHandle, zspace::Shape};
 use cubecl_common::quant::scheme::QuantScheme;
 
 use crate::{
@@ -14,7 +12,7 @@ use crate::{
 /// shape on `tensor.quantization`. The host data on `tensor.host` is left as
 /// the original f32 reference so correctness checks can still compare against it.
 pub(crate) fn apply_quantization(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     tensor: &mut TestTensor,
     scheme: QuantScheme,
 ) {

@@ -10,21 +10,18 @@ use crate::{
     },
     routine::BlueprintStrategy,
 };
-use cubecl::{
-    prelude::TensorBinding,
-    {Runtime, client::ComputeClient},
-};
+use cubecl::{client::ComputeClient, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 /// Select which kernel to launch for the given Algorithm.
 ///
 /// Only works for concrete tensor inputs and output.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, R: Runtime, A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_kernel_concrete<MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
+    client: &ComputeClient,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     problem: MatmulProblem,
     vector_sizes: MatmulVectorSizes,
     blueprint_strategy: &BlueprintStrategy<(), A>,
@@ -63,16 +60,16 @@ where
         dtypes,
     );
 
-    launch_kernel::<MA, R, A>(client, input, output, (), launch_info)
+    launch_kernel::<MA, A>(client, input, output, (), launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: BatchMatmulRoutine<MA::Config>>(
-    client: &ComputeClient<R>,
-    input: InputRuntimeArg<MA, R>,
-    output: OutputRuntimeArg<MA, R>,
-    config: ConfigRuntimeArg<MA, R>,
+pub fn launch_kernel_virtual<MA: MatmulArgs, A: BatchMatmulRoutine<MA::Config>>(
+    client: &ComputeClient,
+    input: InputRuntimeArg<MA>,
+    output: OutputRuntimeArg<MA>,
+    config: ConfigRuntimeArg<MA>,
     problem: MatmulProblem,
     view_vector_sizes: MatmulVectorSizes,
     blueprint_strategy: &BlueprintStrategy<MA::Config, A>,
@@ -81,19 +78,19 @@ pub fn launch_kernel_virtual<MA: MatmulArgs, R: Runtime, A: BatchMatmulRoutine<M
     let expand_info = A::expand_blueprint(&problem, &device_settings, blueprint_strategy)?;
     let launch_info = A::prepare(&problem, &device_settings, expand_info)?;
 
-    launch_kernel::<MA, R, A>(client, input, output, config, launch_info)
+    launch_kernel::<MA, A>(client, input, output, config, launch_info)
 }
 
 /// Select which kernel to launch for the given Algorithm.
 #[allow(clippy::too_many_arguments)]
-pub fn launch_kernel<MA: MatmulArgs, R: Runtime, A: BatchMatmulRoutine<MA::Config>>(
-    client: &ComputeClient<R>,
-    input: InputRuntimeArg<MA, R>,
-    output: OutputRuntimeArg<MA, R>,
-    config: ConfigRuntimeArg<MA, R>,
+pub fn launch_kernel<MA: MatmulArgs, A: BatchMatmulRoutine<MA::Config>>(
+    client: &ComputeClient,
+    input: InputRuntimeArg<MA>,
+    output: OutputRuntimeArg<MA>,
+    config: ConfigRuntimeArg<MA>,
     launch_info: LaunchInfo<A::Blueprint>,
 ) -> Result<(), MatmulSetupError> {
-    A::launch::<MA, R>(
+    A::launch::<MA>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

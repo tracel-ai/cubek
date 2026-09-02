@@ -154,7 +154,7 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
 
 #[test]
 fn test_hsum_and_array_sum() {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([4]))
         .dtype(f32::elem_type_native())
         .custom(vec![1.0, 2.0, 3.0, 4.0])
@@ -164,7 +164,7 @@ fn test_hsum_and_array_sum() {
         .zeros()
         .generate_without_host_data();
 
-    test_hsum_kernel::launch::<TestRuntime>(
+    test_hsum_kernel::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(1),
@@ -183,7 +183,7 @@ fn test_hsum_and_array_sum() {
 
 #[test]
 fn test_extrema_max_min() {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([4]))
         .dtype(f32::elem_type_native())
         .custom(vec![3.0, 1.0, 7.0, 2.0])
@@ -193,7 +193,7 @@ fn test_extrema_max_min() {
         .zeros()
         .generate_without_host_data();
 
-    test_extrema_kernel::launch::<TestRuntime>(
+    test_extrema_kernel::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(1),
@@ -214,7 +214,7 @@ fn test_extrema_max_min() {
 
 #[test]
 fn test_logsumexp_step() {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([2]))
         .dtype(f32::elem_type_native())
         .custom(vec![2.0, 5.0])
@@ -224,7 +224,7 @@ fn test_logsumexp_step() {
         .zeros()
         .generate_without_host_data();
 
-    test_logsumexp_step_kernel::launch::<TestRuntime>(
+    test_logsumexp_step_kernel::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(1),
@@ -250,7 +250,7 @@ fn test_logsumexp_step() {
 
 #[test]
 fn test_plane_and_group_primitives() {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let output_handle = TestInput::builder(client.clone(), Shape::new([60]))
         .dtype(f32::elem_type_native())
         .zeros()
@@ -258,14 +258,14 @@ fn test_plane_and_group_primitives() {
 
     let is_cpu = client.properties().hardware.num_cpu_cores.is_some();
     if is_cpu {
-        test_plane_and_group_fallback_kernel::launch::<TestRuntime>(
+        test_plane_and_group_fallback_kernel::launch(
             &client,
             CubeCount::Static(1, 1, 1),
             CubeDim::new_1d(4),
             output_handle.clone().binding().into_tensor_arg(),
         );
     } else {
-        test_plane_and_group_kernel::launch::<TestRuntime>(
+        test_plane_and_group_kernel::launch(
             &client,
             CubeCount::Static(1, 1, 1),
             CubeDim::new_1d(4),

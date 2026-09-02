@@ -47,7 +47,7 @@ fn test_topk_plane_reduce_inplace() {
 
     let output_handle = build_output_tensor(&client, storage_type, &shape);
 
-    launch_plane_reduce_inplace::launch::<TestRuntime>(
+    launch_plane_reduce_inplace::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new(&client, num_threads),
@@ -64,10 +64,10 @@ fn test_topk_plane_reduce_inplace() {
 }
 
 fn build_output_tensor(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
+    client: &cubecl::client::ComputeClient,
     output_dtype: ElemType,
     output_shape: &Shape,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let strides = contiguous_strides(output_shape);
     TestInput::builder(client.clone(), output_shape.clone())
         .dtype(output_dtype)
@@ -185,7 +185,7 @@ fn test_topk_plane_topk_insert() {
 
     let storage_type = f32::elem_type_native();
 
-    launch_plane_topk_insert::launch::<TestRuntime>(
+    launch_plane_topk_insert::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new(&client, num_threads),

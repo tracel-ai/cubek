@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime,
     client::ComputeClient,
     ir::{ElemType, VectorSize},
 };
@@ -81,9 +80,9 @@ pub(crate) fn find_stage_size_m_n(
     }
 }
 
-pub fn convolution_matmul_selection<R: Runtime>(
+pub fn convolution_matmul_selection(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient<R>,
+    client: &ComputeClient,
     problem: &ConvolutionProblem,
     plane_dim: u32,
     swizzle: bool,
@@ -96,7 +95,7 @@ pub fn convolution_matmul_selection<R: Runtime>(
     // to be the rough cutoff for the k=4 size.
     let stage_k = if problem.k >= 4096 { 4 } else { 2 };
 
-    let tile_size = find_instruction_size::<R, _, _>(
+    let tile_size = find_instruction_size::<_, _>(
         client,
         (
             dtypes.lhs_register,

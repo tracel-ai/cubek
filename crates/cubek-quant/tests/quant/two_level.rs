@@ -50,11 +50,11 @@ fn packed_f32() -> QuantScheme {
 }
 
 struct Fixture {
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     shape: Shape,
-    input: TensorHandle<TestRuntime>,
-    scale: TensorHandle<TestRuntime>,
-    global: TensorHandle<TestRuntime>,
+    input: TensorHandle,
+    scale: TensorHandle,
+    global: TensorHandle,
     data: Vec<f32>,
 }
 

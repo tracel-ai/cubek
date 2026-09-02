@@ -36,10 +36,10 @@ pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
 }
 
 /// Pseudo-random generator
-pub(crate) fn random<F: RandomFamily, R: Runtime>(
-    client: &ComputeClient<R>,
+pub(crate) fn random<F: RandomFamily>(
+    client: &ComputeClient,
     prng: F::Runtime,
-    output: TensorBinding<R>,
+    output: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
 ) -> Result<(), LaunchError> {
@@ -56,7 +56,7 @@ pub(crate) fn random<F: RandomFamily, R: Runtime>(
     let address_type = output.required_address_type(dtype.size());
     let output = linear_view(output);
 
-    prng_kernel::launch::<F, R>(
+    prng_kernel::launch::<F>(
         client,
         launch.cube_count,
         launch.cube_dim,
@@ -95,7 +95,7 @@ pub(crate) trait PrngArgs: Send + Sync + 'static {
     /// other distributions one each.
     const VECTORS_PER_DRAW: usize;
 
-    fn args<R: Runtime>(self) -> <Self::Args as LaunchArg>::RuntimeArg<R>;
+    fn args(self) -> <Self::Args as LaunchArg>::RuntimeArg;
 }
 
 pub(crate) trait RandomFamily: Send + Sync + 'static + std::fmt::Debug {
@@ -337,7 +337,7 @@ mod tests {
         let client = TestRuntime::client(&Default::default());
         let dtype = f32::elem_type_native();
         let zeros = vec![0.0f32; elements];
-        let output = TensorHandle::<TestRuntime>::new_contiguous(
+        let output = TensorHandle::new_contiguous(
             shape.clone(),
             client.create_from_slice(f32::as_bytes(&zeros)),
             dtype,
@@ -391,17 +391,13 @@ mod tests {
     /// stays at zero rather than at whatever the allocation held.
     fn draw_over_zeros(
         shape: Vec<usize>,
-        launch: impl FnOnce(
-            &ComputeClient<TestRuntime>,
-            TensorBinding<TestRuntime>,
-            ElemType,
-        ) -> Result<(), LaunchError>,
+        launch: impl FnOnce(&ComputeClient, TensorBinding, ElemType) -> Result<(), LaunchError>,
     ) -> Vec<f32> {
         let client = TestRuntime::client(&Default::default());
         let dtype = f32::elem_type_native();
 
         let zeros = vec![0.0f32; shape.iter().product()];
-        let output = TensorHandle::<TestRuntime>::new_contiguous(
+        let output = TensorHandle::new_contiguous(
             shape,
             client.create_from_slice(f32::as_bytes(&zeros)),
             dtype,

@@ -122,7 +122,7 @@ impl Layout for Im2colLayout {
     }
 }
 
-impl<R: Runtime> Im2colLayoutLaunch<R> {
+impl Im2colLayoutLaunch {
     pub fn from_args(
         problem: &ConvolutionProblem,
         params: ConvolutionParams,

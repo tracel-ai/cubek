@@ -94,7 +94,7 @@ fn run(space: Space) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    coarse_lhs_matmul::launch::<TestRuntime>(
+    coarse_lhs_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

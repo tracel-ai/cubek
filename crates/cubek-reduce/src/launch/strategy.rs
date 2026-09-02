@@ -33,6 +33,6 @@ pub struct VectorizationStrategy {
     pub parallel_output_vectorization: bool,
 }
 
-pub(crate) fn support_plane<R: Runtime>(client: &ComputeClient<R>) -> bool {
+pub(crate) fn support_plane(client: &ComputeClient) -> bool {
     client.properties().features.plane.contains(Plane::Ops)
 }

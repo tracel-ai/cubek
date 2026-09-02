@@ -8,7 +8,7 @@ use crate::{
     launch::ConvolutionArgs,
     routines::Routine,
 };
-use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubecl::{client::ComputeClient, prelude::*};
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
     routine::BlueprintStrategy,
@@ -20,11 +20,11 @@ use cubek_std::{InputBinding, MatrixLayout};
 /// Called by `cubek_convolution::launch_ref` after the routine and
 /// blueprint-strategy have been resolved.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub(crate) fn launch_internal<R: Runtime, const N_SPATIAL: usize, Rt: Routine>(
-    client: &ComputeClient<R>,
-    input: InputBinding<R>,
-    out_grad: InputBinding<R>,
-    weight_grad: TensorBinding<R>,
+pub(crate) fn launch_internal<const N_SPATIAL: usize, Rt: Routine>(
+    client: &ComputeClient,
+    input: InputBinding,
+    out_grad: InputBinding,
+    weight_grad: TensorBinding,
     args: ConvolutionArgs<N_SPATIAL>,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
@@ -45,7 +45,7 @@ where
         other => unimplemented!("Unsupported dimensionality {other}"),
     };
 
-    launch_with_routine::<R, Rt>(
+    launch_with_routine::<Rt>(
         client,
         input,
         out_grad,
@@ -58,11 +58,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn launch_with_routine<R: Runtime, Rt: Routine>(
-    client: &ComputeClient<R>,
-    input: InputBinding<R>,
-    out_grad: InputBinding<R>,
-    weight_grad: TensorBinding<R>,
+fn launch_with_routine<Rt: Routine>(
+    client: &ComputeClient,
+    input: InputBinding,
+    out_grad: InputBinding,
+    weight_grad: TensorBinding,
     (stride, padding, dilation): (&[usize], &[usize], &[usize]),
     dimensionality: Dimensionality,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
@@ -127,7 +127,7 @@ where
         address_type,
     };
 
-    launch_kernel::<R, Rt>(
+    launch_kernel::<Rt>(
         client,
         input,
         out_grad,
@@ -139,11 +139,11 @@ where
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_kernel<R: Runtime, Rt: Routine>(
-    client: &ComputeClient<R>,
-    input: InputBinding<R>,
-    out_grad: InputBinding<R>,
-    weight_grad: TensorBinding<R>,
+pub fn launch_kernel<Rt: Routine>(
+    client: &ComputeClient,
+    input: InputBinding,
+    out_grad: InputBinding,
+    weight_grad: TensorBinding,
     problem: ConvolutionProblem,
     blueprint_strategy: &BlueprintStrategy<RuntimeArgs, Rt::MatmulRoutine>,
     dtypes: MatmulElems,
@@ -173,7 +173,7 @@ where
 
     let vector_sizes = Rt::filter_vector_sizes(vector_sizes).pick_max()?;
 
-    launch_kernel_concrete::<R, Rt::Args, Rt::MatmulRoutine>(
+    launch_kernel_concrete::<Rt::Args, Rt::MatmulRoutine>(
         client,
         input,
         out_grad,

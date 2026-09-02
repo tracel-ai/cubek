@@ -19,8 +19,8 @@ fn large_fft_roundtrip() {
         .uniform(42, -1., 1.)
         .generate_with_f32_host_data();
 
-    let (spectrum_re, spectrum_im) = rfft(original_signal, shape.len() - 1, dtype);
-    let signal_back = irfft(spectrum_re, spectrum_im, shape.len() - 1, dtype);
+    let (spectrum_re, spectrum_im) = rfft::<TestRuntime>(original_signal, shape.len() - 1, dtype);
+    let signal_back = irfft::<TestRuntime>(spectrum_re, spectrum_im, shape.len() - 1, dtype);
 
     assert_equals_approx(
         &HostData::from_tensor_handle(&client, signal_back, cubek_test_utils::HostDataType::F32),

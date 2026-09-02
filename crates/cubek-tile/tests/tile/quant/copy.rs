@@ -28,7 +28,7 @@ fn copy_non_quantized_matches_reference() {
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
     let dtype = f32::elem_type_native();
-    plain_copy::launch::<TestRuntime>(
+    plain_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -69,7 +69,7 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    plain_copy::launch::<TestRuntime>(
+    plain_copy::launch(
         &client,
         launch.cube_count(),
         launch.cube_dim(),
@@ -120,7 +120,7 @@ fn copy_quantized_per_tensor_matches_reference() {
         .generate_without_host_data();
 
     let out_dtype = f32::elem_type_native();
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -208,7 +208,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         .build();
 
     let out_dtype = f32::elem_type_native();
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -276,7 +276,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
 
     let input_dtype = u32::elem_type_native();
     let out_dtype = f32::elem_type_native();
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -377,7 +377,7 @@ fn copy_quantized_lookup_matches_reference() {
         .lookup_arange(&table);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -442,7 +442,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -500,7 +500,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
         .lookup_arange(&table);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -569,7 +569,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
     let out_dtype = f32::elem_type_native();
     // The packed binding stays a scalar `u32`: the scheme serves `pack` values per word,
     // so the copy moves whole lines and the destination is lined at that served width.
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -742,7 +742,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
     });
 
     let out_dtype = f32::elem_type_native();
-    dequant_copy::launch::<TestRuntime>(
+    dequant_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),

@@ -878,7 +878,7 @@ fn cpu_gemm_rejects_input_register_type() {
     let mut dtypes = MatmulElems::from_single_dtype(f32t);
     dtypes.lhs_register = ElemType::Float(FloatKind::TF32);
 
-    match launch_ref::<TestRuntime>(
+    match launch_ref(
         &client,
         WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f32t)).unwrap(),
         WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f32t)).unwrap(),
@@ -935,7 +935,7 @@ fn accumulator_holds_steps_the_output_element_cannot() {
     let rhs = build(vec![k, n], rhs_data);
     let out = build(vec![m, n], vec![0.0; m * n]);
 
-    launch_ref::<TestRuntime>(
+    launch_ref(
         &client,
         WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f16t)).unwrap(),
         WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f16t)).unwrap(),

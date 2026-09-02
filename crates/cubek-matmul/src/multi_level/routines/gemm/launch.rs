@@ -16,9 +16,9 @@ use crate::{
     routine::{BlueprintStrategy, into_contiguous_if_highly_permuted},
 };
 
-fn vector_size_for<R: Runtime>(
-    client: &ComputeClient<R>,
-    binding: &InputBinding<R>,
+fn vector_size_for(
+    client: &ComputeClient,
+    binding: &InputBinding,
     default_size: usize,
     plane_size: usize,
     dim: usize,
@@ -39,11 +39,11 @@ fn vector_size_for<R: Runtime>(
 /// data only when its current layout differs. `RowMajor` leaves the last dim
 /// contiguous, `ColMajor` the second-to-last.
 #[allow(clippy::result_large_err)]
-fn make_k_contiguous<R: Runtime>(
-    client: &ComputeClient<R>,
-    binding: InputBinding<R>,
+fn make_k_contiguous(
+    client: &ComputeClient,
+    binding: InputBinding,
     target: MatrixLayout,
-) -> Result<InputBinding<R>, MatmulSetupError> {
+) -> Result<InputBinding, MatmulSetupError> {
     let rank = binding.shape().len();
     let layout = MatrixLayout::from_shape_and_strides(
         binding.shape(),
@@ -66,11 +66,11 @@ fn make_k_contiguous<R: Runtime>(
 }
 
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    mut lhs: InputBinding<R>,
-    mut rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref(
+    client: &ComputeClient,
+    mut lhs: InputBinding,
+    mut rhs: InputBinding,
+    out: TensorBinding,
     strategy: &BlueprintStrategy<(), GemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -208,7 +208,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    GemmRoutine::launch::<TensorArgs, R>(
+    GemmRoutine::launch::<TensorArgs>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

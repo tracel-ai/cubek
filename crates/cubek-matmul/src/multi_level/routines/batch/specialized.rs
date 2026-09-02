@@ -1,8 +1,6 @@
 use std::{fmt::Display, marker::PhantomData};
 
-use cubecl::{
-    CubeCount, CubeDim, Runtime, client::ComputeClient, features::MmaConfig, ir::AddressType,
-};
+use cubecl::{CubeCount, CubeDim, client::ComputeClient, features::MmaConfig, ir::AddressType};
 use cubek_std::{
     MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
@@ -102,22 +100,22 @@ where
     AL: FullLoadingStrategy<RC, Stage: StageFamily>,
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <SpecializedBatch<RC, L, AL>>::launch_unchecked::<MA, R>(
+                <SpecializedBatch<RC, L, AL>>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -136,14 +134,14 @@ where
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<SpecializedBatch<RC, L, AL>, RC, R>(
+        batch_validate_blueprint::<SpecializedBatch<RC, L, AL>, RC>(
             client,
             blueprint,
             problem,
@@ -156,9 +154,9 @@ where
         SpecializedBatch::<RC, L, AL>::num_stages()
     }
 
-    fn expand_blueprint<R: Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -174,7 +172,7 @@ where
 
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(_) => infer_blueprint_plane::<R>(
+            BlueprintStrategy::Inferred(_) => infer_blueprint_plane(
                 tile_matmul,
                 &device_settings.client,
                 problem,
@@ -195,9 +193,9 @@ where
         Ok(ExpandInfo { blueprint, dtypes })
     }
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
@@ -227,9 +225,9 @@ where
 }
 
 #[allow(unused, reason = "needs more tuning")]
-fn infer_blueprint_specialized<R: Runtime>(
+fn infer_blueprint_specialized(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient<R>,
+    client: &ComputeClient,
     problem: &MatmulProblem,
     plane_dim: u32,
     swizzle: bool,
@@ -275,7 +273,7 @@ fn infer_blueprint_specialized<R: Runtime>(
             .build()
             .unwrap()
     } else {
-        return infer_blueprint_plane::<R>(
+        return infer_blueprint_plane(
             tile_matmul,
             client,
             problem,

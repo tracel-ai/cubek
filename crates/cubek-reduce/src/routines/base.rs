@@ -51,9 +51,9 @@ pub trait Routine: core::fmt::Debug + Clone + Sized {
     type Strategy: core::fmt::Debug + Clone + Send + 'static;
     type Blueprint: core::fmt::Debug + Clone + Send + 'static;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         &self,
-        client: &ComputeClient<R>,
+        client: &ComputeClient,
         problem: ReduceProblem,
         settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,

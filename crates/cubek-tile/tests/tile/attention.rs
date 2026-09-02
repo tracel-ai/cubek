@@ -134,7 +134,7 @@ fn run(
     causal: bool,
     vec: usize,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
@@ -195,7 +195,7 @@ fn run(
     })
     .build();
 
-    attention_fold_kernel::launch::<TestRuntime>(
+    attention_fold_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),
@@ -420,7 +420,7 @@ fn run_cmma(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -480,7 +480,7 @@ fn run_cmma(
     })
     .build();
 
-    attention_fold_cmma_kernel::launch::<TestRuntime>(
+    attention_fold_cmma_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_1d(units as u32),
@@ -788,7 +788,7 @@ fn run_split_at(
     vec: usize,
     split_inner: bool,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let cap = client.properties().hardware.max_units_per_cube as usize;
     let team = team.min((cap / splits).max(1));
     let rows = g * qp;
@@ -849,7 +849,7 @@ fn run_split_at(
     })
     .build();
 
-    attention_fold_split_kernel::launch::<TestRuntime>(
+    attention_fold_split_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(team as u32, splits as u32),
@@ -1008,7 +1008,7 @@ fn run_stream(
     bound_s: usize,
     vec: usize,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let lanes = client.properties().hardware.plane_size_max as usize;
     let cap = client.properties().hardware.max_units_per_cube as usize;
     let splits = splits.min((cap / lanes).max(1));
@@ -1047,7 +1047,7 @@ fn run_stream(
     })
     .build();
 
-    attention_stream_test_kernel::launch::<TestRuntime>(
+    attention_stream_test_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(lanes as u32, splits as u32),

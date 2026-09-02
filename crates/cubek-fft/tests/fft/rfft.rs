@@ -14,7 +14,7 @@ use cubek_test_utils::{
 
 use cubek_fft::eval::cpu_reference::rfft_ref;
 
-fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim: usize) {
+fn test_launch(client: ComputeClient, signal_shape: Vec<usize>, dim: usize) {
     let dtype = f32::elem_type_native();
     let mut spectrum_shape = signal_shape.clone();
     spectrum_shape[dim] = signal_shape[dim] / 2 + 1;
@@ -42,9 +42,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
     let outcome = launch_and_capture_outcome(
         &client,
         &[&spectrum_re_handle.handle, &spectrum_im_handle.handle],
-        |c| {
-            rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, dim, dtype).into()
-        },
+        |c| rfft_launch(c, signal_binding, re_binding, im_binding, dim, dtype).into(),
     );
 
     match outcome {
@@ -62,7 +60,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, signal_shape: Vec<usize>, dim
 }
 
 fn test_launch_padded(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     signal_shape: Vec<usize>,
     dim: usize,
     signal_len: usize,
@@ -110,7 +108,7 @@ fn test_launch_padded(
             &padded_im.handle,
         ],
         |c| {
-            if let Err(e) = rfft_launch_padded::<TestRuntime>(
+            if let Err(e) = rfft_launch_padded(
                 c,
                 virtual_signal_binding,
                 virtual_re_binding,
@@ -121,7 +119,7 @@ fn test_launch_padded(
             ) {
                 return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
             }
-            rfft_launch::<TestRuntime>(
+            rfft_launch(
                 c,
                 padded_signal_binding,
                 padded_re_binding,
@@ -151,10 +149,10 @@ fn test_launch_padded(
 }
 
 pub fn assert_rfft_result(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     signal: HostData,
-    spectrum_re: TensorHandle<TestRuntime>,
-    spectrum_im: TensorHandle<TestRuntime>,
+    spectrum_re: TensorHandle,
+    spectrum_im: TensorHandle,
     dim: usize,
 ) -> ValidationResult {
     // big epsilon because with wgpu, compute is less precise
@@ -237,25 +235,17 @@ fn padded_data(shape: &[usize], dim: usize, signal_len: usize, target_len: usize
 }
 
 fn tensor_from_data(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Vec<usize>,
     data: &[f32],
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
-    TensorHandle::<TestRuntime>::new_contiguous(
-        shape,
-        client.create_from_slice(f32::as_bytes(data)),
-        dtype,
-    )
+) -> TensorHandle {
+    TensorHandle::new_contiguous(shape, client.create_from_slice(f32::as_bytes(data)), dtype)
 }
 
-fn empty_tensor(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+fn empty_tensor(client: &ComputeClient, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
     let elems = shape.iter().product::<usize>();
-    TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
+    TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }
 
 #[test]
@@ -405,8 +395,7 @@ fn rfft_nyquist_bin_large_sizes() {
             .flat_map(|_| (0..n_fft).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }))
             .collect();
         let signal_handle = client.create_from_slice(f32::as_bytes(&signal_data));
-        let signal =
-            TensorHandle::<TestRuntime>::new_contiguous(signal_shape, signal_handle, dtype);
+        let signal = TensorHandle::new_contiguous(signal_shape, signal_handle, dtype);
         let spectrum_re = TestInput::builder(client.clone(), spectrum_shape.clone())
             .dtype(dtype)
             .zeros()
@@ -422,8 +411,7 @@ fn rfft_nyquist_bin_large_sizes() {
 
         let outcome =
             launch_and_capture_outcome(&client, &[&spectrum_re.handle, &spectrum_im.handle], |c| {
-                rfft_launch::<TestRuntime>(c, signal_binding, re_binding, im_binding, 1, dtype)
-                    .into()
+                rfft_launch(c, signal_binding, re_binding, im_binding, 1, dtype).into()
             });
 
         let outcome = match outcome {

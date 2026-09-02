@@ -38,7 +38,7 @@ impl Layout for TmaOutGradLayout {
     }
 }
 
-impl<R: Runtime> TmaOutGradLayoutLaunch<R> {
+impl TmaOutGradLayoutLaunch {
     pub fn from_problem(problem: &ConvolutionProblem) -> Self {
         TmaOutGradLayoutLaunch::new(problem.k as u32, problem.m as u32)
     }

@@ -119,7 +119,7 @@ fn run(
     causal: bool,
     mask_fn: Option<fn(usize, usize) -> bool>,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
 
@@ -167,7 +167,7 @@ fn run(
     let gmem_space = Space::new(&[(Q, rows), (S, total_cols)]);
     let block_space = Space::new(&[(Q, rows), (S, cols)]);
 
-    softmax_walk_kernel::launch::<TestRuntime>(
+    softmax_walk_kernel::launch(
         &client,
         CubeCount::new_single(),
         // Explicit x = units so UNIT_POS_X is the owner index on every
@@ -409,7 +409,7 @@ fn run_smem_acc(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
@@ -449,7 +449,7 @@ fn run_smem_acc(
     let gmem_space = Space::new(&[(Q, rows), (S, total_cols)]);
     let block_space = Space::new(&[(Q, rows), (S, cols)]);
 
-    softmax_smem_acc_kernel::launch::<TestRuntime>(
+    softmax_smem_acc_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),

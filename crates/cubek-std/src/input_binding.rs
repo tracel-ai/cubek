@@ -1,6 +1,5 @@
 use cubecl::std::tensor::{into_contiguous_packed, into_contiguous_pitched};
 use cubecl::{
-    Runtime,
     client::ComputeClient,
     frontend::Scalar,
     ir::{AddressType, ElemType},
@@ -12,12 +11,12 @@ use cubecl_common::quant::scheme::{QuantScheme, QuantStore, QuantValue};
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum InputBinding<R: Runtime> {
-    Normal(TensorBinding<R>, ElemType),
+pub enum InputBinding {
+    Normal(TensorBinding, ElemType),
     Quantized {
-        data: TensorBinding<R>,
+        data: TensorBinding,
         data_dtype: ElemType,
-        scale: TensorBinding<R>,
+        scale: TensorBinding,
         scale_dtype: ElemType,
         /// Unpacked shape, excluding padding
         shape: Shape,
@@ -25,7 +24,7 @@ pub enum InputBinding<R: Runtime> {
     },
 }
 
-impl<R: Runtime> Clone for InputBinding<R> {
+impl Clone for InputBinding {
     fn clone(&self) -> Self {
         match self {
             Self::Normal(arg0, arg1) => Self::Normal(arg0.clone(), *arg1),
@@ -48,8 +47,8 @@ impl<R: Runtime> Clone for InputBinding<R> {
     }
 }
 
-impl<R: Runtime> InputBinding<R> {
-    pub fn new(data: TensorBinding<R>, dtype: ElemType) -> Self {
+impl InputBinding {
+    pub fn new(data: TensorBinding, dtype: ElemType) -> Self {
         Self::Normal(data, dtype)
     }
 
@@ -99,8 +98,8 @@ impl<R: Runtime> InputBinding<R> {
         }
     }
     pub fn quantized(
-        data: TensorBinding<R>,
-        scale: TensorBinding<R>,
+        data: TensorBinding,
+        scale: TensorBinding,
         shape: Shape,
         scheme: QuantScheme,
         data_dtype: ElemType,
@@ -116,7 +115,7 @@ impl<R: Runtime> InputBinding<R> {
         }
     }
 
-    pub fn data(&self) -> &TensorBinding<R> {
+    pub fn data(&self) -> &TensorBinding {
         match self {
             InputBinding::Normal(handle, ..) => handle,
             InputBinding::Quantized { data, .. } => data,
@@ -130,21 +129,21 @@ impl<R: Runtime> InputBinding<R> {
         }
     }
 
-    pub fn into_data(self) -> TensorBinding<R> {
+    pub fn into_data(self) -> TensorBinding {
         match self {
             InputBinding::Normal(handle, ..) => handle,
             InputBinding::Quantized { data, .. } => data,
         }
     }
 
-    pub fn data_mut(&mut self) -> &mut TensorBinding<R> {
+    pub fn data_mut(&mut self) -> &mut TensorBinding {
         match self {
             InputBinding::Normal(handle, ..) => handle,
             InputBinding::Quantized { data, .. } => data,
         }
     }
 
-    pub fn scale(&self) -> Option<&TensorBinding<R>> {
+    pub fn scale(&self) -> Option<&TensorBinding> {
         match self {
             InputBinding::Normal(..) => None,
             InputBinding::Quantized { scale, .. } => Some(scale),
@@ -165,7 +164,7 @@ impl<R: Runtime> InputBinding<R> {
         }
     }
 
-    pub fn into_contiguous(self, client: &ComputeClient<R>) -> Result<Self, LaunchError> {
+    pub fn into_contiguous(self, client: &ComputeClient) -> Result<Self, LaunchError> {
         let val = match self {
             Self::Normal(data, dtype) => Self::Normal(
                 into_contiguous_pitched(client, data, dtype).binding(),

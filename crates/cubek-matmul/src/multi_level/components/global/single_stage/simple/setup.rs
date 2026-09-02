@@ -184,8 +184,8 @@ where
         Ok(resources)
     }
 
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

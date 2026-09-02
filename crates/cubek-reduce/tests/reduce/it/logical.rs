@@ -73,7 +73,7 @@ fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
     let input_binding = input_handle.binding();
     let output_binding = output_handle.clone().binding();
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        reduce::<TestRuntime>(
+        reduce(
             c,
             input_binding,
             output_binding,

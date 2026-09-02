@@ -1,5 +1,5 @@
 use cubecl::{
-    Runtime, VectorizationError,
+    VectorizationError,
     client::ComputeClient,
     ir::VectorSize,
     tensor_vector_size_parallel,
@@ -32,7 +32,7 @@ pub struct AvailableVectorSizes {
 }
 
 impl AvailableVectorSizes {
-    pub fn from_type_size_tma<R: Runtime>(client: &ComputeClient<R>, elem_out: usize) -> Self {
+    pub fn from_type_size_tma(client: &ComputeClient, elem_out: usize) -> Self {
         // TMA requires vector size 1 for inputs
         AvailableVectorSizes {
             lhs: vec![1],
@@ -41,8 +41,8 @@ impl AvailableVectorSizes {
         }
     }
 
-    pub fn from_type_sizes<R: Runtime>(
-        client: &ComputeClient<R>,
+    pub fn from_type_sizes(
+        client: &ComputeClient,
         elem_lhs: usize,
         elem_rhs: usize,
         elem_out: usize,

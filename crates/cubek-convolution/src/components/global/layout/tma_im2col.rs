@@ -150,7 +150,7 @@ pub(crate) fn div_mod_seq(pos: u32, shape: &Sequence<FastDivmod<u32>>) -> (u32, 
     (offs, out.reversed())
 }
 
-impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
+impl TmaIm2colLayoutLaunch {
     pub fn from_args(problem: &ConvolutionProblem, check_kernel: bool) -> Self {
         let shape_out = problem.out_shape.iter().map(|it| *it as u32).collect();
 
@@ -171,7 +171,7 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
 
     fn from_args_lhs(
         problem: &ConvolutionProblem,
-        shape_out: SequenceArg<R, FastDivmod<u32>>,
+        shape_out: SequenceArg<FastDivmod<u32>>,
         padded_channels: u32,
         params: ConvolutionParams,
         check_kernel: bool,
@@ -191,7 +191,7 @@ impl<R: Runtime> TmaIm2colLayoutLaunch<R> {
 
     fn from_args_rhs(
         problem: &ConvolutionProblem,
-        shape_out: SequenceArg<R, FastDivmod<u32>>,
+        shape_out: SequenceArg<FastDivmod<u32>>,
         padded_channels: u32,
         params: ConvolutionParams,
         check_kernel: bool,

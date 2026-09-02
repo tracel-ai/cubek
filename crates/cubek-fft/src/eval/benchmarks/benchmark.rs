@@ -44,24 +44,24 @@ struct FftBench<E> {
     shape: Vec<usize>,
     mode: FftMode,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _e: PhantomData<E>,
 }
 
 #[derive(Clone)]
 struct FftInput {
-    signal: TensorHandle<TestRuntime>,
-    spectrum_re: TensorHandle<TestRuntime>,
-    spectrum_im: TensorHandle<TestRuntime>,
+    signal: TensorHandle,
+    spectrum_re: TensorHandle,
+    spectrum_im: TensorHandle,
 }
 
 fn make_uniform(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: Vec<usize>,
     dtype: ElemType,
     seed: u64,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(shape))
         .layout(StridedLayout::RowMajor)
         .dtype(dtype)
@@ -69,11 +69,7 @@ fn make_uniform(
         .generate_without_host_data()
 }
 
-fn empty_handle(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    elem: impl Into<Type>,
-) -> TensorHandle<TestRuntime> {
+fn empty_handle(client: &ComputeClient, shape: Vec<usize>, elem: impl Into<Type>) -> TensorHandle {
     TensorHandle::empty(client, shape, elem)
 }
 

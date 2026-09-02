@@ -34,13 +34,13 @@ use cubek_test_utils::{
 /// the scaffold so we don't have to thread mixed precision through every
 /// helper while the kernels are stubs.
 struct BackwardInputs {
-    q: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    q: cubecl::std::tensor::TensorHandle,
     q_data: HostData,
-    k: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    k: cubecl::std::tensor::TensorHandle,
     k_data: HostData,
-    v: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    v: cubecl::std::tensor::TensorHandle,
     v_data: HostData,
-    do_: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    do_: cubecl::std::tensor::TensorHandle,
     do_data: HostData,
 }
 
@@ -79,7 +79,7 @@ fn problem_causal(
     p
 }
 
-fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) -> BackwardInputs {
+fn seed_inputs(client: &ComputeClient, problem: &AttentionProblem) -> BackwardInputs {
     let q_shape = [
         problem.dims.batch,
         problem.dims.num_heads,
@@ -135,10 +135,10 @@ fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) 
 }
 
 fn zeros_like(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: [usize; 4],
     dtype: cubecl::ir::ElemType,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .zeros()
@@ -146,10 +146,10 @@ fn zeros_like(
 }
 
 fn zeros_row(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: [usize; 3],
     dtype: cubecl::ir::ElemType,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .zeros()
@@ -481,10 +481,10 @@ fn run_end_to_end(problem: AttentionProblem) {
 }
 
 fn upload_row(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     shape: [usize; 3],
     data: &HostData,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     let values: Vec<f32> = match &data.data {
         cubek_test_utils::HostDataVec::F32(v) => v.clone(),
         _ => unreachable!("reference produces fp32 rowwise tensors"),

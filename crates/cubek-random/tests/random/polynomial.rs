@@ -85,7 +85,7 @@ fn run_cos_sin_turns(turns: &[f32]) -> (Vec<f32>, Vec<f32>) {
     let cube_dim = CubeDim::new(&client, turns.len());
     let cubes = turns.len().div_ceil(cube_dim.num_elems() as usize) as u32;
 
-    kernel_cos_sin_turns::launch::<TestRuntime>(
+    kernel_cos_sin_turns::launch(
         &client,
         CubeCount::Static(cubes, 1, 1),
         cube_dim,
@@ -108,7 +108,7 @@ fn run_ln(inputs: &[f32]) -> Vec<f32> {
     let cube_dim = CubeDim::new(&client, inputs.len());
     let cubes = inputs.len().div_ceil(cube_dim.num_elems() as usize) as u32;
 
-    kernel_ln::launch::<TestRuntime>(
+    kernel_ln::launch(
         &client,
         CubeCount::Static(cubes, 1, 1),
         cube_dim,

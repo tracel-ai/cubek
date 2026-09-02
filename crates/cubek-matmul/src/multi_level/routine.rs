@@ -18,38 +18,35 @@ use crate::{
 /// The launch pipeline for matmuls with a batch matmul (might become legacy)
 pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprint> {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError>;
 
-    fn expand_blueprint<R: Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError>;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError>;
 
     fn num_stages() -> NumStages;
 
-    fn device_settings<R: Runtime>(
-        client: &ComputeClient<R>,
-        vector_sizes: MatmulVectorSizes,
-    ) -> DeviceSettings<R> {
+    fn device_settings(client: &ComputeClient, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
         // Sometimes the GPU doesn't support plane instructions and doesn't report the
         // plane size, but we can still execute algorithms that don't use plane instructions.
         //
@@ -69,8 +66,8 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -81,8 +78,8 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
 /// Validate a blueprint against a batch-matmul family `F`. Routines delegate here from
 /// their [`BatchMatmulRoutine::validate_blueprint`].
 #[allow(clippy::result_large_err)]
-pub fn batch_validate_blueprint<F, RC, R>(
-    client: &ComputeClient<R>,
+pub fn batch_validate_blueprint<F, RC>(
+    client: &ComputeClient,
     blueprint: &F::Blueprint,
     problem: &MatmulProblem,
     dtypes: &MatmulElems,
@@ -91,7 +88,6 @@ pub fn batch_validate_blueprint<F, RC, R>(
 where
     RC: RuntimeConfig,
     F: BatchMatmulFamily<RC>,
-    R: Runtime,
 {
     F::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)
 }
@@ -113,12 +109,12 @@ pub struct LaunchInfo<B: Blueprint> {
 }
 
 impl LaunchInfo<BatchMatmulBlueprint> {
-    pub fn new<R: Runtime>(
+    pub fn new(
         blueprint: BatchMatmulBlueprint,
         dtypes: MatmulElems,
         problem: &MatmulProblem,
         compute_resources: CubeDimResource,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
     ) -> Result<Self, MatmulSetupError> {
         let (cube_dim, cube_count_plan) =
             blueprint.cube_launch_info(compute_resources, problem, device_settings)?;

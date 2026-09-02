@@ -22,7 +22,7 @@ use cubek_attention::{
 const RANGE: f32 = 8.0;
 const RANGE_EPSILON: f32 = 1e-2;
 
-fn f32_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f32_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         f32::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),

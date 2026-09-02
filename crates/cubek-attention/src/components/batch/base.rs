@@ -27,14 +27,14 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     ///
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
-    unsafe fn launch_unchecked<AA: AttentionArgs, R: Runtime>(
-        client: &ComputeClient<R>,
+    unsafe fn launch_unchecked<AA: AttentionArgs>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<AA, R>,
-        output: OutputRuntimeArg<AA, R>,
-        cube_mapping: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<AA>,
+        output: OutputRuntimeArg<AA>,
+        cube_mapping: CubeMappingLaunch,
         dtypes: &AttentionElems,
         vector_sizes: &AttentionVectorSizes,
         attention_blueprint: Self::Blueprint,

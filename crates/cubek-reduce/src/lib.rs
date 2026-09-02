@@ -93,10 +93,10 @@ pub use routines::shared_sum::shared_sum;
 ///        println!("Output = {:?}", output_values); // Should print [1, 5].
 /// }
 /// ```
-pub fn reduce<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn reduce(
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
     axis: usize,
     strategy: ReduceStrategy,
     operation: ReduceOperationConfig,
@@ -114,7 +114,7 @@ pub fn reduce<R: Runtime>(
         },
     )?;
 
-    launch_reduce::<R>(client, input, output, axis, strategy, dtypes, operation)
+    launch_reduce(client, input, output, axis, strategy, dtypes, operation)
 }
 
 /// Reduce the given `axis` of `input`, writing the values into `values` and their indices
@@ -132,11 +132,11 @@ pub fn reduce<R: Runtime>(
 ///
 /// The plain [`reduce`] entrypoint is unaffected and still writes a single output.
 #[allow(clippy::too_many_arguments)]
-pub fn reduce_with_indices<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    values: TensorBinding<R>,
-    indices: TensorBinding<R>,
+pub fn reduce_with_indices(
+    client: &ComputeClient,
+    input: TensorBinding,
+    values: TensorBinding,
+    indices: TensorBinding,
     axis: usize,
     strategy: ReduceStrategy,
     operation: ReduceOperationConfig,
@@ -175,7 +175,7 @@ pub fn reduce_with_indices<R: Runtime>(
         });
     }
 
-    launch_reduce_with_indices::<R>(
+    launch_reduce_with_indices(
         client, input, values, indices, axis, strategy, dtypes, operation,
     )
 }

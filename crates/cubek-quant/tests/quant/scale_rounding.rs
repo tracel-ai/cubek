@@ -102,10 +102,10 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
 }
 
 fn f32_tensor(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
+    client: &cubecl::client::ComputeClient,
     data: &[f32],
     shape: cubecl::zspace::Shape,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let alloc =
         client.create_tensor_from_slice(f32::as_bytes(data), shape.clone(), size_of::<f32>());
     TensorHandle::new(alloc.memory, shape, alloc.strides, f32::elem_type_native())

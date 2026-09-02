@@ -10,7 +10,7 @@ mod matmul_plane_vecmat {
     use crate::harness::test_matmul_strategy;
 
     fn launch_simple_cyclic(
-        client: ComputeClient<TestRuntime>,
+        client: ComputeClient,
         problem: MatmulProblem,
         bp: BatchMatmulBlueprint,
     ) {
@@ -22,7 +22,7 @@ mod matmul_plane_vecmat {
     }
 
     fn launch_double_buffering_cyclic(
-        client: ComputeClient<TestRuntime>,
+        client: ComputeClient,
         problem: MatmulProblem,
         bp: BatchMatmulBlueprint,
     ) {

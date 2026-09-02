@@ -80,7 +80,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .build();
 
     // Shape and strides count values; the packing says how many share a stored word.
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -126,7 +126,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .vectorize(factor)
         .build();
 
-    dequantize::launch::<TestRuntime>(
+    dequantize::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),

@@ -43,7 +43,7 @@ struct DepthwiseBench {
     problem: DepthwiseProblem,
     strategy: DepthwiseStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
 }
 
@@ -52,11 +52,7 @@ fn dtype() -> ElemType {
     f32::elem_type_native()
 }
 
-fn uniform(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 4],
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn uniform(client: &ComputeClient, shape: [usize; 4], seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype())
         .uniform(seed, 0.0, 1.0)
@@ -64,7 +60,7 @@ fn uniform(
 }
 
 impl Benchmark for DepthwiseBench {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -76,7 +72,7 @@ impl Benchmark for DepthwiseBench {
 
     fn execute(&self, (input, weight): Self::Input) -> Result<(), String> {
         let problem = &self.problem;
-        let out: TensorHandle<TestRuntime> =
+        let out: TensorHandle =
             TensorHandle::empty(&self.client, problem.out_shape().to_vec(), dtype());
 
         let padding = problem.padding();
@@ -86,7 +82,7 @@ impl Benchmark for DepthwiseBench {
             dilation: [problem.dilation; 2],
         };
 
-        launch_depthwise::<TestRuntime>(
+        launch_depthwise(
             &self.client,
             DepthwiseTensors {
                 input: input.binding(),
@@ -107,12 +103,7 @@ impl Benchmark for DepthwiseBench {
 
     fn name(&self) -> String {
         let client = <TestRuntime as Runtime>::client(&self.device);
-        format!(
-            "{}-depthwise-{}",
-            <TestRuntime as Runtime>::name(&client),
-            dtype()
-        )
-        .to_lowercase()
+        format!("{}-depthwise-{}", client.name(), dtype()).to_lowercase()
     }
 
     fn sync(&self) {

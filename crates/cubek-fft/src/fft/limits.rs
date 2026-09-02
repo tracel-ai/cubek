@@ -10,14 +10,14 @@ use cubecl::prelude::*;
 /// the imaginary part), so the byte budget is
 /// `2 * size_of::<f32>() * n_fft <= hardware.max_shared_memory_size`.
 /// We floor to a power of two because the butterfly requires it.
-pub(crate) fn max_shared_fft_n<R: Runtime>(client: &ComputeClient<R>) -> usize {
+pub(crate) fn max_shared_fft_n(client: &ComputeClient) -> usize {
     let max_smem = client.properties().hardware.max_shared_memory_size;
     let max_elems = max_smem / (2 * core::mem::size_of::<f32>());
     floor_power_of_two(max_elems)
 }
 
 /// Hardware-reported maximum number of units (threads) per cube.
-pub(crate) fn max_units_per_cube<R: Runtime>(client: &ComputeClient<R>) -> usize {
+pub(crate) fn max_units_per_cube(client: &ComputeClient) -> usize {
     client.properties().hardware.max_units_per_cube as usize
 }
 

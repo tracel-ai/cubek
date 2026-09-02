@@ -41,14 +41,14 @@ struct IntoContiguousBench {
     shape: Vec<usize>,
     dims: Vec<(usize, usize)>,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtype: ElemType,
     samples: usize,
 }
 
 impl Benchmark for IntoContiguousBench {
-    type Input = TensorHandle<TestRuntime>;
-    type Output = TensorHandle<TestRuntime>;
+    type Input = TensorHandle;
+    type Output = TensorHandle;
 
     fn prepare(&self) -> Self::Input {
         let mut handle = TensorHandle::empty(&self.client, self.shape.clone(), self.dtype);
@@ -58,7 +58,7 @@ impl Benchmark for IntoContiguousBench {
         handle
     }
 
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
+    fn execute(&self, input: Self::Input) -> Result<TensorHandle, String> {
         Ok(cubecl::std::tensor::into_contiguous(
             &self.client,
             input.binding(),

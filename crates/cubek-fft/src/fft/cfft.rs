@@ -38,11 +38,11 @@ use crate::{
 
 /// Pre-allocated input/output buffers for [`cfft_launch_any_size`]. All four
 /// tensors must be contiguous and share the same shape.
-pub struct CfftBindings<R: Runtime> {
-    pub input_re: TensorBinding<R>,
-    pub input_im: TensorBinding<R>,
-    pub output_re: TensorBinding<R>,
-    pub output_im: TensorBinding<R>,
+pub struct CfftBindings {
+    pub input_re: TensorBinding,
+    pub input_im: TensorBinding,
+    pub output_re: TensorBinding,
+    pub output_im: TensorBinding,
 }
 
 #[derive(Clone, Copy)]
@@ -86,12 +86,12 @@ pub(crate) fn factor_four_step(n_fft: usize, max_shared_n_fft: usize) -> (usize,
 /// Both directions are unnormalized, so `Inverse` after `Forward` scales by
 /// `n` (the length along `dim`); divide by `n` yourself if you need it.
 pub fn cfft<R: Runtime>(
-    input_re: TensorHandle<R>,
-    input_im: TensorHandle<R>,
+    input_re: TensorHandle,
+    input_im: TensorHandle,
     dim: usize,
     dtype: ElemType,
     fft_mode: FftMode,
-) -> (TensorHandle<R>, TensorHandle<R>) {
+) -> (TensorHandle, TensorHandle) {
     assert!(
         input_re.shape() == input_im.shape(),
         "real and imaginary inputs must have the same shape, got {:?} and {:?}",
@@ -117,7 +117,7 @@ pub fn cfft<R: Runtime>(
     let output_im =
         TensorHandle::new_contiguous(shape.clone(), client.empty(num_elems * dtype.size()), dtype);
 
-    cfft_launch_any_size::<R>(
+    cfft_launch_any_size(
         &client,
         CfftBindings {
             input_re: input_re.binding(),
@@ -139,9 +139,9 @@ pub fn cfft<R: Runtime>(
 /// caller may safely pass the same buffer for input and output (aliasing is
 /// allowed for the small path; the large path does its own scratch
 /// management).
-pub fn cfft_launch_any_size<R: Runtime>(
-    client: &ComputeClient<R>,
-    bindings: CfftBindings<R>,
+pub fn cfft_launch_any_size(
+    client: &ComputeClient,
+    bindings: CfftBindings,
     dim: usize,
     dtype: ElemType,
     fft_mode: FftMode,
@@ -168,15 +168,15 @@ pub fn cfft_launch_any_size<R: Runtime>(
     };
 
     if n_fft <= max_shared_fft_n(client) {
-        cfft_shared_launch::<R>(client, bindings, plan)
+        cfft_shared_launch(client, bindings, plan)
     } else {
-        cfft_four_step_launch::<R>(client, bindings, dtype, plan)
+        cfft_four_step_launch(client, bindings, dtype, plan)
     }
 }
 
-fn cfft_shared_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    bindings: CfftBindings<R>,
+fn cfft_shared_launch(
+    client: &ComputeClient,
+    bindings: CfftBindings,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
     let log2_n = plan.n_fft.trailing_zeros() as usize;
@@ -185,7 +185,7 @@ fn cfft_shared_launch<R: Runtime>(
     let cube_count =
         cubecl::calculate_cube_count_elemwise(client, plan.count, CubeDim::new_single());
 
-    cfft_shared_kernel::launch::<f32, R>(
+    cfft_shared_kernel::launch::<f32>(
         client,
         cube_count,
         cube_dim,
@@ -269,9 +269,9 @@ fn cfft_shared_kernel<F: Float>(
 /// four-step pipeline the output has `X[k1 + k2 * N1]` at flat index
 /// `k2 * N1 + k1` (natural linear order over `k`). Caller's `output_re` /
 /// `output_im` tensors receive this natural order.
-fn cfft_four_step_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    bindings: CfftBindings<R>,
+fn cfft_four_step_launch(
+    client: &ComputeClient,
+    bindings: CfftBindings,
     dtype: ElemType,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
@@ -283,12 +283,12 @@ fn cfft_four_step_launch<R: Runtime>(
     // scratch and output; the transpose at the end lands in `output`.
     let scratch_shape: Vec<usize> = bindings.input_re.shape.to_vec();
     let elems: usize = scratch_shape.iter().product();
-    let scratch_re = TensorHandle::<R>::new_contiguous(
+    let scratch_re = TensorHandle::new_contiguous(
         scratch_shape.clone(),
         client.empty(elems * dtype.size()),
         dtype,
     );
-    let scratch_im = TensorHandle::<R>::new_contiguous(
+    let scratch_im = TensorHandle::new_contiguous(
         scratch_shape.clone(),
         client.empty(elems * dtype.size()),
         dtype,
@@ -304,7 +304,7 @@ fn cfft_four_step_launch<R: Runtime>(
         let cube_count =
             cubecl::calculate_cube_count_elemwise(client, plan.count * n2, CubeDim::new_single());
 
-        cfft_four_step_radix1_kernel::launch::<f32, R>(
+        cfft_four_step_radix1_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,
@@ -331,7 +331,7 @@ fn cfft_four_step_launch<R: Runtime>(
         let cube_count =
             cubecl::calculate_cube_count_elemwise(client, plan.count * n1, CubeDim::new_single());
 
-        cfft_four_step_radix2_kernel::launch::<f32, R>(
+        cfft_four_step_radix2_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,
@@ -353,7 +353,7 @@ fn cfft_four_step_launch<R: Runtime>(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, total, cube_dim);
 
-        cfft_four_step_transpose_kernel::launch::<f32, R>(
+        cfft_four_step_transpose_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,

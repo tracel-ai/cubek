@@ -10,7 +10,7 @@ use super::{f32_elem_type, i32_elem_type, make_random_f32_host, make_zero_handle
 use crate::definition::{PoolForwardProblem, PoolMode};
 use crate::eval::cpu_reference::{cpu_reference_pool, decode_index, geometry::PoolGeometry};
 use crate::{pool2d, pool2d_with_indices};
-use cubecl::{TestRuntime, client::ComputeClient};
+use cubecl::client::ComputeClient;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
@@ -50,7 +50,7 @@ pub(crate) fn row_major_strides_vec(shape: &[usize]) -> Vec<usize> {
 }
 
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolForwardProblem<2>,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -69,7 +69,7 @@ pub fn strategy_result(
 
             let indices_handle = make_zero_handle(&client, output_shape.to_vec(), i32_elem_type());
 
-            pool2d_with_indices::<TestRuntime>(
+            pool2d_with_indices(
                 c,
                 input_handle.clone().binding(),
                 output_handle.clone().binding(),
@@ -79,7 +79,7 @@ pub fn strategy_result(
             )
             .into()
         } else {
-            pool2d::<TestRuntime>(
+            pool2d(
                 c,
                 input_handle.clone().binding(),
                 output_handle.clone().binding(),
@@ -101,7 +101,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     problem: PoolForwardProblem<2>,
     seed: u64,
     progress: Option<&Progress>,

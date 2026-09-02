@@ -20,11 +20,11 @@ use crate::{
 };
 
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref(
+    client: &ComputeClient,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     let rank = lhs.shape().len();
@@ -43,13 +43,13 @@ pub fn launch_ref<R: Runtime>(
     // we swap the dimensions to achieve memory-coalescing:
     // consecutive elements of a column in the original rhs tensor will now be stored
     // consecutively in memory, which allows to fetch them with fewer memory instructions
-    let correct_rhs_layout = |mut rhs: InputBinding<R>| {
+    let correct_rhs_layout = |mut rhs: InputBinding| {
         rhs.swap_dims(dim1, dim2);
         let mut rhs = rhs.into_contiguous(client)?;
 
         rhs.swap_dims(dim1, dim2);
 
-        let returned: Result<InputBinding<R>, LaunchError> = Ok(rhs);
+        let returned: Result<InputBinding, LaunchError> = Ok(rhs);
         returned
     };
 
@@ -141,7 +141,7 @@ pub fn launch_ref<R: Runtime>(
         dtypes,
     );
 
-    NaiveRoutine::launch::<TensorArgs, R>(
+    NaiveRoutine::launch::<TensorArgs>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

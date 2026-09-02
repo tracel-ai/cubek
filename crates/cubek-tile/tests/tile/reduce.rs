@@ -135,7 +135,7 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    reduce_matmul_kernel::launch::<TestRuntime>(
+    reduce_matmul_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -392,7 +392,7 @@ fn run_reduce_with_vw(
 
     match in_vw {
         1 => {
-            reduce_kernel::launch::<TestRuntime>(
+            reduce_kernel::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -407,7 +407,7 @@ fn run_reduce_with_vw(
             );
         }
         4 => {
-            reduce_kernel_v4::launch::<TestRuntime>(
+            reduce_kernel_v4::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -681,7 +681,7 @@ fn run_reduce_checked(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    reduce_kernel::launch::<TestRuntime>(
+    reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -844,7 +844,7 @@ fn check_procedural_reduce(stage: StagePlan) {
         .zeros()
         .generate_without_host_data();
 
-    procedural_reduce_kernel::launch::<TestRuntime>(
+    procedural_reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1197,7 +1197,7 @@ fn resident_max_over_lane_split_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1266,7 +1266,7 @@ fn resident_max_over_lane_group_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

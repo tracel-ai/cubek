@@ -1,7 +1,7 @@
 mod utils;
 
 mod unit {
-    use cubecl::{Runtime, client::ComputeClient};
+    use cubecl::client::ComputeClient;
     use cubek_attention::{
         forward::definition::{
             AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize, AttentionVectorSizes,
@@ -19,10 +19,7 @@ mod unit {
         32
     }
 
-    fn tile_size<R: Runtime>(
-        client: &ComputeClient<R>,
-        global_types: AttentionGlobalTypes,
-    ) -> AttentionTileSize {
+    fn tile_size(client: &ComputeClient, global_types: AttentionGlobalTypes) -> AttentionTileSize {
         AttentionTileSize::from_max_vector_sizes(&AttentionVectorSizes::new_max(
             client,
             &global_types,
@@ -34,7 +31,7 @@ mod unit {
         use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+        fn global_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 half::f16::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),
@@ -50,7 +47,7 @@ mod unit {
         use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+        fn global_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 f32::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),
@@ -63,7 +60,7 @@ mod unit {
 }
 
 mod blackbox_accelerated {
-    use cubecl::{Runtime, client::ComputeClient};
+    use cubecl::client::ComputeClient;
     use cubek_attention::{
         forward::definition::{AttentionBlueprint, AttentionGlobalTypes, AttentionTileSize},
         forward::launch::{BlueprintStrategy, Strategy},
@@ -81,8 +78,8 @@ mod blackbox_accelerated {
         }))
     }
 
-    fn tile_size<R: Runtime>(
-        _client: &ComputeClient<R>,
+    fn tile_size(
+        _client: &ComputeClient,
         _global_types: AttentionGlobalTypes,
     ) -> AttentionTileSize {
         #[cfg(target_os = "macos")]
@@ -115,7 +112,7 @@ mod blackbox_accelerated {
         use cubecl::frontend::Scalar;
         use cubek_attention::forward::definition::AttentionGlobalTypes;
 
-        fn global_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+        fn global_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
             AttentionGlobalTypes::from_single_float_dtype(
                 half::f16::elem_type_native(),
                 AttentionGlobalTypes::mask_dtype(client),

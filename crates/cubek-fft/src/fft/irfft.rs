@@ -17,11 +17,11 @@ use crate::{
 
 /// Inverse Real-valued Fast Fourier Transform.
 pub fn irfft<R: Runtime>(
-    spectrum_re: TensorHandle<R>,
-    spectrum_im: TensorHandle<R>,
+    spectrum_re: TensorHandle,
+    spectrum_im: TensorHandle,
     dim: usize,
     dtype: ElemType,
-) -> TensorHandle<R> {
+) -> TensorHandle {
     assert!(
         spectrum_re.shape() == spectrum_im.shape(),
         "Spectrum's real and imaginary parts should be the same shape, got {:?} and {:?}",
@@ -40,7 +40,7 @@ pub fn irfft<R: Runtime>(
         dtype,
     );
 
-    irfft_launch::<R>(
+    irfft_launch(
         &client,
         spectrum_re.binding(),
         spectrum_im.binding(),
@@ -54,16 +54,16 @@ pub fn irfft<R: Runtime>(
 }
 
 /// Launches the IRFFT kernel.
-pub fn irfft_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
-    signal: TensorBinding<R>,
+pub fn irfft_launch(
+    client: &ComputeClient,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
+    signal: TensorBinding,
     dim: usize,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let spec_bins = spectrum_re.shape[dim];
-    irfft_launch_padded::<R>(
+    irfft_launch_padded(
         client,
         spectrum_re,
         spectrum_im,
@@ -75,11 +75,11 @@ pub fn irfft_launch<R: Runtime>(
 }
 
 /// Launches the IRFFT kernel while treating bins at `spec_bins..n_freq` as zero.
-pub fn irfft_launch_padded<R: Runtime>(
-    client: &ComputeClient<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
-    signal: TensorBinding<R>,
+pub fn irfft_launch_padded(
+    client: &ComputeClient,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
+    signal: TensorBinding,
     dim: usize,
     spec_bins: usize,
     dtype: ElemType,
@@ -117,7 +117,7 @@ pub fn irfft_launch_padded<R: Runtime>(
     }
 
     if n_fft > max_shared_fft_n(client) {
-        return irfft_large_launch::<R>(
+        return irfft_large_launch(
             client,
             spectrum_re,
             spectrum_im,
@@ -134,7 +134,7 @@ pub fn irfft_launch_padded<R: Runtime>(
     let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
     let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
 
-    irfft_kernel::launch::<f32, R>(
+    irfft_kernel::launch::<f32>(
         client,
         cube_count,
         cube_dim,

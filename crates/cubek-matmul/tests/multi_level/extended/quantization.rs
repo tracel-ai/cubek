@@ -480,7 +480,7 @@ pub fn test_matmul_quantized_rhs_gemv() {
 }
 
 /// Helper to convert TestTensor (which may be marked as quantized) to InputBinding.
-fn test_tensor_to_binding(tensor: TestTensor) -> InputBinding<TestRuntime> {
+fn test_tensor_to_binding(tensor: TestTensor) -> InputBinding {
     match tensor.quantization {
         Some(q) => InputBinding::Quantized {
             data: tensor.handle.clone().binding(),

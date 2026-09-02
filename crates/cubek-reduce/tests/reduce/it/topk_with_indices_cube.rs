@@ -31,7 +31,7 @@ use crate::reduce::it::test_case::TestCase;
 /// tests skip that runtime so the pre-existing bug does not fail the CPU CI job.
 fn cpu_runtime() -> bool {
     let client = TestRuntime::client(&Default::default());
-    <TestRuntime as Runtime>::name(&client) == "cpu"
+    client.name() == "cpu"
 }
 
 fn cube_strategy(use_planes: bool) -> ReduceStrategy {

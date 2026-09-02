@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
@@ -65,22 +65,22 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
 
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &ComputeClient,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <DoubleUnitBatch<RC>>::launch_unchecked::<MA, R>(
+                <DoubleUnitBatch<RC>>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -99,14 +99,14 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &ComputeClient,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<DoubleUnitBatch<RC>, RC, R>(
+        batch_validate_blueprint::<DoubleUnitBatch<RC>, RC>(
             client,
             blueprint,
             problem,
@@ -119,9 +119,9 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
         DoubleUnitBatch::<RC>::num_stages()
     }
 
-    fn expand_blueprint<R: Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -148,9 +148,9 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
         Ok(ExpandInfo { blueprint, dtypes })
     }
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
@@ -178,10 +178,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
         )
     }
 
-    fn device_settings<R: Runtime>(
-        client: &ComputeClient<R>,
-        vector_sizes: MatmulVectorSizes,
-    ) -> DeviceSettings<R> {
+    fn device_settings(client: &ComputeClient, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
         let plane_dim = match client.properties().hardware.plane_size_min {
             0 => 32,
             plane_dim => plane_dim,

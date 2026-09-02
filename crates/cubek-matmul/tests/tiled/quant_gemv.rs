@@ -27,11 +27,11 @@ fn pack(values: &[i32], bits: usize) -> Vec<u32> {
 /// A contiguous `[rows, cols]` handle over `data`. For the weight the shape counts *values*
 /// while the buffer holds packed words, which is what the launch's `field` reconciles.
 fn handle<E: Numeric + bytemuck::Pod>(
-    client: &ComputeClient<TestRuntime>,
+    client: &ComputeClient,
     data: Vec<E>,
     shape: [usize; 2],
-) -> TensorHandle<TestRuntime> {
-    TensorHandle::<TestRuntime>::new_contiguous(
+) -> TensorHandle {
+    TensorHandle::new_contiguous(
         shape.to_vec(),
         client.create(Bytes::from_elems(data)),
         E::elem_type_native(),
@@ -69,12 +69,12 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         field,
         block,
     };
-    launch_ref::<TestRuntime>(
+    launch_ref(
         &client,
         QuantGemvBindings {
             x: handle(&client, x.clone(), [rows, d_in]).binding(),
             // The shape counts values; the buffer holds `d_out · d_in / factor` words.
-            weights: TensorHandle::<TestRuntime>::new_contiguous(
+            weights: TensorHandle::new_contiguous(
                 vec![d_out, d_in],
                 client.create(Bytes::from_elems(pack(&w, field.size_bits()))),
                 u32::elem_type_native(),
@@ -171,11 +171,11 @@ fn a_second_scale_level_is_one_more_binding() {
         field,
         block,
     };
-    launch_ref::<TestRuntime>(
+    launch_ref(
         &client,
         QuantGemvBindings {
             x: handle(&client, x.clone(), [rows, d_in]).binding(),
-            weights: TensorHandle::<TestRuntime>::new_contiguous(
+            weights: TensorHandle::new_contiguous(
                 vec![d_out, d_in],
                 client.create(Bytes::from_elems(pack(&w, field.size_bits()))),
                 u32::elem_type_native(),

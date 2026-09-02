@@ -10,11 +10,7 @@ mod matmul_tma {
 
         use crate::harness::test_matmul_strategy;
 
-        fn launch_simple_tma(
-            c: ComputeClient<TestRuntime>,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
+        fn launch_simple_tma(c: ComputeClient, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,
@@ -22,7 +18,7 @@ mod matmul_tma {
             );
         }
         fn launch_double_buffering_tma(
-            c: ComputeClient<TestRuntime>,
+            c: ComputeClient,
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
@@ -32,11 +28,7 @@ mod matmul_tma {
                 MultiLevel::DoubleTmaCmma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_specialized_tma(
-            c: ComputeClient<TestRuntime>,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
+        fn launch_specialized_tma(c: ComputeClient, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,
@@ -56,11 +48,7 @@ mod matmul_tma {
 
         use crate::harness::test_matmul_strategy;
 
-        fn launch_simple_tma(
-            c: ComputeClient<TestRuntime>,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
+        fn launch_simple_tma(c: ComputeClient, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,
@@ -68,7 +56,7 @@ mod matmul_tma {
             );
         }
         fn launch_double_buffering_tma(
-            c: ComputeClient<TestRuntime>,
+            c: ComputeClient,
             p: MatmulProblem,
             bp: BatchMatmulBlueprint,
         ) {
@@ -78,11 +66,7 @@ mod matmul_tma {
                 MultiLevel::DoubleTmaMma(BlueprintStrategy::Forced(bp)).into(),
             );
         }
-        fn launch_specialized_tma(
-            c: ComputeClient<TestRuntime>,
-            p: MatmulProblem,
-            bp: BatchMatmulBlueprint,
-        ) {
+        fn launch_specialized_tma(c: ComputeClient, p: MatmulProblem, bp: BatchMatmulBlueprint) {
             test_matmul_strategy(
                 c,
                 p,

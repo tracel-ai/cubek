@@ -57,24 +57,20 @@ struct UnaryBench<E> {
     shape: Vec<usize>,
     vectorization: VectorSize,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _e: PhantomData<E>,
 }
 
 impl<E: Float> Benchmark for UnaryBench<E> {
-    type Input = (
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-    );
+    type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
         let client = <TestRuntime as Runtime>::client(&self.device);
         let storage = E::elem_type_native();
 
-        let make = |seed: u64| -> TensorHandle<TestRuntime> {
+        let make = |seed: u64| -> TensorHandle {
             TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
                 .dtype(storage)
                 .uniform(seed, 0., 1.)
@@ -95,7 +91,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
         let cube_dim = CubeDim::new(&self.client, working_units);
         let cube_count = calculate_cube_count_elemwise(&self.client, working_units, cube_dim);
 
-        execute::launch::<E, TestRuntime>(
+        execute::launch::<E>(
             &self.client,
             cube_count,
             cube_dim,
@@ -116,7 +112,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
 
         format!(
             "unary-{}-{}-{:?}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             E::elem_type_native(),
             self.vectorization,
         )

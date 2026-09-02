@@ -20,7 +20,6 @@
 //! bandwidth-bound, and both of those are what let it reach the bandwidth.
 
 use cubecl::{
-    Runtime,
     prelude::*,
     server::LaunchError,
     zspace::{Shape, Strides},
@@ -236,15 +235,15 @@ impl DepthwiseTiling {
     }
 }
 
-/// The three tensors this routine moves, named because they are all `TensorBinding<R>` and a
+/// The three tensors this routine moves, named because they are all `TensorBinding` and a
 /// positional triple lets two of them be swapped without a word from the compiler.
 ///
 /// NHWC maps, and Burn's `[out_channels, kh, kw, in_channels / groups]` filter — whose trailing
 /// axis is 1 for a depthwise convolution.
-pub struct DepthwiseTensors<R: Runtime> {
-    pub input: TensorBinding<R>,
-    pub weight: TensorBinding<R>,
-    pub out: TensorBinding<R>,
+pub struct DepthwiseTensors {
+    pub input: TensorBinding,
+    pub weight: TensorBinding,
+    pub out: TensorBinding,
 }
 
 /// Which tiling to run a problem under.
@@ -267,9 +266,9 @@ pub enum DepthwiseStrategy {
 /// tuner reads that as "this candidate does not apply here", which is exactly what it is — and
 /// [`ConvSetupError::InvalidConfig`] when a fixed tiling is degenerate. Returns
 /// [`ConvSetupError::Unknown`] when re-laying the filter cannot be launched.
-pub fn launch_depthwise<R: Runtime>(
-    client: &ComputeClient<R>,
-    tensors: DepthwiseTensors<R>,
+pub fn launch_depthwise(
+    client: &ComputeClient,
+    tensors: DepthwiseTensors,
     args: ConvolutionArgs<2>,
     groups: usize,
     dtype: ElemType,
@@ -351,7 +350,7 @@ pub fn launch_depthwise<R: Runtime>(
         guard(ragged_c),
     ]);
 
-    depthwise_kernel::launch::<R>(
+    depthwise_kernel::launch(
         client,
         space.cube_count(),
         space.cube_dim(client),
@@ -387,8 +386,8 @@ impl Geometry {
     ///
     /// [`ConvSetupError::NotDepthwise`] when the convolution is not one filter per channel. The
     /// tuner reads that as "this candidate does not apply here", which is exactly what it is.
-    fn new<R: Runtime>(
-        tensors: &DepthwiseTensors<R>,
+    fn new(
+        tensors: &DepthwiseTensors,
         args: ConvolutionArgs<2>,
         groups: usize,
     ) -> Result<Self, ConvSetupError> {
@@ -437,12 +436,12 @@ impl Geometry {
     /// has to be the innermost dim for a line to cover a cell's worth of filter. Permuting the
     /// binding's existing strides re-presents that logical tensor without assuming anything about
     /// its storage; `into_contiguous` is what makes the new layout physical.
-    fn channels_innermost<R: Runtime>(
+    fn channels_innermost(
         &self,
-        client: &ComputeClient<R>,
-        weight: TensorBinding<R>,
+        client: &ComputeClient,
+        weight: TensorBinding,
         dtype: ElemType,
-    ) -> Result<TensorBinding<R>, LaunchError> {
+    ) -> Result<TensorBinding, LaunchError> {
         let mut permuted = weight;
         let channel_stride = permuted.strides[0];
         let row_stride = permuted.strides[1];
@@ -470,7 +469,7 @@ impl Geometry {
 /// The moment a plane reduction appears in this kernel that stops being true: wgpu reports a
 /// range on AMD RDNA (32/64) and Intel (8/32), and a reduction sized to the max would cover a
 /// fraction of its row on a device honouring the min.
-fn plane_lanes<R: Runtime>(client: &ComputeClient<R>) -> usize {
+fn plane_lanes(client: &ComputeClient) -> usize {
     client.properties().hardware.plane_size_max as usize
 }
 
@@ -485,12 +484,12 @@ fn guard(ragged: bool) -> Option<Boundary> {
 /// Every gate below the request is a fact about the buffers rather than a preference: the channel
 /// must be the contiguous dim, and the width must divide the channel count, since a partial line
 /// has no cell to be.
-fn line_width<R: Runtime>(
-    client: &ComputeClient<R>,
+fn line_width(
+    client: &ComputeClient,
     channels: usize,
     dtype: ElemType,
     requested: usize,
-    operands: &[&TensorBinding<R>],
+    operands: &[&TensorBinding],
 ) -> usize {
     if !operands.iter().all(|b| b.strides.last() == Some(&1)) {
         return 1;

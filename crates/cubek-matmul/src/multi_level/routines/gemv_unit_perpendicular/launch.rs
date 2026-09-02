@@ -16,9 +16,9 @@ use crate::{
     routine::BlueprintStrategy,
 };
 
-fn vector_size_for<R: Runtime>(
-    client: &ComputeClient<R>,
-    binding: &InputBinding<R>,
+fn vector_size_for(
+    client: &ComputeClient,
+    binding: &InputBinding,
     default_size: usize,
     plane_size: usize,
     dim: usize,
@@ -36,11 +36,11 @@ fn vector_size_for<R: Runtime>(
 }
 
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref(
+    client: &ComputeClient,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     strategy: &BlueprintStrategy<(), GemvUnitPerpendicularRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -147,7 +147,7 @@ pub fn launch_ref<R: Runtime>(
             dtypes,
         );
 
-    GemvUnitPerpendicularRoutine::launch::<TensorArgs, R>(
+    GemvUnitPerpendicularRoutine::launch::<TensorArgs>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

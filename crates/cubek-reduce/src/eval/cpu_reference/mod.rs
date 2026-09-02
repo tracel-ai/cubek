@@ -31,7 +31,6 @@ pub use sum::reference_sum;
 pub use topk::reference_topk;
 
 use cubecl::{
-    TestRuntime,
     client::ComputeClient,
     prelude::*,
     zspace::{Shape, Strides},
@@ -49,7 +48,7 @@ use crate::{
 /// Run `strategy` on a seeded f32 reduce problem and return its output as a
 /// [`HostData`].
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     shape: Vec<usize>,
     axis: usize,
     strategy: ReduceStrategy,
@@ -78,7 +77,7 @@ pub fn strategy_result(
     };
 
     let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-        reduce::<TestRuntime>(
+        reduce(
             c,
             input_handle.clone().binding(),
             output_handle.clone().binding(),
@@ -107,7 +106,7 @@ pub fn strategy_result(
 /// validate the fused path too: running the plain `reduce` here instead would
 /// silently check a kernel that is not the one being measured.
 pub fn strategy_result_with_indices(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     shape: Vec<usize>,
     axis: usize,
     strategy: ReduceStrategy,
@@ -144,7 +143,7 @@ pub fn strategy_result_with_indices(
         &client,
         &[&values_handle.handle, &indices_handle.handle],
         |c| {
-            reduce_with_indices::<TestRuntime>(
+            reduce_with_indices(
                 c,
                 input_handle.clone().binding(),
                 values_handle.clone().binding(),
@@ -172,7 +171,7 @@ pub fn strategy_result_with_indices(
 /// inputs, run the matching naive reduce reference, return the result as a
 /// [`HostData`].
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     shape: Vec<usize>,
     axis: usize,
     config: ReduceOperationConfig,

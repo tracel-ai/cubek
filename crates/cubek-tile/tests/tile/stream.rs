@@ -79,7 +79,7 @@ fn copy_one_run<E: Numeric>(
 }
 
 struct Harness {
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     dtype: ElemType,
     space: Space,
 }
@@ -97,21 +97,21 @@ impl Harness {
         }
     }
 
-    fn source(&self) -> (TensorHandle<TestRuntime>, HostData) {
+    fn source(&self) -> (TensorHandle, HostData) {
         TestInput::builder(self.client.clone(), shape![ROWS, COLS])
             .dtype(self.dtype)
             .arange()
             .generate_with_f32_host_data()
     }
 
-    fn destination(&self) -> TensorHandle<TestRuntime> {
+    fn destination(&self) -> TensorHandle {
         TestInput::builder(self.client.clone(), shape![ROWS, COLS])
             .dtype(self.dtype)
             .zeros()
             .generate_without_host_data()
     }
 
-    fn read(&self, output: TensorHandle<TestRuntime>) -> HostData {
+    fn read(&self, output: TensorHandle) -> HostData {
         HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
     }
 }
@@ -142,7 +142,7 @@ fn runs_cover_the_grid(cubes: usize) {
     let dst = h.destination();
     let (src_arg, dst_arg) = tile_args!(h, src, dst);
 
-    copy_run::launch::<TestRuntime>(
+    copy_run::launch(
         &h.client,
         CubeCount::Static(cubes as u32, 1, 1),
         h.space.cube_dim(&h.client),
@@ -190,7 +190,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
     // Regions 3 and 4 of the row-major walk: the second half of row band 1, and the first half of
     // row band 2. A rectangle cannot name that pair either.
     let (start, steps) = (3usize, 2usize);
-    copy_one_run::launch::<TestRuntime>(
+    copy_one_run::launch(
         &h.client,
         CubeCount::Static(1, 1, 1),
         h.space.cube_dim(&h.client),
@@ -293,7 +293,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> Ho
         .build()
         .with_instruction(Instruction::registers(16));
 
-    stream_matmul::launch::<TestRuntime>(
+    stream_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -476,7 +476,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .resolve_lanes(plane_size)
             .with_instruction(Instruction::registers(16));
 
-        stream_matmul::launch::<TestRuntime>(
+        stream_matmul::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),

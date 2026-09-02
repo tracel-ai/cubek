@@ -77,7 +77,7 @@ impl Layout for OutLayout {
     }
 }
 
-impl<R: Runtime> OutLayoutLaunch<R> {
+impl OutLayoutLaunch {
     pub fn from_args(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         match problem.operation {
             ConvolutionOperation::Forward => Self::from_args_fprop(problem, config),

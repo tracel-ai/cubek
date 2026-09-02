@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, Runtime, client::ComputeClient, flex32, prelude::Scalar, tf32};
+use cubecl::{CubeDim, client::ComputeClient, flex32, prelude::Scalar, tf32};
 use cubek_std::{
     MatrixLayout,
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
@@ -86,11 +86,7 @@ impl Blueprint for BatchMatmulBlueprint {
 }
 
 /// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
-pub fn adjust_dtypes<R: Runtime>(
-    client: &ComputeClient<R>,
-    dtypes: &mut MatmulElems,
-    requires_accelerator: bool,
-) {
+pub fn adjust_dtypes(client: &ComputeClient, dtypes: &mut MatmulElems, requires_accelerator: bool) {
     let f32_dtype = f32::elem_type_native();
     let flex_dtype = flex32::elem_type_native();
     let tf32_dtype = tf32::elem_type_native();
@@ -145,11 +141,11 @@ impl BatchMatmulBlueprint {
         }
     }
 
-    pub fn cube_launch_info<R: Runtime>(
+    pub fn cube_launch_info(
         &self,
         cubedim_resource: CubeDimResource,
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
     ) -> Result<(CubeDim, CubeCountPlan), MatmulSetupError> {
         let plane_dim = device_settings.plane_dim;
         let cube_dim = cubedim_resource.to_cube_dim(plane_dim)?;

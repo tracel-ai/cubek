@@ -506,9 +506,9 @@ fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
 
 fn launch_ref<E: Float>(
     strategy: CopyStrategyEnum,
-    client: &ComputeClient<TestRuntime>,
-    input: TensorBinding<TestRuntime>,
-    output: TensorBinding<TestRuntime>,
+    client: &ComputeClient,
+    input: TensorBinding,
+    output: TensorBinding,
     smem_size: usize,
     double_buffering: bool,
 ) {
@@ -527,7 +527,7 @@ fn launch_ref<E: Float>(
     unsafe {
         match strategy {
             CopyStrategyEnum::DummyCopy => {
-                memcpy_test::launch_unchecked::<E, DummyCopy, DummyCompute, TestRuntime>(
+                memcpy_test::launch_unchecked::<E, DummyCopy, DummyCompute>(
                     client,
                     cube_count,
                     cube_dim,
@@ -538,7 +538,7 @@ fn launch_ref<E: Float>(
                 )
             }
             CopyStrategyEnum::CoalescedCopy => {
-                memcpy_test::launch_unchecked::<E, CoalescedCopy, DummyCompute, TestRuntime>(
+                memcpy_test::launch_unchecked::<E, CoalescedCopy, DummyCompute>(
                     client,
                     cube_count,
                     cube_dim,
@@ -549,12 +549,7 @@ fn launch_ref<E: Float>(
                 )
             }
             CopyStrategyEnum::MemcpyAsyncSingleSliceDuplicatedAll => {
-                memcpy_test::launch_unchecked::<
-                    E,
-                    MemcpyAsyncSingleSliceDuplicatedAll,
-                    DummyCompute,
-                    TestRuntime,
-                >(
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSingleSliceDuplicatedAll, DummyCompute>(
                     client,
                     cube_count,
                     cube_dim,
@@ -564,26 +559,22 @@ fn launch_ref<E: Float>(
                     config,
                 )
             }
-            CopyStrategyEnum::MemcpyAsyncSingleSliceElected => memcpy_test::launch_unchecked::<
-                E,
-                MemcpyAsyncSingleSliceElected,
-                DummyCompute,
-                TestRuntime,
-            >(
-                client,
-                cube_count,
-                cube_dim,
-                1,
-                input.into_tensor_arg(),
-                output.into_tensor_arg(),
-                config,
-            ),
+            CopyStrategyEnum::MemcpyAsyncSingleSliceElected => {
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSingleSliceElected, DummyCompute>(
+                    client,
+                    cube_count,
+                    cube_dim,
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
+                    config,
+                )
+            }
             CopyStrategyEnum::MemcpyAsyncSingleSliceElectedCooperative => {
                 memcpy_test::launch_unchecked::<
                     E,
                     MemcpyAsyncSingleSliceElectedCooperative,
                     DummyCompute,
-                    TestRuntime,
                 >(
                     client,
                     cube_count,
@@ -595,12 +586,7 @@ fn launch_ref<E: Float>(
                 )
             }
             CopyStrategyEnum::MemcpyAsyncSplitPlaneDuplicatedUnit => {
-                memcpy_test::launch_unchecked::<
-                    E,
-                    MemcpyAsyncSplitPlaneDuplicatedUnit,
-                    DummyCompute,
-                    TestRuntime,
-                >(
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSplitPlaneDuplicatedUnit, DummyCompute>(
                     client,
                     cube_count,
                     cube_dim,
@@ -610,54 +596,44 @@ fn launch_ref<E: Float>(
                     config,
                 )
             }
-            CopyStrategyEnum::MemcpyAsyncSplitPlaneElectedUnit => memcpy_test::launch_unchecked::<
-                E,
-                MemcpyAsyncSplitPlaneElectedUnit,
-                DummyCompute,
-                TestRuntime,
-            >(
-                client,
-                cube_count,
-                cube_dim,
-                1,
-                input.into_tensor_arg(),
-                output.into_tensor_arg(),
-                config,
-            ),
-            CopyStrategyEnum::MemcpyAsyncSplitDuplicatedAll => memcpy_test::launch_unchecked::<
-                E,
-                MemcpyAsyncSplitDuplicatedAll,
-                DummyCompute,
-                TestRuntime,
-            >(
-                client,
-                cube_count,
-                cube_dim,
-                1,
-                input.into_tensor_arg(),
-                output.into_tensor_arg(),
-                config,
-            ),
-            CopyStrategyEnum::MemcpyAsyncSplitLargeUnitWithIdle => memcpy_test::launch_unchecked::<
-                E,
-                MemcpyAsyncSplitLargeUnitWithIdle,
-                DummyCompute,
-                TestRuntime,
-            >(
-                client,
-                cube_count,
-                cube_dim,
-                1,
-                input.into_tensor_arg(),
-                output.into_tensor_arg(),
-                config,
-            ),
+            CopyStrategyEnum::MemcpyAsyncSplitPlaneElectedUnit => {
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSplitPlaneElectedUnit, DummyCompute>(
+                    client,
+                    cube_count,
+                    cube_dim,
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
+                    config,
+                )
+            }
+            CopyStrategyEnum::MemcpyAsyncSplitDuplicatedAll => {
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSplitDuplicatedAll, DummyCompute>(
+                    client,
+                    cube_count,
+                    cube_dim,
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
+                    config,
+                )
+            }
+            CopyStrategyEnum::MemcpyAsyncSplitLargeUnitWithIdle => {
+                memcpy_test::launch_unchecked::<E, MemcpyAsyncSplitLargeUnitWithIdle, DummyCompute>(
+                    client,
+                    cube_count,
+                    cube_dim,
+                    1,
+                    input.into_tensor_arg(),
+                    output.into_tensor_arg(),
+                    config,
+                )
+            }
             CopyStrategyEnum::MemcpyAsyncSplitSmallUnitCoalescedLoop => {
                 memcpy_test::launch_unchecked::<
                     E,
                     MemcpyAsyncSplitSmallUnitCoalescedLoop,
                     DummyCompute,
-                    TestRuntime,
                 >(
                     client,
                     cube_count,
@@ -673,7 +649,6 @@ fn launch_ref<E: Float>(
                     E,
                     MemcpyAsyncSplitMediumUnitCoalescedOnce,
                     DummyCompute,
-                    TestRuntime,
                 >(
                     client,
                     cube_count,
@@ -721,16 +696,12 @@ struct MemcpyAsyncBench<E> {
     double_buffering: bool,
     strategy: CopyStrategyEnum,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    client: ComputeClient,
     samples: usize,
     _e: PhantomData<E>,
 }
 
-fn make_uniform_1d<E: Float>(
-    client: &ComputeClient<TestRuntime>,
-    len: usize,
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn make_uniform_1d<E: Float>(client: &ComputeClient, len: usize, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(vec![len]))
         .layout(StridedLayout::Explicit(vec![1]))
         .dtype(E::elem_type_native())
@@ -739,7 +710,7 @@ fn make_uniform_1d<E: Float>(
 }
 
 impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -772,7 +743,7 @@ impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
         let client = <TestRuntime as Runtime>::client(&self.device);
         format!(
             "memcpy_async-{}-{}-{:?}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             E::elem_type_native(),
             self.strategy
         )

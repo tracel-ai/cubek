@@ -6,12 +6,12 @@ use cubek_test_utils::{
 };
 
 fn empty_tensor(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
+    client: &cubecl::client::ComputeClient,
     shape: Vec<usize>,
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let elems = shape.iter().product::<usize>();
-    TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
+    TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }
 
 /// Scale every element of an f32 `HostData` by `factor`.
@@ -80,12 +80,10 @@ fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
             &recovered_im.handle,
         ],
         |c| {
-            if let Err(e) =
-                cfft_launch_any_size::<TestRuntime>(c, forward, dim, dtype, FftMode::Forward)
-            {
+            if let Err(e) = cfft_launch_any_size(c, forward, dim, dtype, FftMode::Forward) {
                 return ExecutionOutcome::CompileError(format!("forward launch failed: {e}"));
             }
-            cfft_launch_any_size::<TestRuntime>(c, inverse, dim, dtype, FftMode::Inverse).into()
+            cfft_launch_any_size(c, inverse, dim, dtype, FftMode::Inverse).into()
         },
     );
 

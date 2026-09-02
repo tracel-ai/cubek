@@ -44,9 +44,9 @@ pub(crate) struct PrngLaunchSettings {
 }
 
 impl PrngLaunchSettings {
-    pub(crate) fn new<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
+    pub(crate) fn new(
+        client: &ComputeClient,
+        output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,
         strategy: PrngStrategy,
@@ -65,11 +65,7 @@ impl PrngLaunchSettings {
         }
     }
 
-    fn interleaved<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
-        dtype: ElemType,
-    ) -> Self {
+    fn interleaved(client: &ComputeClient, output: &TensorBinding, dtype: ElemType) -> Self {
         let size = output.size();
 
         // Every lane already draws its own decorrelated stream (see `PrngState::seeded`),
@@ -95,9 +91,9 @@ impl PrngLaunchSettings {
         }
     }
 
-    fn blocked<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
+    fn blocked(
+        client: &ComputeClient,
+        output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,
     ) -> Self {
@@ -165,7 +161,7 @@ mod tests {
             PrngBlueprint::Interleaved
         };
 
-        let output = TensorHandle::<TestRuntime>::empty(&client, vec![64, 64], dtype);
+        let output = TensorHandle::empty(&client, vec![64, 64], dtype);
         let settings =
             PrngLaunchSettings::new(&client, &output.binding(), dtype, 1, PrngStrategy::Inferred);
 

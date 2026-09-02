@@ -11,7 +11,7 @@ fn values_open_interval() {
     let input = client.create_from_slice(u32::as_bytes(&[0, u32::MAX]));
     let output = client.empty(input.size() as usize);
 
-    kernel_to_unit_interval_oo::launch::<TestRuntime>(
+    kernel_to_unit_interval_oo::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),
@@ -60,7 +60,7 @@ fn values_closed_open_interval() {
     let input = client.create_from_slice(u32::as_bytes(&[0, u32::MAX]));
     let output = client.empty(input.size() as usize);
 
-    kernel_to_unit_interval_co::launch::<TestRuntime>(
+    kernel_to_unit_interval_co::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_1d(2),

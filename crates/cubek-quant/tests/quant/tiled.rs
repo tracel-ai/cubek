@@ -42,7 +42,7 @@ fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
     let output = TensorHandle::zeros(&client, shape.clone(), f32::elem_type_native());
     let output_dtype = f32::elem_type_native();
 
-    cubek_quant::dequantize_tiled::launch_ref::<TestRuntime>(
+    cubek_quant::dequantize_tiled::launch_ref(
         &client,
         input.binding(),
         output.clone().binding(),
