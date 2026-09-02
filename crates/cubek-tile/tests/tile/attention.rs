@@ -407,6 +407,10 @@ fn attention_fold_cmma_kernel(
 }
 
 /// Launch the tensor-core fold and check against direct host math.
+///
+/// `spanned` gives `k` and `v` a leading axis the launch spans rather than iterates — the shape a
+/// client's cache has, where a KV head is an axis of the operand and a cube owns one position of
+/// it.
 fn run_cmma(
     (units, rows, s_total, block, d, val_dim, frag): (
         usize,
@@ -419,6 +423,7 @@ fn run_cmma(
     ),
     bound_s: usize,
     causal: bool,
+    spanned: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
@@ -445,11 +450,20 @@ fn run_cmma(
         .dtype(f32_ty)
         .custom((0..rows * d).map(|i| wobble(i, 1)).collect())
         .generate_with_f32_host_data();
-    let (k_handle, k_data) = TestInput::builder(client.clone(), Shape::new([s_total, d]))
+    // The spanned arm binds the same values under one more dim: same cells, one axis above the
+    // two the leaf contracts.
+    let kv_shape = |rows: usize, cols: usize| {
+        if spanned {
+            Shape::new([1, rows, cols])
+        } else {
+            Shape::new([rows, cols])
+        }
+    };
+    let (k_handle, k_data) = TestInput::builder(client.clone(), kv_shape(s_total, d))
         .dtype(f32_ty)
         .custom((0..s_total * d).map(|i| wobble(i, 2)).collect())
         .generate_with_f32_host_data();
-    let (v_handle, v_data) = TestInput::builder(client.clone(), Shape::new([s_total, val_dim]))
+    let (v_handle, v_data) = TestInput::builder(client.clone(), kv_shape(s_total, val_dim))
         .dtype(f32_ty)
         .custom((0..s_total * val_dim).map(|i| wobble(i, 3) / 2.).collect())
         .generate_with_f32_host_data();
@@ -467,6 +481,7 @@ fn run_cmma(
     let space = Tiling::over(
         &mut (),
         &[
+            (G, 1),
             (QP, rows),
             (S, s_total),
             (D, d),
@@ -476,9 +491,24 @@ fn run_cmma(
         ],
     )
     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.walk(&[(QP, rows), (S, block), (D, d), (V, val_dim), (R, 1), (C, 1)]);
+        l.walk(&[
+            (G, 1),
+            (QP, rows),
+            (S, block),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]);
     })
     .build();
+    // The axis is on the operand only where its binding has a dim for it: a spec naming one it
+    // does not is a different operand, not the same one spanned.
+    let (k_axes, v_axes): (&[Axis], &[Axis]) = if spanned {
+        (&[G, S, D], &[G, S, V])
+    } else {
+        (&[S, D], &[S, V])
+    };
 
     attention_fold_cmma_kernel::launch::<TestRuntime>(
         &client,
@@ -490,11 +520,11 @@ fn run_cmma(
         ),
         TileArgLaunch::new(
             k_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, D]),
+            TileSpec::direct(k_axes),
         ),
         TileArgLaunch::new(
             v_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[S, V]),
+            TileSpec::direct(v_axes),
         ),
         TileArgLaunch::new(
             mask_handle.clone().binding().into_tensor_arg(),
@@ -518,7 +548,14 @@ fn run_cmma(
             let masked = j >= bound_s || (causal && j > r);
             if !masked {
                 let dot: f32 = (0..d)
-                    .map(|p| q_data.get_f32(&[r, p]) * k_data.get_f32(&[j, p]))
+                    .map(|p| {
+                        let key = if spanned {
+                            k_data.get_f32(&[0, j, p])
+                        } else {
+                            k_data.get_f32(&[j, p])
+                        };
+                        q_data.get_f32(&[r, p]) * key
+                    })
                     .sum();
                 scores.push((dot * scale, j));
             }
@@ -528,7 +565,14 @@ fn run_cmma(
         for vi in 0..val_dim {
             let expected: f32 = scores
                 .iter()
-                .map(|(s, j)| (s - m).exp() / l * v_data.get_f32(&[*j, vi]))
+                .map(|(s, j)| {
+                    let value = if spanned {
+                        v_data.get_f32(&[0, *j, vi])
+                    } else {
+                        v_data.get_f32(&[*j, vi])
+                    };
+                    (s - m).exp() / l * value
+                })
                 .sum();
             let got = out.get_f32(&[r, vi]);
             assert!(
@@ -544,7 +588,7 @@ fn run_cmma(
 /// before it folded in, reads back here as zeros or as one block's answer.
 #[test]
 fn fold_cmma_single_fragment() {
-    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false);
+    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false, false);
 }
 
 /// Fragments are owned, not shared, and a contraction deeper than one fragment closes: two planes
@@ -552,7 +596,7 @@ fn fold_cmma_single_fragment() {
 /// leaves whole fragments stale; a step dropped leaves half a dot product.
 #[test]
 fn fold_cmma_fragment_grid() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false);
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false);
 }
 
 /// The attended prefix may end inside a block: the mask probe owns the tail, so score fragments
@@ -561,7 +605,17 @@ fn fold_cmma_fragment_grid() {
 /// accumulator.
 #[test]
 fn fold_cmma_causal_ragged_bound() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true);
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, false);
+}
+
+/// The keys and values a client hands over are not bare matrices: a KV head is an axis of the
+/// cache and a cube owns one position of it, so the block reaching the leaf carries that axis
+/// above the two it contracts. The fragment arm reads the trailing two, as the column arm does,
+/// and spans what is above them — a leaf reading `axis_at(0)` as the rows contracts a 1×block
+/// matrix here and returns zeros.
+#[test]
+fn fold_cmma_spanned_leading_axis() {
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true);
 }
 
 /// The split fold: teams on the cube's y dim each fold a disjoint slice of
