@@ -1,6 +1,6 @@
 //! The decode gemv's serving geometry, in the split-axis spelling.
 //!
-//! `y = W · x` with `W` the weight's physical `[d_out, d_in]` buffer as the *lhs* — the
+//! `y = W · x` with `W` the weight's physical `[d_out, d_in]` buffer as the *lhs*, the
 //! orientation a decode step streams, where the contraction runs along the buffer's contiguous
 //! direction. `K` is spelled `(KB, KI)`, so one scale per block is the operand omitting `KI`.
 //!
@@ -50,7 +50,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 /// The activation is read *scalar* here, and has to be: a promoted block lines its cells along
 /// the accumulator, so a rhs lined along the contraction folds a whole step into one cell and
 /// `RegisterData::mma_scaled` refuses it. Which is why the shipping shape below keeps its
-/// accumulator in memory — the two are a trade, not a ladder.
+/// accumulator in memory: the two are a trade, not a ladder.
 #[cube(launch)]
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,

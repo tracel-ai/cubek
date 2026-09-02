@@ -14,12 +14,10 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer
-/// spans and how they address its physical axes ([`Projection`], which carries the buffer's
-/// storage tiling in its own repetition). What a kernel feeds [`Tile::of`](crate::Tile::of)
-/// alongside that space; `of` projects the space onto the projection's logical axes, so no operand
-/// ever carries its own copy of the space. The launch-side builder derives it
-/// ([`build`](crate::StridedTileSource::build)).
+/// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
+/// how they address its physical axes ([`Projection`], carrying the storage tiling in its own
+/// repetition). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space, which `of`
+/// projects onto the logical axes, so no operand carries its own copy of the space.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
@@ -33,10 +31,9 @@ pub struct TileSpec {
     /// Explicit stage-layout override; `None` derives from this operand's stages
     /// ([`StageStorage::for_stages`]).
     pub storage: Option<StageStorage>,
-    /// Where this operand lives at each level of the kernel's space, coarse to fine. Empty (the
-    /// default) is every level [`InPlace`](Residence::InPlace): read where it already is, staging
-    /// nothing. Also the operand's format statement: its finest register stage is what it is at
-    /// the instruction ([`Instruction::at_instruction`]), and operands that disagree meet the
+    /// Where this operand lives at each level of the kernel's space, coarse to fine; empty is
+    /// every level [`InPlace`](Residence::InPlace). Also the operand's format statement: its
+    /// finest register stage is what it is at the instruction, and operands that disagree meet the
     /// kind-pairing panics there.
     pub residence: SmallVec<[Residence; MAX_LEVELS]>,
     /// The line width this operand's next shared-memory stage is served at; `None` serves it at
@@ -50,15 +47,10 @@ pub struct TileSpec {
 }
 
 impl TileSpec {
-    /// An operand's spec from its mapping; the optional halves are the safe defaults
-    /// (unchecked, cube size unknown, nothing staged) and are set by
-    /// [`with_boundary`](Self::with_boundary), [`checked`](Self::checked), [`units`](Self::units),
-    /// [`storage`](Self::storage), [`residence`](Self::residence), and
-    /// [`stage_width`](Self::stage_width).
-    ///
-    /// [`Projection::validate`] is not run here: its innermost-identity rule turns on the served
-    /// vector width, which a spec does not carry and only [`Tile::of`](crate::Tile::of) knows, so
-    /// that is where it runs instead.
+    /// An operand's spec from its mapping; the optional halves take safe defaults (unchecked, cube
+    /// size unknown, nothing staged) and have setters of their own. [`Projection::validate`] does
+    /// not run here: its innermost-identity rule turns on the served vector width, which a spec
+    /// does not carry and only [`Tile::of`](crate::Tile::of) knows.
     pub fn new(projection: Projection) -> Self {
         TileSpec {
             projection,
@@ -121,12 +113,9 @@ impl TileSpec {
     }
 
     /// State that this operand's binding holds `u32` words packing several values each, one per
-    /// `field`-wide slot: `32 / field.size_bits()` of them, innermost axis first. The tile then
-    /// serves those values ([`TileArg::tile_packed`]), unpacking at the read.
-    ///
-    /// Values and nothing else. Scales, where the operand has any, are a second tensor and folding
-    /// them in is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)), so a
-    /// packed operand is sayable on its own and a q4 kernel needs no scheme.
+    /// `field`-wide slot, innermost axis first; the tile then serves those values, unpacking at
+    /// the read. Values and nothing else: scales are a second tensor and folding them in is a verb
+    /// the kernel writes, so a packed operand is sayable on its own and a q4 kernel needs no scheme.
     pub fn packed(self, field: QuantValue) -> Self {
         self.packing(Packing::Packed { field })
     }
@@ -138,13 +127,11 @@ impl TileSpec {
         self
     }
 
-    /// A padded [`stage_width`](Self::stage_width)'s preconditions, in one place because two
-    /// entry points set it: [`StridedTileSource::stage_width`](crate::StridedTileSource::stage_width),
-    /// which checks them at launch, and a hand-built spec, which meets them at
-    /// [`Tile::of`](crate::Tile::of). `vector_size` is the width the operand is served from global
-    /// memory at and `quantized` whether it carries a quantized form: neither is a fact about the
-    /// spec, so both are passed in.
-    pub fn validate_stage_width(&self, vector_size: usize, quantized: bool) {
+    /// A padded [`stage_width`](Self::stage_width)'s preconditions, in one place because two entry
+    /// points set it: the launch-side setter, and a hand-built spec meeting them at
+    /// [`Tile::of`](crate::Tile::of). `vector_size` and `quantized` are passed in because neither
+    /// is a fact about the spec.
+    pub(crate) fn validate_stage_width(&self, vector_size: usize, quantized: bool) {
         let Some(width) = self.stage_width else {
             return;
         };
@@ -171,11 +158,9 @@ impl TileSpec {
         );
     }
 
-    /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. A boolean
-    /// convenience over [`with_boundary`](Self::with_boundary): it unconditionally overwrites
-    /// whatever mode was set before it, so a `with_boundary(Some(Boundary::Clamp))` before this
-    /// call is silently dropped back to `Zero`. Sequence a `Clamp` override after `checked`, not
-    /// before it.
+    /// Set whether edge reads/writes must be bounds-checked with [`Boundary::Zero`]. Overwrites
+    /// whatever mode stood, so sequence a `Clamp` [`with_boundary`](Self::with_boundary) *after*
+    /// this, not before.
     pub fn checked(self, check: bool) -> Self {
         self.with_boundary(check.then_some(Boundary::Zero))
     }
@@ -193,10 +178,9 @@ impl TileSpec {
     }
 
     /// State the boundary mode for every coordinate axis. An all-`None` list collapses to the
-    /// empty one, so "nothing is checked" has a single representation whichever setter minted it.
-    /// The list is shaped over [`coordinate_rank`](Projection::coordinate_rank), not the buffer's
-    /// physical rank, which storage tiling splits into grid and tile fragments no
-    /// [`Window`](crate::Window) ever addresses.
+    /// empty one, so "nothing is checked" has one representation. Shaped over
+    /// [`coordinate_rank`](Projection::coordinate_rank), not the buffer's physical rank, which
+    /// storage tiling splits into fragments no [`Window`](crate::Window) addresses.
     pub fn boundaries(mut self, boundaries: &[Option<Boundary>]) -> Self {
         let coord_rank = self.projection.coordinate_rank();
         assert!(
@@ -236,21 +220,14 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 }
 
 /// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
-/// for a destination whose writes add rather than replace.
+/// for a destination whose writes add rather than replace. Bound as `Atomic<E>`, which carries no
+/// served width, so the tile is served scalar and its register block works in scalars where a
+/// storing one works in lines. A limit, not a design: serving it wider is sound, but the width
+/// would have to be stated on the [`TileSpec`], and today no operand states one.
 ///
-/// The buffer is bound as `Atomic<E>` because that is what accumulating needs, and it carries no served
-/// width the way [`TileArg`] does: an atomic element is always one scalar, so there is nowhere in
-/// the type to put one. The tile is therefore served scalar.
-///
-/// That is a limit, not a design. The width a tile is served at also sets its register block's
-/// line width, so an accumulating output works in scalar registers where a storing one can work
-/// in lines. Serving it wider is sound (a `V`-wide line commits as `V` adds, which is
-/// what the backing already does), but the width would have to be stated on the [`TileSpec`]
-/// rather than read off the binding, and today no operand states one.
-///
-/// **The buffer arrives holding the monoid's identity.** `mm` states `c = a·b` and owns that init,
-/// but a cell here belongs to several instances and none of them may seed it, so the seeding
-/// happens once at the launch instead. Nothing can check it: the destination cannot read.
+/// **The buffer arrives holding the monoid's identity.** A cell here belongs to several instances
+/// and none of them may seed it, so the seeding happens once at the launch. Nothing can check it:
+/// the destination cannot read.
 #[derive(CubeType, CubeLaunch)]
 pub struct AccumulateArg<'a, E: Numeric> {
     pub tensor: &'a Tensor<Atomic<E>>,
@@ -288,9 +265,8 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 
     /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: `coefficients` holds
     /// one value per [`Scale::Dynamic`](crate::Scale) term and one per
-    /// [`Divisor::Dynamic`](crate::Divisor) axis of the spec's projection, `offsets` one signed
-    /// value per [`Offset::Dynamic`](crate::Offset) axis. See [`Tile::of_gathered`] for the order
-    /// each carrier is read in, which only it enforces.
+    /// [`Divisor::Dynamic`](crate::Divisor) axis, `offsets` one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis. [`Tile::of_gathered`] states the order.
     pub fn tile_gathered(
         &self,
         #[comptime] space: Space,
@@ -307,11 +283,10 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     }
 }
 
-/// One quantized operand as a single launch argument: the storage-typed values tensor
-/// (`E` is the *stored* scalar: `u32` words packed, `i8` native), its scales, and the
-/// comptime spec + scheme. A quantized tensor is one thing, so its pieces travel as one
-/// argument; [`TileArg`] is its plain twin. Only per-operand facts live here; the
-/// kernel's one [`Space`] arrives separately and [`tile`](QuantTileArg::tile) projects it.
+/// One quantized operand as a single launch argument: the storage-typed values tensor, its scales,
+/// and the comptime spec + scheme. A quantized tensor is one thing, so its pieces travel together;
+/// [`TileArg`] is its plain twin. The kernel's one [`Space`] arrives separately and
+/// [`tile`](QuantTileArg::tile) projects it.
 #[derive(CubeType, CubeLaunch)]
 pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub values: &'a Tensor<Vector<E, V>>,
@@ -387,16 +362,13 @@ impl<E: Numeric> TmaTileArg<E> {
     }
 }
 
-/// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread. Every
-/// rule here is also an in-kernel assumption, but a kernel-side assert fires on a device thread,
-/// where it reads as zeroed output rather than as a rejection, so this is the one gate.
+/// Reject a [`QuantScheme`] this operand cannot serve, at launch and on the caller's thread: a
+/// kernel-side assert would fire on a device thread and read as zeroed output rather than a
+/// rejection, so this is the one gate.
 ///
-/// A tile reads a scale as its window's own start plus the block index *within* the window
-/// ([`ScaleLayout`]), which is the true block only if no window straddles a block edge. Every
-/// window is a level's cut, and its origin is a multiple of that cut, so per axis each level's
-/// edge must tile whole blocks or fit inside one. A line is one read, so it may not straddle
-/// either. A per-tensor scale covers every window and line, so only the store and param rules
-/// apply to it.
+/// A tile reads a scale as its window's start plus the block index *within* the window, which is
+/// the true block only if no window straddles a block edge. So per axis each level's edge must
+/// tile whole blocks or fit inside one, and a line, being one read, may not straddle either.
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
@@ -464,12 +436,10 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 }
 
 impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
-    /// Load a TMA tensor-map as a tile argument for `operand`, whose axes (3 with a leading
-    /// batch axis, 2 without) and per-level residences drive the spec. `dims` is the
-    /// operand's logical runtime `(batch, rows, cols)`; `transposed` flags a col-major
-    /// operand whose descriptor swapped its inner pair (the layout swaps coords back). The
-    /// spec's width and storage don't apply to a tensor map, so the spec is built here, not
-    /// by the caller.
+    /// Load a TMA tensor-map as a tile argument for `operand`, whose axes and per-level residences
+    /// drive the spec. `dims` is the operand's logical runtime `(batch, rows, cols)`; `transposed`
+    /// flags a col-major descriptor whose inner pair the layout swaps back. Width and storage do
+    /// not apply to a tensor map, so the spec is built here rather than by the caller.
     pub fn tensor_map(
         tensor_map: TensorMapArg<R, Tiled>,
         operand: &Operand,
@@ -493,12 +463,10 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
     }
 }
 
-/// In-kernel tensor-map layout: aligns the operand's logical [`CoordsDyn`] to the
-/// descriptor's 3-D `(batch, row, col)`. A batchless (rank-2) operand gets batch `0`, a
-/// unit batch broadcasts; a col-major (`transposed`) descriptor swapped its inner pair, so
-/// the layout swaps coords back. `shape()` stays logical, so a tile's `bound` aligns with
-/// its space whatever the descriptor order. Same rules as cubek-matmul's legacy
-/// `SimpleTmaGlobalLayout` (tuple coords); keep the two in step.
+/// In-kernel tensor-map layout: aligns the operand's logical [`CoordsDyn`] to the descriptor's 3-D
+/// `(batch, row, col)`. A rank-2 operand gets batch `0`, a unit batch broadcasts, and a
+/// `transposed` descriptor has its inner pair swapped back. `shape()` stays logical, so a tile's
+/// `bound` aligns with its space whatever the descriptor order.
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct TmaDynLayout {
     /// Logical `(batch, rows, cols)` of the operand.

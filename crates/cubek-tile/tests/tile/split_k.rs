@@ -91,11 +91,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let split_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, inside)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                .walk(&[(M, m), (N, n), (KI, inside)])
+                .walk(&[(M, m), (N, n), (KI, inside)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -134,11 +133,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let fold_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(M, 1)])
-                .walk(&[(N, n), (KB, splits)])
+                .walk(&[(N, n), (KB, splits)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -329,11 +327,10 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -468,12 +465,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(lanes(), &[(N, per_lane)])
                 .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m)])
+                .walk(&[(M, m)]);
         })
         .build()
         .resolve_lanes(plane_size)
@@ -551,11 +547,10 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(planes(), &[(K, k / num_planes)])
-                .walk(&[(M, m), (N, n)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -648,11 +643,10 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));

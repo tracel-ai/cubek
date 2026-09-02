@@ -52,14 +52,13 @@ fn copy_non_quantized_matches_reference() {
 fn copy_spread_across_cubes_and_planes_matches_reference() {
     let (m, n) = (4, 512);
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let launch = Tiling::new()
-        .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let launch = Tiling::over(&mut (), &[(M, m), (N, n)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Y), &[(M, 1)])
-                .distribute(cubes(CubeAxis::X), &[(N, 128)])
+                .distribute(cubes(CubeAxis::X), &[(N, 128)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)]);
         })
         .build()
         .launcher_over(&client, &[]);
@@ -721,10 +720,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A space that tiles into `bm×bn` blocks, one cube walking them.
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, bm), (N, bn)])
+    let space = Tiling::over(&mut (), &[(M, m), (N, n)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, bm), (N, bn)]);
         })
         .build();
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.

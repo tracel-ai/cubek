@@ -168,8 +168,15 @@ impl Operand {
     }
 }
 
-// Small tuples of operands as an [`OperandSet`], for callers (tests foremost) whose set has
-// no name of its own: `Tiling::over((a, b, out), …)` with `o.0`/`o.1`/`o.2` in the closures.
+// Tuples of operands as an [`OperandSet`], for callers whose set has no name of its own:
+// `Tiling::over(&mut (a, b, out), …)` with `o.0`/`o.1`/`o.2` in the closures. The empty tuple
+// is the zero-arity member: a space built with no operand to place.
+impl OperandSet for () {
+    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
+        core::iter::empty()
+    }
+}
+
 impl OperandSet for (Operand,) {
     fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
         [&mut self.0].into_iter()

@@ -4,8 +4,8 @@
 //! A dense convolution contracts input channels into output channels, so `CI` appears in the two
 //! operands and not in the accumulator. A depthwise one has no such pairing: each channel carries
 //! its own filter and reaches exactly one output channel, so the single channel axis `C` appears
-//! in *all three* operands. That is the whole difference. `C` is then a batch axis — an axis the
-//! walk splits and the leaf never folds — and the contraction is over the window taps `RH`/`RW`
+//! in *all three* operands. That is the whole difference. `C` is then a batch axis (an axis the
+//! walk splits and the leaf never folds), and the contraction is over the window taps `RH`/`RW`
 //! alone.
 //!
 //! Stating it that way is what keeps this a space-and-projection change rather than a new kernel:
@@ -14,7 +14,7 @@
 //!
 //! Why it matters: `groups != 1` is refused outright by every accelerated convolution routine, so
 //! a depthwise layer has exactly one implementation to fall back on. Expressing it here gives the
-//! DSL a path that keeps channels innermost, which is the layout a depthwise kernel wants — it is
+//! DSL a path that keeps channels innermost, which is the layout a depthwise kernel wants: it is
 //! bandwidth-bound, and coalescing across `C` is the whole game.
 #![allow(non_snake_case)]
 
@@ -28,7 +28,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
-/// specialization, no lane fan-out — the lines here run along the channel, not along `K`.
+/// specialization, no lane fan-out: the lines here run along the channel, not along `K`.
 const INSTRUCTION: Instruction = Instruction::Registers {
     config: RegisterBlock::new(16),
 };
@@ -118,42 +118,44 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let space = Tiling::new()
-            .extents(&[
+        let space = Tiling::over(
+            &mut (),
+            &[
                 (B, self.b),
                 (OH, self.oh),
                 (OW, self.ow),
                 (C, self.c),
                 (RH, self.rh),
                 (RW, self.rw),
-            ])
-            // Two levels, not one. A single all-`sequential` level puts the whole
-            // convolution in one instance; the grid has to separate the output before
-            // anything else about the kernel matters.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                    .distribute(cubes(CubeAxis::Y), &[(OW, tile_ow)])
-                    .distribute(cubes(CubeAxis::Z), &[(OH, tile_oh)])
-                    .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                    .walk(&[(RH, self.rh), (RW, self.rw)])
-            })
-            // Channels across the cube's planes; the leaf spreads each plane's tile over its
-            // own lanes, so consecutive lanes still read consecutive channels of one pixel —
-            // which is the whole reason to keep NHWC here.
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.distribute(planes(), &[(C, 1)]).walk(&[
-                    (OW, 1),
-                    (OH, 1),
-                    (B, 1),
-                    (RH, self.rh),
-                    (RW, self.rw),
-                ])
-            })
-            .build()
-            .with_instruction(INSTRUCTION);
+            ],
+        )
+        // Two levels, not one. A single all-`sequential` level puts the whole
+        // convolution in one instance; the grid has to separate the output before
+        // anything else about the kernel matters.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
+                .distribute(cubes(CubeAxis::Y), &[(OW, tile_ow)])
+                .distribute(cubes(CubeAxis::Z), &[(OH, tile_oh)])
+                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
+                .walk(&[(RH, self.rh), (RW, self.rw)]);
+        })
+        // Channels across the cube's planes; the leaf spreads each plane's tile over its
+        // own lanes, so consecutive lanes still read consecutive channels of one pixel,
+        // which is the whole reason to keep NHWC here.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(C, 1)]).walk(&[
+                (OW, 1),
+                (OH, 1),
+                (B, 1),
+                (RH, self.rh),
+                (RW, self.rw),
+            ]);
+        })
+        .build()
+        .with_instruction(INSTRUCTION);
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
-        // it does for the dense case — it is only the weight and accumulator that change.
+        // it does for the dense case: it is only the weight and accumulator that change.
         let in_spec = TileSpec::new(Projection::new(
             // The contracted taps come last: the gather leaf lines the input along the
             // fastest contracted axis, so `RW` has to be the operand's innermost logical

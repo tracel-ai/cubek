@@ -170,8 +170,9 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (G, g),
             (QP, qp),
             (S, s_total),
@@ -179,19 +180,20 @@ fn run(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[
-                (G, g),
-                (QP, qp),
-                (S, block),
-                (D, d),
-                (V, val_dim),
-                (R, 1),
-                (C, 1),
-            ])
-        })
-        .build();
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[
+            (G, g),
+            (QP, qp),
+            (S, block),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]);
+    })
+    .build();
 
     attention_fold_kernel::launch::<TestRuntime>(
         &client,
@@ -319,10 +321,9 @@ fn attention_fold_cmma_kernel(
     // The queries stage with the grid their lhs role reads: `frag` rows against `frag` of the
     // contracted head dim. Both matmuls' accumulators state the instruction itself.
     let q_space = comptime!(
-        Tiling::new()
-            .extents(&[(QP, rows), (D, d)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(QP, frag), (D, frag)])
+        Tiling::over(&mut (), &[(QP, rows), (D, d)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(QP, frag), (D, frag)]);
             })
             .build()
     );
@@ -330,9 +331,10 @@ fn attention_fold_cmma_kernel(
     q_s.copy_from(&q);
 
     let score_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, rows), (C, block)])
-            .instruction(Instruction::Cmma, |l| { l.walk(&[(R, frag), (C, frag)]) })
+        Tiling::over(&mut (), &[(R, rows), (C, block)])
+            .instruction(Instruction::Cmma, |l, _| {
+                l.walk(&[(R, frag), (C, frag)]);
+            })
             .build()
     );
     let mut score = MemData::<f32>::smem(
@@ -345,9 +347,10 @@ fn attention_fold_cmma_kernel(
     let mut factors =
         MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let acc_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, rows), (V, val_dim)])
-            .instruction(Instruction::Cmma, |l| { l.walk(&[(R, frag), (V, frag)]) })
+        Tiling::over(&mut (), &[(R, rows), (V, val_dim)])
+            .instruction(Instruction::Cmma, |l, _| {
+                l.walk(&[(R, frag), (V, frag)]);
+            })
             .build()
     );
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
@@ -461,19 +464,21 @@ fn run_cmma(
 
     // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
     // in blocks and nothing else.
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (QP, rows),
             (S, s_total),
             (D, d),
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(QP, rows), (S, block), (D, d), (V, val_dim), (R, 1), (C, 1)])
-        })
-        .build();
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(QP, rows), (S, block), (D, d), (V, val_dim), (R, 1), (C, 1)]);
+    })
+    .build();
 
     attention_fold_cmma_kernel::launch::<TestRuntime>(
         &client,
@@ -568,7 +573,7 @@ fn fold_cmma_causal_ragged_bound() {
 ///
 /// `split_inner` flips where the split axis sits on the row lanes, which is
 /// the one thing `merge_splits` reads off the space. Both orders run the same
-/// cuts and the same op and must give the same answer — a cross-cube merge
+/// cuts and the same op and must give the same answer; a cross-cube merge
 /// lays the split innermost so its drain can contract it, and nothing but a
 /// test here says that layout works.
 #[cube(launch)]
@@ -614,16 +619,15 @@ fn attention_fold_split_kernel<W: Size>(
     let split_rows = comptime!(splits * rows);
     let form = comptime!(Instruction::registers(budget));
     let score_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows), (C, block)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(R, rows), (C, block)])
+        Tiling::over(&mut (), &[(R, split_rows), (C, block)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(R, rows), (C, block)]);
             })
             .build()
             .with_instruction(form)
     );
     // The split outermost gives a team one contiguous run of rows; innermost
-    // gives it a strided column. Only the declared order differs — the cuts
+    // gives it a strided column. Only the declared order differs: the cuts
     // below are the same either way, and so is every op that reads them.
     let row_extents = comptime!(if split_inner {
         [(R, rows), (T, splits)]
@@ -631,18 +635,16 @@ fn attention_fold_split_kernel<W: Size>(
         [(T, splits), (R, rows)]
     });
     let row_space = comptime!(
-        Tiling::new()
-            .extents(&row_extents)
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(T, 1), (R, rows)])
+        Tiling::over(&mut (), &row_extents)
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(T, 1), (R, rows)]);
             })
             .build()
     );
     let acc_space = comptime!(
-        Tiling::new()
-            .extents(&[(R, split_rows), (V, val_dim)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(R, rows), (V, val_dim)])
+        Tiling::over(&mut (), &[(R, split_rows), (V, val_dim)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(R, rows), (V, val_dim)]);
             })
             .build()
             .with_instruction(form)
@@ -822,8 +824,9 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention space, as in [`run`].
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (G, g),
             (QP, qp),
             (S, s_total),
@@ -831,19 +834,20 @@ fn run_split_at(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[
-                (G, g),
-                (QP, qp),
-                (S, block),
-                (D, d),
-                (V, val_dim),
-                (R, 1),
-                (C, 1),
-            ])
-        })
-        .build();
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[
+            (G, g),
+            (QP, qp),
+            (S, block),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]);
+    })
+    .build();
 
     attention_fold_split_kernel::launch::<TestRuntime>(
         &client,
@@ -1034,12 +1038,14 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let space = Tiling::new()
-        .extents(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)])
-        })
-        .build();
+    let space = Tiling::over(
+        &mut (),
+        &[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)]);
+    })
+    .build();
 
     attention_stream_test_kernel::launch::<TestRuntime>(
         &client,

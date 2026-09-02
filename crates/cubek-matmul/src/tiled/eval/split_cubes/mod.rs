@@ -155,35 +155,36 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                        .walk(&[(M, m)])
-                })
-                .build(),
-            Mapping::Workspace { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                        .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                        .walk(&[(M, m), (KI, k / splits)])
-                })
-                .build(),
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                            .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                            .walk(&[(M, m)]);
+                    })
+                    .build()
+            }
+            Mapping::Workspace { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, k / splits)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                            .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                            .walk(&[(M, m), (KI, k / splits)]);
+                    })
+                    .build()
+            }
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            Mapping::AtomicLanes { .. } => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                         .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                        .walk(&[(M, m)])
+                        .walk(&[(M, m)]);
                 })
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                     l.distribute(lanes(), &[(K, k / splits / plane_size)])
-                        .walk(&[(M, m), (N, COLS)])
+                        .walk(&[(M, m), (N, COLS)]);
                 })
                 .build()
                 .resolve_lanes(plane_size),
@@ -194,12 +195,11 @@ impl Mapping {
     /// The fold pass's space, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Space {
         let Problem { m, n, .. } = problem;
-        Tiling::new()
-            .extents(&[(M, m), (N, n), (KB, self.splits())])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        Tiling::over(&mut (), &[(M, m), (N, n), (KB, self.splits())])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(cubes(CubeAxis::X), &[(M, 1)])
                     .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
-                    .walk(&[(KB, self.splits())])
+                    .walk(&[(KB, self.splits())]);
             })
             .build()
             .with_instruction(INSTRUCTION)

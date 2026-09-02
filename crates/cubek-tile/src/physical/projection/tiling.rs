@@ -43,7 +43,7 @@ impl StorageTiling {
     }
 
     /// An explicit fragment count per axis, in the operand's axis order.
-    pub fn per_axis(fragments: &[usize]) -> Self {
+    pub(crate) fn per_axis(fragments: &[usize]) -> Self {
         assert!(
             fragments.iter().all(|&n| n >= 1),
             "StorageTiling: every axis carries at least one physical fragment, got {fragments:?}"
@@ -65,7 +65,7 @@ impl StorageTiling {
     /// The deepest axis's fragment count, which is how many levels the physical order runs over.
     /// A *count*, not a depth: an untiled axis carries one fragment, so this is the `levels + 1`
     /// the rest of the crate spells out, never `levels` itself.
-    pub fn max_fragments(&self) -> usize {
+    pub(crate) fn max_fragments(&self) -> usize {
         self.fragments.iter().copied().max().unwrap_or(0)
     }
 
@@ -75,7 +75,7 @@ impl StorageTiling {
     }
 
     /// Whether any axis is split at all.
-    pub fn is_tiled(&self) -> bool {
+    pub(crate) fn is_tiled(&self) -> bool {
         self.fragments.iter().any(|&n| n > 1)
     }
 

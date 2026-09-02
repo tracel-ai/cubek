@@ -6,6 +6,9 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+/// This operation's one operand, at the position its slot payload holds it.
+const INPUT: usize = FIRST;
+
 /// One level's reduction as a [`Pipelined`] operation: the accumulator it writes and the single
 /// operand its slots stage.
 #[derive(CubeType)]
@@ -55,7 +58,7 @@ impl<Acc: Numeric, In: Numeric> Pipelined for ReduceWalk<Acc, In> {
         #[comptime] publish: bool,
     ) {
         let monoid = comptime!(self.monoid);
-        let plan = slot.plan(LHS);
+        let plan = slot.plan(INPUT);
         let payload = comptime!(plan.payload);
         if comptime!(publish) {
             slot.publish();

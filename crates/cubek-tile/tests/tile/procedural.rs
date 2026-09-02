@@ -351,10 +351,9 @@ impl Harness {
         Self {
             client: <TestRuntime as Runtime>::client(&Default::default()),
             dtype: f32::elem_type_native(),
-            space: Tiling::new()
-                .extents(&[(ROW, ROWS), (COL, COLS)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-                    level.walk(&[(ROW, 2), (COL, 3)])
+            space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+                    level.walk(&[(ROW, 2), (COL, 3)]);
                 })
                 .build(),
         }
@@ -644,10 +643,9 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
-    let space = Tiling::new()
-        .extents(&[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level.walk(&[(ROW, 2), (COL, 4)])
+    let space = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -674,10 +672,9 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
-    let concrete = Tiling::new()
-        .extents(&[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level.walk(&[(ROW, 2), (COL, 4)])
+    let concrete = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
     let space = concrete.clone().with_dynamic(&[ROW]);

@@ -1,9 +1,8 @@
-//! A level-centric builder for a multi-level [`Space`]. Declare the axis extents once,
-//! then one [`level`](LeveledTiling::level) per decomposition: its walk order, buffering, and
-//! who works on which axes ([`LevelCuts`]). Each [`level`](LeveledTiling::level) maps 1:1 to the
-//! [`Level`](super::Level) the [`Walk`](crate::Walk) consumes; no transpose.
-//! [`Tiling::over`] is the same chain threading an [`OperandSet`] through each level
-//! closure, so an operand states where it lives at the level that cuts it.
+//! A level-centric builder for a multi-level [`Space`]. [`Tiling::over`] threads the operands
+//! through, then one [`level`](OperandTiling::level) per decomposition: its walk order,
+//! buffering, who works on which axes ([`LevelCuts`]), and where each operand it materializes
+//! lives. Each level maps 1:1 to the [`Level`](super::Level) the [`Walk`](crate::Walk) consumes;
+//! no transpose.
 
 use crate::{Axis, ByAxis, Instruction, Space};
 
@@ -40,8 +39,8 @@ struct LevelSpec {
     /// The axes this level distributes as one, if any ([`LevelCuts::distribute`]).
     work: Option<Work>,
     cuts: Vec<(Axis, Cut)>,
-    /// Whether any operand stated a residence here ([`Tiling::over`] only). A level that cuts
-    /// nothing but moves an operand is not null, so it is not droppable.
+    /// Whether any operand stated a residence here. A level that cuts nothing but moves an
+    /// operand is not null, so it is not droppable.
     moves_an_operand: bool,
 }
 
@@ -55,44 +54,37 @@ impl LevelSpec {
     }
 }
 
-/// The empty seed: declare [`extents`](Tiling::extents) to start adding levels.
+/// The builder's entry point, and the only one: a space is always built over an operand set,
+/// even when that set is empty.
 pub struct Tiling;
 
 impl Tiling {
-    pub fn new() -> Self {
-        Tiling
-    }
-
-    /// Declare every axis and its top extent, fixing the canonical axis order. Levels are
-    /// added next; their cuts may come in any order and are realigned to this one.
-    pub fn extents(self, extents: &[(Axis, usize)]) -> LeveledTiling {
-        LeveledTiling {
-            extents: extents.to_vec(),
-            levels: Vec::new(),
-            instruction: None,
-        }
-    }
-
-    /// Build a space together with its operands, `extents` declaring every axis and its top
-    /// extent as in [`extents`](Tiling::extents). Each level closure gets the cut collector and
-    /// the operand set, so an operand's residence at a level is stated where the level is
-    /// declared ([`Operand::stage`](crate::Operand::stage)); a level that states nothing for an
-    /// operand leaves it in place. [`build`](OperandTiling::build) returns the space and the
-    /// operands, sealed.
+    /// Build a space together with its operands. `extents` declares every axis and its top extent,
+    /// fixing the canonical axis order; cuts may come in any order and are realigned to it. Each
+    /// level closure gets the cut collector and the operand set, so an operand's residence is
+    /// stated where the level is declared ([`Operand::stage`](crate::Operand::stage)) and a level
+    /// stating nothing leaves it in place. A space with no operand passes the empty set,
+    /// `Tiling::over(&mut (), …)`.
     pub fn over<'o, O: OperandSet>(
         operands: &'o mut O,
         extents: &[(Axis, usize)],
     ) -> OperandTiling<'o, O> {
         OperandTiling {
-            tiling: Tiling::new().extents(extents),
+            extents: extents.to_vec(),
+            levels: Vec::new(),
+            instruction: None,
             operands,
         }
     }
 }
 
-/// [`LeveledTiling`] threading an [`OperandSet`] through its level closures.
+/// Builds a [`Space`] one level at a time, carrying the operands each level places. Add levels
+/// with [`level`](Self::level), end the chain with [`instruction`](Self::instruction) where
+/// something contracts at the last one, then [`build`](Self::build).
 pub struct OperandTiling<'o, O> {
-    tiling: LeveledTiling,
+    extents: Vec<(Axis, usize)>,
+    levels: Vec<LevelSpec>,
+    instruction: Option<Instruction>,
     operands: &'o mut O,
 }
 
@@ -107,14 +99,13 @@ impl<O: OperandSet> OperandTiling<'_, O> {
         f: impl FnOnce(&mut LevelCuts, &mut O),
     ) -> Self {
         let mut cuts = LevelCuts::new();
-        let index = self.tiling.levels.len();
+        let index = self.levels.len();
         f(&mut cuts, self.operands);
         let moves_an_operand = self.operands.each().any(|o| o.stated_at(index));
         for operand in self.operands.each() {
             operand.close_level(index);
         }
-        self.tiling
-            .push(order, buffering, cuts.cuts, cuts.work, moves_an_operand);
+        self.push(order, buffering, cuts.cuts, cuts.work, moves_an_operand);
         self
     }
 
@@ -126,53 +117,50 @@ impl<O: OperandSet> OperandTiling<'_, O> {
         instruction: Instruction,
         f: impl FnOnce(&mut LevelCuts, &mut O),
     ) -> Self {
-        self.tiling = self.tiling.state_instruction(instruction);
+        assert!(
+            self.instruction.is_none(),
+            "Tiling::instruction: stated once, already {:?}",
+            self.instruction
+        );
+        self.instruction = Some(instruction);
         self.level(WalkOrder::RowMajor, Buffering::SINGLE, f)
     }
 
-    /// Build the [`Space`]. The operands are the caller's own and stay theirs; this seals them,
-    /// so one residence per level stands and every later [`stage`](crate::Operand::stage) panics.
+    /// Build the [`Space`]: the extents, the stack of levels that cut something, and what runs
+    /// once they are exhausted. The operands are the caller's own and stay theirs; this seals
+    /// them, so one residence per level stands and every later
+    /// [`stage`](crate::Operand::stage) panics.
     pub fn build(self) -> Space {
         // A dropped level is one no operand stated anything at, so its stage is the padded
         // `InPlace`; dropping it here keeps the residence column one entry per surviving level.
-        let kept = self.tiling.kept_levels();
+        let kept = self.kept_levels();
+        let mut space = Space::new(&self.extents);
+        for (level, _) in self.levels.iter().zip(&kept).filter(|&(_, &keep)| keep) {
+            let edges = self.edges(level);
+            let dists: Vec<_> = self
+                .extents
+                .iter()
+                .map(|&(a, _)| (a, level.cut(a).dist))
+                .collect();
+            let builder = match level.order {
+                WalkOrder::RowMajor => {
+                    Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists))
+                }
+                WalkOrder::Reversed => {
+                    Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
+                }
+            };
+            space =
+                space.with_partitioner(builder.distributing(level.buffering, level.work.clone()));
+        }
         for operand in self.operands.each() {
             operand.keep_levels(&kept);
             operand.seal();
         }
-        self.tiling.build()
-    }
-}
-
-impl Default for Tiling {
-    fn default() -> Self {
-        Tiling::new()
-    }
-}
-
-/// Builds a [`Space`] one level at a time: add levels with [`level`](LeveledTiling::level),
-/// each configured by a closure that states, on a [`LevelCuts`], who works on which axes, then
-/// end the chain with [`build`](LeveledTiling::build).
-pub struct LeveledTiling {
-    extents: Vec<(Axis, usize)>,
-    levels: Vec<LevelSpec>,
-    instruction: Option<Instruction>,
-}
-
-impl LeveledTiling {
-    /// Add a decomposition level (coarse to fine) with its walk order and buffering; `cuts`
-    /// states who works on which axes, on the [`LevelCuts`]. Where each operand *lives* at this
-    /// level is stated by the operand, not here ([`Residence`](crate::Residence)).
-    pub fn level(
-        mut self,
-        order: WalkOrder,
-        buffering: Buffering,
-        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
-    ) -> Self {
-        let mut level = LevelCuts::new();
-        cuts(&mut level);
-        self.push(order, buffering, level.cuts, level.work, false);
-        self
+        match self.instruction {
+            Some(instruction) => space.with_instruction(instruction),
+            None => space,
+        }
     }
 
     /// Close `cuts` into a level. They must cover exactly the declared axes (any order);
@@ -189,17 +177,17 @@ impl LeveledTiling {
         // is off.
         for &(axis, _) in &self.extents {
             let stated = cuts.iter().filter(|&&(a, _)| a == axis).count();
-            assert!(stated > 0, "LeveledTiling::level: axis {axis:?} has no cut");
+            assert!(stated > 0, "Tiling::level: axis {axis:?} has no cut");
             assert!(
                 stated == 1,
-                "LeveledTiling::level: axis {axis:?} is cut {stated} times; a level states each \
+                "Tiling::level: axis {axis:?} is cut {stated} times; a level states each \
                  of its axes once, by `walk` or `distribute`"
             );
         }
         assert_eq!(
             cuts.len(),
             self.extents.len(),
-            "LeveledTiling::level: {} cuts but {} axes declared",
+            "Tiling::level: {} cuts but {} axes declared",
             cuts.len(),
             self.extents.len()
         );
@@ -212,38 +200,11 @@ impl LeveledTiling {
         });
     }
 
-    /// The last level, and what runs on the cells it cuts out. See
-    /// [`OperandTiling::instruction`].
-    pub fn instruction(
-        self,
-        instruction: Instruction,
-        cuts: impl for<'a> FnOnce(&'a mut LevelCuts) -> &'a mut LevelCuts,
-    ) -> Self {
-        self.state_instruction(instruction)
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, cuts)
-    }
-
-    /// Record what runs at the last level, without adding one.
-    fn state_instruction(mut self, instruction: Instruction) -> Self {
-        assert!(
-            self.instruction.is_none(),
-            "Tiling::instruction: stated once, already {:?}",
-            self.instruction
-        );
-        self.instruction = Some(instruction);
-        self
-    }
-
-    /// Which levels [`build`](Self::build) keeps, one flag per declared level.
-    ///
-    /// A level whose edges are the extents handed to it cuts nothing: [`Space::count`] is 1 on
-    /// every axis. Drop it: the level is part of the [`Space`], and the [`Space`] is the
-    /// kernel-cache key, so keeping it compiles the same program twice. Four things a level
-    /// says that a cut does not, each keeping it: a deeper pipeline than its parent, work it
+    /// Which levels [`build`](Self::build) keeps, one flag per declared level. A level cutting
+    /// nothing is dropped: the [`Space`] is the kernel-cache key, so keeping it compiles the same
+    /// program twice. Five things keep one anyway: a deeper pipeline than its parent, work it
     /// distributes as one, an operand moving here, the instruction it carries, and being the only
-    /// level left. That last one is
-    /// not a fallback: a partitioned space separates a tile from the cells it is walked in, and
-    /// a space with no level at all *is* its cell, which is a different space entirely.
+    /// level left, which is not a fallback but the difference between a tile and its cell.
     fn kept_levels(&self) -> Vec<bool> {
         // The extents handed to the next level: the top extents, then each kept level's edges.
         // Nothing is staged above the first level, so its parent buffers once.
@@ -281,35 +242,6 @@ impl LeveledTiling {
             .iter()
             .map(|&(a, _)| (a, level.cut(a).edge))
             .collect()
-    }
-
-    /// Build the [`Space`]: the extents, the stack of levels that cut something, and what runs
-    /// once they are exhausted. Where each operand *lives* is the operands' own statement.
-    pub fn build(self) -> Space {
-        let kept = self.kept_levels();
-        let mut space = Space::new(&self.extents);
-        for (level, _) in self.levels.iter().zip(&kept).filter(|&(_, &keep)| keep) {
-            let edges = self.edges(level);
-            let dists: Vec<_> = self
-                .extents
-                .iter()
-                .map(|&(a, _)| (a, level.cut(a).dist))
-                .collect();
-            let builder = match level.order {
-                WalkOrder::RowMajor => {
-                    Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists))
-                }
-                WalkOrder::Reversed => {
-                    Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
-                }
-            };
-            space =
-                space.with_partitioner(builder.distributing(level.buffering, level.work.clone()));
-        }
-        match self.instruction {
-            Some(instruction) => space.with_instruction(instruction),
-            None => space,
-        }
     }
 }
 

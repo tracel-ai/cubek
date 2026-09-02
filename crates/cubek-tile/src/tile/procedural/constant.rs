@@ -41,7 +41,7 @@ impl RecipeAxisDependencies for ZerosExpand {
 
 /// Constant one, carrying no value for the same reason as [`Zeros`].
 #[derive(CubeType, Clone, Copy, Default)]
-pub struct Ones;
+pub(crate) struct Ones;
 
 #[cube]
 impl<T: Numeric> Recipe<T> for Ones {

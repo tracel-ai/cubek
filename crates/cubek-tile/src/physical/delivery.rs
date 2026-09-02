@@ -3,9 +3,8 @@
 //! both argument types.
 
 use cubecl::prelude::*;
-use cubecl::zspace::SmallVec;
 
-use crate::{MAX_LEVELS, MmaIOConfig, RegisterBlock, Space, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Space, Sync, Tile, TileArg, TmaTileArg};
 
 /// How an operand reaches a stage: a buffered cooperative copy, coordinate-backed cooperative
 /// materialization, or a TMA hardware bulk copy. Read off a tile via
@@ -28,7 +27,7 @@ impl Delivery {
     }
 
     /// The synchronization required to materialize this source in a staging slot.
-    pub fn rendezvous(&self) -> Sync {
+    pub(crate) fn rendezvous(&self) -> Sync {
         match self {
             Delivery::Copy | Delivery::Procedural => Sync::Cube,
             Delivery::Tma => Sync::Barrier,
@@ -56,185 +55,6 @@ impl Delivery {
             ));
         }
         Ok(())
-    }
-}
-
-/// How a derived smem stage lays out its buffer: storage-tiled at the final tile (one
-/// contiguous block per fragment) or plain strided rows (legacy `sync_full_strided`).
-/// A per-operand comptime plan config ([`storage`](crate::StridedTileSource::storage)).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum StageStorage {
-    Tiled,
-    Strided,
-}
-
-/// Where an operand's cells physically sit while the level below reads or writes them. One
-/// vocabulary for both directions: an input is *filled* from its source into its residence, an
-/// output *drains* from its residence into its sink ([`accumulate`](crate::Tile::accumulate)).
-///
-/// Stated per level, coarse to fine, by the operand itself ([`StagePlan`]). A level says only how
-/// deeply its walk is buffered ([`Buffering`](crate::Buffering)); where each of its operands lives
-/// is the operand's own business, so one level can stage `lhs` into shared memory while `rhs`
-/// streams straight from where it already is.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Residence {
-    /// Read where the operand already is: a global window, a recipe evaluated at the leaf, or
-    /// registers a level above already holds. The level's walk still runs its ring, but its slots
-    /// allocate nothing and fill nothing: each holds the operand whole, and the read selects the
-    /// region's own window (or block of fragments) out of it.
-    InPlace,
-    /// A cooperatively filled shared-memory buffer the leaf reads windows from. How many physical
-    /// buffers back it is the ring's business, not the operand's: one per slot while the walk moves
-    /// its window, one for the whole ring once the walk leaves it fixed (see
-    /// [`WindowMode`](crate::WindowMode)).
-    Smem,
-    /// Plane-private register tiles in the stated encoding, selected by comptime coordinate (so
-    /// the level's walk unrolls).
-    Register,
-}
-
-/// The encoding of a register-resident tile: the software instruction's register array (whose
-/// execution `config` rides along, being the one instruction fact no stage placement implies),
-/// or a matrix fragment in one of the two hardware forms. `io` rides the manual form because it
-/// comes from a device query, which cannot run in-kernel.
-///
-/// Also the instruction vocabulary: an operand *is* its operand.s finest register stage at the
-/// instruction ([`register_stage`](Self::register_stage)), and an accumulator no stages answers
-/// for takes the blueprint's statement at the kernel top
-/// ([`Tile::instruction`](crate::Tile::instruction)).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Instruction {
-    Registers { config: RegisterBlock },
-    Cmma,
-    Mma { io: MmaIOConfig },
-}
-
-impl Instruction {
-    /// The compiler-emitted contraction under a scalar register budget, with neither edge
-    /// specialization nor lane fan-out. The shape most callers want; state a
-    /// [`RegisterBlock`] directly to turn either on.
-    pub const fn registers(budget: usize) -> Self {
-        Instruction::Registers {
-            config: RegisterBlock::new(budget),
-        }
-    }
-
-    /// Whether any level stages this operand into registers. Which instruction those registers
-    /// are for is the space's statement, never the operand's, so this answers presence only.
-    pub fn stages_to_registers(stages: &[Residence]) -> bool {
-        stages.iter().any(|residence| match residence {
-            Residence::Register => true,
-            Residence::InPlace | Residence::Smem => false,
-        })
-    }
-}
-
-impl StageStorage {
-    /// The safe default for an operand with these stages: a cmma fragment load reads a whole
-    /// transaction, so tile its stages. Anything else keeps plain strided rows, the manual-mma
-    /// form included: it addresses each element by computed offset, so contiguity buys it nothing.
-    pub fn for_stages(stages: &[Residence], instruction: Option<Instruction>) -> Self {
-        match instruction.filter(|_| Instruction::stages_to_registers(stages)) {
-            Some(Instruction::Cmma) => StageStorage::Tiled,
-            Some(Instruction::Registers { .. }) | Some(Instruction::Mma { .. }) | None => {
-                StageStorage::Strided
-            }
-        }
-    }
-}
-
-/// Where an operand lives at each level of its space, plus the two facts a materialized level
-/// needs to lay a buffer out: the `storage` layout and the launch's `units` (cube size). One
-/// comptime value threaded from the operand's [`TileSpec`](crate::TileSpec) through every stage
-/// derived from it, so a fill never re-derives either.
-///
-/// The residences are a stream, not an indexed table: [`head`](StagePlan::head) is the current
-/// level's, and [`descend`](StagePlan::descend) pops it wherever a space is
-/// [`divide`](crate::Space::divide)d. Plan and partitioner therefore stay in step with no depth
-/// arithmetic, and a plan that runs out answers [`InPlace`](Residence::InPlace) forever: below the
-/// last level there is only the leaf, which reads its operands where they are.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct StagePlan {
-    residence: SmallVec<[Residence; MAX_LEVELS]>,
-    /// How a buffer built from this plan lays itself out, whether the staging walk builds it or a
-    /// caller does. A level whose residence is [`InPlace`](Residence::InPlace) builds none, and
-    /// leaves this unread.
-    pub storage: StageStorage,
-    /// The launch's cube size (units per cube), `0` when unknown. A comptime worker count
-    /// lets a fill emit straight-line tasks instead of a rolled loop whose runtime
-    /// `CUBE_DIM` stride blocks unrolling; `0` falls back to the rolled loop.
-    pub units: usize,
-    /// The line width the next shared-memory stage is served at, `None` to serve it at the source
-    /// operand's own. A wider stage is padded to whole lines. Other residences carry it forward;
-    /// the Smem level that consumes it clears it on descent.
-    pub stage_width: Option<usize>,
-}
-
-impl StagePlan {
-    /// A plan staging nothing: every level [`InPlace`](Residence::InPlace). The default, so an
-    /// operand that states no residence is read where it already lives.
-    pub fn in_place() -> Self {
-        StagePlan::new(&[], StageStorage::Strided, 0)
-    }
-
-    /// A plan over `residence`, one entry per level of the operand's space, coarse to fine.
-    pub fn new(residence: &[Residence], storage: StageStorage, units: usize) -> Self {
-        StagePlan {
-            residence: SmallVec::from_slice(residence),
-            storage,
-            units,
-            stage_width: None,
-        }
-    }
-
-    /// Serve this plan's next shared-memory stage at `width` rather than at the source operand's
-    /// own line width.
-    /// See [`stage_width`](StagePlan::stage_width).
-    pub fn staged_at(mut self, width: Option<usize>) -> Self {
-        self.stage_width = width;
-        self
-    }
-
-    /// The line width this plan's next shared-memory stage is served in: the padded
-    /// [`stage_width`](StagePlan::stage_width) when one is stated, else `source` unchanged.
-    pub fn effective_width(&self, source: usize) -> usize {
-        self.stage_width.unwrap_or(source)
-    }
-
-    /// The finest register stage still ahead of this operand: what it is at the instruction
-    /// ([`Instruction::stages_to_registers`]).
-    pub fn stages_to_registers(&self) -> bool {
-        Instruction::stages_to_registers(&self.residence)
-    }
-
-    /// This level's residence. An exhausted plan answers [`InPlace`](Residence::InPlace).
-    pub fn head(&self) -> Residence {
-        self.residence
-            .first()
-            .copied()
-            .unwrap_or(Residence::InPlace)
-    }
-
-    /// The plan one level down, this level's residence consumed. Called wherever a space is
-    /// divided, so the two descend together. A pending stage width follows non-Smem residences;
-    /// the Smem level it configures consumes it exactly once.
-    pub fn descend(&self) -> Self {
-        StagePlan {
-            residence: self.residence.iter().skip(1).copied().collect(),
-            storage: self.storage,
-            units: self.units,
-            stage_width: if self.head() == Residence::Smem {
-                None
-            } else {
-                self.stage_width
-            },
-        }
-    }
-}
-
-impl Default for StagePlan {
-    fn default() -> Self {
-        StagePlan::in_place()
     }
 }
 
@@ -277,80 +97,5 @@ impl DeliveryFamily for Tma {
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
         arg.tile(space)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The plan is consumed in lockstep with the level chain, so what a tile asks for is always
-    /// the head, and descending is what keeps the two aligned.
-    #[test]
-    fn a_plan_hands_out_one_residence_per_level() {
-        let plan = StagePlan::new(
-            &[Residence::Smem, Residence::InPlace, Residence::Register],
-            StageStorage::Strided,
-            0,
-        );
-        assert_eq!(plan.head(), Residence::Smem);
-        assert_eq!(plan.descend().head(), Residence::InPlace);
-        assert_eq!(plan.descend().descend().head(), Residence::Register);
-    }
-
-    /// Below the last level there is only the leaf, which reads its operands where they are, so an
-    /// exhausted plan keeps answering rather than running out of entries.
-    #[test]
-    fn an_exhausted_plan_stays_in_place() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
-        assert_eq!(plan.descend().head(), Residence::InPlace);
-        assert_eq!(plan.descend().descend().head(), Residence::InPlace);
-        assert_eq!(StagePlan::in_place().head(), Residence::InPlace);
-    }
-
-    #[test]
-    fn an_unstated_stage_width_is_the_operands_own() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0);
-        assert_eq!(plan.effective_width(1), 1);
-        assert_eq!(plan.effective_width(4), 4);
-    }
-
-    #[test]
-    fn a_padded_stage_widens_its_source() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0).staged_at(Some(4));
-        assert_eq!(plan.effective_width(1), 4);
-    }
-
-    #[test]
-    fn a_stage_width_follows_non_smem_and_clears_after_the_first_smem() {
-        let plan = StagePlan::new(
-            &[
-                Residence::InPlace,
-                Residence::Register,
-                Residence::Smem,
-                Residence::Smem,
-            ],
-            StageStorage::Strided,
-            0,
-        )
-        .staged_at(Some(4));
-        let after_in_place = plan.descend();
-        assert_eq!(after_in_place.effective_width(1), 4);
-        let at_first_smem = after_in_place.descend();
-        assert_eq!(at_first_smem.head(), Residence::Smem);
-        assert_eq!(at_first_smem.effective_width(1), 4);
-        let at_second_smem = at_first_smem.descend();
-        assert_eq!(at_second_smem.head(), Residence::Smem);
-        assert_eq!(at_second_smem.effective_width(1), 1);
-    }
-
-    /// The layout and worker count are facts about the operand, not about one level, so they
-    /// survive the descent that consumes the residences.
-    #[test]
-    fn descending_keeps_the_storage_facts() {
-        let plan = StagePlan::new(&[Residence::Smem], StageStorage::Tiled, 128);
-        let below = plan.descend();
-        assert_eq!(below.storage, StageStorage::Tiled);
-        assert_eq!(below.units, 128);
     }
 }

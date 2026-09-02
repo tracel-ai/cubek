@@ -9,6 +9,8 @@
 //! rescale) meets no fragment in flight: this leaf needs no fragment arithmetic and no accumulator
 //! surviving a barrier.
 
+use core::fmt::{self, Display, Formatter};
+
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
     prelude::*,
@@ -34,11 +36,10 @@ impl<EA: Float> Tile<EA> {
         cols_bound: usize,
     ) {
         let mma = comptime!(Contraction::of(
-            "score",
+            Matmul::Score,
             &self.space,
             &q.space,
-            &k.space,
-            MatrixLayout::ColMajor,
+            &k.space
         ));
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
         let cols = comptime!(self.space.extent_at(1));
@@ -50,36 +51,31 @@ impl<EA: Float> Tile<EA> {
         let grid = comptime!(cols / n);
         let steps = comptime!(head_dim / kc);
         let visits = comptime!((self.space.extent_at(0) / m) * grid);
-        let mut visit = first_visit();
+        // Each plane takes every `planes`-th fragment, from wherever the launch put it in the
+        // cube. The stride is never zero: a cube narrower than a plane cannot run a plane
+        // instruction at all, and a zero step would hang rather than refuse.
+        let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
+        let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
         while visit < visits {
             let row = visit / grid;
             let col = visit % grid;
             if col * n < cols_bound {
-                let mut acc = fragment::<EA>(
-                    MatrixIdent::Accumulator,
-                    MatrixLayout::RowMajor,
-                    comptime!(mma.clone()),
-                );
+                let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
                 acc.zero();
                 for step in 0..steps {
-                    let mut lhs = fragment::<EI>(
-                        MatrixIdent::A,
-                        MatrixLayout::RowMajor,
-                        comptime!(mma.clone()),
-                    );
-                    lhs.copy_from(&q.at(&window(comptime!(q.space.clone()), row, step)));
-                    let mut rhs = fragment::<EI>(
-                        MatrixIdent::B,
-                        MatrixLayout::ColMajor,
-                        comptime!(mma.clone()),
-                    );
-                    rhs.copy_from(&k.at(&window(comptime!(k.space.clone()), col, step)));
+                    let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
+                    let window = Region::trailing(comptime!(q.space.clone()), row, step);
+                    lhs.copy_from(&q.at(&window));
+                    let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                    let window = Region::trailing(comptime!(k.space.clone()), col, step);
+                    rhs.copy_from(&k.at(&window));
                     acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
                 }
-                let mut cell = out.at(&window(comptime!(out.space.clone()), row, col));
+                let window = Region::trailing(comptime!(out.space.clone()), row, col);
+                let mut cell = out.at(&window);
                 cell.copy_from(&acc);
             }
-            visit += visit_stride();
+            visit += planes;
         }
     }
 
@@ -102,11 +98,10 @@ impl<EA: Float> Tile<EA> {
         cols_bound: usize,
     ) {
         let mma = comptime!(Contraction::of(
-            "mix",
+            Matmul::Mix,
             &self.space,
             &p.space,
-            &val.space,
-            MatrixLayout::RowMajor,
+            &val.space
         ));
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
         let val_dim = comptime!(self.space.extent_at(1));
@@ -122,36 +117,57 @@ impl<EA: Float> Tile<EA> {
         let grid = comptime!(val_dim / n);
         let steps = comptime!(cols / kc);
         let visits = comptime!((self.space.extent_at(0) / m) * grid);
-        let mut visit = first_visit();
+        // Every `planes`-th fragment, as in `score_fragments`.
+        let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
+        let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
         while visit < visits {
             let row = visit / grid;
             let col = visit % grid;
-            let mut acc = fragment::<EA>(
-                MatrixIdent::Accumulator,
-                MatrixLayout::RowMajor,
-                comptime!(mma.clone()),
-            );
-            let mut cell = out.at(&window(comptime!(out.space.clone()), row, col));
+            let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
+            let window = Region::trailing(comptime!(out.space.clone()), row, col);
+            let mut cell = out.at(&window);
             acc.copy_from(&cell);
             for step in 0..steps {
                 if step * kc < cols_bound {
-                    let mut lhs = fragment::<EP>(
-                        MatrixIdent::A,
-                        MatrixLayout::RowMajor,
-                        comptime!(mma.clone()),
-                    );
-                    lhs.copy_from(&p.at(&window(comptime!(p.space.clone()), row, step)));
-                    let mut rhs = fragment::<EI>(
-                        MatrixIdent::B,
-                        MatrixLayout::RowMajor,
-                        comptime!(mma.clone()),
-                    );
-                    rhs.copy_from(&val.at(&window(comptime!(val.space.clone()), step, col)));
+                    let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
+                    let window = Region::trailing(comptime!(p.space.clone()), row, step);
+                    lhs.copy_from(&p.at(&window));
+                    let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                    let window = Region::trailing(comptime!(val.space.clone()), step, col);
+                    rhs.copy_from(&val.at(&window));
                     acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
                 }
             }
             cell.copy_from(&acc);
-            visit += visit_stride();
+            visit += planes;
+        }
+    }
+}
+
+/// Which of the fold's two matmuls a contraction is. It names the leaf in the refusals, and it
+/// decides how the rhs operand is read: the score contracts the keys transposed, the mix reads the
+/// values as they lie.
+#[derive(Clone, Copy, Debug)]
+enum Matmul {
+    Score,
+    Mix,
+}
+
+impl Matmul {
+    /// The matrix the rhs operand fragment is read as.
+    fn rhs_layout(self) -> MatrixLayout {
+        match self {
+            Matmul::Score => MatrixLayout::ColMajor,
+            Matmul::Mix => MatrixLayout::RowMajor,
+        }
+    }
+}
+
+impl Display for Matmul {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Matmul::Score => write!(f, "score"),
+            Matmul::Mix => write!(f, "mix"),
         }
     }
 }
@@ -166,6 +182,7 @@ impl<EA: Float> Tile<EA> {
 /// contraction's edges.
 #[derive(Clone, Debug)]
 struct Contraction {
+    matmul: Matmul,
     m: usize,
     n: usize,
     k: usize,
@@ -176,50 +193,55 @@ struct Contraction {
 
 impl Contraction {
     /// The contraction `out += lhs · rhs` the three spaces state, refusing any extent they do not
-    /// agree on. `rhs_layout` is how the rhs's window is read: col-major from a `{cols, k}` window,
-    /// row-major from a `{k, cols}` one. `verb` names the leaf in the refusals.
-    fn of(verb: &str, out: &Space, lhs: &Space, rhs: &Space, rhs_layout: MatrixLayout) -> Self {
+    /// agree on. `matmul` names the leaf in the refusals and says how the rhs's window is read:
+    /// col-major from a `{cols, k}` window, row-major from a `{k, cols}` one.
+    fn of(matmul: Matmul, out: &Space, lhs: &Space, rhs: &Space) -> Self {
+        let layout = matmul.rhs_layout();
         assert!(
             out.rank() == 2 && lhs.rank() == 2 && rhs.rank() == 2,
-            "{verb}: a fragment leaf reads rank-2 tiles ({out:?}, {lhs:?}, {rhs:?}); stage the \
+            "{matmul}: a fragment leaf reads rank-2 tiles ({out:?}, {lhs:?}, {rhs:?}); stage the \
              rows as one axis"
         );
         let (rows, cols) = (out.extent_at(0), out.extent_at(1));
         let contracted = lhs.extent_at(1);
-        let (m, n) = visit_box(out);
-        let (lhs_rows, k) = visit_box(lhs);
-        let stored = match rhs_layout {
+        // A visit covers the box the level the instruction sits on cuts, or the whole tile where
+        // that level cut nothing.
+        let (acc_box, lhs_box) = (out.sub_tile_space(), lhs.sub_tile_space());
+        let (m, n) = (acc_box.extent_at(0), acc_box.extent_at(1));
+        let (lhs_rows, k) = (lhs_box.extent_at(0), lhs_box.extent_at(1));
+        let stored = match layout {
             MatrixLayout::ColMajor => (cols, contracted),
             MatrixLayout::RowMajor => (contracted, cols),
             MatrixLayout::Undefined => {
-                panic!("{verb}: an operand fragment is read row- or col-major")
+                panic!("{matmul}: an operand fragment is read row- or col-major")
             }
         };
         assert!(
             lhs.extent_at(0) == rows,
-            "{verb}: the lhs is {lhs:?}, not the {rows}x{contracted} this accumulator contracts"
+            "{matmul}: the lhs is {lhs:?}, not the {rows}x{contracted} this accumulator contracts"
         );
         assert!(
             (rhs.extent_at(0), rhs.extent_at(1)) == stored,
-            "{verb}: the rhs is {rhs:?}, not the {}x{} window a {rhs_layout:?} operand is read \
+            "{matmul}: the rhs is {rhs:?}, not the {}x{} window a {layout:?} operand is read \
              from here",
             stored.0,
             stored.1
         );
         assert!(
             lhs_rows == m,
-            "{verb}: the lhs visits {lhs_rows} rows and the accumulator {m}; both levels cut the \
-             same rows"
+            "{matmul}: the lhs visits {lhs_rows} rows and the accumulator {m}; both levels cut \
+             the same rows"
         );
         assert!(
             rows.is_multiple_of(m) && cols.is_multiple_of(n) && contracted.is_multiple_of(k),
-            "{verb}: the {m}x{n}x{k} fragment does not tile a {rows}x{cols} accumulator \
+            "{matmul}: the {m}x{n}x{k} fragment does not tile a {rows}x{cols} accumulator \
              contracting {contracted}"
         );
         // The contracted axis is the lhs's own label: the rhs may carry another for the same axis
         // (a value block's positions are the score's columns), and the edges have to be one thing.
         let (row, col, con) = (out.axis_at(0), out.axis_at(1), lhs.axis_at(1));
         Contraction {
+            matmul,
             m,
             n,
             k,
@@ -237,53 +259,28 @@ impl Contraction {
             MatrixIdent::B => self.rhs.clone(),
         }
     }
+
+    /// How `role`'s fragment is read. Only the rhs is ever transposed, and which way is the
+    /// matmul's own statement, so no call site repeats it.
+    fn layout(&self, role: MatrixIdent) -> MatrixLayout {
+        match role {
+            MatrixIdent::Accumulator | MatrixIdent::A => MatrixLayout::RowMajor,
+            MatrixIdent::B => self.matmul.rhs_layout(),
+        }
+    }
 }
 
-/// One uninitialized fragment of `mma`'s shape in `role`, read at `layout`.
+/// One uninitialized fragment of `mma`'s shape in `role`, read as `mma` states.
 #[cube]
-fn fragment<E: Numeric>(
-    #[comptime] role: MatrixIdent,
-    #[comptime] layout: MatrixLayout,
-    #[comptime] mma: Contraction,
-) -> Tile<E> {
+fn fragment<E: Numeric>(#[comptime] role: MatrixIdent, #[comptime] mma: Contraction) -> Tile<E> {
     let (m, n, k) = comptime!((mma.m, mma.n, mma.k));
-    CmmaData::<E>::fragment(role, m, n, k, layout, comptime!(mma.form(role)))
-}
-
-/// The first fragment this plane owns, and the stride to its next
-/// ([`visit_stride`]): the plane is the worker here, wherever the launch put it in the cube.
-#[cube]
-fn first_visit() -> usize {
-    UNIT_POS as usize / PLANE_DIM as usize
-}
-
-/// How many fragments the planes get through per round. Never zero: a cube narrower than a plane
-/// cannot run a plane instruction at all, and a step of zero would hang rather than refuse.
-#[cube]
-fn visit_stride() -> usize {
-    max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize)
-}
-
-/// The region at trailing coordinates `(c0, c1)`, runtime: the visit a plane picked out of the
-/// grid, which no [`Walk`] enumerates because the workers here are planes.
-#[cube]
-fn window(#[comptime] space: Space, c0: usize, c1: usize) -> Region {
-    let mut coords = Coords::<u32>::new();
-    coords.push(c0 as u32);
-    coords.push(c1 as u32);
-    Region::new(coords, space)
-}
-
-/// The `rows × cols` box one visit covers: the edges of the level the space's instruction sits on,
-/// or the whole tile where that level cut nothing. Every axis above the innermost multiplies into
-/// the row edge, so a tile carrying its rows as several axes reads like the flat one it is laid
-/// out as.
-fn visit_box(space: &Space) -> (usize, usize) {
-    let sub = space.sub_tile_space();
-    let rank = sub.rank();
-    (
-        (0..rank - 1).map(|p| sub.extent_at(p)).product(),
-        sub.extent_at(rank - 1),
+    CmmaData::<E>::fragment(
+        role,
+        m,
+        n,
+        k,
+        comptime!(mma.layout(role)),
+        comptime!(mma.form(role)),
     )
 }
 
@@ -291,10 +288,12 @@ fn visit_box(space: &Space) -> (usize, usize) {
 /// leaf that reads it off the accumulator applies it to every operand.
 fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
     let (a0, a1) = (space.axis_at(0), space.axis_at(1));
-    Tiling::new()
-        .extents(&[(a0, space.extent_at(0)), (a1, space.extent_at(1))])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(a0, e0), (a1, e1)])
-        })
-        .build()
+    Tiling::over(
+        &mut (),
+        &[(a0, space.extent_at(0)), (a1, space.extent_at(1))],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(a0, e0), (a1, e1)]);
+    })
+    .build()
 }

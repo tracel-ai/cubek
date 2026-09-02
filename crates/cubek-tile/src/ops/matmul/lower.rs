@@ -26,13 +26,10 @@ fn refuse_distributed_work(space: &Space) {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing
-    /// it held before takes part.
-    ///
-    /// Where the leaf owns each output cell outright, that lets the register block start from the
-    /// identity instead of reading `c` back, which is one load per cell and, for a `kc` too short
-    /// to amortize it, a measurable share of the leaf. Where it does not, the seed the caller
-    /// would have written happens here instead, so the verb costs nothing to reach for.
+    /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing it
+    /// held before takes part. Where the leaf owns each output cell outright the register block
+    /// starts from the identity instead of reading `c` back, which for a short `kc` is a
+    /// measurable share of the leaf; where it does not, the seed happens here anyway.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -50,12 +47,9 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `c += a · b`: [`mm`](Tile::mm) with the accumulate its name carries. Folds onto whatever
-    /// `c` holds, which the caller owns: nothing here initializes it.
-    ///
-    /// Also the recursion the walk re-enters per region, and deliberately so: what the
-    /// accumulation starts from is decided once, at the top, from the undivided operand spaces. A
-    /// region's operands are one contracted step of the whole and always span their own leaf, so
-    /// re-deciding down here would overwrite at every step of a walk that must fold them together.
+    /// `c` holds; nothing here initializes it. Also the recursion the walk re-enters per region,
+    /// deliberately: what the accumulation starts from is decided once at the top, since a
+    /// region's operands always span their own leaf and re-deciding would overwrite every step.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -79,11 +73,9 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// [`mma`](Tile::mma) over `steps` of this level's regions starting at `base`, rather than
-    /// all of them.
-    ///
-    /// What a streamed instance runs on one output tile: its share of that tile's contraction is
-    /// a range of the line rather than the whole of it, and the walk is where a range is said
+    /// [`mma`](Tile::mma) over `steps` of this level's regions starting at `base`, not all of
+    /// them. What a streamed instance runs on one output tile: its share of that tile's
+    /// contraction is a range of the line, and the walk is where a range is said
     /// ([`Walk::window`]). Everything under it is the contraction a whole region gets.
     pub(crate) fn mma_window<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
@@ -114,25 +106,19 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `c = (a ⊗ s) · b`, or `c = a · (b ⊗ s)`: [`mm`](Tile::mm) with one operand scaled by a
     /// real operand.
     ///
-    /// The scales are an operand like any other — their own tensor, their own axes, named at the
-    /// call — and the arithmetic that folds them in is this verb. Nothing decodes behind a read:
-    /// an operand that arrives quantized arrives as what it is, and what it takes to serve it is
-    /// written here.
+    /// The scales are an operand like any other, and the arithmetic that folds them in is this
+    /// verb: nothing decodes behind a read.
     ///
     /// **Which operand it scales is not stated**: the scales' own axes say it
     /// ([`ScaleSide`](crate::ScaleSide)). A scale spanning the output's columns is a fact about
-    /// the rhs's columns and nothing else could fold it in; anything else scales the lhs. The two
-    /// are the same sum of terms — the scale is one more factor of each — so one verb serves both,
-    /// folding once per `(row, k)` or once per `(col, k)`, whichever the operand asks for.
+    /// the rhs's columns; anything else scales the lhs. Both are the same sum of terms, so one
+    /// verb serves both, folding once per `(row, k)` or once per `(col, k)`.
     ///
-    /// `s` resolves at whatever granularity its own axes give it, and an axis it does not address
-    /// it cannot vary over. The block is an axis of the problem — `(KB, KI)` for a contracted one,
-    /// `(NB, NI)` for a column, spelled with
-    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values — and the
-    /// scales leave the position inside it unmapped. One scale per block then follows from which
-    /// axes the operand spans, with nothing dividing anything, which is why no line can straddle a
-    /// block here whatever width it is served at. A scales operand that divides instead is
-    /// refused.
+    /// `s` resolves at whatever granularity its axes give it, and cannot vary over an axis it does
+    /// not address. The block is an axis of the problem, `(KB, KI)` or `(NB, NI)`, spelled with
+    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values while the
+    /// scales leave the position inside it unmapped, so no line can straddle a block whatever
+    /// width it is served at. A scales operand that divides instead is refused.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -194,17 +180,12 @@ impl<Acc: Numeric> Tile<Acc> {
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
     /// [`witnesses`](Tile::witnesses) each [`Dynamic`](crate::Extent) axis. The output contributes
-    /// no axis beyond `lhs ∪ rhs`, which is why the schedules can merge the same two for their own
-    /// comptime decisions.
+    /// no axis beyond `lhs ∪ rhs`, which is why the schedules merge the same two.
     ///
-    /// The accumulator is asked for sizes all the same, because spanning an axis and being able to
-    /// state its size are different things. A gathered operand spans the axes its affine map reads
-    /// (a convolution's `OH` and `RH` both address one input dim), but its bound is the receptive
-    /// field they reach over, so it can answer for neither: the output positions come off the
-    /// accumulator and the window off the weights.
-    ///
-    /// It is asked first for the same reason: an axis it spans is one it writes, so its bound is
-    /// the extent the walk must cover, whatever an input's buffer reaches over.
+    /// The accumulator is asked for sizes all the same, and first: spanning an axis and being able
+    /// to state its size are different things (a gathered operand's bound is the receptive field
+    /// its axes reach over, so it answers for neither), and an axis the output spans is one it
+    /// writes, so its bound is the extent the walk must cover.
     pub(crate) fn op_space<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
@@ -276,7 +257,7 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
 /// fragment accumulator contracts through a hardware instruction that takes two operands and no
 /// scales, so a scaled contraction there is a different instruction, not this one under a flag.
 #[cube]
-pub fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
+pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
@@ -346,11 +327,9 @@ impl<E: Numeric> PlaneTile<E> {
 
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
-    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand.
-    ///
-    /// Only the register form. A hardware instruction eats its operands' format whole, so a scale
-    /// there routes to the *fragment*, not to a view: a different instruction, not this one with
-    /// a multiply added.
+    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand. Only the register form:
+    /// a hardware instruction eats its operands' format whole, so a scale there routes to the
+    /// *fragment* rather than to a view, which is a different instruction.
     pub fn mma_scaled<EL: Numeric, ER: Numeric, ES: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -381,11 +360,10 @@ fn hardware_semiring(#[comptime] semiring: Semiring) {
     ));
 }
 
-/// Asserts that operands are not gathered and read as one matrix each.
-///
-/// A fragment contracts over one `k` edge, which is not the same as one contracted *axis*: axes
-/// the operand carries as one run flatten into an edge, and a partitioned contraction is exactly
-/// that. What it cannot read is a contraction its axes give no edge for.
+/// Asserts that operands are not gathered and read as one matrix each. A fragment contracts over
+/// one `k` edge, which is not one contracted *axis*: axes carried as one run flatten into an edge,
+/// and a partitioned contraction is exactly that. What it cannot read is a contraction its axes
+/// give no edge for.
 #[cube]
 fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
     let lhs_gathered = lhs.gathered();
@@ -430,20 +408,21 @@ mod tests {
     // `#[should_panic]` never sees it and the launch returns zeros.
 
     fn space(distributed: bool) -> Space {
-        Tiling::new()
-            .extents(&[(M, 8), (N, 8), (K, 8)])
+        Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
             .level(
                 WalkOrder::RowMajor,
                 Buffering::SINGLE,
-                |l| match distributed {
+                |l, _| match distributed {
                     true => {
-                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
+                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
                     }
-                    false => l.walk(&[(M, 4), (N, 4), (K, 8)]),
+                    false => {
+                        l.walk(&[(M, 4), (N, 4), (K, 8)]);
+                    }
                 },
             )
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(M, 4), (N, 4), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(M, 4), (N, 4), (K, 4)]);
             })
             .build()
     }

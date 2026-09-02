@@ -19,7 +19,11 @@ impl<EA: Float> Tile<EA> {
     /// a register budget, which caps the rows a visit keeps live, and the hardware one carries
     /// none, so its fragment is the box the level it sits on cuts.
     pub fn score<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
-        match comptime!(instruction(&self.space, "score")) {
+        match comptime!(self.space.instruction().expect(
+            "score: this accumulator's space states no instruction; end its tiling with \
+             `.instruction(Instruction::Cmma, |l, o| ...)`, or `Instruction::registers(budget)` for \
+             the software one, so the level it is cut at says what runs on its cells"
+        )) {
             Instruction::Registers { config } => self.score_columns(q, k, cols_bound, config),
             Instruction::Cmma => self.score_fragments(q, k, cols_bound),
             Instruction::Mma { .. } => comptime!(panic!(
@@ -47,7 +51,11 @@ impl<EA: Float> Tile<EA> {
         factors: &Tile<EA>,
         cols_bound: usize,
     ) {
-        match comptime!(instruction(&self.space, "mix")) {
+        match comptime!(self.space.instruction().expect(
+            "mix: this accumulator's space states no instruction; end its tiling with \
+             `.instruction(Instruction::Cmma, |l, o| ...)`, or `Instruction::registers(budget)` for \
+             the software one, so the level it is cut at says what runs on its cells"
+        )) {
             Instruction::Registers { config } => {
                 self.mix_columns(p, val, factors, cols_bound, config)
             }
@@ -58,17 +66,4 @@ impl<EA: Float> Tile<EA> {
             )),
         }
     }
-}
-
-/// The instruction this accumulation contracts through, stated by the level its space was cut at
-/// ([`Tiling::instruction`]). A leaf finding none is a plan that never stated one, and says so
-/// while the kernel expands rather than picking an arm on its own.
-fn instruction(space: &Space, verb: &str) -> Instruction {
-    space.instruction().unwrap_or_else(|| {
-        panic!(
-            "{verb}: this accumulator's space states no instruction; end its tiling with \
-             `.instruction(Instruction::Cmma, |l| ...)`, or `Instruction::registers(budget)` for \
-             the software one, so the level it is cut at says what runs on its cells"
-        )
-    })
 }

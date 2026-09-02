@@ -89,10 +89,9 @@ impl Harness {
         Self {
             client: <TestRuntime as Runtime>::client(&Default::default()),
             dtype: f32::elem_type_native(),
-            space: Tiling::new()
-                .extents(&[(ROW, ROWS), (COL, COLS)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-                    level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])
+            space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+                    level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
                 })
                 .build(),
         }
@@ -278,19 +277,18 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> Ho
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(MM, m), (NN, n), (KK, k)])
+    let space = Tiling::over(&mut (), &[(MM, m), (NN, n), (KK, k)])
         // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
         // region of this level is one output tile and the index reaches through the level below.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(
                 cubes(CubeAxis::X).instances(runs),
                 &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-            )
+            );
         })
         // One tile's contraction, which is what a run counts in.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -463,17 +461,16 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let space = Tiling::new()
-            .extents(&[(MM, m), (NN, n), (KK, k)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(MM, m), (NN, n), (KK, k)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(
                     cubes(CubeAxis::X).instances(runs),
                     &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-                )
+                );
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(lanes(), &[(KK, 1)])
-                    .walk(&[(MM, TILE_M), (NN, TILE_N)])
+                    .walk(&[(MM, TILE_M), (NN, TILE_N)]);
             })
             .build()
             .resolve_lanes(plane_size)

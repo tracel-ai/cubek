@@ -1,7 +1,7 @@
 //! `TileSpec::packed`: an operand whose values are fields of a stored word, said on its own.
 //!
-//! A packed tensor is *values*, stored small. Saying so takes one fact — how wide a field is and
-//! how it reads back — and that fact belongs to the values, not to a quantization scheme: there
+//! A packed tensor is *values*, stored small. Saying so takes one fact (how wide a field is and
+//! how it reads back), and that fact belongs to the values, not to a quantization scheme: there
 //! are no scales here, no block grid, no scale binding, nothing for a scheme to carry. The tile
 //! serves what the words hold ([`TileArg::tile_packed`]) and the read unpacks.
 //!
@@ -145,10 +145,9 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -218,7 +217,7 @@ fn nvfp4_shaped_decode() {
 }
 
 /// `c = x · (w ⊗ s)` with `w` packed along its columns: the q4 kernel with the *weights on the
-/// right*, which is the shape the shipped quant matmul has. Same verb, same body — only the
+/// right*, which is the shape the shipped quant matmul has. Same verb, same body: only the
 /// scales' axes differ, and that is what says which factor they meet.
 #[cube(launch)]
 fn packed_matmul_rhs<E: Numeric, V: Size>(
@@ -239,7 +238,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
 /// at all. The binding says `i8`, the tile serves `i8`, and the contraction casts each value into
-/// the accumulator's element as it always does — a value is whatever its tensor holds, for the
+/// the accumulator's element as it always does: a value is whatever its tensor holds, for the
 /// same reason a scale is.
 #[cube(launch)]
 fn native_matmul<E: Numeric>(
@@ -632,10 +631,9 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -749,10 +747,9 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -871,19 +868,21 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (M, rows),
             (NB, blocks_n),
             (NI, bn),
             (KB, blocks_k),
             (KI, block_k),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     packed_matmul_rhs::launch::<TestRuntime>(
         &client,
@@ -1009,19 +1008,21 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (M, rows),
             (NB, blocks_n),
             (NI, bn),
             (KB, blocks_k),
             (KI, block_k),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     packed_matmul_rhs::launch::<TestRuntime>(
         &client,
@@ -1091,7 +1092,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
 }
 
 /// A block covering both lines: several lines share a scale, which is the direction that is
-/// always sound. The other one — a block narrower than the line reading it — is refused by the
+/// always sound. The other one (a block narrower than the line reading it) is refused by the
 /// contraction (`mm_scaled: ... scale blocks must cover whole lines`), and that refusal is a
 /// comptime panic inside the kernel, so it lands on a worker thread rather than in a
 /// `should_panic` test.
@@ -1152,19 +1153,21 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (M, rows),
             (NB, blocks_n),
             (NI, bn),
             (KB, blocks_k),
             (KI, block_k),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     packed_matmul_rhs::launch::<TestRuntime>(
         &client,
@@ -1234,7 +1237,7 @@ fn several_lines_may_share_one_scale() {
 }
 
 /// **The native store needs no engine feature.** `i8` weights, their scales beside them, one
-/// contraction — the tile serves the element its binding names and the block casts it, so
+/// contraction: the tile serves the element its binding names and the block casts it, so
 /// `Packing::Native` never has to be *stated* for a store that carries no scales in its element.
 #[test]
 fn an_i8_operand_contracts_against_its_scales() {
@@ -1273,10 +1276,9 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -1396,24 +1398,26 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (M, 1),
             (NB, blocks_n),
             (NI, bn),
             (KB, blocks_k),
             (KI, block_k),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
-                (M, 1),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+            (M, 1),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     // One entry per level: the accumulator opens at the outermost and lives to the leaf.
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
@@ -1540,24 +1544,26 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[
+    let space = Tiling::over(
+        &mut (),
+        &[
             (M, 1),
             (NB, blocks_n),
             (NI, bn),
             (KB, blocks_k),
             (KI, block_k),
-        ])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
-                (M, 1),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        ],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+            (M, 1),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
@@ -1646,7 +1652,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
 ///
 /// [`a_packed_decode_gemv_runs_in_this_spelling`] runs this block with the scales folded in, and
-/// the two reach the same `block::contract` through the same `RegisterData` — so if a packed rhs
+/// the two reach the same `block::contract` through the same `RegisterData`, so if a packed rhs
 /// were what a promoted accumulator could not drain, the gemv could not be spelled either. What
 /// makes both work is the accumulator being declared at the *served* width (`V = factor`); a
 /// narrower one is refused by the width assert, and that is the only thing packing owes here.
@@ -1699,11 +1705,10 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(N, bn)])
-                .walk(&[(M, 1), (KB, 1), (KI, block_k)])
+                .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));

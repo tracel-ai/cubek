@@ -5,8 +5,8 @@
 //! one spans fewer axes than the other and so spreads each of its values across every position of
 //! the axes it omits.
 //!
-//! Proven here with the axes doing all the work. `COL` is spelled `(CB, CI)` — which block of
-//! columns, and where inside it — the weights address both, and the scales address `CB` alone. One
+//! Proven here with the axes doing all the work. `COL` is spelled `(CB, CI)`: which block of
+//! columns, and where inside it. The weights address both, and the scales address `CB` alone. One
 //! scale per block of columns is then a fact about which axes the operand distinguishes, with
 //! nothing dividing anything.
 
@@ -23,7 +23,7 @@ const CB: Axis = Axis(1);
 const CI: Axis = Axis(2);
 
 /// `out = weights ⊗ scales`. The weights arrive packed and unpack at the read; the scales
-/// broadcast over the axis they omit. Neither fact is stated here — both are the operands'.
+/// broadcast over the axis they omit. Neither fact is stated here; both are the operands'.
 #[cube(launch)]
 fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     weights: &TileArg<'_, u32, Const<1>>,

@@ -18,24 +18,25 @@ impl Region {
         Region { coords, space }
     }
 
-    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere; comptime, so
-    /// it folds to constants and can select fragments.
-    pub fn trailing(
-        #[comptime] space: Space,
-        #[comptime] c0: usize,
-        #[comptime] c1: usize,
-    ) -> Region {
+    /// The region at trailing-two coordinates `(c0, c1)`, `0` elsewhere. The coordinates carry
+    /// their own constness ([`fcast`](crate::Fold::fcast) keeps a constant constant): comptime
+    /// ones fold to constants and can select fragments, ones the kernel computed (the visit a
+    /// worker picked out of a grid by hardware position) window memory.
+    pub fn trailing(#[comptime] space: Space, c0: usize, c1: usize) -> Region {
         let rank = comptime!(space.rank());
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            let c = comptime!(if p == rank - 2 {
-                c0 as u32
-            } else if p == rank - 1 {
-                c1 as u32
+            // `fcast`, not `as`: a comptime coordinate has to stay a constant or it could no
+            // longer select a fragment. `runtime` on the `0` moves the literal into the expand
+            // domain and keeps it constant too.
+            let c = if comptime!(p == rank - 2) {
+                c0.fcast::<u32>()
+            } else if comptime!(p == rank - 1) {
+                c1.fcast::<u32>()
             } else {
-                0u32
-            });
+                0u32.runtime()
+            };
             coords.push(c);
         }
         Region::new(coords, comptime!(space.clone()))

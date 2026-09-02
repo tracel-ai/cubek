@@ -29,10 +29,9 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// An accumulator's scope, opened by [`Tile::accumulate`] and closed by whichever op exhausts it.
-///
 /// The variants are the output's [`Residence`] at the level the scope opens, not a choice made
-/// here. `EA` is the register accumulate element, distinct from the stored `Out` (`f32` accumulate
-/// under an `f16` output); an `InPlace` scope has no second element, so it never reads `EA`.
+/// here. `EA` is the register accumulate element, distinct from the stored `Out`; an `InPlace`
+/// scope has no second element and never reads it.
 // The register variant carries a second tile; both are expansion-time handles, so the size gap
 // costs nothing the kernel ever sees.
 #[allow(clippy::large_enum_variant)]
@@ -95,11 +94,9 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
     }
 
     /// `c = lhs · rhs`: contract into the accumulator and drain, the contraction owning the init.
-    /// The scope's whole body at every call site that is not accumulating onto `c`.
-    ///
-    /// `semiring` is the algebra of the contraction itself: the product it forms from a pair of
-    /// operands and the monoid those products accumulate into. The scope holds a fold and nothing
-    /// more, so a contraction, which needs more than a fold, is handed one.
+    /// The scope's whole body at every call site not accumulating onto `c`. `semiring` is the
+    /// algebra of the contraction: the product it forms and the monoid those products accumulate
+    /// into. The scope holds a fold and nothing more, so a contraction is handed one.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -155,10 +152,8 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// `c = (lhs ⊗ s) · rhs`, or its rhs twin: [`mm`](AccumulatorScope::mm) with one operand
     /// scaled by a real operand, the side read off the scales' axes
-    /// ([`ScaleSide`](crate::ScaleSide)).
-    ///
-    /// A register accumulator here is what a decode gemv wants: the scaled partials never
-    /// round-trip through the sink between `K` steps.
+    /// ([`ScaleSide`](crate::ScaleSide)). A register accumulator here is what a decode gemv wants:
+    /// the scaled partials never round-trip through the sink between `K` steps.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -228,7 +223,7 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
 
     /// `c = fold(c, input)`: [`reduce_axis`](AccumulatorScope::reduce_axis) folding onto an
     /// accumulator the caller [`seed`](AccumulatorScope::seed)ed.
-    pub fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
+    pub(crate) fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
         match self {
             AccumulatorScope::Register { tile, sink, monoid } => {
                 tile.reduce_axis_accumulate(input, comptime!(*monoid));
@@ -281,30 +276,21 @@ fn opens(space: &Space, residence: Residence) -> Opens {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Open this output's accumulator scope, uninitialized, folding under `monoid`: `Sum` for a
-    /// matmul, `Min` for a min-plus one, whichever fold a reduce asked for. `monoid` is stated
-    /// here because it is read on drain, when the plane's lanes are combined, and comptime state
-    /// cannot be set after a thing is built, and because it is the accumulation's one algebra
-    /// rather than a fact about each call. It is a fold and nothing more: an op needing more,
-    /// [`mm`](AccumulatorScope::mm) and [`mma`](AccumulatorScope::mma), is handed the
-    /// [`Semiring`] it runs, whose add this must be.
+    /// Open this output's accumulator scope, uninitialized, folding under `monoid`. Stated here
+    /// because it is read on drain, when the plane's lanes are combined, and is the accumulation's
+    /// one algebra rather than a fact about each call. A fold and nothing more: an op needing more
+    /// is handed the [`Semiring`] it runs, whose add this must be.
     ///
-    /// The op that closes the scope drains it; where that op is [`mm`](AccumulatorScope::mm) or
-    /// [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too, and only the
-    /// accumulating verbs ask the caller to state one ([`seed`](AccumulatorScope::seed)).
+    /// The op that closes the scope drains it, and where that op is [`mm`](AccumulatorScope::mm)
+    /// or [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too; only the
+    /// accumulating verbs ask the caller to seed. Where the accumulator lives is the output
+    /// operand's own statement ([`Operand::stage`]), and `EA` is read only under
+    /// [`Register`](Residence::Register).
     ///
-    /// Where the accumulator lives is the output operand's own statement, read off the residence
-    /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read
-    /// only when that statement is [`Register`](Residence::Register).
-    ///
-    /// `lhs` is the operand this accumulator will contract against, and it states the
-    /// register form the accumulator takes: a staged cmma or manual-mma operand meets a
-    /// matching fragment. An operand staging no register form leaves the instruction open (memory
-    /// windows serve the software instruction and both hardware mmas alike), so the space's
-    /// instruction decides ([`Space::instruction`]). `lhs` also sizes the
-    /// fragment: a hardware fragment is the whole `m × n × k` instruction, and an accumulator
-    /// spans only `m × n`, so the contraction depth has to come from a side that has it. The
-    /// `mma` call is the next line at every call site, so it is already in hand.
+    /// `lhs` states the register form the accumulator takes: a staged cmma or manual-mma operand
+    /// meets a matching fragment, and one staging no register form leaves the space's
+    /// [`instruction`](Space::instruction) to decide. It also sizes the fragment, since a hardware
+    /// fragment is the whole `m × n × k` and an accumulator spans only `m × n`.
     pub fn accumulate<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -393,13 +379,12 @@ mod tests {
     #[test]
     #[should_panic = "contracting in place would fold into the destination once per step"]
     fn distributed_work_contracting_in_place_is_refused() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)])
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(M, 4), (N, 4), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(M, 4), (N, 4), (K, 4)]);
             })
             .build();
         opens(&space.project(&[M, N]), Residence::InPlace);
@@ -410,11 +395,10 @@ mod tests {
     #[test]
     fn opening_an_accumulator_over_a_cube_split_output_is_fine() {
         let scope = test_scope();
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 8), (K, 4)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(cubes(CubeAxis::X), &[(N, 4)])
-                    .walk(&[(M, 4), (K, 4)])
+                    .walk(&[(M, 4), (K, 4)]);
             })
             .build()
             .with_instruction(Instruction::registers(16));

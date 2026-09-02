@@ -15,12 +15,11 @@ Split the contraction across cubes by cutting a contracted axis at cube scope, a
 destination that folds:
 
 ```rust
-let space = Tiling::new()
-    .extents(&[(M, m), (N, n), (K, k)])
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
         l.distribute(cubes(CubeAxis::X), &[(N, cols)])
             .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])   // the whole feature
-            .walk(&[(M, m)])
+            .walk(&[(M, m)]);
     })
     .build()
     .with_instruction(Instruction::registers(64));

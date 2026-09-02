@@ -20,6 +20,7 @@
 //! [`direct`](Projection::direct) is the degenerate one every current operand uses.
 
 mod base;
+mod carrier;
 mod compact;
 mod fold;
 mod map;

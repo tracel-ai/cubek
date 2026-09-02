@@ -1,6 +1,6 @@
 //! An axis spelled as two: `x = xb · B + xi`, the axis partitioned into blocks.
 //!
-//! A *partition* of an axis is not a gather — the windows tile instead of overlapping, so a
+//! A *partition* of an axis is not a gather: the windows tile instead of overlapping, so a
 //! logical position still determines a cell and every window is still a dense box. An operand
 //! spanning `(KB, KI)` must therefore read exactly as one spanning `K` does, and cost the same.
 //!
@@ -83,10 +83,9 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (K, block)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (K, depth)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (K, block)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -143,10 +142,9 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -228,10 +226,9 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -324,13 +321,15 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     matmul::launch::<TestRuntime>(
         &client,
@@ -410,13 +409,15 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     scaled_matmul::launch::<TestRuntime>(
         &client,
@@ -508,13 +509,15 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     wide_matmul::launch::<TestRuntime>(
         &client,
@@ -610,13 +613,15 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     wide_scaled_matmul::launch::<TestRuntime>(
         &client,
@@ -710,13 +715,15 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
@@ -814,13 +821,15 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
@@ -926,13 +935,15 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        })
-        .build()
-        .with_instruction(Instruction::registers(16));
+    let space = Tiling::over(
+        &mut (),
+        &[(M, rows), (NB, blocks), (NI, inside), (K, depth)],
+    )
+    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    })
+    .build()
+    .with_instruction(Instruction::registers(16));
 
     wide_typed_scaled_matmul::launch::<TestRuntime>(
         &client,

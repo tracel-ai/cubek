@@ -55,7 +55,7 @@ impl Fold for i32 {}
 /// Folding reductions over the elements at comptime `picks`: a sequence accumulates
 /// by chaining fresh values, where a `let mut` accumulator would land in a mutable
 /// slot and erase constness.
-pub trait FoldSeq<C: Int>: Sized {
+pub(crate) trait FoldSeq<C: Int>: Sized {
     /// Product of the picked elements (empty picks fold to `1`).
     fn fproduct(&self, _picks: Vec<usize>) -> C {
         unexpanded!()
@@ -136,7 +136,7 @@ fn fold_rem<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
 }
 
 /// Expand twin of [`Fold`]; blanket on integer expand elements.
-pub trait FoldExpand<C: Int>: Sized {
+pub(crate) trait FoldExpand<C: Int>: Sized {
     fn __expand_fadd_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fsub_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fmul_method(self, scope: &Scope, rhs: Self) -> Self;
@@ -174,7 +174,7 @@ impl<C: Int> FoldExpand<C> for NativeExpand<C> {
 }
 
 /// Expand twin of [`FoldSeq`]; blanket on integer sequences.
-pub trait FoldSeqExpand<C: Int>: Sized {
+pub(crate) trait FoldSeqExpand<C: Int>: Sized {
     fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C>;
     fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C>;
 }
@@ -235,15 +235,15 @@ impl<C: Int> Coords<C> {
         unexpanded!()
     }
     /// Re-view as boundary [`CoordsDyn`] (same handles; cubecl layouts flow those).
-    pub fn to_dyn(&self) -> CoordsDyn {
+    pub(crate) fn to_dyn(&self) -> CoordsDyn {
         unexpanded!()
     }
     /// Product of the elements at comptime `picks` (empty picks fold to `1`).
-    pub fn fproduct(&self, _picks: Vec<usize>) -> C {
+    pub(crate) fn fproduct(&self, _picks: Vec<usize>) -> C {
         unexpanded!()
     }
     /// Sum of the elements at comptime `picks` (empty picks fold to `0`).
-    pub fn fsum(&self, _picks: Vec<usize>) -> C {
+    pub(crate) fn fsum(&self, _picks: Vec<usize>) -> C {
         unexpanded!()
     }
 

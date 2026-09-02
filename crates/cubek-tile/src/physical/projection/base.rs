@@ -31,19 +31,16 @@ impl Projection {
 
     /// [`direct`](Projection::direct) over a space's own axes: what a materialized tile (an smem
     /// stage, a fragment) maps through, whatever its source mapped through.
-    pub fn direct_over(space: &crate::Space) -> Self {
+    pub(crate) fn direct_over(space: &crate::Space) -> Self {
         Projection::direct(&space.axes().collect::<Vec<_>>())
     }
 
     /// Build the projection off a realized [`ConcreteLayout`]: one identity term per physical
-    /// axis, in buffer order, with logical order [`distinct_axes`](ConcreteLayout::distinct_axes).
-    /// A storage-tiled logical axis labels several physical axes, which is the whole encoding of
-    /// its tiling: the digit each fragment carries follows from that repetition
-    /// ([`digit`](Projection::digit)), so no extent is read here and none is baked in. What
+    /// axis, in buffer order. A storage-tiled logical axis labels several physical axes, which is
+    /// the whole encoding of its tiling, so no extent is read here and none is baked in. What
     /// [`StridedTileSource::subspace`](crate::StridedTileSource::subspace) derives a labeled
-    /// operand's mapping from; [`StridedTileSource::gathered`](crate::StridedTileSource::gathered)
-    /// is the entry for one no labeling describes.
-    pub fn of_layout(layout: &ConcreteLayout) -> Projection {
+    /// operand's mapping from.
+    pub(crate) fn of_layout(layout: &ConcreteLayout) -> Projection {
         Projection {
             physical: layout
                 .axes()
@@ -55,12 +52,9 @@ impl Projection {
     }
 
     /// [`direct`](Projection::direct) with the axes storage-tiled per `tiling`: each axis labels as
-    /// many physical axes as it has fragments, emitted in [`StorageTiling`]'s level-major order. A
-    /// [`StorageTiling`] of all ones is [`direct`](Projection::direct) itself.
-    ///
-    /// The tiling lives in the repetition, so the projection alone says how many physical axes the
-    /// buffer has and how a coordinate splits across them ([`digit`](Projection::digit)); no extent
-    /// is read here and none is baked in.
+    /// many physical axes as it has fragments, in [`StorageTiling`]'s level-major order (all ones
+    /// is [`direct`](Projection::direct) itself). The tiling lives in the repetition, so the
+    /// projection alone says how a coordinate splits across them, with no extent baked in.
     pub fn tiled(axes: &[Axis], tiling: StorageTiling) -> Self {
         let physical: Vec<PhysicalAxisMap> = tiling
             .order(axes)
@@ -72,10 +66,8 @@ impl Projection {
 
     /// The same operand in *coordinate* space: an axis's storage fragments merged back into the one
     /// coordinate they are digits of, so there is one entry per coordinate a
-    /// [`GmemLayout`](crate::GmemLayout) consumes rather than one per physical axis of the buffer.
-    /// [`positional`](Projection::positional) is the other half of the pair, coordinate to
-    /// physical; this one is logical to coordinate. An untiled operand, gathered or not, is its own
-    /// coordinate map.
+    /// [`GmemLayout`](crate::GmemLayout) consumes. The logical-to-coordinate half of the pair
+    /// [`positional`](Projection::positional) completes. An untiled operand is its own map.
     pub fn untiled(&self) -> Projection {
         let carried = self.carried_groups();
         let physical: Vec<PhysicalAxisMap> = carried
@@ -85,23 +77,18 @@ impl Projection {
         Projection::new(&self.axes, &physical)
     }
 
-    /// How many coordinates address this operand: its physical axes with each storage-tiled
-    /// axis's fragments folded back into the one coordinate they are digits of. This is the rank
-    /// every [`Window`](crate::Window) is shaped over, and so the rank of a
-    /// [`TileSpec`](crate::TileSpec)'s boundary list; [`physical_rank`](Self::physical_rank) is
-    /// the buffer's own, which is larger under storage tiling.
+    /// How many coordinates address this operand: its physical axes with each storage-tiled axis's
+    /// fragments folded back into one. The rank every [`Window`](crate::Window) is shaped over;
+    /// [`physical_rank`](Self::physical_rank) is the buffer's own, larger under storage tiling.
     pub fn coordinate_rank(&self) -> usize {
         self.carried_groups().len()
     }
 
     /// The same buffer addressed by physical position instead of by this operand's own axes: each
-    /// physical axis relabeled with the synthetic [`Axis`] of the coordinate that addresses it, at
-    /// coefficient `1`. Storage tiling survives (a tiled axis's fragments share one label, which is
-    /// what makes them digits of one coordinate); a gather does not, since it is resolved one layer
-    /// up, by [`AxisProjection`](crate::AxisProjection), and never reaches the layout.
-    ///
-    /// This is the map [`GmemLayout`](crate::GmemLayout) splits coordinates through, so a buffer
-    /// only ever has to describe itself once: the operand's projection, relabeled.
+    /// physical axis relabeled with the coordinate's synthetic [`Axis`], at coefficient `1`.
+    /// Storage tiling survives, a gather does not (it is resolved one layer up and never reaches
+    /// the layout). The map [`GmemLayout`](crate::GmemLayout) splits coordinates through, so a
+    /// buffer only ever describes itself once.
     pub fn positional(&self) -> Projection {
         let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
@@ -128,15 +115,10 @@ impl Projection {
     }
 
     /// One physical axis per *coordinate* this operand is addressed by: the first fragment of each
-    /// distinct leading axis, in buffer order. The two collapsing views ([`untiled`],
-    /// [`positional`]) share it, since both fold an axis's fragments back into the one coordinate
-    /// they are digits of.
-    ///
-    /// Identifying a group by its leading term is only an identity when a physical axis carries
-    /// one logical axis, which is exactly what storage tiling produces: an affine map contributes
-    /// its whole cell as one coordinate, so a *gathered* projection must be untiled for this to
-    /// mean anything. [`validate`](Projection::validate) pins that down at construction, and the
-    /// assert here keeps a hand-built projection from silently losing a physical axis.
+    /// distinct leading axis, in buffer order, shared by [`untiled`] and [`positional`].
+    /// Identifying a group by its leading term only holds when a physical axis carries one logical
+    /// axis, so a *gathered* projection must be untiled for this to mean anything; the assert here
+    /// keeps a hand-built one from silently losing a physical axis.
     fn carried_groups(&self) -> Vec<usize> {
         assert!(
             self.is_invertible() || !self.is_tiled(),
@@ -167,22 +149,16 @@ impl Projection {
     /// (`0..tiling.rank()`) labeled by the synthetic axis `Axis(p)`, split per `tiling`. A
     /// `GmemLayout` addresses its buffer by physical position, already resolved past any gather one
     /// layer up, so it never needs the operand's real axis labels.
-    pub fn of_tiling(tiling: StorageTiling) -> Projection {
+    pub(crate) fn of_tiling(tiling: StorageTiling) -> Projection {
         let axes: Vec<Axis> = (0..tiling.rank()).map(|p| Axis(p as u8)).collect();
         Projection::tiled(&axes, tiling)
     }
 
     /// How many fragments each logical axis is split across, counted off the physical map. A
-    /// gathered one reports one fragment per axis, since several of its axes share one physical
-    /// axis rather than one axis spanning several: it is not tiled, and its physical rank does not
-    /// follow from this.
-    ///
-    /// Counts only, not an order: [`tiled`](Projection::tiled) reconstructs this projection from
-    /// them exactly when it is [`level_major`](Projection::is_level_major), which is every
-    /// projection [`tiled`](Projection::tiled) itself builds but not every one
-    /// [`of_layout`](Projection::of_layout) can read off a real buffer (`[A, A, B]` counts as
-    /// `[2, 1]`, whose level-major order is `[A, B, A]`). [`is_tiled`](Projection::is_tiled) asks
-    /// only whether some count exceeds one, which the order cannot change.
+    /// gathered one reports one per axis: it is not tiled, and its physical rank does not follow
+    /// from this. Counts only, not an order, so [`tiled`](Projection::tiled) rebuilds this
+    /// projection exactly when it is [`level_major`](Projection::is_level_major) (`[A, A, B]`
+    /// counts as `[2, 1]`, whose level-major order is `[A, B, A]`).
     pub fn tiling(&self) -> StorageTiling {
         StorageTiling::per_axis(
             &self
@@ -199,12 +175,10 @@ impl Projection {
     }
 
     /// Whether the physical axes run in [`StorageTiling`]'s level-major order, so
-    /// [`tiling`](Projection::tiling) describes this projection whole and
-    /// [`tiled`](Projection::tiled) rebuilds it. True by construction for
-    /// [`tiled`](Projection::tiled) and [`of_tiling`](Projection::of_tiling), and for any untiled
-    /// projection trivially; a buffer that groups an axis's fragments together
-    /// (`[A, A, B]`) is a layout the counts alone do not pin down.
-    pub fn is_level_major(&self) -> bool {
+    /// [`tiling`](Projection::tiling) describes this projection whole. True by construction for
+    /// [`tiled`](Projection::tiled) and [`of_tiling`](Projection::of_tiling); a buffer grouping an
+    /// axis's fragments together (`[A, A, B]`) is a layout the counts alone do not pin down.
+    pub(crate) fn is_level_major(&self) -> bool {
         self.is_invertible()
             && self.tiling().order(&self.axes)
                 == self
@@ -220,21 +194,20 @@ impl Projection {
     /// Whether some axis is storage-tiled: split across several physical fragments, so a
     /// coordinate along it decomposes into one digit per fragment. Not a rank comparison, which a
     /// gather also fails (its logical rank exceeds its physical one without any axis being split).
-    pub fn is_tiled(&self) -> bool {
+    pub(crate) fn is_tiled(&self) -> bool {
         self.tiling().is_tiled()
     }
 
-    /// Where `axis`'s digit at physical axis `pa` sits in the buffer's mixed radix: the physical
-    /// positions of that axis's *finer* fragments (whose extents are the block this digit sits
-    /// above), and the position whose extent is this digit's radix, `None` for the outermost
-    /// fragment, which has no enclosing block and keeps the full quotient.
-    ///
-    /// Positional, not numeric: the radix is looked up in the buffer's own `physical_shape` at use
-    /// time rather than baked in here. That is what lets one representation serve an smem stage,
-    /// whose extents are comptime and fold the arithmetic away, and a gmem tensor, whose tile
-    /// extents are genuine runtime values. An axis carried by a single physical axis yields
-    /// `(&[], None)`: the whole coordinate, no arithmetic at all.
-    pub fn digit(&self, pa: usize, axis: Axis) -> (SmallVec<[usize; MAX_AXES]>, Option<usize>) {
+    /// Where `axis`'s digit at physical axis `pa` sits in the buffer's mixed radix: the positions
+    /// of that axis's *finer* fragments, and the position whose extent is this digit's radix
+    /// (`None` for the outermost, which keeps the full quotient). Positional, not numeric: the
+    /// radix is looked up in the buffer's own `physical_shape` at use time, which is what lets one
+    /// representation serve a comptime smem stage and a runtime gmem tensor alike.
+    pub(crate) fn digit(
+        &self,
+        pa: usize,
+        axis: Axis,
+    ) -> (SmallVec<[usize; MAX_AXES]>, Option<usize>) {
         let carriers = self.carriers(axis);
         assert!(
             carriers.contains(&pa),
@@ -252,11 +225,10 @@ impl Projection {
     }
 
     /// The physical axes carrying `axis`, in buffer order: one entry unless the axis is
-    /// storage-tiled, in which case its extents multiply back to the logical one
-    /// ([`logical_extent`](crate::logical_extent)). Never empty: every caller decomposes a coordinate along `axis`, and an
-    /// axis addressing no physical axis has no decomposition, so that is a malformed projection
-    /// rather than an empty answer ([`validate`](Projection::validate) rules it out up front).
-    pub fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
+    /// storage-tiled, in which case its extents multiply back to the logical one. Never empty: an
+    /// axis addressing no physical axis has no decomposition, which is a malformed projection
+    /// rather than an empty answer.
+    pub(crate) fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
         let carriers: SmallVec<[usize; MAX_AXES]> = (0..self.physical.len())
             .filter(|&q| self.physical[q].terms().iter().any(|t| t.axis == axis))
             .collect();
@@ -277,7 +249,7 @@ impl Projection {
 
     /// Whether this is the [`direct`](Projection::direct) mapping. Every generalized path is
     /// gated on this being `false`, so a direct operand keeps its exact previous codegen.
-    pub fn is_direct(&self) -> bool {
+    pub(crate) fn is_direct(&self) -> bool {
         self.physical.len() == self.axes.len()
             && self
                 .physical
@@ -290,11 +262,11 @@ impl Projection {
         self.physical.len()
     }
 
-    pub fn logical_rank(&self) -> usize {
+    pub(crate) fn logical_rank(&self) -> usize {
         self.axes.len()
     }
 
-    pub fn logical_axes(&self) -> &[Axis] {
+    pub(crate) fn logical_axes(&self) -> &[Axis] {
         &self.axes
     }
 
@@ -306,7 +278,12 @@ impl Projection {
             .expect("Projection::position: axis not spanned by this operand")
     }
 
-    pub fn physical_axis(&self, pa: usize) -> &PhysicalAxisMap {
+    /// Every physical axis's map, in the projection's own order.
+    pub(crate) fn axis_maps(&self) -> impl Iterator<Item = &PhysicalAxisMap> {
+        self.physical.iter()
+    }
+
+    pub(crate) fn physical_axis(&self, pa: usize) -> &PhysicalAxisMap {
         &self.physical[pa]
     }
 
@@ -333,103 +310,19 @@ impl Projection {
 
     /// Whether any physical axis carries a negative offset or a dynamic offset (whose sign
     /// cannot be proven non-negative at comptime).
-    pub fn may_underflow(&self) -> bool {
+    pub(crate) fn may_underflow(&self) -> bool {
         self.physical.iter().any(|m| match m.offset() {
             Offset::Static(o) => o < 0,
             Offset::Dynamic => true,
         })
     }
 
-    /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
-    /// term order within, each axis's [`Dynamic`](Divisor::Dynamic) divisor last, so a caller fills
-    /// the carrier by walking the maps in order.
-    pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
-        if !self.physical[pa].terms()[t].scale.is_dynamic() {
-            return None;
-        }
-        let within = self.physical[pa].terms()[..t]
-            .iter()
-            .filter(|term| term.scale.is_dynamic())
-            .count();
-        Some(self.coefficient_base(pa) + within)
-    }
-
-    /// Where physical axis `pa`'s divisor sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Divisor::Static). Divisors share the carrier with coefficients: both are
-    /// unsigned values of the same combination, and an axis's divisor follows its own terms.
-    pub fn dynamic_divisor_index(&self, pa: usize) -> Option<usize> {
-        if !self.physical[pa].divisor().is_dynamic() {
-            return None;
-        }
-        Some(self.coefficient_base(pa) + self.physical[pa].dynamic_scale_count())
-    }
-
-    /// Where physical axis `pa`'s entries start in the runtime coefficient carrier; at the physical
-    /// rank, the carrier's whole length.
-    fn coefficient_base(&self, pa: usize) -> usize {
-        self.physical[..pa]
-            .iter()
-            .map(|m| m.dynamic_scale_count() + m.divisor().is_dynamic() as usize)
-            .sum()
-    }
-
-    /// The length of the runtime coefficient carrier: every [`Dynamic`](Scale::Dynamic) coefficient
-    /// and every [`Dynamic`](Divisor::Dynamic) divisor.
-    pub fn dynamic_coefficient_count(&self) -> usize {
-        self.coefficient_base(self.physical.len())
-    }
-
-    /// Whether any physical axis's divisor is only known at runtime.
-    pub fn has_dynamic_divisors(&self) -> bool {
-        self.physical.iter().any(|m| m.divisor().is_dynamic())
-    }
-
-    /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
-    /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
-    /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
-    pub fn dynamic_offset_index(&self, pa: usize) -> Option<usize> {
-        if !self.physical[pa].offset().is_dynamic() {
-            return None;
-        }
-        Some(
-            self.physical[..pa]
-                .iter()
-                .filter(|m| m.offset().is_dynamic())
-                .count(),
-        )
-    }
-
-    /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
-    pub fn dynamic_offset_count(&self) -> usize {
-        self.physical
-            .iter()
-            .filter(|m| m.offset().is_dynamic())
-            .count()
-    }
-
-    /// Whether any coefficient, offset or divisor is only known at runtime.
-    pub fn has_dynamic(&self) -> bool {
-        self.has_dynamic_scales() || self.dynamic_offset_count() > 0 || self.has_dynamic_divisors()
-    }
-
-    /// Whether any coefficient is only known at runtime.
-    pub fn has_dynamic_scales(&self) -> bool {
-        self.physical.iter().any(|m| m.has_dynamic_scale())
-    }
-
     /// How many elements of physical axis `pa` a region covers, given each logical axis's extent:
-    /// the receptive field `1 + Σ (extent - 1) * scale`. A single coefficient-`1` term collapses to
-    /// `extent`, so a direct operand's window is its sub-tile edge as before; two terms give the
-    /// overlapping stencil window. A constant offset shifts position without changing span.
-    ///
-    /// For a [rational](Divisor) axis with divisor `d`, reports the conservative receptive field
-    /// over all possible runtime phase residues: `1 + ⌊(field + d - 1) / d⌋`.
-    ///
-    /// A [`Dynamic`](Scale::Dynamic) coefficient or [`Dynamic`](Divisor::Dynamic) divisor reports
-    /// the widest field its bound admits ([`Scale::bound`], [`Divisor::bound`]) rather than the
-    /// exact one, since the field grows with the coefficients and shrinks with the divisor. That is
-    /// an upper bound on every window the launch can ask for, which is what sizing a stage needs.
+    /// the receptive field `1 + Σ (extent - 1) * scale`. One coefficient-`1` term collapses to
+    /// `extent`; a constant offset shifts position without changing span. A [rational](Divisor)
+    /// axis reports the conservative field over every runtime phase residue,
+    /// `1 + ⌊(field + d - 1) / d⌋`, and a [`Dynamic`](Scale::Dynamic) coefficient or divisor the
+    /// widest its bound admits, which is what sizing a stage needs.
     pub fn span(&self, pa: usize, extent_of: impl Fn(Axis) -> usize) -> usize {
         let map = &self.physical[pa];
         let field: usize = map
@@ -440,18 +333,12 @@ impl Projection {
         1 + field.div_ceil(map.divisor().bound())
     }
 
-    /// Whether every physical axis carries exactly one logical axis at coefficient `1` with zero
-    /// offset and no division, so the physical coordinates uniquely determine the logical ones and
-    /// [`fold_physical`](crate::fold_physical) can invert `GmemLayout`'s `to_source_pos`. True for
-    /// [`of_layout`](Projection::of_layout) and [`of_tiling`](Projection::of_tiling); false for an
-    /// affine (gather/stencil) map, which mixes several logical coordinates into one physical cell,
-    /// applies a constant offset, or divides.
     /// How this operand's logical coordinates sit on its buffer's physical axes: [`Disjoint`]
     /// where every physical axis is partitioned by the axes addressing it, so a position
     /// determines a cell and no two share one; [`Overlapping`] where any axis may not.
     ///
-    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one —
-    /// one axis per physical axis, in order — and a [`Disjoint`] projection of higher logical rank
+    /// The question every dense path asks. [`is_direct`](Self::is_direct) is the narrower one, one
+    /// axis per physical axis in order, and a [`Disjoint`] projection of higher logical rank
     /// answers the same for the same reason: nothing aliases, every window is a box.
     ///
     /// [`Disjoint`]: Composition::Disjoint
@@ -468,12 +355,9 @@ impl Projection {
     }
 
     /// Refuse a [`Disjoint`](Composition::Disjoint) claim the extents contradict: coarsest first,
-    /// each
-    /// coefficient must be the product of the finer axes' extents, so the terms really partition
-    /// the physical axis instead of overlapping on it.
-    ///
-    /// Checked here rather than at construction because a map holds coefficients and the extents
-    /// live in the space; this is the one place both are in hand.
+    /// each coefficient must be the product of the finer axes' extents, so the terms really
+    /// partition the physical axis. Checked here rather than at construction because a map holds
+    /// coefficients and the extents live in the space; this is where both are in hand.
     pub fn validate_composition(&self, extent_of: impl Fn(Axis) -> usize) {
         for (pa, map) in self.physical.iter().enumerate() {
             let radices = map.claimed_radices();
@@ -505,7 +389,7 @@ impl Projection {
         }
     }
 
-    pub fn is_invertible(&self) -> bool {
+    pub(crate) fn is_invertible(&self) -> bool {
         self.physical.iter().all(|m| {
             m.offset() == Offset::Static(0)
                 && m.divisor().is_unit()
@@ -513,12 +397,10 @@ impl Projection {
         })
     }
 
-    /// The phase-1 contract for a *gathered* (affine) projection. A plain one, storage-tiled or
-    /// not, is unconstrained: it is what the engine has always done.
-    ///
+    /// The phase-1 contract for a *gathered* (affine) projection; a plain one is unconstrained.
     /// `vector_size` is the width the operand is served at. At `1` there are no vector lines to
-    /// address, so the innermost-identity rule below has nothing to protect and is skipped: a
-    /// scalar operand may gather on its innermost axis. Any wider serving still requires it.
+    /// address, so the innermost-identity rule below is skipped and a scalar operand may gather on
+    /// its innermost axis; any wider serving still requires it.
     pub fn validate(&self, vector_size: usize) {
         // Every physical axis carrying one logical axis at coefficient 1 is exactly "no gather",
         // whatever the ranks: `direct`, and `tiled`, which repeats a label rather than scaling it.
@@ -687,9 +569,8 @@ mod tests {
 
     /// An axis addressing nothing is a *broadcast*, not a mistake: the operand is defined over it
     /// and constant along it, which is what lets one scale cover a block of the values beside it.
-    ///
     /// Nothing distinguishes it from forgetting to map the axis, and that is the trade: omission
-    /// is the design's own word for invariance, so the spelling has to mean it.
+    /// is the design's own word for invariance.
     #[test]
     fn an_axis_addressing_nothing_is_a_broadcast() {
         let p = Projection::new(

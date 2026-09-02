@@ -60,7 +60,7 @@ pub enum Partitioner {
 /// inside a cube, and what a level separates inside a cube the cube's own cooperative
 /// transports already spread.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub enum LevelScope {
+pub(crate) enum LevelScope {
     /// Every axis `Sequential`: one instance walks the whole grid.
     Sequential,
     /// Some axis rides a cube dim and none reaches inside a cube, so the level separates
@@ -95,7 +95,7 @@ impl LevelScope {
 /// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
 /// A view over [`LevelScope`], never stored: the scope is the level's own state.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum LevelRole {
+pub(crate) enum LevelRole {
     /// Spreads its tiles across hardware instances (`Spatial` on some axis).
     Instance,
     /// Partitions its tiles sequentially across a grid (every axis `Sequential`).
@@ -360,10 +360,9 @@ mod tests {
 
     #[test]
     fn a_level_with_no_spatial_axis_is_sequential() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(M, 4), (N, 4)])
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(M, 4), (N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Sequential);
@@ -372,11 +371,10 @@ mod tests {
 
     #[test]
     fn cube_axes_alone_separate_what_the_launch_grid_does() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
-                    .distribute(cubes(CubeAxis::X), &[(N, 4)])
+                    .distribute(cubes(CubeAxis::X), &[(N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Cubes);
@@ -387,11 +385,10 @@ mod tests {
     /// level reads as `Planes`. Reading only the first axis, or the coarsest, would say `Cubes`.
     #[test]
     fn a_plane_axis_beside_a_cube_axis_reaches_inside_the_cube() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
-                    .distribute(planes(), &[(N, 4)])
+                    .distribute(planes(), &[(N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Planes);
@@ -399,11 +396,10 @@ mod tests {
 
     #[test]
     fn a_unit_axis_is_the_finest_scope() {
-        let space = Tiling::new()
-            .extents(&[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(planes(), &[(M, 4)])
-                    .distribute(lanes(), &[(N, 4)])
+                    .distribute(lanes(), &[(N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Lanes);

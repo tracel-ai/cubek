@@ -276,21 +276,17 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
     let level = |l: &mut cubek_tile::LevelCuts| {
         l.walk(&[(M, 16), (N, 32), (K, 16)]);
     };
-    let one_line = Tiling::new()
-        .extents(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let one_line = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
             level(l);
-            l
         })
         .build();
-    let a_dial_each = Tiling::new()
-        .extents(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let a_dial_each = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
                 .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
             level(l);
-            l
         })
         .build();
 
@@ -306,13 +302,12 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
 /// inside another, so they are read as one index instead.
 #[test]
 fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5),
                 &[(M, 16), (N, 32), (K, 16)],
-            )
+            );
         })
         .build();
     assert!(space.partitioner().work().is_some());
@@ -324,11 +319,10 @@ fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
 /// axis's own tiles across the scope, which is what a cut has always meant.
 #[test]
 fn distributing_one_axis_with_a_count_is_a_dial() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
-                .walk(&[(N, 32), (K, 16)])
+                .walk(&[(N, 32), (K, 16)]);
         })
         .build();
     assert!(space.partitioner().work().is_none());
@@ -339,11 +333,10 @@ fn distributing_one_axis_with_a_count_is_a_dial() {
 /// reads as if the line were not there.
 #[test]
 fn distributing_no_axis_states_nothing() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::Z), &[])
-                .walk(&[(M, 16), (N, 32), (K, 16)])
+                .walk(&[(M, 16), (N, 32), (K, 16)]);
         })
         .build();
     assert!(space.partitioner().work().is_none());
@@ -355,10 +348,9 @@ fn distributing_no_axis_states_nothing() {
 #[test]
 #[should_panic = "combine in registers"]
 fn distributing_work_across_lanes_is_refused() {
-    Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)])
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)]);
         })
         .build();
 }
@@ -368,13 +360,12 @@ fn distributing_work_across_lanes_is_refused() {
 #[test]
 #[should_panic = "instances taking turns would leave no region long enough"]
 fn distributing_work_in_turns_is_refused() {
-    Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5).interleaved(),
                 &[(M, 16), (N, 32), (K, 16)],
-            )
+            );
         })
         .build();
 }
@@ -383,13 +374,12 @@ fn distributing_work_in_turns_is_refused() {
 #[test]
 #[should_panic = "a level states each of its axes once"]
 fn an_axis_both_cut_and_distributed_is_refused() {
-    Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(K, 16)]).distribute(
                 cubes(CubeAxis::X).instances(5),
                 &[(M, 16), (N, 32), (K, 16)],
-            )
+            );
         })
         .build();
 }
@@ -398,13 +388,12 @@ fn an_axis_both_cut_and_distributed_is_refused() {
 /// chain does, so migrating a caller changes nothing about its space.
 #[test]
 fn over_builds_the_space_plain_tiling_would() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 16), (N, 32), (K, 16)])
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32), (K, 16)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
         })
         .build();
 
@@ -577,20 +566,18 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
 /// which is what stops the two from compiling as two kernels.
 #[test]
 fn a_level_that_cuts_nothing_is_dropped() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 16), (N, 32)])
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 16), (N, 32)])
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         // The same edges again: nothing left to cut.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 16), (N, 32)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
 
@@ -602,13 +589,12 @@ fn a_level_that_cuts_nothing_is_dropped() {
 /// two regions where its parent buffers one, so it is not a no-op and stays.
 #[test]
 fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 16), (N, 32)])
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
-            l.walk(&[(M, 16), (N, 32)])
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
 
@@ -625,10 +611,9 @@ fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
 /// on (attention's split count, a plane grid of one) lands on 1.
 #[test]
 fn the_only_level_stays_even_when_it_cuts_nothing() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, 64), (N, 64)])
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 64), (N, 64)]);
         })
         .build();
 

@@ -219,12 +219,14 @@ impl Conv1d {
         residence: &[Residence],
         instruction: Instruction,
     ) {
-        let space = Tiling::new()
-            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(WalkOrder::RowMajor, buffering, |l| {
-                l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
-            })
-            .build();
+        let space = Tiling::over(
+            &mut (),
+            &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
+        )
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
+        })
+        .build();
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
@@ -362,10 +364,9 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -438,10 +439,9 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -510,10 +510,9 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -681,12 +680,14 @@ impl Conv1d {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::new()
-            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(WalkOrder::RowMajor, buffering, |l| {
-                l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
-            })
-            .build();
+        let space = Tiling::over(
+            &mut (),
+            &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
+        )
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
+        })
+        .build();
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
         // output position's last tap still lands on the final row.
@@ -914,12 +915,14 @@ impl Conv1d {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::new()
-            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
-            })
-            .build();
+        let space = Tiling::over(
+            &mut (),
+            &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
+        )
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
+        })
+        .build();
 
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
@@ -1110,12 +1113,14 @@ impl Conv1d {
         let client = <TestRuntime as Runtime>::client(&Default::default());
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::new()
-            .extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(WalkOrder::RowMajor, buffering, |l| {
-                l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
-            })
-            .build();
+        let space = Tiling::over(
+            &mut (),
+            &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
+        )
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
+        })
+        .build();
 
         let gathered = if dynamic_scales {
             PhysicalAxisMap::scaled_with_offset(
@@ -1332,26 +1337,28 @@ impl Conv2d {
         buffering: Buffering,
         residence: &[Residence],
     ) {
-        let space = Tiling::new()
-            .extents(&[
+        let space = Tiling::over(
+            &mut (),
+            &[
                 (OH, self.oh),
                 (OW, self.ow),
                 (CO, self.co),
                 (RH, self.rh),
                 (RW, self.rw),
                 (CI, self.ci),
-            ])
-            .level(WalkOrder::RowMajor, buffering, |l| {
-                l.walk(&[
-                    (OH, tile_oh),
-                    (OW, tile_ow),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (RW, self.rw),
-                    (CI, self.ci),
-                ])
-            })
-            .build();
+            ],
+        )
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[
+                (OH, tile_oh),
+                (OW, tile_ow),
+                (CO, tile_co),
+                (RH, self.rh),
+                (RW, self.rw),
+                (CI, self.ci),
+            ]);
+        })
+        .build();
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
         let in_spec = TileSpec::new(Projection::new(
@@ -1729,10 +1736,9 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
         })
         .build();
 
@@ -1930,7 +1936,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     // The *shape*, not just the feature: a backend can advertise manual mma and
     // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
-    // instruction the hardware does not have — it reads back zeros, which looks
+    // instruction the hardware does not have: it reads back zeros, which looks
     // like a leaf bug and is a missing guard.
     let f32_native = f32::elem_type_native();
     let offers_8x8x8 = client.properties().features.matmul.mma.iter().any(|c| {
@@ -1953,10 +1959,9 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
     let instruction = Instruction::Mma { io };
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -2075,12 +2080,17 @@ impl Resize1d {
     }
 
     fn space_with_buffering(&self, oh_edges: &[usize], buffering: Buffering) -> Space {
-        let mut tiling =
-            Tiling::new().extents(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        // The builder borrows its operand set, so an empty one still needs a binding to
+        // outlive the loop below.
+        let mut no_operands = ();
+        let mut tiling = Tiling::over(
+            &mut no_operands,
+            &[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)],
+        );
         for (i, &edge) in oh_edges.iter().enumerate() {
             let sched = if i == 0 { buffering } else { Buffering::SINGLE };
-            tiling = tiling.level(WalkOrder::RowMajor, sched, |l| {
-                l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+            tiling = tiling.level(WalkOrder::RowMajor, sched, |l, _| {
+                l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
             });
         }
         tiling.build()
@@ -2481,10 +2491,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 
@@ -2554,10 +2563,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let space = Tiling::new()
-        .extents(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+    let space = Tiling::over(&mut (), &[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
         })
         .build();
 

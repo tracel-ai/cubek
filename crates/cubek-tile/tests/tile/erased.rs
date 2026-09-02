@@ -4,7 +4,7 @@
 //! The point of an erased backing is that the address is never formed: the tile
 //! walks its layout exactly as it would over memory, and what happens at the end
 //! of the walk is a call rather than a load or a store. So the property worth
-//! pinning is that the walk is *unchanged* — the same kernel, over the same
+//! pinning is that the walk is *unchanged*: the same kernel, over the same
 //! space and the same spec, must touch the same place whichever backing it was
 //! given. That is what makes a fused operand a drop-in for the kernel it
 //! replaces, on either side: [`WriteOnly`] for fuse-on-write, [`ReadOnly`] for
@@ -89,13 +89,12 @@ macro_rules! output_arg {
     };
 }
 
-/// The space both kernels walk, cut so the store is not one contiguous run —
+/// The space both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space() -> Space {
-    Tiling::new()
-        .extents(&[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level.walk(&[(ROW, 2), (COL, 3)])
+    Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            level.walk(&[(ROW, 2), (COL, 3)]);
         })
         .build()
 }
@@ -159,7 +158,7 @@ fn a_sink_stores_where_a_buffer_stores() {
 /// [`Launcher::bind_geometry`] instead of stated at the call site.
 ///
 /// This is the pair a fused store actually reaches for. The kernels above take their spec off a
-/// `TileArg` — but a destination written through a call has no `TileArg` to take it off, which is
+/// `TileArg`, but a destination written through a call has no `TileArg` to take it off, which is
 /// the whole reason `bind_geometry` exists: it runs the derivation a bound operand runs and hands
 /// both halves, the spec *and* the geometry it settled on, so neither is restated here.
 #[cube(launch)]
@@ -302,7 +301,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
 ///
 /// The mirror of [`sink_matmul`], and the reason the read path had to become a view: an operand
 /// tile reads through `matrix_transparent`, which composes onto `MemData::read_view` exactly as
-/// the drain composes onto `write_view`. Nothing about the leaf changes — it asks the same layout
+/// the drain composes onto `write_view`. Nothing about the leaf changes: it asks the same layout
 /// for the same coordinates, and what answers is a call instead of a load.
 #[cube(launch)]
 fn source_matmul<E: Numeric, EA: Numeric>(
@@ -334,9 +333,9 @@ fn source_matmul<E: Numeric, EA: Numeric>(
 enum Backed {
     /// Every operand and the destination in memory: the control.
     Buffer,
-    /// The destination erased — fuse-on-write.
+    /// The destination erased: fuse-on-write.
     Sink,
-    /// The lhs erased — fuse-on-read.
+    /// The lhs erased: fuse-on-read.
     Source,
 }
 
@@ -453,7 +452,7 @@ fn a_register_accumulator_drains_into_a_sink() {
 ///
 /// The other direction of fusion. A sink lets a kernel hand its result to a generated epilogue;
 /// a source lets it take its input from a generated producer, and the leaf must not be able to
-/// tell — same space, same spec, same coordinates, a call where the load was.
+/// tell: same space, same spec, same coordinates, a call where the load was.
 #[test]
 fn a_contraction_reads_its_lhs_through_a_source() {
     let (m, n, k) = (4usize, 4usize, 16usize);
@@ -487,14 +486,13 @@ const MASKED_ROWS: usize = 5;
 ///
 /// The two properties the aligned scalar spaces above cannot reach. Masking puts a guard between
 /// the walk and the write, and a served width of two makes the tile count its innermost extent in
-/// lines and re-express every coarser stride as `stride / 2` — arithmetic a stated geometry runs
+/// lines and re-express every coarser stride as `stride / 2`, arithmetic a stated geometry runs
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space() -> Space {
-    Tiling::new()
-        .extents(&[(ROW, MASKED_ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level| {
-            level.walk(&[(ROW, 2), (COL, 2)])
+    Tiling::over(&mut (), &[(ROW, MASKED_ROWS), (COL, COLS)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            level.walk(&[(ROW, 2), (COL, 2)]);
         })
         .build()
 }
@@ -632,7 +630,7 @@ fn run_masked(erased: Erased) -> HostData {
 /// The guard is the whole question. A sink's write ends in a call, so an overhanging lane a
 /// buffer would have clipped has nothing to clip it: the call happens or it does not, and a mask
 /// dropped between the walk and `write_view` hands the epilogue coordinates off the end of the
-/// product. The width is the other half — the tile counts its innermost extent in lines and
+/// product. The width is the other half: the tile counts its innermost extent in lines and
 /// re-expresses every coarser stride as `stride / 2`, on numbers nobody read off a tensor.
 #[test]
 fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
@@ -658,7 +656,7 @@ fn a_masked_vectorized_sink_stores_where_a_buffer_stores() {
 /// A masked, vectorized read through a source reads the cells a buffer read reads.
 ///
 /// The read half of the same question, and not the same code: a buffer's masked read is the
-/// slice's, while an erased one is [`ErasedTensor`]'s own — it folds an out-of-bounds index to
+/// slice's, while an erased one is [`ErasedTensor`]'s own: it folds an out-of-bounds index to
 /// zero, reads *that* cell, and selects the mask value after. So a guard dropped between the walk
 /// and the call does not fault here either; it returns the wrong cell's value, which the
 /// `row * COLS + col` fill makes visible as another cell rather than as a near miss. The width is

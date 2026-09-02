@@ -13,7 +13,7 @@ pub const FULLY_MASKED_ROW_THRESHOLD: f32 = 1e-4;
 /// `1/l`, exactly zero when `l` is numerically zero, so a fully-masked row
 /// drains to exact zeros instead of NaN.
 #[cube]
-pub fn masked_recip<E: Float>(l: E) -> E {
+pub(crate) fn masked_recip<E: Float>(l: E) -> E {
     let eps = E::new(FULLY_MASKED_ROW_THRESHOLD);
     E::cast_from(l >= eps) * clamp_min(l, eps).recip()
 }
@@ -142,14 +142,14 @@ impl MaskProbe {
     }
 
     /// The query position of score row `r` (see `q_rows`).
-    pub fn row_q(&self, r: usize) -> usize {
+    pub(crate) fn row_q(&self, r: usize) -> usize {
         let q_rows = comptime!(self.q_rows);
         self.origin_q + r % q_rows
     }
 
     /// The probe advanced `offset` along the reduced axis: how a walk hands
     /// each region its own origin.
-    pub fn step_s(&self, offset: usize) -> MaskProbe {
+    pub(crate) fn step_s(&self, offset: usize) -> MaskProbe {
         MaskProbe {
             origin_q: self.origin_q,
             origin_s: self.origin_s + offset,

@@ -68,7 +68,7 @@ impl RuntimeMap {
 /// drives lives in an ordinary `#[cube]` function, like every other comptime/runtime mix in this
 /// crate ([`top_window`](crate::GmemLayout)).
 #[cube]
-pub fn logical_extent(
+pub(crate) fn logical_extent(
     #[comptime] projection: Projection,
     physical_shape: &Coords<u32>,
 ) -> Coords<u32> {
@@ -88,7 +88,7 @@ pub fn logical_extent(
 /// radices come from `physical_shape`, so a static store folds the whole thing to a constant and a
 /// runtime-shaped one stays exact.
 #[cube]
-pub fn step_offset(
+pub(crate) fn step_offset(
     #[comptime] projection: Projection,
     #[comptime] axis: Axis,
     #[comptime] edge: usize,
@@ -123,7 +123,7 @@ pub fn step_offset(
 /// operand is either resolved a layer above it or staged through its own compacted [`Projection`],
 /// never folded here directly.
 #[cube]
-pub fn fold_physical(
+pub(crate) fn fold_physical(
     #[comptime] projection: Projection,
     digits: &Coords<u32>,
     physical_shape: &Coords<u32>,

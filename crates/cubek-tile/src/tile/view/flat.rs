@@ -12,9 +12,9 @@ use cubecl::{
 use crate::*;
 
 /// A masked 1-D ([`FlatLayout`]) view: a flat row-major scan over a [`Tile`].
-pub type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
+pub(crate) type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
-pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
+pub(crate) type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 
 /// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it
@@ -22,7 +22,7 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 /// A static window's extents are constant handles, so the decode divides by constants.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct FlatLayout {
+pub(crate) struct FlatLayout {
     shape: Coords<u32>,
 }
 
@@ -80,7 +80,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
+    pub(crate) fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

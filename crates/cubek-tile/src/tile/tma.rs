@@ -30,7 +30,7 @@ pub struct TmaData<T: Numeric> {
 impl<T: Numeric> TmaData<T> {
     /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side, [`TmaTileArg`]) as a `TmaGmem`
     /// tile. `pos` starts at the origin and advances on [`at`](Tile::at).
-    pub fn from_tensor_map(
+    pub(crate) fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
         #[comptime] stage: StagePlan,

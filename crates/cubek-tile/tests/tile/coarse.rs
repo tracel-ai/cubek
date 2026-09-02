@@ -1,18 +1,18 @@
 //! A **coarse** operand: one value per block of an axis, rather than one per element.
 //!
-//! This is the shape a per-block quantization scale has — `s[m, k / block]` beside a
-//! `v[m, k]` — and it is the one capability the explicit-scales design needs, since there the
+//! This is the shape a per-block quantization scale has: `s[m, k / block]` beside a
+//! `v[m, k]`, and it is the one capability the explicit-scales design needs, since there the
 //! scales are a real operand of the kernel instead of a buffer hidden on the values' binding.
 //! Proven here with plain floats, deliberately: if the mechanism only works inside the quant
 //! machinery it is not a mechanism.
 //!
-//! The spelling is a rational [`Projection`] — `⌊k / BLOCK⌋`, the same floor the resample
-//! mapping already rides — so a coarse operand is a gather like any other, and nothing about it
+//! The spelling is a rational [`Projection`]: `⌊k / BLOCK⌋`, the same floor the resample
+//! mapping already rides, so a coarse operand is a gather like any other, and nothing about it
 //! is quantization's.
 //!
 //! The probe is a contraction, not a copy, because the read is what the design needs: a scale
 //! is consumed where the values are, never staged into the shape of its own expansion.
-//! ([`Tile::copy`] refuses this outright — a compacted stage fill requires source and
+//! ([`Tile::copy`] refuses this outright: a compacted stage fill requires source and
 //! destination to share a projection, which a coarse source by definition does not.)
 
 use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
@@ -58,10 +58,9 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Space {
-    Tiling::new()
-        .extents(&[(M, ROWS), (N, COLS), (K, DEPTH)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.walk(&[(M, ROWS), (N, COLS), (K, cut)])
+    Tiling::over(&mut (), &[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
         })
         .build()
         .with_instruction(Instruction::registers(16))
