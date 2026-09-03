@@ -63,13 +63,13 @@ fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
 /// The unit comes from the key's own mode rather than from the caller, so a
 /// memo keyed on the key alone cannot serve one resource's rate to another.
 ///
-/// Zero when the device has no peak for the key, which leaves the resource
+/// NaN when the device has no peak for the key, which leaves the resource
 /// unscored rather than dividing by a ceiling that does not exist.
 fn peak_per_s(key: ThroughputKey) -> f64 {
     let mut peaks = PEAKS.lock().expect("peaks mutex is not poisoned");
     *peaks.entry(key).or_insert_with(|| {
         let Ok(value) = measure_peak_throughput(&client(), key) else {
-            return 0.0;
+            return f64::NAN;
         };
 
         match key.mode {
