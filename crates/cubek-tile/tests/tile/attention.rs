@@ -310,6 +310,7 @@ fn attention_fold_cmma_kernel(
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] frag: usize,
+    #[comptime] planes: usize,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -331,13 +332,10 @@ fn attention_fold_cmma_kernel(
     let mut q_s = MemData::<f32>::smem(q_space, 1usize, comptime!(StagePlan::in_place()));
     q_s.copy_from(&q);
 
-    let score_space = comptime!(
-        Tiling::over(&mut (), &[(R, rows), (C, block)])
-            .instruction(Instruction::Cmma, |l, _| {
-                l.walk(&[(R, frag), (C, frag)]);
-            })
-            .build()
-    );
+    // With `planes > 1` the space states each plane's slice of the grid above the instruction:
+    // the leaf then holds its slice's accumulators across the contraction instead of walking the
+    // whole grid one fragment at a time.
+    let score_space = comptime!(sliced(&[(R, rows), (C, block)], planes, frag));
     let mut score = MemData::<f32>::smem(
         score_space.clone(),
         1usize,
@@ -347,13 +345,7 @@ fn attention_fold_cmma_kernel(
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors =
         MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
-    let acc_space = comptime!(
-        Tiling::over(&mut (), &[(R, rows), (V, val_dim)])
-            .instruction(Instruction::Cmma, |l, _| {
-                l.walk(&[(R, frag), (V, frag)]);
-            })
-            .build()
-    );
+    let acc_space = comptime!(sliced(&[(R, rows), (V, val_dim)], planes, frag));
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
@@ -408,7 +400,29 @@ fn attention_fold_cmma_kernel(
     }
 }
 
+/// `{rows, cols}` cut into `frag × frag` fragments, under one slice of `cols / planes` per plane
+/// when more than one is stated.
+fn sliced(extents: &[(Axis, usize); 2], planes: usize, frag: usize) -> Space {
+    let (rows, cols) = (extents[0], extents[1]);
+    let mut ops = ();
+    let tiling = Tiling::over(&mut ops, extents);
+    let tiling = match planes {
+        1 => tiling,
+        planes => tiling.level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[rows, (cols.0, cols.1 / planes)]);
+        }),
+    };
+    tiling
+        .instruction(Instruction::Cmma, |l, _| {
+            l.walk(&[(rows.0, frag), (cols.0, frag)]);
+        })
+        .build()
+}
+
 /// Launch the tensor-core fold and check against direct host math.
+///
+/// `planes` above one states each plane's slice of the fragment grid, and requires the cube to be
+/// exactly that many planes of the width the device commits to; skipped where it does not.
 ///
 /// `spanned` gives `k` and `v` a leading axis the launch spans rather than iterates — the shape a
 /// client's cache has, where a KV head is an axis of the operand and a cube owns one position of
@@ -426,8 +440,20 @@ fn run_cmma(
     bound_s: usize,
     causal: bool,
     spanned: bool,
+    planes: usize,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    if planes > 1 {
+        let hw = &client.properties().hardware;
+        let exact = hw.plane_size_min == hw.plane_size_max;
+        if !exact || units != planes * hw.plane_size_min as usize {
+            TestOutcome::Validated(ValidationResult::Skipped(format!(
+                "a stated slice needs a cube of exactly {planes} planes; this device commits to none"
+            )))
+            .enforce();
+            return;
+        }
+    }
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -540,6 +566,7 @@ fn run_cmma(
         causal,
         block,
         frag,
+        planes,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -590,7 +617,7 @@ fn run_cmma(
 /// before it folded in, reads back here as zeros or as one block's answer.
 #[test]
 fn fold_cmma_single_fragment() {
-    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false, false);
+    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false, false, 1);
 }
 
 /// Fragments are owned, not shared, and a contraction deeper than one fragment closes: two planes
@@ -598,7 +625,7 @@ fn fold_cmma_single_fragment() {
 /// leaves whole fragments stale; a step dropped leaves half a dot product.
 #[test]
 fn fold_cmma_fragment_grid() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false);
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false, 1);
 }
 
 /// The attended prefix may end inside a block: the mask probe owns the tail, so score fragments
@@ -607,7 +634,7 @@ fn fold_cmma_fragment_grid() {
 /// accumulator.
 #[test]
 fn fold_cmma_causal_ragged_bound() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, false);
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, false, 1);
 }
 
 /// The keys and values a client hands over are not bare matrices: a KV head is an axis of the
@@ -617,7 +644,24 @@ fn fold_cmma_causal_ragged_bound() {
 /// matrix here and returns zeros.
 #[test]
 fn fold_cmma_spanned_leading_axis() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true);
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true, 1);
+}
+
+/// The space states each plane's slice of the grid, so a plane holds its slice's accumulators
+/// across the whole contraction and loads each P fragment once for all of them. Same rows, same
+/// ragged causal bound and same spanned operands as the cases above — the slice changes who
+/// holds what, never the answer. A plane reading its neighbour's slice, or a P fragment reused
+/// against the wrong column, comes out here as a wrong row rather than zeros.
+#[test]
+fn fold_cmma_plane_slices() {
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2);
+}
+
+/// A slice one fragment wide: `cn = 1`, so the reuse loop degenerates and the accumulator
+/// bookkeeping is all that is left to get wrong.
+#[test]
+fn fold_cmma_plane_slices_one_fragment_wide() {
+    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false, 2);
 }
 
 /// The split fold: teams on the cube's y dim each fold a disjoint slice of
