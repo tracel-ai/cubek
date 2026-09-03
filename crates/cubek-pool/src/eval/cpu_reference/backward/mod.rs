@@ -11,7 +11,7 @@ use crate::definition::{PoolBackwardProblem, PoolMode};
 use crate::eval::cpu_reference::{cpu_reference_max_pool_indices, cpu_reference_pool_backward};
 use crate::{pool2d_backward, pool2d_with_indices, pool2d_with_indices_backward};
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     zspace::{Shape, Strides},
 };
 use cubek_test_utils::{
@@ -19,7 +19,7 @@ use cubek_test_utils::{
 };
 
 pub fn strategy_result(
-    client: ComputeClient,
+    client: Client,
     problem: PoolBackwardProblem<2>,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -107,7 +107,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     problem: PoolBackwardProblem<2>,
     seed: u64,
     progress: Option<&Progress>,

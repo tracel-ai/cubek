@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::{ElemType, FloatKind},
     prelude::*,
     std::tensor::TensorHandle,
@@ -10,7 +10,7 @@ use crate::BaseInputSpec;
 use crate::test_tensor::strides::physical_extent;
 
 fn new_custom_data(
-    client: &ComputeClient,
+    client: &Client,
     shape: Shape,
     strides: Strides,
     dtype: ElemType,

@@ -122,7 +122,7 @@ fn loop_ranges(
 }
 
 pub(crate) fn avg_pool2d_backward_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     output: TensorBinding,

@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -42,7 +42,7 @@ pub fn bench(
 struct PoolBench {
     problem: PoolProblem,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     dtype: ElemType,
     indices_dtype: ElemType,
     samples: usize,

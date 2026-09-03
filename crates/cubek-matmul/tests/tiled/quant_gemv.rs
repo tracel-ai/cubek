@@ -27,7 +27,7 @@ fn pack(values: &[i32], bits: usize) -> Vec<u32> {
 /// A contiguous `[rows, cols]` handle over `data`. For the weight the shape counts *values*
 /// while the buffer holds packed words, which is what the launch's `field` reconciles.
 fn handle<E: Numeric + bytemuck::Pod>(
-    client: &ComputeClient,
+    client: &Client,
     data: Vec<E>,
     shape: [usize; 2],
 ) -> TensorHandle {

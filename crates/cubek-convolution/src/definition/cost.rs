@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::ElemType,
     throughput::{ThroughputKey, ThroughputMode},
     tune::Work,
@@ -88,7 +88,7 @@ impl Conv2dCost {
 
     /// The probe the contraction's arithmetic runs on, which is the matmul's:
     /// an accelerated convolution issues the same MMA a gemm does.
-    pub fn compute_key(&self, client: &ComputeClient) -> ThroughputKey {
+    pub fn compute_key(&self, client: &Client) -> ThroughputKey {
         self.gemm().compute_key(client)
     }
 }

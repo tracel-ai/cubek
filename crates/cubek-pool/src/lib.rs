@@ -1,6 +1,6 @@
 use core::result::Result;
 
-use cubecl::{client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
@@ -24,7 +24,7 @@ use crate::kernel::{
 ///
 /// Expects input in NHWC layout.
 pub fn pool2d(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     mode: PoolMode<2>,
@@ -46,7 +46,7 @@ pub fn pool2d(
 ///
 /// Expects input in NHWC layout. Output indices are expected to be in the same layout as well.
 pub fn pool2d_with_indices(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     indices: TensorBinding,
@@ -72,7 +72,7 @@ pub fn pool2d_with_indices(
 ///
 /// Expects input and output gradients in NHWC layout.
 pub fn pool2d_backward(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     in_grad: TensorBinding,
@@ -107,7 +107,7 @@ pub fn pool2d_backward(
 /// Expects input and output gradients in NHWC layout. Output indices are expected to be in the same layout as well.
 #[allow(clippy::too_many_arguments)]
 pub fn pool2d_with_indices_backward(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     indices: TensorBinding,

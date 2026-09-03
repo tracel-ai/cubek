@@ -61,7 +61,7 @@ impl PrngArgs for Bernoulli {
 
 /// Pseudo-random generator with bernoulli distribution
 pub fn random_bernoulli(
-    client: &ComputeClient,
+    client: &Client,
     probability: f32,
     out: TensorBinding,
     dtype: ElemType,
@@ -70,7 +70,7 @@ pub fn random_bernoulli(
 }
 
 pub(crate) fn random_bernoulli_with_strategy(
-    client: &ComputeClient,
+    client: &Client,
     probability: f32,
     out: TensorBinding,
     dtype: ElemType,

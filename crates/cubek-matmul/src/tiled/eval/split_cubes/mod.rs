@@ -25,7 +25,7 @@ use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     features::AtomicUsage,
     future,
     ir::{ElemType, FloatKind, Type},
@@ -251,7 +251,7 @@ pub struct Strategy {
 
 /// Everything one mapping needs to launch, built once so only the launches are timed.
 struct Bound {
-    client: ComputeClient,
+    client: Client,
     mapping: Mapping,
     samples: usize,
     space: Space,
@@ -277,7 +277,7 @@ const LHS_SEED: u64 = 0;
 const RHS_SEED: u64 = 1;
 
 impl Bound {
-    fn new(client: &ComputeClient, mapping: Mapping, problem: Problem) -> Self {
+    fn new(client: &Client, mapping: Mapping, problem: Problem) -> Self {
         let lanes = client.properties().hardware.plane_size_max as usize;
         let Problem { m, n, k } = problem;
         let splits = mapping.splits();
@@ -432,7 +432,7 @@ impl Benchmark for Bound {
 /// A mapping that computes the wrong answer still times fast, so each proves itself on a small
 /// shape first. The trap this one is really guarding is the atomic drain onto a buffer that was
 /// not zeroed, which reads as a plausible number rather than as garbage.
-fn verify(client: &ComputeClient, mapping: Mapping) -> Result<(), String> {
+fn verify(client: &Client, mapping: Mapping) -> Result<(), String> {
     let lanes = client.properties().hardware.plane_size_max as usize;
     // Big enough that every mapping's cuts divide it: each cube's slice of `K` has to survive
     // being cut again across the plane.

@@ -1,6 +1,6 @@
 //! Launch wiring for the CpuGemm routine.
 
-use cubecl::{client::ComputeClient, prelude::*};
+use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
     Axis, Buffering, CubeAxis, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
@@ -97,7 +97,7 @@ fn fold_logical(shape: &[usize], levels: usize) -> (Vec<usize>, usize, usize) {
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     lhs: WithLayout<InputBinding>,
     rhs: WithLayout<InputBinding>,
     out: WithLayout<TensorBinding>,

@@ -11,7 +11,7 @@ use crate::{
     kernel::{interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
-use cubecl::{client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 /// Interpolate operation
 ///
@@ -23,7 +23,7 @@ use cubecl::{client::ComputeClient, prelude::TensorBinding, prelude::*};
 /// so a caller that has measured nothing still gets a geometry built for the hardware it runs on.
 /// [`InterpolateStrategy::Forced`] pins every choice for one that has.
 pub fn interpolate(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: InterpolateOptions,
@@ -44,7 +44,7 @@ pub fn interpolate(
 ///
 /// Expects input in NHWC layout.
 pub fn interpolate_backward(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     input_grad: TensorBinding,

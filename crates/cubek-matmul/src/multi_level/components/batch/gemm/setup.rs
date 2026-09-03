@@ -1,6 +1,6 @@
 use cubecl::{
     CubeCount, CubeDim,
-    client::ComputeClient,
+    client::Client,
     ir::{AddressType, DeviceProperties},
     server::LaunchError,
 };
@@ -105,7 +105,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
     }
 
     unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -145,7 +145,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
     }
 
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         _dtypes: &MatmulElems,

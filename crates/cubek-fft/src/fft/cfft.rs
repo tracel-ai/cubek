@@ -140,7 +140,7 @@ pub fn cfft<R: Runtime>(
 /// allowed for the small path; the large path does its own scratch
 /// management).
 pub fn cfft_launch_any_size(
-    client: &ComputeClient,
+    client: &Client,
     bindings: CfftBindings,
     dim: usize,
     dtype: ElemType,
@@ -175,7 +175,7 @@ pub fn cfft_launch_any_size(
 }
 
 fn cfft_shared_launch(
-    client: &ComputeClient,
+    client: &Client,
     bindings: CfftBindings,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
@@ -270,7 +270,7 @@ fn cfft_shared_kernel<F: Float>(
 /// `k2 * N1 + k1` (natural linear order over `k`). Caller's `output_re` /
 /// `output_im` tensors receive this natural order.
 fn cfft_four_step_launch(
-    client: &ComputeClient,
+    client: &Client,
     bindings: CfftBindings,
     dtype: ElemType,
     plan: CfftPlan,

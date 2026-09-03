@@ -5,7 +5,7 @@ use std::{
     fmt::Display,
 };
 
-use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
@@ -59,7 +59,7 @@ impl Routine<()> for GemmRoutine {
 impl BatchMatmulRoutine<()> for GemmRoutine {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = ()>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -93,7 +93,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

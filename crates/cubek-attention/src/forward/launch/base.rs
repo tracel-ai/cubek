@@ -1,4 +1,4 @@
-use cubecl::{client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 
 use crate::forward::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,
@@ -31,7 +31,7 @@ pub enum Strategy {
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_ref(
     strategy: Strategy,
-    client: &ComputeClient,
+    client: &Client,
     query: TensorBinding,
     key: TensorBinding,
     value: TensorBinding,
@@ -68,7 +68,7 @@ pub fn launch_ref(
 
 #[allow(clippy::too_many_arguments)]
 pub fn launch_attention<A: Routine>(
-    client: &ComputeClient,
+    client: &Client,
     query: TensorBinding,
     key: TensorBinding,
     value: TensorBinding,

@@ -102,7 +102,7 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
 }
 
 fn f32_tensor(
-    client: &cubecl::client::ComputeClient,
+    client: &cubecl::client::Client,
     data: &[f32],
     shape: cubecl::zspace::Shape,
 ) -> TensorHandle {

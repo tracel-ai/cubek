@@ -39,7 +39,7 @@ impl TileVariant for CmmaMatmul {
         false
     }
 
-    fn should_swizzle(_client: &ComputeClient) -> bool {
+    fn should_swizzle(_client: &Client) -> bool {
         false
     }
 
@@ -47,12 +47,12 @@ impl TileVariant for CmmaMatmul {
         Ok(Plane::default_resource())
     }
 
-    fn is_supported(client: &ComputeClient, config: MmaConfig) -> bool {
+    fn is_supported(client: &Client, config: MmaConfig) -> bool {
         client.properties().features.matmul.cmma.contains(&config)
     }
 
     fn supported_sizes(
-        client: &ComputeClient,
+        client: &Client,
         lhs_ty: ElemType,
         rhs_ty: ElemType,
         acc_ty: ElemType,
@@ -82,7 +82,7 @@ impl TileVariant for CmmaMatmul {
     }
 
     fn validate(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,

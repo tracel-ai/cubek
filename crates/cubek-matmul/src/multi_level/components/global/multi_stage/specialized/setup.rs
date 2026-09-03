@@ -193,7 +193,7 @@ where
     }
 
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

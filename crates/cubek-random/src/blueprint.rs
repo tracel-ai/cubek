@@ -45,7 +45,7 @@ pub(crate) struct PrngLaunchSettings {
 
 impl PrngLaunchSettings {
     pub(crate) fn new(
-        client: &ComputeClient,
+        client: &Client,
         output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,
@@ -65,7 +65,7 @@ impl PrngLaunchSettings {
         }
     }
 
-    fn interleaved(client: &ComputeClient, output: &TensorBinding, dtype: ElemType) -> Self {
+    fn interleaved(client: &Client, output: &TensorBinding, dtype: ElemType) -> Self {
         let size = output.size();
 
         // Every lane already draws its own decorrelated stream (see `PrngState::seeded`),
@@ -92,7 +92,7 @@ impl PrngLaunchSettings {
     }
 
     fn blocked(
-        client: &ComputeClient,
+        client: &Client,
         output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,

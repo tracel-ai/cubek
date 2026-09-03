@@ -9,7 +9,7 @@ use cubecl::{
 use crate::definition::{MatmulAvailabilityError, MatmulElems, MatmulSetupError};
 
 pub(super) fn check_types_available(
-    client: &ComputeClient,
+    client: &Client,
     dtypes: &MatmulElems,
     require_plane_ops: bool,
 ) -> Result<(), MatmulSetupError> {

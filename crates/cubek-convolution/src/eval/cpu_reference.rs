@@ -4,7 +4,7 @@
 //! test suite uses.
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::AddressType,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides, shape},
@@ -25,7 +25,7 @@ use crate::{
 /// Run `strategy` against the conv problem with seeded inputs and return its
 /// output as a [`HostData`].
 pub fn strategy_result(
-    client: ComputeClient,
+    client: Client,
     spec: ConvSpec,
     strategy: Strategy,
     dtypes: MatmulElems,
@@ -61,7 +61,7 @@ pub fn strategy_result(
 /// CPU-only counterpart to [`strategy_result`]: generate the same seeded
 /// inputs, run the naive CPU convolution, return the result as a [`HostData`].
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     spec: ConvSpec,
     dtypes: MatmulElems,
     seed_lhs: u64,
@@ -124,7 +124,7 @@ struct SeededInputs {
 }
 
 fn seed_inputs(
-    client: &ComputeClient,
+    client: &Client,
     spec: &ConvSpec,
     dtypes: &MatmulElems,
     seed_lhs: u64,
@@ -219,7 +219,7 @@ pub fn assert_result(
     lhs: &HostData,
     rhs: &HostData,
     problem: &ConvolutionProblem,
-    client: &ComputeClient,
+    client: &Client,
     out: TensorHandle,
     dtypes: MatmulElems,
 ) -> ValidationResult {

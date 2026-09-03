@@ -28,7 +28,7 @@ pub trait BatchAttentionFamily: Send + Sync + 'static {
     /// Out-of-bounds can happen
     #[allow(clippy::too_many_arguments)]
     unsafe fn launch_unchecked<AA: AttentionArgs>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,

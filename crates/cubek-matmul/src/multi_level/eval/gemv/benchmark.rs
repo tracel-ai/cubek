@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     cmma::MatrixLayout,
     future,
     prelude::*,
@@ -58,7 +58,7 @@ struct GemvBench {
     rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
@@ -71,7 +71,7 @@ struct GemvInputs {
 }
 
 fn make_tensor_with_layout(
-    client: &ComputeClient,
+    client: &Client,
     row_major_shape: [usize; 3],
     layout: MatrixLayout,
     dtype: ElemType,

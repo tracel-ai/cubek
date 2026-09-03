@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
@@ -66,7 +66,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleUnitAlgorithm {
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -100,7 +100,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -178,7 +178,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
         )
     }
 
-    fn device_settings(client: &ComputeClient, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
+    fn device_settings(client: &Client, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
         let plane_dim = match client.properties().hardware.plane_size_min {
             0 => 32,
             plane_dim => plane_dim,

@@ -407,7 +407,7 @@ impl TestCase {
 
     fn build_output_tensor(
         &self,
-        client: &cubecl::client::ComputeClient,
+        client: &cubecl::client::Client,
         output_dtype: ElemType,
         output_shape: &Shape,
         config: &ReduceOperationConfig,

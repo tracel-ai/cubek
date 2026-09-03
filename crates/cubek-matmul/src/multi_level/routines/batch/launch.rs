@@ -16,7 +16,7 @@ use crate::{
 use cubecl::{
     features::{Tma, TypeUsage},
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},
-    {client::ComputeClient, frontend::TensorBinding},
+    {client::Client, frontend::TensorBinding},
 };
 use cubek_std::InputBinding;
 
@@ -26,7 +26,7 @@ use cubek_std::InputBinding;
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
@@ -60,7 +60,7 @@ pub fn launch_ref<A: BatchMatmulRoutine<()>>(
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
 pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
@@ -113,7 +113,7 @@ pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn launch_inner_ref<MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,

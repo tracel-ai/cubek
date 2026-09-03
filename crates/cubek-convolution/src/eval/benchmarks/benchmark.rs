@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -53,17 +53,12 @@ struct Conv2dBench<MP> {
     problem: Conv2dProblem,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _phantom: PhantomData<MP>,
 }
 
-fn make_uniform_4d(
-    client: &ComputeClient,
-    shape: [usize; 4],
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle {
+fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .uniform(seed, 0.0, 1.0)

@@ -17,7 +17,7 @@ use crate::{
     },
 };
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -33,7 +33,7 @@ pub(crate) fn i32_elem_type() -> ElemType {
 }
 
 pub(crate) fn make_random_f32_host(
-    client: &ComputeClient,
+    client: &Client,
     shape: Vec<usize>,
     seed: u64,
 ) -> (TensorHandle, HostData) {
@@ -43,7 +43,7 @@ pub(crate) fn make_random_f32_host(
 }
 
 pub(crate) fn make_zero_handle(
-    client: &ComputeClient,
+    client: &Client,
     shape: Vec<usize>,
     dtype: ElemType,
 ) -> TensorHandle {
@@ -54,7 +54,7 @@ pub(crate) fn make_zero_handle(
 }
 
 pub fn strategy_result(
-    client: ComputeClient,
+    client: Client,
     problem: PoolProblem,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -69,7 +69,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     problem: PoolProblem,
     seed: u64,
     progress: Option<&Progress>,

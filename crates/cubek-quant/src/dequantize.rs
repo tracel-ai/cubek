@@ -223,7 +223,7 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
 #[allow(clippy::result_large_err)]
 /// Convert the tensor back to a higher precision data type.
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     scales: &[TensorBinding],
@@ -284,7 +284,7 @@ pub fn launch_ref(
 
 #[allow(clippy::too_many_arguments)]
 fn dequantize_packed(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     scheme: QuantScheme,
     scale: TensorBinding,
@@ -347,7 +347,7 @@ fn dequantize_packed(
 
 #[allow(clippy::too_many_arguments)]
 fn dequantize_native(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     scheme: QuantScheme,
     scale: TensorBinding,

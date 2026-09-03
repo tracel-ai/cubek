@@ -6,7 +6,7 @@
 //! scheme about those is testing its own arithmetic.
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
     {zspace::Shape, zspace::shape},
@@ -16,7 +16,7 @@ use cubek_test_utils::{TestInput, quant_layout};
 
 /// `data` on the device as an f32 tensor: what these tests hand the kernels for an input, an
 /// inner scale grid, or a one-element global scale.
-pub(crate) fn f32_tensor(client: &ComputeClient, data: &[f32], shape: Shape) -> TensorHandle {
+pub(crate) fn f32_tensor(client: &Client, data: &[f32], shape: Shape) -> TensorHandle {
     TestInput::builder(client.clone(), shape)
         .custom(data.to_vec())
         .generate_without_host_data()
@@ -32,7 +32,7 @@ pub(crate) fn scale_shape(scheme: &QuantScheme, shape: &Shape) -> Shape {
 /// The pair quantize writes over a tensor of `shape`. Allocated rather than launched, so a test
 /// can hand them to a launch it expects to be refused.
 pub(crate) fn quant_outputs(
-    client: &ComputeClient,
+    client: &Client,
     scheme: &QuantScheme,
     shape: &Shape,
 ) -> (TensorHandle, TensorHandle) {
@@ -59,7 +59,7 @@ pub(crate) fn quant_outputs(
 ///
 /// The input is always f32 here, which is what [`f32_tensor`] builds.
 pub(crate) fn quantize(
-    client: &ComputeClient,
+    client: &Client,
     scheme: &QuantScheme,
     input: &TensorHandle,
     scale: &TensorHandle,
@@ -94,7 +94,7 @@ pub(crate) fn quantize(
 /// Reconstruct `values` into a fresh `out_dtype` tensor, a buffer of its own so an element the
 /// kernel never wrote reads as a mismatch rather than as whatever was there before.
 pub(crate) fn dequantize(
-    client: &ComputeClient,
+    client: &Client,
     scheme: &QuantScheme,
     values: &TensorHandle,
     scales: &TensorHandle,

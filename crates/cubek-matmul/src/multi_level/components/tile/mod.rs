@@ -120,7 +120,7 @@ impl TileMatmulKind {
         }
     }
 
-    pub fn should_swizzle(&self, client: &ComputeClient) -> bool {
+    pub fn should_swizzle(&self, client: &Client) -> bool {
         match self {
             TileMatmulKind::Cmma => CmmaMatmul::should_swizzle(client),
             TileMatmulKind::Mma => MmaMatmul::should_swizzle(client),
@@ -140,7 +140,7 @@ impl TileMatmulKind {
         }
     }
 
-    pub fn is_supported(&self, client: &ComputeClient, config: MmaConfig) -> bool {
+    pub fn is_supported(&self, client: &Client, config: MmaConfig) -> bool {
         match self {
             TileMatmulKind::Cmma => CmmaMatmul::is_supported(client, config),
             TileMatmulKind::Mma => MmaMatmul::is_supported(client, config),
@@ -152,7 +152,7 @@ impl TileMatmulKind {
 
     pub fn supported_sizes(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         lhs_ty: ElemType,
         rhs_ty: ElemType,
         acc_ty: ElemType,
@@ -215,7 +215,7 @@ impl TileMatmulKind {
 
     pub fn validate_blueprint(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

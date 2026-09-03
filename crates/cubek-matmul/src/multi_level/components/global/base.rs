@@ -48,7 +48,7 @@ pub trait GlobalMatmulFamily<RC: RuntimeConfig>: Send + Sync + 'static {
     ) -> Result<CubeDimResource, MatmulSetupError>;
 
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

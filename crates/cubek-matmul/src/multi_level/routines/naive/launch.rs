@@ -21,7 +21,7 @@ use crate::{
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,

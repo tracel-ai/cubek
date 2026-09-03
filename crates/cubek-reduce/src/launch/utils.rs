@@ -29,7 +29,7 @@ pub fn calculate_plane_count_per_cube(
 }
 
 pub fn generate_vector_size(
-    client: &ComputeClient,
+    client: &Client,
     input: &TensorBinding,
     output: &TensorBinding,
     axis: usize,

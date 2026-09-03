@@ -3,8 +3,8 @@
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::Scalar,
-    ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
+    CubeCount, CubeDim, Runtime, TestRuntime, client::Client, frontend::Scalar, ir::AddressType,
+    prelude::*, zspace::Shape, zspace::shape,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
@@ -67,7 +67,7 @@ struct Operand {
 impl Operand {
     /// A fresh (zeroed) operand of logical `(batch, rows, cols)` in `layout`.
     fn zeros(
-        client: &ComputeClient,
+        client: &Client,
         layout: InnerLayout,
         axes: [Axis; 3],
         batch: usize,
@@ -86,7 +86,7 @@ impl Operand {
     /// [`zeros`](Self::zeros) with poisoned contents: an output must come out
     /// `A·B` whatever its buffer held (burn launches with recycled pool memory).
     fn poisoned(
-        client: &ComputeClient,
+        client: &Client,
         layout: InnerLayout,
         axes: [Axis; 3],
         batch: usize,
@@ -124,7 +124,7 @@ impl Operand {
 
 /// Copy every logical element from `src` into `dst` through their views: moving
 /// data between two physical layouts in logical order.
-fn copy(client: &ComputeClient, src: &Operand, dst: &Operand) {
+fn copy(client: &Client, src: &Operand, dst: &Operand) {
     // src and dst are built over the same logical space; it is the kernel's one space.
     copy_logical::launch(
         client,
@@ -153,7 +153,7 @@ fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
-fn gather(client: &ComputeClient, src: &Operand) -> TensorHandle {
+fn gather(client: &Client, src: &Operand) -> TensorHandle {
     let logical = Operand::zeros(
         client,
         InnerLayout::RowMajor,

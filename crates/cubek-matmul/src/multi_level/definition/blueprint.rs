@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, client::ComputeClient, flex32, prelude::Scalar, tf32};
+use cubecl::{CubeDim, client::Client, flex32, prelude::Scalar, tf32};
 use cubek_std::{
     MatrixLayout,
     cube_count::{Count3d, CubeCountPlan, HypercubeBlueprint},
@@ -86,7 +86,7 @@ impl Blueprint for BatchMatmulBlueprint {
 }
 
 /// Modifies the given matmul element types based on the kind of accelerator the kernel is run on.
-pub fn adjust_dtypes(client: &ComputeClient, dtypes: &mut MatmulElems, requires_accelerator: bool) {
+pub fn adjust_dtypes(client: &Client, dtypes: &mut MatmulElems, requires_accelerator: bool) {
     let f32_dtype = f32::elem_type_native();
     let flex_dtype = flex32::elem_type_native();
     let tf32_dtype = tf32::elem_type_native();

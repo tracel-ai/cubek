@@ -13,16 +13,16 @@ use crate::harness::assert_result;
 
 /// Test the correctness of a public [`Strategy`] against the CPU reference.
 #[allow(unused)]
-pub fn test_matmul_strategy(client: ComputeClient, problem: MatmulProblem, strategy: Strategy) {
+pub fn test_matmul_strategy(client: Client, problem: MatmulProblem, strategy: Strategy) {
     run(client, problem, move |client, lhs, rhs, out, dtypes| {
         launch_ref(&strategy, client, lhs, rhs, out, dtypes)
     });
 }
 
-pub(crate) fn run<F>(client: ComputeClient, problem: MatmulProblem, launch: F)
+pub(crate) fn run<F>(client: Client, problem: MatmulProblem, launch: F)
 where
     F: FnOnce(
-        &ComputeClient,
+        &Client,
         InputBinding,
         InputBinding,
         TensorBinding,
@@ -41,7 +41,7 @@ where
 /// themselves (e.g. compare a broadcast run against its contiguous baseline).
 #[allow(unused)]
 pub(crate) fn run_with_strides(
-    client: ComputeClient,
+    client: Client,
     problem: MatmulProblem,
     strategy: Strategy,
 ) -> TestOutcome {
@@ -61,7 +61,7 @@ pub(crate) fn run_with_strides(
 /// so the CPU reference sees the same memory layout the kernel did (a no-op when
 /// the layouts already pin explicit strides).
 fn run_outcome<F>(
-    client: ComputeClient,
+    client: Client,
     mut problem: MatmulProblem,
     lhs_layout: LayoutSpec,
     rhs_layout: LayoutSpec,
@@ -69,7 +69,7 @@ fn run_outcome<F>(
 ) -> TestOutcome
 where
     F: FnOnce(
-        &ComputeClient,
+        &Client,
         InputBinding,
         InputBinding,
         TensorBinding,

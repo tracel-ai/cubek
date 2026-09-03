@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -74,7 +74,7 @@ struct ReduceBench<E> {
     kind: ReduceBenchKind,
     strategy: ReduceStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }

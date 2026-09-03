@@ -16,7 +16,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -86,7 +86,7 @@ pub struct TiledStrategy {
 /// A fresh uniform-random operand of the given physical `packing`; a contiguous buffer whose
 /// row-major strides already realize the layout (tiled dims are just higher rank).
 fn make(
-    client: &ComputeClient,
+    client: &Client,
     packing: Packing,
     batch: usize,
     rows: usize,
@@ -106,7 +106,7 @@ fn make(
 struct TiledBench {
     problem: TiledProblem,
     strategy: TiledStrategy,
-    client: ComputeClient,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }

@@ -8,7 +8,7 @@
 use crate::attention::forward::assert_result;
 use crate::attention::forward::launcher::test_launch;
 use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar, zspace::Shape,
+    Runtime, TestRuntime, client::Client, ir::AddressType, prelude::Scalar, zspace::Shape,
 };
 use cubek_attention::forward::definition::{
     AccumulatorPrecision, AttentionDims, AttentionElems, AttentionGlobalTypes, AttentionIdent,
@@ -20,7 +20,7 @@ use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, launch_and_capture_outcome,
 };
 
-fn f16_dtypes(client: &ComputeClient) -> AttentionGlobalTypes {
+fn f16_dtypes(client: &Client) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),

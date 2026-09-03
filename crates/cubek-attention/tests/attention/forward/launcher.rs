@@ -6,10 +6,10 @@ use cubek_attention::{
     forward::launch::{Strategy, launch_ref},
 };
 
-use cubecl::client::ComputeClient;
+use cubecl::client::Client;
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
-pub fn test_launch(client: ComputeClient, problem: AttentionProblem, strategy: Strategy) {
+pub fn test_launch(client: Client, problem: AttentionProblem, strategy: Strategy) {
     test_launch_scaled(client, problem, strategy, 1.0, None)
 }
 
@@ -17,7 +17,7 @@ pub fn test_launch(client: ComputeClient, problem: AttentionProblem, strategy: S
 /// optional absolute-epsilon override (the default epsilon assumes unit-range
 /// inputs, so larger magnitudes must scale it along with the data).
 pub fn test_launch_scaled(
-    client: ComputeClient,
+    client: Client,
     problem: AttentionProblem,
     strategy: Strategy,
     range: f32,
@@ -30,7 +30,7 @@ pub fn test_launch_scaled(
 /// input: attention consumers routinely pass permuted views (a projection
 /// reshaped to `(b, seq, heads, hd)` then swapped to `(b, heads, seq, hd)`),
 /// so the kernels must not assume packed row-major inputs.
-pub fn test_launch_permuted(client: ComputeClient, problem: AttentionProblem, strategy: Strategy) {
+pub fn test_launch_permuted(client: Client, problem: AttentionProblem, strategy: Strategy) {
     let heads = problem.dims.num_heads;
     let head_dim_strides = |seq: usize, dim: usize| {
         cubek_test_utils::StridedLayout::Explicit(vec![seq * heads * dim, dim, heads * dim, 1])
@@ -50,7 +50,7 @@ pub struct InputLayouts {
 }
 
 fn test_launch_with_layouts(
-    client: ComputeClient,
+    client: Client,
     problem: AttentionProblem,
     strategy: Strategy,
     range: f32,

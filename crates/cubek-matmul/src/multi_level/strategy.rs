@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use cubecl::{client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::{
@@ -252,7 +252,7 @@ impl Display for Strategy {
 impl Strategy {
     pub(crate) fn launch_ref(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         lhs: InputBinding,
         rhs: InputBinding,
         out: TensorBinding,

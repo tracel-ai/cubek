@@ -53,7 +53,7 @@ pub trait Routine: core::fmt::Debug + Clone + Sized {
 
     fn prepare(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         problem: ReduceProblem,
         settings: ReduceVectorSettings,
         strategy: BlueprintStrategy<Self>,

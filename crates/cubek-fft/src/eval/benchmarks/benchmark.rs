@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -44,7 +44,7 @@ struct FftBench<E> {
     shape: Vec<usize>,
     mode: FftMode,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }
@@ -56,12 +56,7 @@ struct FftInput {
     spectrum_im: TensorHandle,
 }
 
-fn make_uniform(
-    client: &ComputeClient,
-    shape: Vec<usize>,
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle {
+fn make_uniform(client: &Client, shape: Vec<usize>, dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(shape))
         .layout(StridedLayout::RowMajor)
         .dtype(dtype)
@@ -69,7 +64,7 @@ fn make_uniform(
         .generate_without_host_data()
 }
 
-fn empty_handle(client: &ComputeClient, shape: Vec<usize>, elem: impl Into<Type>) -> TensorHandle {
+fn empty_handle(client: &Client, shape: Vec<usize>, elem: impl Into<Type>) -> TensorHandle {
     TensorHandle::empty(client, shape, elem)
 }
 

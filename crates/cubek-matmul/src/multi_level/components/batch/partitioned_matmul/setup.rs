@@ -62,7 +62,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
     }
 
     unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -103,7 +103,7 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
     }
 
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

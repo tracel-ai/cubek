@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, client::ComputeClient, prelude::Scalar};
+use cubecl::{CubeDim, client::Client, prelude::Scalar};
 use cubek_matmul::multi_level::{
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
     routines::find_instruction_size,
@@ -83,11 +83,10 @@ fn blueprint(
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(strategy) => {
-            let is_supported = |client: &ComputeClient, mma| {
-                client.properties().features.matmul.cmma.contains(&mma)
-            };
+            let is_supported =
+                |client: &Client, mma| client.properties().features.matmul.cmma.contains(&mma);
 
-            let supported_sizes = |client: &ComputeClient, lhs_ty, rhs_ty, acc_ty| {
+            let supported_sizes = |client: &Client, lhs_ty, rhs_ty, acc_ty| {
                 client
                     .properties()
                     .features

@@ -8,7 +8,7 @@
 use cubecl::prelude::{Numeric, Size};
 use cubecl::{
     bytes::Bytes,
-    client::ComputeClient,
+    client::Client,
     prelude::TensorArg,
     prelude::TensorBinding,
     quant::scheme::{QuantScheme, QuantValue},
@@ -45,7 +45,7 @@ impl TileInput {
     /// recursion, or [`untiled`](TileInputBuilder::untiled) for none, then a data
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
-    pub fn builder(client: &ComputeClient, space: Space) -> TileInputBuilder {
+    pub fn builder(client: &Client, space: Space) -> TileInputBuilder {
         TileInputBuilder {
             client: client.clone(),
             space,
@@ -177,7 +177,7 @@ enum TileLevel {
 /// levels (each a [`split`](Self::split) or [`tile`](Self::tile)), and a data
 /// finalizer that fills the `[grid…, level…, finest…]` buffer.
 pub struct TileInputBuilder {
-    client: ComputeClient,
+    client: Client,
     space: Space,
     levels: Option<Vec<TileLevel>>,
     residence: Vec<Residence>,
@@ -324,7 +324,7 @@ impl TileInputBuilder {
 pub struct QuantizedTileInputBuilder {
     residence: Vec<Residence>,
     dequant_at: DequantAt,
-    client: ComputeClient,
+    client: Client,
     space: Space,
     scheme: QuantScheme,
 }

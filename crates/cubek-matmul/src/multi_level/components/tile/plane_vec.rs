@@ -46,7 +46,7 @@ impl TileVariant for PlaneVecMatInnerProduct {
         true
     }
 
-    fn should_swizzle(_client: &ComputeClient) -> bool {
+    fn should_swizzle(_client: &Client) -> bool {
         // Supported but needs tuning, currently off.
         false
     }
@@ -55,12 +55,12 @@ impl TileVariant for PlaneVecMatInnerProduct {
         Ok(Plane::default_resource())
     }
 
-    fn is_supported(_client: &ComputeClient, _config: MmaConfig) -> bool {
+    fn is_supported(_client: &Client, _config: MmaConfig) -> bool {
         true
     }
 
     fn supported_sizes(
-        _client: &ComputeClient,
+        _client: &Client,
         _lhs_ty: ElemType,
         _rhs_ty: ElemType,
         _acc_ty: ElemType,
@@ -83,7 +83,7 @@ impl TileVariant for PlaneVecMatInnerProduct {
     }
 
     fn validate(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

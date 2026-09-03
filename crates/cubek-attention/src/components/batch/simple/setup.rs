@@ -32,7 +32,7 @@ impl<GA: GlobalAttentionFamily> BatchAttentionFamily for SimpleBatchAttentionFam
     type Blueprint = AttentionBlueprint;
 
     unsafe fn launch_unchecked<AA: AttentionArgs>(
-        client: &cubecl::prelude::ComputeClient,
+        client: &cubecl::prelude::Client,
         cube_dim: cubecl::CubeDim,
         cube_count: cubecl::CubeCount,
         address_type: AddressType,

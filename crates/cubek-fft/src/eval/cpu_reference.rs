@@ -5,7 +5,7 @@
 use std::f32::consts::PI;
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     prelude::Scalar,
     zspace::{Shape, Strides},
 };
@@ -20,7 +20,7 @@ use crate::fft::{FftMode, irfft_launch, rfft_launch};
 /// Run the FFT kernel for `mode` against the given problem with seeded inputs
 /// and return its output as a [`HostData`].
 pub fn kernel_result(
-    client: ComputeClient,
+    client: Client,
     shape: Vec<usize>,
     dim: usize,
     mode: FftMode,
@@ -116,7 +116,7 @@ pub fn kernel_result(
 /// pair for [`FftMode::Forward`] and the reconstructed signal for
 /// [`FftMode::Inverse`].
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     shape: Vec<usize>,
     dim: usize,
     mode: FftMode,

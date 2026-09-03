@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -41,7 +41,7 @@ struct IntoContiguousBench {
     shape: Vec<usize>,
     dims: Vec<(usize, usize)>,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     dtype: ElemType,
     samples: usize,
 }

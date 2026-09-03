@@ -37,7 +37,7 @@ pub fn with_seed<R>(seed_value: u64, f: impl FnOnce() -> R) -> R {
 
 /// Pseudo-random generator
 pub(crate) fn random<F: RandomFamily>(
-    client: &ComputeClient,
+    client: &Client,
     prng: F::Runtime,
     output: TensorBinding,
     dtype: ElemType,
@@ -391,7 +391,7 @@ mod tests {
     /// stays at zero rather than at whatever the allocation held.
     fn draw_over_zeros(
         shape: Vec<usize>,
-        launch: impl FnOnce(&ComputeClient, TensorBinding, ElemType) -> Result<(), LaunchError>,
+        launch: impl FnOnce(&Client, TensorBinding, ElemType) -> Result<(), LaunchError>,
     ) -> Vec<f32> {
         let client = TestRuntime::client(&Default::default());
         let dtype = f32::elem_type_native();

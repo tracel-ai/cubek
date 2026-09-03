@@ -3,14 +3,14 @@ mod backward;
 mod bench_catalog;
 mod forward;
 
-use cubecl::{client::ComputeClient, ir::ElemType, std::tensor::TensorHandle};
+use cubecl::{client::Client, ir::ElemType, std::tensor::TensorHandle};
 use cubek_interpolate::definition::InterpolateError;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, assert_equals_approx,
 };
 
 pub fn build_output_tensor(
-    client: &ComputeClient,
+    client: &Client,
     output_shape: Vec<usize>,
     dtype: ElemType,
 ) -> TensorHandle {
@@ -20,7 +20,7 @@ pub fn build_output_tensor(
         .generate_without_host_data()
 }
 
-pub fn output_host_f32(client: &ComputeClient, output: TensorHandle) -> HostData {
+pub fn output_host_f32(client: &Client, output: TensorHandle) -> HostData {
     HostData::from_tensor_handle(client, output, HostDataType::F32)
 }
 

@@ -16,14 +16,14 @@ use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
     self, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
 };
-use cubecl::{Runtime, TestRuntime, client::ComputeClient};
+use cubecl::{Runtime, TestRuntime, client::Client};
 
 use crate::{HostData, Progress};
 
 /// The client every category scores against: `measure_peak_throughput` is
 /// always run on `<TestRuntime as Runtime>::Device::default()`, so the
 /// process-wide peak memo below can key on [`ThroughputKey`] alone.
-pub fn client() -> ComputeClient {
+pub fn client() -> Client {
     let device = <TestRuntime as Runtime>::Device::default();
     <TestRuntime as Runtime>::client(&device)
 }

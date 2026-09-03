@@ -242,7 +242,7 @@ impl StageMatmulKind {
 
     pub fn validate_blueprint(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

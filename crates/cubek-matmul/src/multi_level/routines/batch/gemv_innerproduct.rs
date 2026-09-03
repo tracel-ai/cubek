@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
 use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 
 use crate::{
@@ -84,7 +84,7 @@ impl<RC: RuntimeConfig> Routine<RC> for VecMatInnerProductAlgorithm {
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -118,7 +118,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for VecMatInnerProductAlgorithm {
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -211,7 +211,7 @@ impl<RC: RuntimeConfig> Routine<RC> for DoubleVecMatInnerProductAlgorithm {
 impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgorithm {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -245,7 +245,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgor
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -329,7 +329,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleVecMatInnerProductAlgor
 }
 
 fn infer_blueprint_vecmat(
-    client: &ComputeClient,
+    client: &Client,
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,

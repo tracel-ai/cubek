@@ -284,7 +284,7 @@ fn quantize_symmetric_packed_kernel<F: Float, N: Size, FS: Numeric, QS: Int>(
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     scales: &[TensorBinding],
@@ -352,7 +352,7 @@ pub fn launch_ref(
 
 #[allow(clippy::too_many_arguments)]
 fn quantize_native(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     scheme: &QuantScheme,
     scale: TensorBinding,
@@ -425,7 +425,7 @@ fn quantize_native(
 
 #[allow(clippy::too_many_arguments)]
 fn quantize_packed(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     scheme: &QuantScheme,
     scale: TensorBinding,

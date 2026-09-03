@@ -4,7 +4,7 @@ use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     calculate_cube_count_elemwise,
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -57,7 +57,7 @@ struct UnaryBench<E> {
     shape: Vec<usize>,
     vectorization: VectorSize,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }

@@ -64,7 +64,7 @@ fn test_topk_plane_reduce_inplace() {
 }
 
 fn build_output_tensor(
-    client: &cubecl::client::ComputeClient,
+    client: &cubecl::client::Client,
     output_dtype: ElemType,
     output_shape: &Shape,
 ) -> TensorHandle {

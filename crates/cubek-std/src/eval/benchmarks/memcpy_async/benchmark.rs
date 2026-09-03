@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     frontend::Float,
     future,
     prelude::{barrier::Barrier, *},
@@ -506,7 +506,7 @@ fn memcpy_test_double_buffer<E: Float, N: Size, Cpy: CopyStrategy, Cpt: ComputeT
 
 fn launch_ref<E: Float>(
     strategy: CopyStrategyEnum,
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     smem_size: usize,
@@ -696,12 +696,12 @@ struct MemcpyAsyncBench<E> {
     double_buffering: bool,
     strategy: CopyStrategyEnum,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }
 
-fn make_uniform_1d<E: Float>(client: &ComputeClient, len: usize, seed: u64) -> TensorHandle {
+fn make_uniform_1d<E: Float>(client: &Client, len: usize, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(vec![len]))
         .layout(StridedLayout::Explicit(vec![1]))
         .dtype(E::elem_type_native())

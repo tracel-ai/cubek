@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -44,7 +44,7 @@ struct InterpolateBench {
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     dtype: ElemType,
     samples: usize,
 }

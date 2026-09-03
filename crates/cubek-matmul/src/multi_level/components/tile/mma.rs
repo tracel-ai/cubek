@@ -30,7 +30,7 @@ impl TileVariant for MmaMatmul {
         true
     }
 
-    fn should_swizzle(client: &ComputeClient) -> bool {
+    fn should_swizzle(client: &Client) -> bool {
         // No alignment means swizzling can't be properly used, since it needs
         // to be applied to the address, and alignment guarantees the offset
         // is aligned to the pattern repeat.
@@ -41,12 +41,12 @@ impl TileVariant for MmaMatmul {
         Ok(Plane::default_resource())
     }
 
-    fn is_supported(client: &ComputeClient, config: MmaConfig) -> bool {
+    fn is_supported(client: &Client, config: MmaConfig) -> bool {
         client.properties().features.matmul.mma.contains(&config)
     }
 
     fn supported_sizes(
-        client: &ComputeClient,
+        client: &Client,
         lhs_ty: ElemType,
         rhs_ty: ElemType,
         acc_ty: ElemType,
@@ -82,7 +82,7 @@ impl TileVariant for MmaMatmul {
     }
 
     fn validate(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,

@@ -14,7 +14,7 @@ pub use dkdv::flash_attention_backward_dkdv;
 pub use dq::flash_attention_backward_dq;
 pub use prepass::flash_attention_backward_prepass;
 
-use cubecl::{client::ComputeClient, prelude::*, std::tensor::TensorHandle};
+use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
@@ -36,7 +36,7 @@ use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
 /// - `dq, dk, dv`: `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward(
-    client: &ComputeClient,
+    client: &Client,
     q: TensorBinding,
     k: TensorBinding,
     v: TensorBinding,

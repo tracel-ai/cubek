@@ -7,7 +7,7 @@
 //! and inner scales narrow enough to be worth a second level in the first place.
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     features::TypeUsage,
     prelude::*,
     std::tensor::TensorHandle,
@@ -50,7 +50,7 @@ fn packed_f32() -> QuantScheme {
 }
 
 struct Fixture {
-    client: ComputeClient,
+    client: Client,
     shape: Shape,
     input: TensorHandle,
     scale: TensorHandle,

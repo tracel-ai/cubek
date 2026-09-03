@@ -107,12 +107,12 @@ impl TestInput {
     /// `.arange()`,
     /// `.eye()`, `.zeros()`, `.uniform(seed, lo, hi)`, `.bernoulli(seed, p)`,
     /// or `.custom(data)` to produce a [`TestInput`] ready to generate.
-    pub fn builder(client: ComputeClient, shape: impl Into<Shape>) -> TestInputBuilder {
+    pub fn builder(client: Client, shape: impl Into<Shape>) -> TestInputBuilder {
         TestInputBuilder::new(client, shape.into())
     }
 
     pub fn new(
-        client: ComputeClient,
+        client: Client,
         shape: impl Into<Shape>,
         dtype: impl Into<InputDataType>,
         layout: impl Into<LayoutSpec>,
@@ -214,7 +214,7 @@ impl TestInput {
 }
 
 pub struct BaseInputSpec {
-    pub client: ComputeClient,
+    pub client: Client,
     pub shape: Shape,
     pub dtype: ElemType,
     pub layout: LayoutSpec,
@@ -259,14 +259,14 @@ pub enum Distribution {
 ///     .generate_with_f32_host_data();
 /// ```
 pub struct TestInputBuilder {
-    client: ComputeClient,
+    client: Client,
     shape: Shape,
     dtype: Option<InputDataType>,
     layout: LayoutSpec,
 }
 
 impl TestInputBuilder {
-    fn new(client: ComputeClient, shape: Shape) -> Self {
+    fn new(client: Client, shape: Shape) -> Self {
         Self {
             client,
             shape,

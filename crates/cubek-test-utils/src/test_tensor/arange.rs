@@ -32,7 +32,7 @@ fn arange_launch<T: Numeric>(
 }
 
 fn new_arange(
-    client: &ComputeClient,
+    client: &Client,
     shape: Shape,
     strides: Strides,
     dtype: ElemType,

@@ -1,4 +1,4 @@
-use cubecl::{client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError};
+use cubecl::{client::Client, ir::ElemType, prelude::TensorBinding, server::LaunchError};
 use cubek_matmul::multi_level::tile::{ColMajorTilingOrder, RowMajorTilingOrder};
 use cubek_matmul::{
     definition::AvailableVectorSizes,
@@ -62,7 +62,7 @@ impl<
     type Args = TensorArgs<RuntimeArgs>;
 
     fn correct_layout(
-        client: &ComputeClient,
+        client: &Client,
         handle: TensorBinding,
         dtype: ElemType,
         _operation: ConvolutionOperation,
@@ -78,7 +78,7 @@ impl Routine for SimpleAsyncTmaConv {
     type Args = TensorMapArgs<RuntimeArgs>;
 
     fn correct_layout(
-        client: &ComputeClient,
+        client: &Client,
         handle: TensorBinding,
         dtype: ElemType,
         operation: ConvolutionOperation,

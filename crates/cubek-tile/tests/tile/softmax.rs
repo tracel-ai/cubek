@@ -8,7 +8,7 @@
 //! including exact zeros and exact -inf lse on fully-masked rows.
 
 use cubecl::std::tensor::layout::CoordsDyn;
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
+use cubecl::{Runtime, TestRuntime, client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
@@ -119,7 +119,7 @@ fn run(
     causal: bool,
     mask_fn: Option<fn(usize, usize) -> bool>,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
 
@@ -409,7 +409,7 @@ fn run_smem_acc(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);

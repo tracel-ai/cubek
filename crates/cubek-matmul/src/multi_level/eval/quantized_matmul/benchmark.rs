@@ -3,7 +3,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -64,7 +64,7 @@ pub fn bench(
 struct QuantMatmulBench {
     problem: QuantizedMatmulProblem,
     strategy: Strategy,
-    client: ComputeClient,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
@@ -137,11 +137,7 @@ pub(super) fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> 
         .collect()
 }
 
-fn quantize_operand(
-    client: &ComputeClient,
-    input: TensorHandle,
-    scheme: &QuantScheme,
-) -> QuantOperand {
+fn quantize_operand(client: &Client, input: TensorHandle, scheme: &QuantScheme) -> QuantOperand {
     let shape: Shape = input.shape().clone();
     let scale_shape_vec = scales_shape(scheme, &shape);
 
@@ -193,12 +189,7 @@ fn quantize_operand(
     }
 }
 
-fn float_operand(
-    client: &ComputeClient,
-    shape: Vec<usize>,
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle {
+fn float_operand(client: &Client, shape: Vec<usize>, dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(shape))
         .dtype(dtype)
         .uniform(seed, -1.0, 1.0)

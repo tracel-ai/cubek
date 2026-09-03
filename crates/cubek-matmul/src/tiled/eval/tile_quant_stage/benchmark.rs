@@ -3,7 +3,7 @@ use std::sync::Arc;
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
@@ -102,7 +102,7 @@ struct TileQuantStageBench {
     tk: usize,
     scheme: QuantScheme,
     pack: usize,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
 }
 

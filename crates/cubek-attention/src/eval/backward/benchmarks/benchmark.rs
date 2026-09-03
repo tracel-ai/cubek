@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -55,7 +55,7 @@ struct BackwardBench<AP> {
     problem: AttentionProblem,
     strategy: BackwardStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
     _phantom: std::marker::PhantomData<AP>,
 }
@@ -90,21 +90,21 @@ impl Clone for BackwardInputs {
     }
 }
 
-fn make_uniform<T: Numeric>(client: &ComputeClient, shape: [usize; 4], seed: u64) -> TensorHandle {
+fn make_uniform<T: Numeric>(client: &Client, shape: [usize; 4], seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(T::elem_type_native())
         .uniform(seed, 0., 1.)
         .generate_without_host_data()
 }
 
-fn make_zeros<T: Numeric>(client: &ComputeClient, shape: [usize; 4]) -> TensorHandle {
+fn make_zeros<T: Numeric>(client: &Client, shape: [usize; 4]) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(T::elem_type_native())
         .zeros()
         .generate_without_host_data()
 }
 
-fn make_zeros_row(client: &ComputeClient, shape: [usize; 3]) -> TensorHandle {
+fn make_zeros_row(client: &Client, shape: [usize; 3]) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(f32::elem_type_native())
         .zeros()

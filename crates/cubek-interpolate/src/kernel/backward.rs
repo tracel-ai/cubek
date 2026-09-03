@@ -2,7 +2,7 @@ use crate::definition::NearestMode;
 use cubecl::prelude::*;
 use cubecl::{
     calculate_cube_count_elemwise,
-    client::ComputeClient,
+    client::Client,
     ir::UIntKind,
     num_traits::Zero,
     prelude::TensorBinding,
@@ -15,7 +15,7 @@ use cubecl::{
 };
 
 pub(crate) fn interpolate_nearest_backward_launch(
-    client: &ComputeClient,
+    client: &Client,
     out_grad: TensorBinding,
     input_grad: TensorBinding,
     nearest_mode: NearestMode,

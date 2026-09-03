@@ -26,7 +26,7 @@ use super::references;
 /// fragment shapes they advertise, and an unsupported shape is rejected at
 /// compile time. Returns `false` (after enforcing a skip outcome) when the
 /// device doesn't advertise the exact configuration.
-fn require_cmma_8x8x8_f32(client: &ComputeClient) -> bool {
+fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -50,7 +50,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient) -> bool {
 /// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
 /// not have: it reads back zeros, which looks like a leaf bug and is a missing
 /// guard.
-fn require_mma_8x8x8_f32(client: &ComputeClient) -> bool {
+fn require_mma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -2498,7 +2498,7 @@ fn register_matmul_folded_step_quant_q4() {
 
 /// Drive [`launch_matmul_folded_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[j,p]`.
 fn run_folded_step_quant(
-    client: ComputeClient,
+    client: Client,
     value: QuantValue,
     (m, n, k): (usize, usize, usize),
     bm: usize,
@@ -4502,7 +4502,7 @@ fn register_matmul_quant_packed_q4() {
 
 /// Build a packed `A` spanning the scheme's signed range and run the register matmul.
 fn run_register_matmul_quant_packed(
-    client: ComputeClient,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     tk: usize,
     value: QuantValue,
@@ -4552,7 +4552,7 @@ fn run_register_matmul_quant_packed(
 /// stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
-    client: ComputeClient,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     residence: &[Residence],
@@ -4890,7 +4890,7 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
 /// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant_rhs(
-    client: ComputeClient,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     value: QuantValue,
@@ -5105,13 +5105,7 @@ fn register_matmul_promoted_lane_group_fold() {
 }
 
 /// `c == a·b` for the two `arange` operands the fold tests share.
-fn assert_matmul_arange(
-    client: &ComputeClient,
-    handle: TensorHandle,
-    m: usize,
-    n: usize,
-    k: usize,
-) {
+fn assert_matmul_arange(client: &Client, handle: TensorHandle, m: usize, n: usize, k: usize) {
     let output = HostData::from_tensor_handle(client, handle, HostDataType::F32);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {

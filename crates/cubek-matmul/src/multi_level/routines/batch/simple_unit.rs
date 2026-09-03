@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
 
 use std::{fmt::Display, marker::PhantomData};
 
@@ -79,7 +79,7 @@ where
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -113,7 +113,7 @@ where
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -200,7 +200,7 @@ where
         )
     }
 
-    fn device_settings(client: &ComputeClient, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
+    fn device_settings(client: &Client, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
         let plane_dim = match client.properties().hardware.plane_size_min {
             0 => 32,
             plane_dim => plane_dim,

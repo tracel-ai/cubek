@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     prelude::*,
     std::tensor::{
         launch::ViewArg,
@@ -46,7 +46,7 @@ pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
     >
 {
     fn adjust_problem(
-        client: &ComputeClient,
+        client: &Client,
         problem: ConvolutionProblem,
         selection: &A::Blueprint,
         dtypes: &MatmulElems,
@@ -55,7 +55,7 @@ pub trait ConcreteArgs<A: BatchMatmulRoutine<RuntimeArgs>>:
 
 impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeArgs> {
     fn adjust_problem(
-        client: &ComputeClient,
+        client: &Client,
         mut problem: ConvolutionProblem,
         _blueprint: &A::Blueprint,
         dtypes: &MatmulElems,
@@ -76,7 +76,7 @@ impl<A: BatchMatmulRoutine<RuntimeArgs, Blueprint = BatchMatmulBlueprint>> Concr
     for TensorMapArgs<RuntimeArgs>
 {
     fn adjust_problem(
-        _client: &ComputeClient,
+        _client: &Client,
         mut problem: ConvolutionProblem,
         blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,

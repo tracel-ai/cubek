@@ -55,7 +55,7 @@ pub fn irfft<R: Runtime>(
 
 /// Launches the IRFFT kernel.
 pub fn irfft_launch(
-    client: &ComputeClient,
+    client: &Client,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,
     signal: TensorBinding,
@@ -76,7 +76,7 @@ pub fn irfft_launch(
 
 /// Launches the IRFFT kernel while treating bins at `spec_bins..n_freq` as zero.
 pub fn irfft_launch_padded(
-    client: &ComputeClient,
+    client: &Client,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,
     signal: TensorBinding,

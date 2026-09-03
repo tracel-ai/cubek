@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::definition::{MatmulElems, MatmulSetupError};
@@ -51,7 +51,7 @@ impl Display for Strategy {
 impl Strategy {
     pub(crate) fn launch_ref(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         lhs: InputBinding,
         rhs: InputBinding,
         out: TensorBinding,
@@ -70,7 +70,7 @@ impl Strategy {
 /// Accelerated first, falling back to the routine that needs no accelerator.
 #[cfg(feature = "multi-level")]
 fn auto(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
@@ -99,7 +99,7 @@ fn auto(
 /// hardware requirement; it was tuned for CPU and has never been measured as a GPU fallback.
 #[cfg(all(feature = "tiled", not(feature = "multi-level")))]
 fn auto(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,

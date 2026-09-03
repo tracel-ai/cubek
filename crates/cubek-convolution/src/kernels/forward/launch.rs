@@ -8,7 +8,7 @@ use crate::{
     launch::ConvolutionArgs,
     routines::Routine,
 };
-use cubecl::{client::ComputeClient, prelude::*};
+use cubecl::{client::Client, prelude::*};
 use cubek_matmul::{
     definition::{AvailableVectorSizes, MatmulElems},
     routine::BlueprintStrategy,
@@ -21,7 +21,7 @@ use cubek_std::{InputBinding, MatrixLayout};
 /// blueprint-strategy have been resolved. Not meant for direct external use.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub(crate) fn launch_internal<const N_SPATIAL: usize, Rt: Routine>(
-    client: &ComputeClient,
+    client: &Client,
     input: InputBinding,
     weight: InputBinding,
     bias: Option<InputBinding>,
@@ -61,7 +61,7 @@ where
 
 #[allow(clippy::too_many_arguments)]
 fn launch_with_routine<Rt: Routine>(
-    client: &ComputeClient,
+    client: &Client,
     input: InputBinding,
     weight: InputBinding,
     bias: Option<InputBinding>,
@@ -149,7 +149,7 @@ where
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 pub fn launch_kernel<Rt: Routine>(
-    client: &ComputeClient,
+    client: &Client,
     input: InputBinding,
     weight: InputBinding,
     bias: Option<InputBinding>,

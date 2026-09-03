@@ -6,7 +6,7 @@ use cubek_test_utils::{
 };
 
 fn empty_tensor(
-    client: &cubecl::client::ComputeClient,
+    client: &cubecl::client::Client,
     shape: Vec<usize>,
     dtype: ElemType,
 ) -> TensorHandle {

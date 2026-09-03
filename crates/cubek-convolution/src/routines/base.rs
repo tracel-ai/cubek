@@ -29,7 +29,7 @@ pub trait Routine {
     const IS_SPECIALIZED: bool = false;
 
     fn correct_layout(
-        client: &ComputeClient,
+        client: &Client,
         handle: TensorBinding,
         dtype: ElemType,
         operation: ConvolutionOperation,
@@ -41,7 +41,7 @@ pub trait Routine {
 }
 
 pub(crate) fn contiguous_pitched_layout(
-    client: &ComputeClient,
+    client: &Client,
     binding: TensorBinding,
     dtype: ElemType,
 ) -> Result<TensorBinding, LaunchError> {
@@ -62,7 +62,7 @@ fn has_valid_layout(binding: &TensorBinding) -> bool {
 const TMA_STRIDE_ALIGN: usize = 16;
 
 pub(crate) fn into_tensor_handle_tma(
-    client: &ComputeClient,
+    client: &Client,
     handle: TensorBinding,
     dtype: ElemType,
     operation: ConvolutionOperation,

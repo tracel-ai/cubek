@@ -68,7 +68,7 @@ impl TileVariant for InterleavedMatmul {
         true
     }
 
-    fn should_swizzle(client: &ComputeClient) -> bool {
+    fn should_swizzle(client: &Client) -> bool {
         // Same alignment reasoning as the register path.
         client.properties().features.alignment
     }
@@ -77,12 +77,12 @@ impl TileVariant for InterleavedMatmul {
         Ok(Plane::default_resource())
     }
 
-    fn is_supported(_client: &ComputeClient, _config: MmaConfig) -> bool {
+    fn is_supported(_client: &Client, _config: MmaConfig) -> bool {
         true
     }
 
     fn supported_sizes(
-        _client: &ComputeClient,
+        _client: &Client,
         _lhs_ty: ElemType,
         _rhs_ty: ElemType,
         _acc_ty: ElemType,
@@ -104,7 +104,7 @@ impl TileVariant for InterleavedMatmul {
     }
 
     fn validate(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

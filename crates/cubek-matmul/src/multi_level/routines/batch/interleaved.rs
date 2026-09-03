@@ -1,4 +1,4 @@
-use cubecl::{CubeCount, CubeDim, client::ComputeClient, features::MmaConfig, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, features::MmaConfig, ir::AddressType};
 use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 use std::{fmt::Display, marker::PhantomData};
 
@@ -79,7 +79,7 @@ where
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -113,7 +113,7 @@ where
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -212,7 +212,7 @@ where
 
 fn infer_blueprint_multi_rows(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient,
+    client: &Client,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,

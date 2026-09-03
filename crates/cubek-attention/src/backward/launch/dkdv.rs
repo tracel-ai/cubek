@@ -10,7 +10,7 @@
 //! dV doesn't need `V` or `D` so its binding set is naturally smaller; dK
 //! drops `dv` instead.
 
-use cubecl::{CubeDim, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, client::Client, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
@@ -163,7 +163,7 @@ fn flash_attention_backward_dk_kernel<E: Float>(
 /// - `dv`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dkdv(
-    client: &ComputeClient,
+    client: &Client,
     q: TensorBinding,
     k: TensorBinding,
     v: TensorBinding,

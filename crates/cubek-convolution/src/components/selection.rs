@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::{ElemType, VectorSize},
 };
 use cubek_matmul::{
@@ -82,7 +82,7 @@ pub(crate) fn find_stage_size_m_n(
 
 pub fn convolution_matmul_selection(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient,
+    client: &Client,
     problem: &ConvolutionProblem,
     plane_dim: u32,
     swizzle: bool,

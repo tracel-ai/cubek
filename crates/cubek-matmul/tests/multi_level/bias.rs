@@ -136,7 +136,7 @@ fn add_bias_to_reference(reference: &mut HostData, bias: &HostData) {
 }
 
 fn launch_with_bias<A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient,
+    client: &Client,
     problem: &MatmulProblem,
     lhs: &TensorHandle,
     rhs: &TensorHandle,

@@ -1,6 +1,6 @@
 use cubecl::{
     AutotuneKey,
-    client::ComputeClient,
+    client::Client,
     ir::ElemType,
     quant::scheme::QuantScheme,
     tune::anchor,
@@ -85,7 +85,7 @@ impl MatmulAutotuneKey {
     /// used for the calculation.
     #[allow(clippy::too_many_arguments)]
     pub fn generate(
-        _client: &ComputeClient,
+        _client: &Client,
         lhs_shape: &Shape,
         rhs_shape: &Shape,
         lhs_strides: &Strides,

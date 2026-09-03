@@ -1,6 +1,6 @@
 use cubecl::std::tensor::{into_contiguous_packed, into_contiguous_pitched};
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     frontend::Scalar,
     ir::{AddressType, ElemType},
     prelude::TensorBinding,
@@ -164,7 +164,7 @@ impl InputBinding {
         }
     }
 
-    pub fn into_contiguous(self, client: &ComputeClient) -> Result<Self, LaunchError> {
+    pub fn into_contiguous(self, client: &Client) -> Result<Self, LaunchError> {
         let val = match self {
             Self::Normal(data, dtype) => Self::Normal(
                 into_contiguous_pitched(client, data, dtype).binding(),

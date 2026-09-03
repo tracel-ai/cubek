@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     ir::{ElemType, FloatKind},
     throughput::{ThroughputKey, compute_throughput_key, select_cmma_tile},
     tune::Work,
@@ -113,7 +113,7 @@ impl AttentionCost {
     ///
     /// Uses an unconstrained tile selection to accurately model peak hardware throughput
     /// for attention matmuls.
-    pub fn compute_key(&self, client: &ComputeClient) -> ThroughputKey {
+    pub fn compute_key(&self, client: &Client) -> ThroughputKey {
         const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
 
         // Softmax statistics accumulate in f32 regardless of operand types.

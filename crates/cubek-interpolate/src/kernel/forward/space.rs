@@ -1,5 +1,5 @@
 use super::geometry::TileGeometry;
-use cubecl::{client::ComputeClient, ir::ElemType};
+use cubecl::{client::Client, ir::ElemType};
 use cubek_tile::{
     Axis, Buffering, Compaction, CubeAxis, Instruction, LevelCuts, Operand, PhysicalAxisMap,
     Projection, RegisterBlock, Residence, Space, Tiling, WalkOrder, cubes, lanes, planes,
@@ -13,7 +13,7 @@ pub const TAP_W: Axis = Axis(4);
 pub const CHANNEL: Axis = Axis(5);
 
 /// The instruction leaf, which the device decides.
-pub fn instruction(client: &ComputeClient) -> Instruction {
+pub fn instruction(client: &Client) -> Instruction {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => Instruction::Registers {
             config: RegisterBlock::new(256).split_edge(),

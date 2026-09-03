@@ -3,7 +3,7 @@
 //! layouts, hypercube / swizzle / specialization / partition-buffering knobs,
 //! and quantization.
 
-use cubecl::{TestRuntime, client::ComputeClient};
+use cubecl::{TestRuntime, client::Client};
 use cubek_matmul::{definition::MatmulProblem, multi_level::test_only::TestStrategy};
 
 use crate::harness::run;
@@ -22,11 +22,7 @@ mod tiling_scheme;
 /// the CPU reference. Kept separate from [`test_matmul_strategy`] so the
 /// public `Strategy` enum stays lean.
 #[allow(unused)]
-pub fn test_matmul_test_strategy(
-    client: ComputeClient,
-    problem: MatmulProblem,
-    strategy: TestStrategy,
-) {
+pub fn test_matmul_test_strategy(client: Client, problem: MatmulProblem, strategy: TestStrategy) {
     crate::harness::run(client, problem, move |client, lhs, rhs, out, dtypes| {
         strategy.launch_ref(client, lhs, rhs, out, dtypes)
     });

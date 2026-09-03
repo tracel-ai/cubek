@@ -1,7 +1,7 @@
 //! Launch wiring for the Cmma routine: one entry ([`launch_ref`]) serving both
 //! deliveries; the blueprint decides, and only the operand construction differs.
 
-use cubecl::{client::ComputeClient, ir::FloatKind, prelude::*};
+use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
@@ -62,7 +62,7 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
 /// plan, and the output's broadcast batch shape.
 #[allow(clippy::result_large_err, clippy::type_complexity)]
 fn setup(
-    client: &ComputeClient,
+    client: &Client,
     lhs: &InputBinding,
     rhs: &InputBinding,
     out: &TensorBinding,
@@ -207,7 +207,7 @@ fn tile_space(
 /// compile, never silently degrades.
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,
@@ -277,7 +277,7 @@ pub fn launch_ref(
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
 #[allow(clippy::too_many_arguments)]
 fn launch_strided(
-    client: &ComputeClient,
+    client: &Client,
     launch: &Launcher<'_>,
     cube_count: CubeCount,
     cube_dim: CubeDim,
@@ -340,7 +340,7 @@ fn launch_strided(
 /// under either delivery.
 #[allow(clippy::too_many_arguments)]
 fn launch_tma(
-    client: &ComputeClient,
+    client: &Client,
     launch: &Launcher<'_>,
     cube_count: CubeCount,
     cube_dim: CubeDim,

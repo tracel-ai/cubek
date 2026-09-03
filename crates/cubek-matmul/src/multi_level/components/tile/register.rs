@@ -47,7 +47,7 @@ impl TileVariant for RegisterMatmul {
         true
     }
 
-    fn should_swizzle(client: &ComputeClient) -> bool {
+    fn should_swizzle(client: &Client) -> bool {
         // Doesn't get rid of all conflicts with the current load strategy, but
         // does reduce them significantly (avg 18 vs avg 5). Tune in the future.
         client.properties().features.alignment
@@ -57,12 +57,12 @@ impl TileVariant for RegisterMatmul {
         Ok(Unit::default_resource())
     }
 
-    fn is_supported(_client: &ComputeClient, _config: MmaConfig) -> bool {
+    fn is_supported(_client: &Client, _config: MmaConfig) -> bool {
         true
     }
 
     fn supported_sizes(
-        _client: &ComputeClient,
+        _client: &Client,
         _lhs_ty: ElemType,
         _rhs_ty: ElemType,
         _acc_ty: ElemType,
@@ -86,7 +86,7 @@ impl TileVariant for RegisterMatmul {
     }
 
     fn validate(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

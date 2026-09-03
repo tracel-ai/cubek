@@ -94,7 +94,7 @@ fn loop_ranges(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn max_pool2d_with_indices_backward_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     indices: TensorBinding,

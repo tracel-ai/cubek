@@ -1,6 +1,6 @@
 use cubecl::{CubeElement, ir::ElemType, prelude::Scalar};
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     std::tensor::TensorHandle,
     {Runtime, TestRuntime},
 };
@@ -12,7 +12,7 @@ use cubek_test_utils::{
 
 use cubek_fft::eval::cpu_reference::irfft_ref;
 
-fn test_launch(client: ComputeClient, spectrum_shape: Vec<usize>, dim: usize) {
+fn test_launch(client: Client, spectrum_shape: Vec<usize>, dim: usize) {
     let dtype = f32::elem_type_native();
     let mut signal_shape = spectrum_shape.clone();
     signal_shape[dim] = (spectrum_shape[dim] - 1) * 2;
@@ -56,7 +56,7 @@ fn test_launch(client: ComputeClient, spectrum_shape: Vec<usize>, dim: usize) {
     .enforce();
 }
 
-fn test_launch_padded(client: ComputeClient, spectrum_shape: Vec<usize>, dim: usize, n_fft: usize) {
+fn test_launch_padded(client: Client, spectrum_shape: Vec<usize>, dim: usize, n_fft: usize) {
     let dtype = f32::elem_type_native();
     let spec_bins = spectrum_shape[dim];
     let n_freq = n_fft / 2 + 1;
@@ -140,7 +140,7 @@ fn test_launch_padded(client: ComputeClient, spectrum_shape: Vec<usize>, dim: us
 }
 
 fn assert_irfft_result(
-    client: &ComputeClient,
+    client: &Client,
     spectrum_re: HostData,
     spectrum_im: HostData,
     signal: TensorHandle,
@@ -194,7 +194,7 @@ fn padded_data(shape: &[usize], dim: usize, target_len: usize) -> Vec<f32> {
 }
 
 fn tensor_from_data(
-    client: &ComputeClient,
+    client: &Client,
     shape: Vec<usize>,
     data: &[f32],
     dtype: ElemType,
@@ -202,7 +202,7 @@ fn tensor_from_data(
     TensorHandle::new_contiguous(shape, client.create_from_slice(f32::as_bytes(data)), dtype)
 }
 
-fn empty_tensor(client: &ComputeClient, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
+fn empty_tensor(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
     let elems = shape.iter().product::<usize>();
     TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }

@@ -79,7 +79,7 @@ fn end_index(output_size_index: usize, output_size: usize, input_size: usize) ->
 }
 
 pub(crate) fn adaptive_avg_pool2d_backward_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     out_grad: TensorBinding,
     output: TensorBinding,

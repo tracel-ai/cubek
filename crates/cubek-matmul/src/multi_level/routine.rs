@@ -19,7 +19,7 @@ use crate::{
 pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprint> {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     fn launch<MA: MatmulArgs<Config = RC>>(
-        client: &ComputeClient,
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
@@ -46,7 +46,7 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
 
     fn num_stages() -> NumStages;
 
-    fn device_settings(client: &ComputeClient, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
+    fn device_settings(client: &Client, vector_sizes: MatmulVectorSizes) -> DeviceSettings {
         // Sometimes the GPU doesn't support plane instructions and doesn't report the
         // plane size, but we can still execute algorithms that don't use plane instructions.
         //
@@ -67,7 +67,7 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
 
     #[allow(clippy::result_large_err)]
     fn validate_blueprint(
-        client: &ComputeClient,
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
@@ -79,7 +79,7 @@ pub trait BatchMatmulRoutine<RC: RuntimeConfig>: Routine<RC, Blueprint: Blueprin
 /// their [`BatchMatmulRoutine::validate_blueprint`].
 #[allow(clippy::result_large_err)]
 pub fn batch_validate_blueprint<F, RC>(
-    client: &ComputeClient,
+    client: &Client,
     blueprint: &F::Blueprint,
     problem: &MatmulProblem,
     dtypes: &MatmulElems,

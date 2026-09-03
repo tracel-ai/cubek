@@ -62,7 +62,7 @@ pub fn rfft<R: Runtime>(
 
 /// Launches the RFFT kernel.
 pub fn rfft_launch(
-    client: &ComputeClient,
+    client: &Client,
     signal: TensorBinding,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,
@@ -83,7 +83,7 @@ pub fn rfft_launch(
 
 /// Launches the RFFT kernel while treating samples at `signal_len..n_fft` as zero.
 pub fn rfft_launch_padded(
-    client: &ComputeClient,
+    client: &Client,
     signal: TensorBinding,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,

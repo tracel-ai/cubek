@@ -6,7 +6,7 @@
 
 use std::fmt::Display;
 
-use cubecl::{client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::{
@@ -90,7 +90,7 @@ where
 impl TestStrategy {
     pub fn launch_ref(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         lhs: InputBinding,
         rhs: InputBinding,
         out: TensorBinding,

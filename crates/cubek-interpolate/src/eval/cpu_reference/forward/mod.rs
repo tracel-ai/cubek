@@ -14,13 +14,13 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions},
     interpolate,
 };
-use cubecl::client::ComputeClient;
+use cubecl::client::Client;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
 
 pub fn kernel_result(
-    client: ComputeClient,
+    client: Client,
     problem: InterpolateForwardProblem,
     strategy: InterpolateStrategy,
     seed: u64,
@@ -54,7 +54,7 @@ pub fn kernel_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     problem: InterpolateForwardProblem,
     seed: u64,
     progress: Option<&Progress>,

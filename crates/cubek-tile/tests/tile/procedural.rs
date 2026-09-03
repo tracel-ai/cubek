@@ -341,7 +341,7 @@ fn divided_direct_copy_kernel<E: Float>(
 }
 
 struct Harness {
-    client: ComputeClient,
+    client: Client,
     dtype: ElemType,
     space: Space,
 }

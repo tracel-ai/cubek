@@ -9,7 +9,7 @@
 
 use core::f32;
 
-use cubecl::{client::ComputeClient, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::{client::Client, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, Progress, StridedLayout, TestInput,
     ValidationResult, assert_equals_approx, launch_and_capture_outcome,
@@ -26,7 +26,7 @@ use crate::{
 /// Inputs are generated via `TestInput::uniform`/`bernoulli` so the same
 /// `(problem, seeds)` pair produces the same bits on every run.
 pub fn strategy_result(
-    client: ComputeClient,
+    client: Client,
     problem: AttentionProblem,
     strategy: Strategy,
     seed_lhs: u64,
@@ -70,7 +70,7 @@ pub fn strategy_result(
 ///
 /// Slow on bench-scale problems by design: only useful as a ground truth.
 pub fn cpu_reference_result(
-    client: ComputeClient,
+    client: Client,
     problem: AttentionProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -108,7 +108,7 @@ struct SeededInputs {
 }
 
 fn seed_inputs(
-    client: &ComputeClient,
+    client: &Client,
     problem: &AttentionProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -187,7 +187,7 @@ pub fn assert_result(
     value: &HostData,
     mask: Option<&HostData>,
     problem: &AttentionProblem,
-    client: &ComputeClient,
+    client: &Client,
     out: TensorHandle,
     elems: AttentionElems,
 ) -> ValidationResult {
@@ -204,7 +204,7 @@ pub fn assert_result_with_epsilon(
     value: &HostData,
     mask: Option<&HostData>,
     problem: &AttentionProblem,
-    client: &ComputeClient,
+    client: &Client,
     out: TensorHandle,
     epsilon: f32,
 ) -> ValidationResult {

@@ -9,14 +9,14 @@ use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
-use cubecl::{client::ComputeClient, ir::ElemType, prelude::*};
+use cubecl::{client::Client, ir::ElemType, prelude::*};
 use cubek_tile::{Geometry, Residence};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
 /// Resolves the strategy against the device and the problem, then dispatches on the mode.
 pub(crate) fn interpolate_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: InterpolateOptions,
@@ -75,7 +75,7 @@ pub(crate) fn interpolate_launch(
 /// reads the refusal rather than predicting it. Nothing has been dispatched by then.
 #[allow(clippy::too_many_arguments)]
 fn launch<F: SeparableFilterFamily>(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: InterpolateOptions,
@@ -105,7 +105,7 @@ fn launch<F: SeparableFilterFamily>(
 }
 
 fn dispatch<F: SeparableFilterFamily>(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: InterpolateOptions,

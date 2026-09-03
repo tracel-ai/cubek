@@ -1,4 +1,4 @@
-use cubecl::{client::ComputeClient, ir::ElemType, prelude::TensorBinding, server::LaunchError};
+use cubecl::{client::Client, ir::ElemType, prelude::TensorBinding, server::LaunchError};
 use cubek_matmul::multi_level::tile::ColMajorTilingOrder;
 use cubek_matmul::{
     definition::AvailableVectorSizes,
@@ -42,7 +42,7 @@ impl<L: AsyncPartialLoadingStrategy<RuntimeArgs>> Routine for SpecializedConv<L>
     const IS_SPECIALIZED: bool = true;
 
     fn correct_layout(
-        client: &ComputeClient,
+        client: &Client,
         handle: TensorBinding,
         dtype: ElemType,
         _operation: ConvolutionOperation,
@@ -59,7 +59,7 @@ impl Routine for SpecializedTmaConv {
     const IS_SPECIALIZED: bool = true;
 
     fn correct_layout(
-        client: &ComputeClient,
+        client: &Client,
         handle: TensorBinding,
         dtype: ElemType,
         operation: ConvolutionOperation,

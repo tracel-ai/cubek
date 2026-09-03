@@ -4,7 +4,7 @@
 //! `Strategy` (`Specific` / `Forced`) into a matmul `BlueprintStrategy`, and
 //! dispatches to the per-operation helper based on `ConvolutionInputs`.
 
-use cubecl::client::ComputeClient;
+use cubecl::client::Client;
 use cubek_matmul::{
     definition::MatmulElems,
     multi_level::{
@@ -57,7 +57,7 @@ pub(crate) fn tile_kind_to_dispatch(kind: AcceleratedTileKind) -> TileMatmulKind
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<const N_SPATIAL: usize>(
     strategy: &Strategy,
-    client: &ComputeClient,
+    client: &Client,
     inputs: ConvolutionInputs,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -109,7 +109,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
     algorithm: ConvAlgorithm,
     tile_kind: AcceleratedTileKind,
     forced_matmul: Option<BatchMatmulBlueprint>,
-    client: &ComputeClient,
+    client: &Client,
     inputs: ConvolutionInputs,
     args: ConvolutionArgs<N_SPATIAL>,
     dtypes: MatmulElems,
@@ -202,7 +202,7 @@ fn dispatch_routine<const N_SPATIAL: usize>(
 /// so the where clause simply requires an impl per operation.
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn dispatch_inputs<const N_SPATIAL: usize, Rt: Routine<Blueprint = BatchMatmulBlueprint>>(
-    client: &ComputeClient,
+    client: &Client,
     inputs: ConvolutionInputs,
     args: ConvolutionArgs<N_SPATIAL>,
     tile_matmul: TileMatmulKind,

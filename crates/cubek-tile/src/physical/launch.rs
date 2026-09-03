@@ -26,7 +26,7 @@ impl Space {
     /// lanes, so their instance product must be exactly `plane_size` or `1`; anything else idles
     /// or races lanes. A deferred `PlaneLanes` count panics here: launch through
     /// [`launcher`](Space::launcher), which stamps it.
-    pub fn cube_dim(&self, client: &ComputeClient) -> CubeDim {
+    pub fn cube_dim(&self, client: &Client) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
         let lanes = instances_count(self, ComputeScope::Unit);
         assert!(
@@ -68,14 +68,14 @@ fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
 pub struct Launcher<'c> {
     concrete: Space,
     kernel: Space,
-    client: &'c ComputeClient,
+    client: &'c Client,
 }
 
 impl Space {
     /// Creates a [`Launcher`] with all kernel space axes marked dynamic, so one compiled kernel
     /// serves arbitrary shapes, resolving `Unit` lane counts from the device `plane_size`. Use
     /// [`launcher_over`](Self::launcher_over) to keep specific axes static.
-    pub fn launcher(self, client: &ComputeClient) -> Launcher<'_> {
+    pub fn launcher(self, client: &Client) -> Launcher<'_> {
         let plane_size = client.properties().hardware.plane_size_max as usize;
         let concrete = self.resolve_lanes(plane_size);
         let kernel = concrete.clone().all_dynamic();
@@ -85,7 +85,7 @@ impl Space {
     /// Creates a [`Launcher`] where only the `dynamic` axes have dynamic extents, every other
     /// axis staying comptime. Specializes kernel loops along an axis, and serves one no operand
     /// can state the size of ([`Tile::witnesses`](crate::Tile::witnesses)); `&[]` is fully static.
-    pub fn launcher_over<'c>(self, client: &'c ComputeClient, dynamic: &[Axis]) -> Launcher<'c> {
+    pub fn launcher_over<'c>(self, client: &'c Client, dynamic: &[Axis]) -> Launcher<'c> {
         // An axis the space does not have would be dropped by `with_dynamic`, leaving a kernel
         // specialized along the axis the caller meant to free.
         for &axis in dynamic {
@@ -102,7 +102,7 @@ impl Space {
 }
 
 impl<'c> Launcher<'c> {
-    fn new(concrete: Space, kernel: Space, client: &'c ComputeClient) -> Self {
+    fn new(concrete: Space, kernel: Space, client: &'c Client) -> Self {
         Launcher {
             concrete,
             kernel,

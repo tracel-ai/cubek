@@ -3,7 +3,7 @@
 //! Each program instance owns one Q-block and sweeps all KV-blocks. `S` and
 //! `dP` are recomputed inside the loop, never materialized to HBM.
 
-use cubecl::{CubeDim, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, client::Client, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
@@ -91,7 +91,7 @@ fn flash_attention_backward_dq_kernel<E: Float>(
 /// - `dq`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
 pub fn flash_attention_backward_dq(
-    client: &ComputeClient,
+    client: &Client,
     q: TensorBinding,
     k: TensorBinding,
     v: TensorBinding,

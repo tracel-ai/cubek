@@ -17,7 +17,7 @@ use crate::{
 };
 
 fn vector_size_for(
-    client: &ComputeClient,
+    client: &Client,
     binding: &InputBinding,
     default_size: usize,
     plane_size: usize,
@@ -37,7 +37,7 @@ fn vector_size_for(
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,

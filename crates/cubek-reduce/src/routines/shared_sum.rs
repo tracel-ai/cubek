@@ -60,7 +60,7 @@ use crate::ReduceError;
 /// }
 /// ```
 pub fn shared_sum(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     cube_count: u32,

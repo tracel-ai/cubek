@@ -67,7 +67,7 @@ impl PrngArgs for Uniform {
 
 /// Pseudo-random generator with uniform distribution
 pub fn random_uniform(
-    client: &ComputeClient,
+    client: &Client,
     lower_bound: f32,
     upper_bound: f32,
     out: TensorBinding,
@@ -84,7 +84,7 @@ pub fn random_uniform(
 }
 
 pub(crate) fn random_uniform_with_strategy(
-    client: &ComputeClient,
+    client: &Client,
     lower_bound: f32,
     upper_bound: f32,
     out: TensorBinding,

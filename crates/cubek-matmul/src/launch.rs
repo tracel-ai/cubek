@@ -1,4 +1,4 @@
-use cubecl::{client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 /// Only the inner element types may change such as the stage or register element types.
 pub fn launch_ref(
     strategy: &Strategy,
-    client: &ComputeClient,
+    client: &Client,
     lhs: InputBinding,
     rhs: InputBinding,
     out: TensorBinding,

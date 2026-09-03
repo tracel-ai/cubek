@@ -1,5 +1,5 @@
 mod matmul_plane_vecmat {
-    use cubecl::{TestRuntime, client::ComputeClient};
+    use cubecl::{TestRuntime, client::Client};
     use cubek_matmul::{
         definition::MatmulProblem,
         multi_level::{Strategy as MultiLevel, definition::BatchMatmulBlueprint},
@@ -9,11 +9,7 @@ mod matmul_plane_vecmat {
 
     use crate::harness::test_matmul_strategy;
 
-    fn launch_simple_cyclic(
-        client: ComputeClient,
-        problem: MatmulProblem,
-        bp: BatchMatmulBlueprint,
-    ) {
+    fn launch_simple_cyclic(client: Client, problem: MatmulProblem, bp: BatchMatmulBlueprint) {
         test_matmul_strategy(
             client,
             problem,
@@ -22,7 +18,7 @@ mod matmul_plane_vecmat {
     }
 
     fn launch_double_buffering_cyclic(
-        client: ComputeClient,
+        client: Client,
         problem: MatmulProblem,
         bp: BatchMatmulBlueprint,
     ) {

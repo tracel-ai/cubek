@@ -267,7 +267,7 @@ pub enum DepthwiseStrategy {
 /// [`ConvSetupError::InvalidConfig`] when a fixed tiling is degenerate. Returns
 /// [`ConvSetupError::Unknown`] when re-laying the filter cannot be launched.
 pub fn launch_depthwise(
-    client: &ComputeClient,
+    client: &Client,
     tensors: DepthwiseTensors,
     args: ConvolutionArgs<2>,
     groups: usize,
@@ -438,7 +438,7 @@ impl Geometry {
     /// its storage; `into_contiguous` is what makes the new layout physical.
     fn channels_innermost(
         &self,
-        client: &ComputeClient,
+        client: &Client,
         weight: TensorBinding,
         dtype: ElemType,
     ) -> Result<TensorBinding, LaunchError> {
@@ -469,7 +469,7 @@ impl Geometry {
 /// The moment a plane reduction appears in this kernel that stops being true: wgpu reports a
 /// range on AMD RDNA (32/64) and Intel (8/32), and a reduction sized to the max would cover a
 /// fraction of its row on a device honouring the min.
-fn plane_lanes(client: &ComputeClient) -> usize {
+fn plane_lanes(client: &Client) -> usize {
     client.properties().hardware.plane_size_max as usize
 }
 
@@ -485,7 +485,7 @@ fn guard(ragged: bool) -> Option<Boundary> {
 /// must be the contiguous dim, and the width must divide the channel count, since a partial line
 /// has no cell to be.
 fn line_width(
-    client: &ComputeClient,
+    client: &Client,
     channels: usize,
     dtype: ElemType,
     requested: usize,

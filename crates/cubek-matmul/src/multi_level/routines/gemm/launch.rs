@@ -17,7 +17,7 @@ use crate::{
 };
 
 fn vector_size_for(
-    client: &ComputeClient,
+    client: &Client,
     binding: &InputBinding,
     default_size: usize,
     plane_size: usize,
@@ -40,7 +40,7 @@ fn vector_size_for(
 /// contiguous, `ColMajor` the second-to-last.
 #[allow(clippy::result_large_err)]
 fn make_k_contiguous(
-    client: &ComputeClient,
+    client: &Client,
     binding: InputBinding,
     target: MatrixLayout,
 ) -> Result<InputBinding, MatmulSetupError> {
@@ -67,7 +67,7 @@ fn make_k_contiguous(
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     mut lhs: InputBinding,
     mut rhs: InputBinding,
     out: TensorBinding,

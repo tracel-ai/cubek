@@ -1,5 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -13,7 +13,7 @@ use crate::{
 };
 
 fn random_tensor_handle(
-    client: &ComputeClient,
+    client: &Client,
     dtype: ElemType,
     seed: u64,
     strides: &[usize],

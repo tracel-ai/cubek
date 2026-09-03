@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -68,13 +68,13 @@ struct GemmBench {
     rhs_layout: MatrixLayout,
     strategy: Strategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 fn make_uniform(
-    client: &ComputeClient,
+    client: &Client,
     shape: [usize; 3],
     dtype: ElemType,
     seed: u64,

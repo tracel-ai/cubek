@@ -51,7 +51,7 @@ use crate::{
 /// * `signal`: (..., <= n_fft) real.
 /// * `spectrum_re`, `spectrum_im`: (..., n_fft/2 + 1) complex.
 pub(crate) fn rfft_large_launch(
-    client: &ComputeClient,
+    client: &Client,
     signal: TensorBinding,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,
@@ -149,7 +149,7 @@ pub(crate) fn rfft_large_launch(
 /// * `spectrum_re`, `spectrum_im`: (..., n_fft/2 + 1) complex.
 /// * `signal`: (..., n_fft) real.
 pub(crate) fn irfft_large_launch(
-    client: &ComputeClient,
+    client: &Client,
     spectrum_re: TensorBinding,
     spectrum_im: TensorBinding,
     signal: TensorBinding,

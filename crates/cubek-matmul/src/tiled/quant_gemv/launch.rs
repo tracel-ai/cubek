@@ -11,7 +11,7 @@
 //! buffer. A wide read wants a lane owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
-use cubecl::{client::ComputeClient, prelude::*};
+use cubecl::{client::Client, prelude::*};
 use cubek_tile::{
     Buffering, CubeAxis, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder, cubes, lanes,
     planes,
@@ -62,7 +62,7 @@ pub struct QuantGemvBindings {
 /// `y = (W ⊗ s) · x`, one launch.
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
-    client: &ComputeClient,
+    client: &Client,
     bindings: QuantGemvBindings,
     problem: &QuantGemvProblem,
     strategy: &BlueprintStrategy<(), QuantGemvRoutine>,

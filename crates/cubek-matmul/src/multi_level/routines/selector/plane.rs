@@ -2,7 +2,7 @@
 use std::cmp::min;
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     features::MmaConfig,
     ir::{ElemType, VectorSize},
 };
@@ -65,7 +65,7 @@ impl Default for PlaneTilingBlueprintOptions {
 
 pub fn infer_blueprint_plane(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient,
+    client: &Client,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
@@ -301,7 +301,7 @@ fn select_size(
 /// is ours.
 #[allow(clippy::type_complexity)]
 pub fn find_instruction_size<IsSupported, SupportedSizes>(
-    client: &ComputeClient,
+    client: &Client,
     elems: (ElemType, ElemType, ElemType),
     problem_size: MatmulProblemSize,
     forced: (Option<u32>, Option<u32>, Option<u32>),
@@ -309,8 +309,8 @@ pub fn find_instruction_size<IsSupported, SupportedSizes>(
     supported_sizes: SupportedSizes,
 ) -> Result<TileSize, MatmulAvailabilityError>
 where
-    IsSupported: Fn(&ComputeClient, MmaConfig) -> bool,
-    SupportedSizes: Fn(&ComputeClient, ElemType, ElemType, ElemType) -> Vec<TileSize>,
+    IsSupported: Fn(&Client, MmaConfig) -> bool,
+    SupportedSizes: Fn(&Client, ElemType, ElemType, ElemType) -> Vec<TileSize>,
 {
     let (lhs, rhs, acc) = elems;
     crate::multi_level::find_instruction_size(
@@ -335,7 +335,7 @@ where
 }
 
 fn selection_tiny(
-    client: &ComputeClient,
+    client: &Client,
     problem: &MatmulProblem,
     tile_size: TileSize,
     plane_dim: u32,

@@ -10,7 +10,7 @@
 
 #![cfg(feature = "cpu-reference")]
 
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::Scalar, zspace::Shape};
+use cubecl::{Runtime, TestRuntime, client::Client, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     backward::{
         BackwardConfig, flash_attention_backward, flash_attention_backward_dkdv,
@@ -79,7 +79,7 @@ fn problem_causal(
     p
 }
 
-fn seed_inputs(client: &ComputeClient, problem: &AttentionProblem) -> BackwardInputs {
+fn seed_inputs(client: &Client, problem: &AttentionProblem) -> BackwardInputs {
     let q_shape = [
         problem.dims.batch,
         problem.dims.num_heads,
@@ -135,7 +135,7 @@ fn seed_inputs(client: &ComputeClient, problem: &AttentionProblem) -> BackwardIn
 }
 
 fn zeros_like(
-    client: &ComputeClient,
+    client: &Client,
     shape: [usize; 4],
     dtype: cubecl::ir::ElemType,
 ) -> cubecl::std::tensor::TensorHandle {
@@ -146,7 +146,7 @@ fn zeros_like(
 }
 
 fn zeros_row(
-    client: &ComputeClient,
+    client: &Client,
     shape: [usize; 3],
     dtype: cubecl::ir::ElemType,
 ) -> cubecl::std::tensor::TensorHandle {
@@ -481,7 +481,7 @@ fn run_end_to_end(problem: AttentionProblem) {
 }
 
 fn upload_row(
-    client: &ComputeClient,
+    client: &Client,
     shape: [usize; 3],
     data: &HostData,
 ) -> cubecl::std::tensor::TensorHandle {

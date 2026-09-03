@@ -28,11 +28,7 @@ fn cast_inner<From: Numeric, To: Numeric, N: Size>(
     )
 }
 
-pub fn copy_casted(
-    client: &ComputeClient,
-    original: TensorHandle,
-    target_type: ElemType,
-) -> TensorHandle {
+pub fn copy_casted(client: &Client, original: TensorHandle, target_type: ElemType) -> TensorHandle {
     if target_type == original.dtype {
         return TensorHandle::new_contiguous(
             original.shape().clone(),

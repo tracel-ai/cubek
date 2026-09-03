@@ -79,7 +79,7 @@ fn copy_one_run<E: Numeric>(
 }
 
 struct Harness {
-    client: ComputeClient,
+    client: Client,
     dtype: ElemType,
     space: Space,
 }

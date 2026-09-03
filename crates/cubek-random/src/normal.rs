@@ -86,7 +86,7 @@ impl PrngArgs for Normal {
 
 /// Pseudo-random generator with normal distribution
 pub fn random_normal(
-    client: &ComputeClient,
+    client: &Client,
     mean: f32,
     std: f32,
     out: TensorBinding,
@@ -96,7 +96,7 @@ pub fn random_normal(
 }
 
 pub(crate) fn random_normal_with_strategy(
-    client: &ComputeClient,
+    client: &Client,
     mean: f32,
     std: f32,
     out: TensorBinding,

@@ -3,7 +3,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -43,7 +43,7 @@ struct DepthwiseBench {
     problem: DepthwiseProblem,
     strategy: DepthwiseStrategy,
     device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
 }
 
@@ -52,7 +52,7 @@ fn dtype() -> ElemType {
     f32::elem_type_native()
 }
 
-fn uniform(client: &ComputeClient, shape: [usize; 4], seed: u64) -> TensorHandle {
+fn uniform(client: &Client, shape: [usize; 4], seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype())
         .uniform(seed, 0.0, 1.0)

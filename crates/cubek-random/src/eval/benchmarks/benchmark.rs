@@ -1,7 +1,7 @@
 use cubecl::{
     Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -43,7 +43,7 @@ struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
     strategy: PrngStrategy,
-    client: ComputeClient,
+    client: Client,
     samples: usize,
 }
 

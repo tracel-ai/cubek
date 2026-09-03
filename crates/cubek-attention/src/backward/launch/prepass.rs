@@ -4,7 +4,7 @@
 //! `D` is subtracted from `dP` in the softmax Jacobian and that step is the
 //! most numerically sensitive part of the backward.
 
-use cubecl::{CubeDim, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, client::Client, prelude::*};
 
 use crate::forward::definition::AttentionSetupError;
 
@@ -40,7 +40,7 @@ fn flash_attention_backward_prepass_kernel<E: Float>(
 /// Output:
 /// - `d`:   `[B, H, N]` fp32: written cleanly.
 pub fn flash_attention_backward_prepass(
-    client: &ComputeClient,
+    client: &Client,
     o: TensorBinding,
     do_: TensorBinding,
     d: TensorBinding,

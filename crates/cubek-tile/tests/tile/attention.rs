@@ -5,7 +5,7 @@
 //! (group-major rows), `k`/`v` simply omit the group axis, and the probe's
 //! `q_rows` maps rows back to query positions for the causal predicate.
 
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
+use cubecl::{Runtime, TestRuntime, client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
     Axis, Buffering, Instruction, MaskProbe, MemData, RowState, Space, StagePlan, StreamFold,
@@ -134,7 +134,7 @@ fn run(
     causal: bool,
     vec: usize,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
     let rows = g * qp;
     let scale = 1. / (d as f32).sqrt();
@@ -420,7 +420,7 @@ fn run_cmma(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -788,7 +788,7 @@ fn run_split_at(
     vec: usize,
     split_inner: bool,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let cap = client.properties().hardware.max_units_per_cube as usize;
     let team = team.min((cap / splits).max(1));
     let rows = g * qp;
@@ -1008,7 +1008,7 @@ fn run_stream(
     bound_s: usize,
     vec: usize,
 ) {
-    let client: ComputeClient = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
     let lanes = client.properties().hardware.plane_size_max as usize;
     let cap = client.properties().hardware.max_units_per_cube as usize;
     let splits = splits.min((cap / lanes).max(1));

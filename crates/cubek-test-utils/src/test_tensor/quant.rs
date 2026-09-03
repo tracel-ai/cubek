@@ -1,4 +1,4 @@
-use cubecl::{client::ComputeClient, ir::ElemType, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::{client::Client, ir::ElemType, std::tensor::TensorHandle, zspace::Shape};
 use cubecl_common::quant::scheme::QuantScheme;
 
 use crate::{
@@ -11,11 +11,7 @@ use crate::{
 /// swaps the handle for the packed output, and stores the scale + original
 /// shape on `tensor.quantization`. The host data on `tensor.host` is left as
 /// the original f32 reference so correctness checks can still compare against it.
-pub(crate) fn apply_quantization(
-    client: &ComputeClient,
-    tensor: &mut TestTensor,
-    scheme: QuantScheme,
-) {
+pub(crate) fn apply_quantization(client: &Client, tensor: &mut TestTensor, scheme: QuantScheme) {
     let original_shape = tensor.handle.shape().clone();
 
     // Derive the scale tensor from the quant value's range. For

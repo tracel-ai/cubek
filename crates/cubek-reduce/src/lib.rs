@@ -94,7 +94,7 @@ pub use routines::shared_sum::shared_sum;
 /// }
 /// ```
 pub fn reduce(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     axis: usize,
@@ -133,7 +133,7 @@ pub fn reduce(
 /// The plain [`reduce`] entrypoint is unaffected and still writes a single output.
 #[allow(clippy::too_many_arguments)]
 pub fn reduce_with_indices(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     values: TensorBinding,
     indices: TensorBinding,

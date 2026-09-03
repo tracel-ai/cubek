@@ -90,7 +90,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
 }
 
 pub(crate) fn avg_pool2d_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: AvgPoolOptions<2>,

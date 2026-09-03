@@ -56,7 +56,7 @@ impl ReduceWithIndicesDtypes {
 /// Returns the blueprint, the launch settings, and the output vectorization axis.
 #[allow(clippy::too_many_arguments)]
 fn prepare_reduce_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: &TensorBinding,
     output: &TensorBinding,
     reduce_axis: usize,
@@ -142,7 +142,7 @@ fn prepare_reduce_launch(
 /// with the appropriate assumptions.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_reduce(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     reduce_axis: usize,
@@ -228,7 +228,7 @@ pub fn reduce_kernel<
 /// accumulator, and `Indices` is what turns coordinate tracking on.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_reduce_with_indices(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     values: TensorBinding,
     indices: TensorBinding,
@@ -282,7 +282,7 @@ pub(crate) fn launch_reduce_with_indices(
 /// config, and the `Arg*` config sizing the blueprint differ.
 #[allow(clippy::too_many_arguments)]
 fn launch_fused<R: ReduceWithIndicesFamily>(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     values: TensorBinding,
     indices: TensorBinding,

@@ -111,7 +111,7 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for MaxPoolWithIndicesStrat
 }
 
 pub(crate) fn max_pool2d_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     options: MaxPoolOptions<2>,
@@ -163,7 +163,7 @@ pub(crate) fn max_pool2d_launch(
 }
 
 pub(crate) fn max_pool2d_with_indices_launch(
-    client: &ComputeClient,
+    client: &Client,
     input: TensorBinding,
     output: TensorBinding,
     indices: TensorBinding,

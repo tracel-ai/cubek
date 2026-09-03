@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use cubecl::{
     CubeDim,
-    {client::ComputeClient, ir::AddressType},
+    {client::Client, ir::AddressType},
 };
 
 use crate::components::tile::TileAttentionKind;
@@ -44,7 +44,7 @@ pub struct DeviceSettings {
     pub plane_dim: u32,
     pub max_cube_count: (u32, u32, u32),
     pub vector_sizes: AttentionVectorSizes,
-    pub client: ComputeClient,
+    pub client: Client,
 }
 
 impl core::fmt::Debug for DeviceSettings {
@@ -58,7 +58,7 @@ impl core::fmt::Debug for DeviceSettings {
 }
 
 impl DeviceSettings {
-    pub fn new(client: &ComputeClient, problem: &AttentionProblem) -> Self {
+    pub fn new(client: &Client, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
             max_cube_count: client.properties().hardware.max_cube_count,

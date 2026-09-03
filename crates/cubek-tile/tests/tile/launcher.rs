@@ -82,7 +82,7 @@ fn smem_operand(axes: &[Axis]) -> Operand {
     operand
 }
 
-fn binding(client: &ComputeClient, shape: &[usize]) -> TensorBinding {
+fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
     let mut strides = vec![1usize; shape.len()];
     for i in (0..shape.len().saturating_sub(1)).rev() {
         strides[i] = strides[i + 1] * shape[i + 1];

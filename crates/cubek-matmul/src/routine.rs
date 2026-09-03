@@ -16,7 +16,7 @@ impl<T: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync> RuntimeCo
 /// *batch* dim is only `MildlyPermuted` and stays untouched (handled natively).
 #[allow(clippy::result_large_err)]
 pub(crate) fn into_contiguous_if_highly_permuted(
-    client: &ComputeClient,
+    client: &Client,
     binding: InputBinding,
 ) -> Result<InputBinding, MatmulSetupError> {
     match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
@@ -33,7 +33,7 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
 
 /// What the routine reads about the device before it can shape a blueprint.
 pub struct DeviceSettings {
-    pub client: ComputeClient,
+    pub client: Client,
     pub plane_dim: u32,
     pub vector_sizes: MatmulVectorSizes,
     pub max_cube_count: (u32, u32, u32),

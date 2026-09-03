@@ -30,7 +30,7 @@ fn eye_launch<T: Numeric, N: Size>(
 
 #[allow(unused)]
 fn new_eyed(
-    client: &ComputeClient,
+    client: &Client,
     shape: Shape,
     rows: usize,
     cols: usize,
