@@ -32,8 +32,7 @@ cpu-reference = [
 path = "src/lib.rs"
 
 [dependencies]
-cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
-cubek = { path = "../crates/cubek", version = "=0.3.0-pre.3", default-features = false, features = [
+cubek = { workspace = true, features = [
     "stdlib",
     "random",
     "reduce",
@@ -45,34 +44,18 @@ cubek = { path = "../crates/cubek", version = "=0.3.0-pre.3", default-features =
     "fft",
     "quantization",
 ] }
-cubek-attention = { path = "../crates/cubek-attention", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-convolution = { path = "../crates/cubek-convolution", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-fft = { path = "../crates/cubek-fft", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-interpolate = { path = "../crates/cubek-interpolate", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-matmul = { path = "../crates/cubek-matmul", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-pool = { path = "../crates/cubek-pool", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-random = { path = "../crates/cubek-random", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-reduce = { path = "../crates/cubek-reduce", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-std = { path = "../crates/cubek-std", version = "=0.3.0-pre.3", features = [
-    "benchmarks",
-] }
-cubek-test-utils = { path = "../crates/cubek-test-utils", version = "=0.3.0-pre.3" }
+cubek-attention = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-convolution = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-fft = {workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-interpolate = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-matmul = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-pool = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-random = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-reduce = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-std = { workspace = true, default-features = true, features = ["benchmarks"] }
+cubek-test-utils = { workspace = true, default-features = true }
+
+cubecl = { workspace = true, features = ["test-runtime", "stdlib"] }
 half = { workspace = true }
 
 [[bench]]

@@ -15,6 +15,23 @@ rust-version = "1.92"
 version = "0.3.0-pre.3"
 
 [workspace.dependencies]
+### Internal cubek crates ###
+# Declared here so each consumer Cargo.toml can use `workspace = true` instead of
+# repeating the path and version.
+cubek = { path = "crates/cubek", version = "=0.3.0-pre.3", default-features = false }
+cubek-attention = { path = "crates/cubek-attention", version = "=0.3.0-pre.3", default-features = false }
+cubek-convolution = { path = "crates/cubek-convolution", version = "=0.3.0-pre.3", default-features = false }
+cubek-fft = { path = "crates/cubek-fft", version = "=0.3.0-pre.3", default-features = false }
+cubek-interpolate = { path = "crates/cubek-interpolate", version = "=0.3.0-pre.3", default-features = false }
+cubek-matmul = { path = "crates/cubek-matmul", version = "=0.3.0-pre.3", default-features = false }
+cubek-pool = { path = "crates/cubek-pool", version = "=0.3.0-pre.3", default-features = false }
+cubek-quant = { path = "crates/cubek-quant", version = "=0.3.0-pre.3", default-features = false }
+cubek-random = { path = "crates/cubek-random", version = "=0.3.0-pre.3", default-features = false }
+cubek-reduce = { path = "crates/cubek-reduce", version = "=0.3.0-pre.3", default-features = false }
+cubek-std = { path = "crates/cubek-std", version = "=0.3.0-pre.3", default-features = false }
+cubek-test-utils = { path = "crates/cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
+cubek-tile = { path = "crates/cubek-tile", version = "=0.3.0-pre.3", default-features = false }
+
 ### For local development. ###
 # cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
 # cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
@@ -31,6 +48,7 @@ cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969
 # cubecl-environment = { version = "=0.11.0-pre.3", default-features = false }
 # cubecl-ir = { version = "=0.11.0-pre.3", default-features = false }
 
+
 log = { default-features = false, version = "0.4.22" }
 
 serde = { version = "1.0.204", default-features = false, features = [
@@ -43,7 +61,6 @@ rand = { version = "0.10.0", default-features = false, features = [
 ] } # std_rng is for no_std
 
 # Testing
-
 bytemuck = "1.16.1"
 half = { version = "2.5", features = [
     "alloc",
