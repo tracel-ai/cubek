@@ -56,7 +56,7 @@ impl ConcreteLayout {
 
     /// The distinct logical axes in first-occurrence order, the axes the operand spans, with each
     /// storage-tiled axis (which contributes several physical fragments) collapsed to one entry.
-    pub fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
+    pub(crate) fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
         let mut out = SmallVec::new();
         for a in &self.axes {
             if !out.contains(&a.axis) {

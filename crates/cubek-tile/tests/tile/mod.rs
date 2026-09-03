@@ -20,3 +20,4 @@ mod separable;
 mod softmax;
 mod space;
 mod split_k;
+mod stream;

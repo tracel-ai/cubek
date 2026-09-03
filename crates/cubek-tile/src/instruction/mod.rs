@@ -8,10 +8,13 @@
 //! and a nest is the verb's, one layer above that.
 
 mod algebra;
+mod base;
+mod config;
 pub mod logsumexp;
 mod mma;
 pub mod plane;
 pub mod registers;
 
 pub use algebra::*;
-pub use registers::contract::ScaleSide;
+pub use base::*;
+pub use config::*;

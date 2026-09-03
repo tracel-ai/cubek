@@ -48,7 +48,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
 /// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the
 /// feature: a backend can advertise manual mma and offer only `16x16x16`
 /// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
-/// not have — it reads back zeros, which looks like a leaf bug and is a missing
+/// not have: it reads back zeros, which looks like a leaf bug and is a missing
 /// guard.
 fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
     let f32_ty = f32::elem_type_native();
@@ -289,10 +289,7 @@ fn matmul_padded_rhs_stage_into_scalar_sink() {
     );
     let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
-            level
-                .axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(k));
+            level.walk(&[(M, m), (N, n), (K, k)]);
             ops.1.stage(Residence::Smem);
         })
         .build();
@@ -352,10 +349,7 @@ fn matmul_padded_rhs_stage_single_row_sink() {
     );
     let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
-            level
-                .axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(k));
+            level.walk(&[(M, m), (N, n), (K, k)]);
             ops.1.stage(Residence::Smem);
         })
         .build();
@@ -415,10 +409,7 @@ fn matmul_padded_rhs_stage_multi_line() {
     );
     let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
-            level
-                .axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(k));
+            level.walk(&[(M, m), (N, n), (K, k)]);
             ops.1.stage(Residence::Smem);
         })
         .build();
@@ -480,17 +471,11 @@ fn matmul_padded_lhs_stage_direct_tail() {
     );
     let space = Tiling::over(&mut operands, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
-            level
-                .axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(k));
+            level.walk(&[(M, m), (N, n), (K, k)]);
             ops.0.stage(Residence::InPlace);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, ops| {
-            level
-                .axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(k));
+            level.walk(&[(M, m), (N, n), (K, k)]);
             ops.0.stage(Residence::Smem);
         })
         .build();
@@ -1119,7 +1104,6 @@ fn matmul_multilevel_tiled_stage() {
 fn matmul_staged_invariant_lhs() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let seq = |edge| Cut::sequential(edge);
     let dtype = f32::elem_type_native();
     let mut ops = (
         Operand::new(&[M, K], dtype),
@@ -1128,12 +1112,12 @@ fn matmul_staged_invariant_lhs() {
     );
     let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(4)).axis(N, seq(2)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 2), (K, 4)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
         })
@@ -1186,7 +1170,6 @@ fn matmul_staged_invariant_lhs() {
 fn matmul_a_level_that_cuts_nothing_is_dropped() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let seq = |edge| Cut::sequential(edge);
     let dtype = f32::elem_type_native();
     let operands = || {
         (
@@ -1199,7 +1182,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
     let mut plain_ops = operands();
     let plain = Tiling::over(&mut plain_ops, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
         })
@@ -1210,12 +1193,12 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
     // states anything here.
     let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build();
 
@@ -1265,7 +1248,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
 
 /// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
 /// column of the register-leaf output and contracts the whole K in registers: the
-/// gemv-perpendicular mapping. `Cut::unit` declares the split without the lane count;
+/// gemv-perpendicular mapping. A bare `lanes()` declares the split without the lane count;
 /// [`Space::resolve_lanes`] (the launch's stamping pass) fills it from the hardware
 /// `plane_size`, so the Unit axis rides the warp's lanes on the cube's X dim.
 /// `plane_size == 1` on CPU degenerates to one lane doing all of N (still correct); the
@@ -1273,19 +1256,17 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
 #[test]
 fn register_matmul_unit_spread_n() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, k, nr) = (4usize, 8usize, 2usize);
-    let n = lanes * nr;
-    let seq = |edge| Cut::sequential(edge);
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, seq(m)).axis(N, Cut::unit(nr)).axis(K, seq(k))
+    let n = plane_size * nr;
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(lanes(), &[(N, nr)]).walk(&[(M, m), (K, k)]);
         })
         .build()
-        // The launcher's stamping pass: `Cut::unit`'s deferred count becomes `plane_size`.
-        .resolve_lanes(lanes);
+        // The launcher's stamping pass: `lanes()`'s deferred count becomes `plane_size`.
+        .resolve_lanes(plane_size);
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -1349,7 +1330,6 @@ fn cmma_matmul_staged_n_walk_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let seq = |edge| Cut::sequential(edge);
     let instruction = Instruction::Cmma;
     let dtype = f32::elem_type_native();
     let mut ops = (
@@ -1361,7 +1341,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
         // inputs take a shared stage there.
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
+            l.walk(&[(M, m), (N, n), (K, stage_k)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
             // The output spans no contracted axis, so L0 holds one region for it: the
@@ -1370,23 +1350,23 @@ fn cmma_matmul_staged_n_walk_partition() {
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::plane(part))
-                .axis(N, Cut::plane(part))
-                .axis(K, seq(stage_k));
+            l.distribute(planes(), &[(M, part)])
+                .distribute(planes(), &[(N, part)])
+                .walk(&[(K, stage_k)]);
         })
         // L2: the contraction-step walk, windowing only.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
+            l.walk(&[(M, part), (N, part), (K, i)]);
         })
         // L3: the N-walk: one B fragment per step, the A column filled once above it.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
+            l.walk(&[(M, part), (N, i), (K, i)]);
             o.0.stage(Residence::Register);
             o.1.stage(Residence::Register);
         })
         // L4: the M-only fragment walk.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
+            l.walk(&[(M, i), (N, i), (K, i)]);
         })
         .build();
 
@@ -1443,7 +1423,6 @@ fn cmma_matmul_double_buffered_plane_stage() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let seq = |edge| Cut::sequential(edge);
     let instruction = Instruction::Cmma;
     let dtype = f32::elem_type_native();
     let mut ops = (
@@ -1455,7 +1434,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; both
         // inputs take a shared stage there.
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k));
+            l.walk(&[(M, m), (N, n), (K, stage_k)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
             // The output spans no contracted axis, so L0 holds one region for it: the
@@ -1464,23 +1443,23 @@ fn cmma_matmul_double_buffered_plane_stage() {
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::plane(part))
-                .axis(N, Cut::plane(part))
-                .axis(K, seq(stage_k));
+            l.distribute(planes(), &[(M, part)])
+                .distribute(planes(), &[(N, part)])
+                .walk(&[(K, stage_k)]);
         })
         // L2: the contraction-step walk, windowing only.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, seq(part)).axis(N, seq(part)).axis(K, seq(i));
+            l.walk(&[(M, part), (N, part), (K, i)]);
         })
         // L3: the N-walk with DOUBLE buffering over a plane stage.
         .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-            l.axis(M, seq(part)).axis(N, seq(i)).axis(K, seq(i));
+            l.walk(&[(M, part), (N, i), (K, i)]);
             o.0.stage(Residence::Register);
             o.1.stage(Residence::Register);
         })
         // L4: the M-only fragment walk.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i));
+            l.walk(&[(M, i), (N, i), (K, i)]);
         })
         .build();
 
@@ -2117,18 +2096,16 @@ fn register_matmul_promoted_cube_plane() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (4usize, 4usize, 16usize);
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
-    let seq = |edge| Cut::sequential(edge);
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, m))
-                .axis(N, Cut::cube(CubeAxis::Y, n))
-                .axis(K, seq(k))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X), &[(M, m)])
+                .distribute(cubes(CubeAxis::Y), &[(N, n)])
+                .walk(&[(K, k)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::plane(leaf_m))
-                .axis(N, Cut::plane(leaf_n))
-                .axis(K, seq(leaf_k))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(M, leaf_m)])
+                .distribute(planes(), &[(N, leaf_n)])
+                .walk(&[(K, leaf_k)]);
         })
         .build();
 
@@ -2444,14 +2421,9 @@ fn register_matmul_folded_step_two_contracted_axes() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
     let k = k1 * k2;
-    let seq = |edge| Cut::sequential(edge);
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k1), (K2, k2)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, seq(m))
-                .axis(N, seq(n))
-                .axis(K, seq(k1))
-                .axis(K2, seq(k2))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k1), (K2, k2)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, m), (N, n), (K, k1), (K2, k2)]);
         })
         .build();
 
@@ -2840,7 +2812,6 @@ fn cmma_matmul_staged_k_walk_strided_stage() {
 fn matmul_leaf_stated_by_operands() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let seq = |edge| Cut::sequential(edge);
     let dtype = f32::elem_type_native();
     let mut ops = (
         Operand::new(&[M, K], dtype),
@@ -2849,7 +2820,7 @@ fn matmul_leaf_stated_by_operands() {
     );
     let space = Tiling::over(&mut ops, &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, seq(4)).axis(N, seq(4)).axis(K, seq(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
             o.0.stage(Residence::Smem);
             o.1.stage(Residence::Smem);
         })
@@ -2909,12 +2880,9 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, buffering, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -2982,12 +2950,9 @@ fn mma_matmul_8x8x8() {
     let instruction = Instruction::Mma {
         io: MmaIOConfig::manual(),
     };
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -3051,19 +3016,16 @@ fn cmma_matmul_plane_partitioned_stage() {
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::sequential(edge))
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+            l.walk(&[(M, m), (N, n), (K, edge)]);
         })
         // L1: the stage split one `8×8` fragment per plane.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::plane(edge))
-                .axis(N, Cut::plane(edge))
-                .axis(K, Cut::sequential(edge))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(M, edge)])
+                .distribute(planes(), &[(N, edge)])
+                .walk(&[(K, edge)]);
         })
         .build();
 
@@ -3129,23 +3091,21 @@ fn cmma_matmul_multi_fragment_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let seq = |edge| Cut::sequential(edge);
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
-            l.axis(M, seq(m)).axis(N, seq(n)).axis(K, seq(stage_k))
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+            l.walk(&[(M, m), (N, n), (K, stage_k)]);
         })
         // L1: the stage split one `part×part` partition per plane (2×2 planes).
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::plane(part))
-                .axis(N, Cut::plane(part))
-                .axis(K, seq(stage_k))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(M, part)])
+                .distribute(planes(), &[(N, part)])
+                .walk(&[(K, stage_k)]);
         })
         // L2: the partition level, 2×2 fragments per plane, 2 K sub-tiles.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, seq(i)).axis(N, seq(i)).axis(K, seq(i))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, i), (N, i), (K, i)]);
         })
         .build();
 
@@ -3269,6 +3229,125 @@ fn cmma_matmul<E: Numeric>(
     c_smem_tile.copy_from(&acc);
     sync_cube();
     c.copy_from(&c_smem_tile);
+}
+
+/// `C = A · Bᵀ` where `B` is stored `{N, K}` row-major: the rhs fragment states
+/// [`ColMajor`](MatrixLayout::ColMajor) and reads the same buffer at the same row stride, the
+/// score matmul of attention (`Q · Kᵀ`, `K` stored `{S, D}`) in miniature. Tensor-core only.
+#[test]
+fn cmma_matmul_transposed_rhs_8x8x8() {
+    let client = <TestRuntime as Runtime>::client(&Default::default());
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+
+    let dtype = f32::elem_type_native();
+    let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+    let a = TileInput::builder(&client, space.project(&[M, K]))
+        .untiled()
+        .arange();
+    // `{N, K}`: the rhs transposed, so `b[j, p] = j·8 + p`.
+    let b = TileInput::builder(&client, space.project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, space.project(&[M, N]))
+        .untiled()
+        .zeros();
+
+    cmma_matmul_transposed_rhs::launch::<TestRuntime>(
+        &client,
+        CubeCount::Static(1, 1, 1),
+        CubeDim::new_3d(32, 1, 1),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        space,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let expected: Vec<f32> = (0..8 * 8)
+        .map(|idx| {
+            let (i, j) = (idx / 8, idx % 8);
+            (0..8).map(|p| ((i * 8 + p) * (j * 8 + p)) as f32).sum()
+        })
+        .collect();
+    let (_, expected) = TestInput::builder(client, shape![8, 8])
+        .custom(expected)
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// [`cmma_matmul`] with the rhs stored `{N, K}` and read through a col-major fragment.
+#[cube(launch)]
+fn cmma_matmul_transposed_rhs<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(space);
+
+    let mut a_smem = MemData::smem(
+        comptime!(a.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    a_smem.copy_from(&a);
+
+    let mut b_smem = MemData::smem(
+        comptime!(b.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    b_smem.copy_from(&b);
+    sync_cube();
+
+    let mut a_frag = CmmaData::<E>::fragment(
+        MatrixIdent::A,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(a.space.clone()),
+    );
+    a_frag.copy_from(&a_smem);
+
+    let mut b_frag = CmmaData::<E>::fragment(
+        MatrixIdent::B,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::ColMajor,
+        comptime!(b.space.clone()),
+    );
+    b_frag.copy_from(&b_smem);
+
+    let mut acc = CmmaData::<E>::fragment(
+        MatrixIdent::Accumulator,
+        8usize,
+        8usize,
+        8usize,
+        MatrixLayout::RowMajor,
+        comptime!(c.space.clone()),
+    );
+    acc.zero();
+
+    acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
+
+    let mut c_smem = MemData::smem(
+        comptime!(c.space.clone()),
+        1usize,
+        comptime!(StagePlan::in_place()),
+    );
+    c_smem.copy_from(&acc);
+    sync_cube();
+    c.copy_from(&c_smem);
 }
 
 /// Quantized `A`: gmem `I` (i8) dequantized into smem by the plain `copy_from`, which recovers
@@ -3536,9 +3615,9 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    // The shape, not just the feature — see `require_mma_8x8x8_f32`. The `f32`
+    // The shape, not just the feature; see `require_mma_8x8x8_f32`. The `f32`
     // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
-    // the *walk*, cut `Cut::sequential(8)` deep, and `A` decodes at the read, so
+    // the *walk*, walked 8 deep, and `A` decodes at the read, so
     // the instruction this leaf reaches for is the same f32 `8x8x8` the plain
     // manual-mma test runs.
     if !require_mma_8x8x8_f32(&client) {
@@ -3556,12 +3635,9 @@ fn mma_matmul_quant_until_read() {
     let instruction = Instruction::Mma {
         io: MmaIOConfig::manual(),
     };
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -3648,12 +3724,9 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
 
     let (m, n, edge) = (8usize, 8usize, 8usize); // K walked in `edge`-deep stages
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, buffering, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, buffering, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -3745,12 +3818,9 @@ fn cmma_matmul_quant_block_m_k_walk() {
 
     let (m, n, k, edge, bm) = (8usize, 8usize, 16usize, 8usize, 4usize); // 2 M-blocks
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -3842,12 +3912,9 @@ fn cmma_matmul_quant_block_k_k_walk() {
 
     let (m, n, k, edge, bk) = (8usize, 8usize, 16usize, 8usize, 4usize); // 4 K-blocks, 2 per stage
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -3939,12 +4006,9 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
 
     let (m, n, k, edge, bk, v) = (8usize, 8usize, 16usize, 8usize, 4usize, 2usize);
     let instruction = Instruction::Cmma;
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(edge))
-                .axis(N, Cut::sequential(edge))
-                .axis(K, Cut::sequential(edge))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
 
@@ -4058,20 +4122,15 @@ fn matmul_triple_buffered_vectorized() {
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         // L0: the whole output, K in two steps. `promote` mirrors this level's *sub-tile*, so the
         // accumulator's grid is only cut a level down.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         // L1: the 2x2 cut of that partition, buffered, with both operands staged.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(2))
-                .axis(N, Cut::sequential(2))
-                .axis(K, Cut::sequential(2))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 2), (N, 2), (K, 2)]);
         })
         .build();
 
@@ -4635,12 +4694,10 @@ fn register_matmul_quant_rhs_gemv_row() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 1), (N, 16), (K, 8)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(1))
-                .axis(N, Cut::cube(CubeAxis::X, 4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 1), (N, 16), (K, 8)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X), &[(N, 4)])
+                .walk(&[(M, 1), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4666,12 +4723,9 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 1), (N, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(1))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 1), (N, 8), (K, 8)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 1), (N, 4), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4697,12 +4751,9 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
 #[test]
 fn register_matmul_quant_rhs_staged_packed_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4726,12 +4777,9 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
 #[test]
 fn register_matmul_quant_rhs_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4755,12 +4803,9 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4782,12 +4827,9 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let plan = Tiling::new()
-        .extents(&[(M, 4), (N, 8), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4))
+    let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build()
         .partitioner()
@@ -4816,12 +4858,9 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
         .per_block([1, 4], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
         .with_value(QuantValue::Q8S);
-    let plan = Tiling::new()
-        .extents(&[(M, 8), (N, 8), (K, 8)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(8))
+    let plan = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 8), (N, 8), (K, 8)]);
         })
         .build()
         .partitioner()
@@ -4972,34 +5011,23 @@ fn run_register_matmul_quant_rhs(
 
 /// The space a rows-in-flight gemv cuts: the plane splits into aligned groups of `GROUP_LANES`,
 /// each group owning one output row and its lanes interleaving `K` between them. Every lane holds
-/// a *partial* of its group's row, so the drain is a segmented reduction — `LaneShare::Group`,
+/// a *partial* of its group's row, so the drain is a segmented reduction: `LaneShare::Group`,
 /// where a whole-plane fold would be `LaneShare::Plane`.
 ///
 /// `groups == 1` is the same space at `LaneShare::Plane`, which is the case already covered; the
 /// point here is a plane carrying several cells at once.
-fn lane_group_fold_space(lanes: usize, group_lanes: usize, edge: usize, n: usize) -> Space {
-    let groups = lanes / group_lanes;
-    let unit = |edge: usize, spread: Spread, instances: usize| {
-        Cut::new(
-            edge,
-            Distribution::Spatial {
-                scope: ComputeScope::Unit,
-                spread,
-                coverage: Coverage::Instances(instances),
-            },
-        )
-    };
-    Tiling::new()
-        .extents(&[(M, groups), (N, n), (K, group_lanes * edge)])
-        .instruction(Instruction::registers(edge * n), |l| {
-            l.axis(M, unit(1, Spread::Contiguous, groups))
-                .axis(N, Cut::sequential(n))
-                .axis(K, unit(edge, Spread::Interleaved, group_lanes))
+fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Space {
+    let groups = plane_size / group_lanes;
+    Tiling::over(&mut (), &[(M, groups), (N, n), (K, group_lanes * edge)])
+        .instruction(Instruction::registers(edge * n), |l, _| {
+            l.distribute(lanes().instances(groups), &[(M, 1)])
+                .distribute(lanes().instances(group_lanes).interleaved(), &[(K, edge)])
+                .walk(&[(N, n)]);
         })
         .build()
 }
 
-/// The memory-backed leaf over the segmented fold — the control for
+/// The memory-backed leaf over the segmented fold, the control for
 /// [`register_matmul_promoted_lane_group_fold`]. If this one fails the space itself is wrong and
 /// the promoted result proves nothing.
 #[test]
@@ -5038,7 +5066,7 @@ fn register_matmul_lane_group_fold() {
 ///
 /// This is the case no other test covers: every promoted test in this file folds either nothing
 /// (`Whole`) or the whole plane (`Plane`). A plane carrying one cell per group has to reduce
-/// within each group and let each group's first lane write *its own row* — and the rows a group
+/// within each group and let each group's first lane write *its own row*, and the rows a group
 /// owns are what the `M` cut hands it, which a block built before the walk descends has to be
 /// told rather than assume.
 #[test]
@@ -5122,8 +5150,8 @@ fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
 ///
 /// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
 /// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
-/// its own. What that is worth is only checkable against a reference the kernel had no hand in —
-/// built on the host from the quantized values and their scales — since a leaf that decoded
+/// its own. What that is worth is only checkable against a reference the kernel had no hand in,
+/// built on the host from the quantized values and their scales, since a leaf that decoded
 /// wrongly and a reference that decoded the same way wrongly would agree.
 #[test]
 fn register_matmul_promoted_accumulator_quant() {

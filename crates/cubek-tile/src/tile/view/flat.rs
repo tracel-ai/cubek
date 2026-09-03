@@ -22,7 +22,7 @@ pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
 /// A static window's extents are constant handles, so the decode divides by constants.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct FlatLayout {
+pub(crate) struct FlatLayout {
     shape: Coords<u32>,
 }
 
@@ -80,6 +80,11 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The mutable twin of [`flat`](Tile::flat). Public because a consumer's kernel is where
+    /// an elementwise write lives: cubek's own leaves write through the staging, but a routine
+    /// outside this crate that computes its cells (a fold's drain, a delta applied in place) has
+    /// no other verb for "each unit writes its own flat positions" — [`copy_from`](Tile::copy_from),
+    /// [`zero`](Tile::zero) and [`init`](Tile::init) all write a value it does not choose per cell.
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),

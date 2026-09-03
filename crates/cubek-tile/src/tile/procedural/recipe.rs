@@ -115,10 +115,10 @@ impl<T: Numeric, R: RecipeExpand<T>> RecipeOps<T> for R {
 
 /// Expansion-time type erasure for a [`Recipe`]. It is never a GPU virtual call.
 #[derive(Clone)]
-pub struct VirtualRecipe<T: Numeric>(PhantomData<T>);
+pub(crate) struct VirtualRecipe<T: Numeric>(PhantomData<T>);
 
 #[derive(Clone)]
-pub struct VirtualRecipeExpand<T: Numeric> {
+pub(crate) struct VirtualRecipeExpand<T: Numeric> {
     state: Arc<dyn RecipeOps<T>>,
     separable: Option<Arc<dyn SeparableRecipeOps<T>>>,
 }
@@ -159,12 +159,12 @@ impl<T: Numeric> VirtualRecipe<T> {
         unexpanded!()
     }
 
-    pub fn evaluate_factor(&self, _coordinates: &RecipeCoords, _factor: usize) -> T {
+    pub(crate) fn evaluate_factor(&self, _coordinates: &RecipeCoords, _factor: usize) -> T {
         unexpanded!()
     }
 
     /// Whether one separable factor reads `axis` from its recipe coordinates.
-    pub fn factor_reads_axis(&self, _factor: usize, _axis: Axis) -> comptime_type!(bool) {
+    pub(crate) fn factor_reads_axis(&self, _factor: usize, _axis: Axis) -> comptime_type!(bool) {
         unexpanded!()
     }
 }

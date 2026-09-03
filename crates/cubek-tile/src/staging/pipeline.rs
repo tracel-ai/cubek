@@ -25,7 +25,7 @@ pub enum Sync {
 impl Sync {
     /// Join the rendezvous requirements of a slot's sources. `Barrier` dominates `Cube` because
     /// TMA transaction completion must be included in the slot's publication.
-    pub fn for_deliveries(deliveries: &[Delivery]) -> Sync {
+    pub(crate) fn for_deliveries(deliveries: &[Delivery]) -> Sync {
         assert!(
             !deliveries.is_empty(),
             "Staging: a slot must have at least one delivery"
@@ -43,7 +43,7 @@ impl Sync {
 
     /// Whether a barrier slot needs every unit to publish its writes. Pure TMA has one hardware
     /// issuer; a mixed slot also contains a synchronous cooperative fill.
-    pub fn collective_full(deliveries: &[Delivery]) -> bool {
+    pub(crate) fn collective_full(deliveries: &[Delivery]) -> bool {
         deliveries
             .iter()
             .any(|delivery| delivery.rendezvous() == Sync::Cube)

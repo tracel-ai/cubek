@@ -91,13 +91,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::cube(CubeAxis::Z, 1))
-                .axis(KI, Cut::sequential(inside))
+    let split_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, inside)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                .walk(&[(M, m), (N, n), (KI, inside)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -136,12 +133,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Tiling::new()
-        .extents(&[(M, m), (N, n), (KB, splits)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::cube(CubeAxis::X, 1))
-                .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::sequential(splits))
+    let fold_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X), &[(M, 1)])
+                .walk(&[(N, n), (KB, splits)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -332,12 +327,10 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -451,11 +444,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .enforce();
         return;
     }
-    let lanes = client.properties().hardware.plane_size_max as usize;
+    let plane_size = client.properties().hardware.plane_size_max as usize;
     let dtype = f32::elem_type_native();
 
     let (m, k, splits, per_lane) = (4usize, 16usize, 4usize, 2usize);
-    let n = lanes * per_lane;
+    let n = plane_size * per_lane;
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
     let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -472,15 +465,14 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::unit(per_lane))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(lanes(), &[(N, per_lane)])
+                .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                .walk(&[(M, m)]);
         })
         .build()
-        .resolve_lanes(lanes)
+        .resolve_lanes(plane_size)
         .with_instruction(Instruction::registers(16));
 
     atomic_split_matmul::launch::<TestRuntime>(
@@ -538,7 +530,7 @@ fn an_atomic_drain_folds_across_planes() {
         return;
     }
     let dtype = f32::elem_type_native();
-    let (m, n, k, planes) = (4usize, 4usize, 16usize, 4usize);
+    let (m, n, k, num_planes) = (4usize, 4usize, 16usize, 4usize);
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
     let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -555,12 +547,10 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::plane(k / planes))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(planes(), &[(K, k / num_planes)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));
@@ -653,12 +643,10 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::new()
-        .extents(&[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(m))
-                .axis(N, Cut::sequential(n))
-                .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build()
         .with_instruction(Instruction::registers(16));

@@ -29,10 +29,9 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// An accumulator's scope, opened by [`Tile::accumulate`] and closed by whichever op exhausts it.
-///
 /// The variants are the output's [`Residence`] at the level the scope opens, not a choice made
-/// here. `EA` is the register accumulate element, distinct from the stored `Out` (`f32` accumulate
-/// under an `f16` output); an `InPlace` scope has no second element, so it never reads `EA`.
+/// here. `EA` is the register accumulate element, distinct from the stored `Out`; an `InPlace`
+/// scope has no second element and never reads it.
 // The register variant carries a second tile; both are expansion-time handles, so the size gap
 // costs nothing the kernel ever sees.
 #[allow(clippy::large_enum_variant)]
@@ -48,6 +47,15 @@ pub enum AccumulatorScope<EA: Numeric, Out: Numeric> {
     },
     /// Contracts in the output itself, so there is nothing to drain.
     InPlace {
+        sink: Tile<Out>,
+        #[cube(comptime)]
+        monoid: Monoid,
+    },
+    /// Contracts this instance's share of work the level distributes as one
+    /// ([`LevelCuts::distribute`]), which is several of the output's regions whole and part of the
+    /// two at either end. The scope is per region of the share rather than per instance, so the
+    /// accumulator opens and drains inside the loop and there is none to hold here.
+    Distributed {
         sink: Tile<Out>,
         #[cube(comptime)]
         monoid: Monoid,
@@ -78,15 +86,17 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 monoid,
             } => tile.init_identity(comptime!(*monoid)),
             AccumulatorScope::InPlace { sink, monoid } => sink.init_identity(comptime!(*monoid)),
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => panic!(
+                "AccumulatorScope::seed: a distributed scope opens one accumulator per region of \
+                 its share and seeds each, so there is nothing here to seed"
+            ),
         }
     }
 
     /// `c = lhs · rhs`: contract into the accumulator and drain, the contraction owning the init.
-    /// The scope's whole body at every call site that is not accumulating onto `c`.
-    ///
-    /// `semiring` is the algebra of the contraction itself: the product it forms from a pair of
-    /// operands and the monoid those products accumulate into. The scope holds a fold and nothing
-    /// more, so a contraction, which needs more than a fold, is handed one.
+    /// The scope's whole body at every call site not accumulating onto `c`. `semiring` is the
+    /// algebra of the contraction: the product it forms and the monoid those products accumulate
+    /// into. The scope holds a fold and nothing more, so a contraction is handed one.
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -102,6 +112,10 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mm(lhs, rhs, semiring)
+            }
+            AccumulatorScope::Distributed { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                distributed_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
             }
         }
     }
@@ -126,15 +140,20 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mma(lhs, rhs, semiring)
             }
+            // The same call as `mm`: a distributed destination is written by instances that
+            // cannot see each other, so none of them may claim a cell, and the init every one of
+            // them would otherwise do is the launch's ([`Write::Accumulate`]).
+            AccumulatorScope::Distributed { sink, monoid } => {
+                comptime!(adds_the_way_it_folds(*monoid, semiring));
+                distributed_mm::<EA, Out, Lhs, Rhs>(sink, lhs, rhs, comptime!(*monoid), semiring)
+            }
         }
     }
 
     /// `c = (lhs ⊗ s) · rhs`, or its rhs twin: [`mm`](AccumulatorScope::mm) with one operand
     /// scaled by a real operand, the side read off the scales' axes
-    /// ([`ScaleSide`](crate::ScaleSide)).
-    ///
-    /// A register accumulator here is what a decode gemv wants: the scaled partials never
-    /// round-trip through the sink between `K` steps.
+    /// ([`ScaleSide`](crate::ScaleSide)). A register accumulator here is what a decode gemv wants:
+    /// the scaled partials never round-trip through the sink between `K` steps.
     pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -151,6 +170,9 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mm_scaled(lhs, rhs, scales, semiring)
+            }
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!("AccumulatorScope::mm_scaled: a scaled contraction over a distributed share")
             }
         }
     }
@@ -174,6 +196,11 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
                 comptime!(adds_the_way_it_folds(*monoid, semiring));
                 sink.mma_scaled(lhs, rhs, scales, semiring)
             }
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!(
+                    "AccumulatorScope::mma_scaled: a scaled contraction over a distributed share"
+                )
+            }
         }
     }
 
@@ -188,12 +215,15 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 sink.reduce_axis(input, comptime!(*monoid))
             }
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!("AccumulatorScope::reduce_axis: a reduction over a distributed share")
+            }
         }
     }
 
     /// `c = fold(c, input)`: [`reduce_axis`](AccumulatorScope::reduce_axis) folding onto an
     /// accumulator the caller [`seed`](AccumulatorScope::seed)ed.
-    pub fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
+    pub(crate) fn reduce_axis_accumulate<In: Numeric>(&mut self, input: &Tile<In>) {
         match self {
             AccumulatorScope::Register { tile, sink, monoid } => {
                 tile.reduce_axis_accumulate(input, comptime!(*monoid));
@@ -202,36 +232,65 @@ impl<EA: Numeric, Out: Numeric> AccumulatorScope<EA, Out> {
             AccumulatorScope::InPlace { sink, monoid } => {
                 sink.reduce_axis_accumulate(input, comptime!(*monoid))
             }
+            AccumulatorScope::Distributed { sink: _, monoid: _ } => {
+                panic!(
+                    "AccumulatorScope::reduce_axis_accumulate: a reduction over a distributed share"
+                )
+            }
         }
+    }
+}
+
+/// What an accumulator scope opens over: whether the level distributes work as one, read
+/// together with the output's [`Residence`] there. Both are needed and neither is a choice made
+/// here.
+enum Opens {
+    /// This instance's own region, in registers.
+    Register,
+    /// This instance's own region, where it already lies.
+    InPlace,
+    /// One region at a time of the share this instance holds, in registers. An instance holding a
+    /// share of distributed work covers several regions and cannot open one accumulator across
+    /// them: the share's length is runtime, and a register block is not.
+    PerRegion,
+}
+
+/// The scope `residence` opens under this level's distribution, and the refusals that leaves.
+fn opens(space: &Space, residence: Residence) -> Opens {
+    let distributed = space.partitioner().work().is_some();
+    match (residence, distributed) {
+        (Residence::Register, false) => Opens::Register,
+        (Residence::Register, true) => Opens::PerRegion,
+        (Residence::InPlace, false) => Opens::InPlace,
+        (Residence::InPlace, true) => panic!(
+            "Tile::accumulate: a share of distributed work covers several output regions, and \
+             contracting in place would fold into the destination once per step of it rather \
+             than once per region; state Residence::Register on the output"
+        ),
+        (Residence::Smem, _) => panic!(
+            "Tile::accumulate: an accumulator has no shared-memory form; state \
+             Residence::Register to contract in registers, or nothing to contract in place"
+        ),
     }
 }
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// Open this output's accumulator scope, uninitialized, folding under `monoid`: `Sum` for a
-    /// matmul, `Min` for a min-plus one, whichever fold a reduce asked for. `monoid` is stated
-    /// here because it is read on drain, when the plane's lanes are combined, and comptime state
-    /// cannot be set after a thing is built, and because it is the accumulation's one algebra
-    /// rather than a fact about each call. It is a fold and nothing more: an op needing more,
-    /// [`mm`](AccumulatorScope::mm) and [`mma`](AccumulatorScope::mma), is handed the
-    /// [`Semiring`] it runs, whose add this must be.
+    /// Open this output's accumulator scope, uninitialized, folding under `monoid`. Stated here
+    /// because it is read on drain, when the plane's lanes are combined, and is the accumulation's
+    /// one algebra rather than a fact about each call. A fold and nothing more: an op needing more
+    /// is handed the [`Semiring`] it runs, whose add this must be.
     ///
-    /// The op that closes the scope drains it; where that op is [`mm`](AccumulatorScope::mm) or
-    /// [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too, and only the
-    /// accumulating verbs ask the caller to state one ([`seed`](AccumulatorScope::seed)).
+    /// The op that closes the scope drains it, and where that op is [`mm`](AccumulatorScope::mm)
+    /// or [`reduce_axis`](AccumulatorScope::reduce_axis) it owns the init too; only the
+    /// accumulating verbs ask the caller to seed. Where the accumulator lives is the output
+    /// operand's own statement ([`Operand::stage`]), and `EA` is read only under
+    /// [`Register`](Residence::Register).
     ///
-    /// Where the accumulator lives is the output operand's own statement, read off the residence
-    /// it stated at this level ([`Operand::stage`]). `EA` is the register accumulate type, read
-    /// only when that statement is [`Register`](Residence::Register).
-    ///
-    /// `lhs` is the operand this accumulator will contract against, and it states the
-    /// register form the accumulator takes: a staged cmma or manual-mma operand meets a
-    /// matching fragment. An operand staging no register form leaves the instruction open (memory
-    /// windows serve the software instruction and both hardware mmas alike), so the space's
-    /// instruction decides ([`Space::instruction`]). `lhs` also sizes the
-    /// fragment: a hardware fragment is the whole `m × n × k` instruction, and an accumulator
-    /// spans only `m × n`, so the contraction depth has to come from a side that has it. The
-    /// `mma` call is the next line at every call site, so it is already in hand.
+    /// `lhs` states the register form the accumulator takes: a staged cmma or manual-mma operand
+    /// meets a matching fragment, and one staging no register form leaves the space's
+    /// [`instruction`](Space::instruction) to decide. It also sizes the fragment, since a hardware
+    /// fragment is the whole `m × n × k` and an accumulator spans only `m × n`.
     pub fn accumulate<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -243,22 +302,19 @@ impl<Acc: Numeric> Tile<Acc> {
         let split_share = self.split_share();
         comptime!(split_share.validate(write, "Tile::accumulate"));
         let plan = self.stage_plan();
-        match comptime!(plan.head()) {
-            Residence::Register => {
+        match comptime!(opens(&self.space, plan.head())) {
+            Opens::Register => {
                 let tile = self.register_partition::<EA, EL>(lhs, monoid);
                 AccumulatorScope::<EA, Acc>::new_Register(tile, self.clone(), monoid)
             }
-            Residence::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid),
-            Residence::Smem => panic!(
-                "Tile::accumulate: an accumulator has no shared-memory form; state \
-                 Residence::Register to contract in registers, or nothing to contract in place"
-            ),
+            Opens::InPlace => AccumulatorScope::<EA, Acc>::new_InPlace(self.clone(), monoid),
+            Opens::PerRegion => AccumulatorScope::<EA, Acc>::new_Distributed(self.clone(), monoid),
         }
     }
 
     /// The plane-resident partition a [`Register`](Residence::Register) scope contracts in,
     /// uninitialized and shaped to meet `lhs` at the instruction.
-    fn register_partition<EA: Numeric, EL: Numeric>(
+    pub(crate) fn register_partition<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
         #[comptime] monoid: Monoid,
@@ -296,7 +352,7 @@ impl<Acc: Numeric> Tile<Acc> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffering, CubeAxis, Cut, Tiling, WalkOrder};
+    use crate::{Buffering, CubeAxis, Tiling, WalkOrder, cubes};
     use cubecl::ir::Scope;
 
     const M: Axis = Axis(0);
@@ -317,17 +373,32 @@ mod tests {
     // `validate` does with it. What is left here is one read of the stamped value, which a
     // procedural tile (the only kind that can be built without a launch) does not carry.
 
+    /// A share of distributed work covers several output regions, so an accumulator has to open
+    /// per region and a register form is the only one that can. Host-side: a comptime panic raised in a
+    /// kernel lands on a worker thread where `#[should_panic]` never sees it.
+    #[test]
+    #[should_panic = "contracting in place would fold into the destination once per step"]
+    fn distributed_work_contracting_in_place_is_refused() {
+        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
+            })
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.walk(&[(M, 4), (N, 4), (K, 4)]);
+            })
+            .build();
+        opens(&space.project(&[M, N]), Residence::InPlace);
+    }
+
     /// The same cut on an axis the output spans is a plain output split: each cube owns its
     /// columns outright, so the accumulator opens as it always has.
     #[test]
     fn opening_an_accumulator_over_a_cube_split_output_is_fine() {
         let scope = test_scope();
-        let space = Tiling::new()
-            .extents(&[(M, 4), (N, 8), (K, 4)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::sequential(4))
-                    .axis(N, Cut::cube(CubeAxis::X, 4))
-                    .axis(K, Cut::sequential(4))
+        let space = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 4)])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(cubes(CubeAxis::X), &[(N, 4)])
+                    .walk(&[(M, 4), (K, 4)]);
             })
             .build()
             .with_instruction(Instruction::registers(16));

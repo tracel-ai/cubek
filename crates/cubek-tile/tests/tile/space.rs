@@ -4,8 +4,8 @@ use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
 use cubecl::quant::scheme::QuantScheme;
 use cubek_tile::{
-    Axis, Buffering, ByAxis, Cut, Distribution, Instruction, Operand, OperandSet, Partitioner,
-    Residence, Space, Stage, Tiling, WalkOrder,
+    Axis, Buffering, ByAxis, CubeAxis, Distribution, Instruction, Operand, OperandSet, Partitioner,
+    Residence, Space, Stage, Tiling, WalkOrder, cubes, lanes,
 };
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
@@ -237,35 +237,173 @@ fn matmul_operands() -> MatmulOperands {
     }
 }
 
+/// Distributing work is a statement about the level's cuts, so it is available wherever cuts are
+/// collected: the operand-threaded chain says it beside the residences the same level states.
+#[test]
+fn over_distributes_work_beside_the_residences() {
+    let mut ops = matmul_operands();
+    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.distribute(
+                cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
+            );
+            o.out.stage(Residence::Register);
+        })
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+            l.walk(&[(M, 16), (N, 32), (K, 4)]);
+            o.b.stage(Residence::Smem);
+        })
+        .build();
+
+    // The shares ride the cubes even though no axis does.
+    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
+    // And the operands' residences are the ones stated, level by level, untouched by the
+    // distribution.
+    let residences = |o: &Operand| o.stages().iter().map(|s| s.residence).collect::<Vec<_>>();
+    assert_eq!(
+        residences(&ops.out),
+        [Residence::Register, Residence::InPlace]
+    );
+    assert_eq!(residences(&ops.b), [Residence::InPlace, Residence::Smem]);
+}
+
+/// One region each is a box of the grid however many axes are named, so the line deals a dial per
+/// axis and states no work. What lets a whole group of batch axes be one `distribute` line
+/// without turning the level into a share.
+#[test]
+fn distributing_several_axes_one_region_each_deals_a_dial_each() {
+    let level = |l: &mut cubek_tile::LevelCuts| {
+        l.walk(&[(M, 16), (N, 32), (K, 16)]);
+    };
+    let one_line = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
+            level(l);
+        })
+        .build();
+    let a_dial_each = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
+                .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
+            level(l);
+        })
+        .build();
+
+    assert_eq!(one_line, a_dial_each);
+    // No work: the walk under it is the one an undistributed level has, and the lowering that
+    // reads this is the one that picks the per-region accumulator nest.
+    assert!(one_line.partitioner().work().is_none());
+    // Both axes still ride Z, one cube per (B0, B1) pair.
+    assert!(matches!(one_line.cube_count(), CubeCount::Static(1, 1, 6)));
+}
+
+/// The same axes with a count stated cannot be a box: a share begins inside one region and ends
+/// inside another, so they are read as one index instead.
+#[test]
+fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(
+                cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
+            );
+        })
+        .build();
+    assert!(space.partitioner().work().is_some());
+    // The shares ride the cubes, and no axis of them does: five cubes, not `4 * 2 * 1`.
+    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
+}
+
+/// One axis is a box whatever the count, so it is dealt a dial: `instances` there sizes the
+/// axis's own tiles across the scope, which is what a cut has always meant.
+#[test]
+fn distributing_one_axis_with_a_count_is_a_dial() {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
+                .walk(&[(N, 32), (K, 16)]);
+        })
+        .build();
+    assert!(space.partitioner().work().is_none());
+    assert!(matches!(space.cube_count(), CubeCount::Static(4, 1, 1)));
+}
+
+/// Nothing named is nothing said: a matmul with no batch axis passes an empty list and the level
+/// reads as if the line were not there.
+#[test]
+fn distributing_no_axis_states_nothing() {
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::Z), &[])
+                .walk(&[(M, 16), (N, 32), (K, 16)]);
+        })
+        .build();
+    assert!(space.partitioner().work().is_none());
+    assert!(matches!(space.cube_count(), CubeCount::Static(1, 1, 1)));
+}
+
+/// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
+/// shares are on different regions, so they never reach a reduction together.
+#[test]
+#[should_panic = "combine in registers"]
+fn distributing_work_across_lanes_is_refused() {
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)]);
+        })
+        .build();
+}
+
+/// A share is walked as a nest, one region at a time, so its steps have to be consecutive.
+/// Instances taking turns would put a different region under the accumulator at every step.
+#[test]
+#[should_panic = "instances taking turns would leave no region long enough"]
+fn distributing_work_in_turns_is_refused() {
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(
+                cubes(CubeAxis::X).instances(5).interleaved(),
+                &[(M, 16), (N, 32), (K, 16)],
+            );
+        })
+        .build();
+}
+
+/// A level states each of its axes once, whichever way it states them.
+#[test]
+#[should_panic = "a level states each of its axes once"]
+fn an_axis_both_cut_and_distributed_is_refused() {
+    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(K, 16)]).distribute(
+                cubes(CubeAxis::X).instances(5),
+                &[(M, 16), (N, 32), (K, 16)],
+            );
+        })
+        .build();
+}
+
 /// The two builders cannot drift: an operand-threaded build partitions exactly as the plain
 /// chain does, so migrating a caller changes nothing about its space.
 #[test]
 fn over_builds_the_space_plain_tiling_would() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(32))
-                .axis(K, Cut::sequential(16))
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32), (K, 16)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
         })
         .build();
 
     let mut ops = matmul_operands();
     let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(32))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 32), (K, 16)]);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
         })
         .build();
 
@@ -284,22 +422,16 @@ fn over_seals_stages_and_omission_is_in_place() {
     let mut ops = matmul_operands();
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage(Residence::Smem);
             o.b.stage(Residence::Smem);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
             o.out.stage(Residence::Register);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build();
 
@@ -337,21 +469,15 @@ fn over_type_column_moves_then_converts() {
     let mut ops = ops;
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.b.stage(Residence::Smem);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
             o.b.stage_as(Residence::Register, f32t);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(4))
-                .axis(N, Cut::sequential(4))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
         .build();
 
@@ -376,9 +502,7 @@ fn over_stage_as_same_type_is_the_move() {
     let mut ops = matmul_operands();
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage_as(Residence::Smem, f32t);
             o.b.stage(Residence::Smem);
         })
@@ -401,9 +525,7 @@ fn over_double_statement_at_one_level_panics() {
     let mut ops = matmul_operands();
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage(Residence::Smem);
             o.a.stage(Residence::Register);
         })
@@ -419,15 +541,11 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
     let mut ops = matmul_operands();
     let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage(Residence::Smem);
         })
         .instruction(Instruction::Cmma, |l, o| {
-            l.axis(M, Cut::sequential(8))
-                .axis(N, Cut::sequential(8))
-                .axis(K, Cut::sequential(4));
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
             o.a.stage(Residence::Register);
         })
         .build();
@@ -448,20 +566,18 @@ fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
 /// which is what stops the two from compiling as two kernels.
 #[test]
 fn a_level_that_cuts_nothing_is_dropped() {
-    let plain = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         // The same edges again: nothing left to cut.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
 
@@ -473,13 +589,12 @@ fn a_level_that_cuts_nothing_is_dropped() {
 /// two regions where its parent buffers one, so it is not a no-op and stays.
 #[test]
 fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l| {
-            l.axis(M, Cut::sequential(16)).axis(N, Cut::sequential(32))
+        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+            l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
 
@@ -496,10 +611,9 @@ fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
 /// on (attention's split count, a plane grid of one) lands on 1.
 #[test]
 fn the_only_level_stays_even_when_it_cuts_nothing() {
-    let space = Tiling::new()
-        .extents(&[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-            l.axis(M, Cut::sequential(64)).axis(N, Cut::sequential(64))
+    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&[(M, 64), (N, 64)]);
         })
         .build();
 
@@ -514,14 +628,10 @@ fn a_level_that_cuts_nothing_but_moves_an_operand_stays() {
     let mut ops = matmul_operands();
     let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
         })
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage(Residence::Smem);
         })
         .build();
@@ -538,21 +648,15 @@ fn the_instruction_level_stays_and_the_columns_follow_the_levels() {
     let mut ops = matmul_operands();
     let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
             o.a.stage(Residence::Smem);
         })
         // Dropped: same edges, nothing stated.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
         })
         .instruction(Instruction::Cmma, |l, _| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
         })
         .build();
 
@@ -569,9 +673,7 @@ fn over_staging_after_build_panics() {
     let mut ops = matmul_operands();
     let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::sequential(16))
-                .axis(N, Cut::sequential(16))
-                .axis(K, Cut::sequential(16));
+            l.walk(&[(M, 16), (N, 16), (K, 16)]);
         })
         .build();
     ops.a.stage(Residence::Smem);

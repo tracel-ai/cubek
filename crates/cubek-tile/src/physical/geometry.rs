@@ -1,19 +1,19 @@
-//! The extents and strides an operand is addressed by, on the host.
+//! The extents and strides an operand is addressed by: [`Geometry`] on the host, where
+//! the derivation settles them, and [`RuntimeGeometry`] in the kernel, which is what a
+//! settled geometry is handed to a tile as. Twins, so they change together.
 
 use core::fmt::{self, Display, Formatter};
 
 use cubecl::prelude::*;
+
+use crate::Coords;
 
 /// One operand's physical extents and strides, in scalars, one entry per physical dim.
 ///
 /// The two are one value because they are never separately true. Held apart they are two
 /// `Vec<usize>` a caller can state at two ranks, and two same-typed arguments a call site can
 /// swap in silence; here a dim is an `(extent, stride)` pair and neither is expressible. A bound
-/// operand takes its geometry off its binding ([`From`]), an unbound one states it, and the
-/// derivation reaches both the same way.
-///
-/// The kernel-side twin is [`RuntimeGeometry`](crate::RuntimeGeometry), which is what the
-/// derivation's settled geometry is handed to a tile as.
+/// operand takes its geometry off its binding ([`From`]), an unbound one states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Geometry {
     shape: Vec<usize>,
@@ -53,7 +53,7 @@ impl Geometry {
     ///
     /// The kernel re-expresses the geometry in lines rather than scalars: [`Tile::of`] counts the
     /// innermost extent in lines and divides every coarser stride by the served width, so a width
-    /// that does not divide them truncates — in bounds, no fault, addressing a fraction of the
+    /// that does not divide them truncates: in bounds, no fault, addressing a fraction of the
     /// operand. [`Launcher::vector_size`](crate::Launcher::vector_size) reads this to *pick* a
     /// width; a caller that states one is *refused* by it. One answer, so the two cannot drift
     /// apart about what a servable width is.
@@ -83,7 +83,7 @@ impl Geometry {
     }
 }
 
-/// Why a [`Geometry`] cannot be served at some width — the value that decided it, so a message
+/// Why a [`Geometry`] cannot be served at some width: the value that decided it, so a message
 /// names the number a reader has to go looking for otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LineMisfit {
@@ -129,5 +129,52 @@ impl<R: Runtime> From<&TensorBinding<R>> for Geometry {
             shape: binding.shape.to_vec(),
             strides: binding.strides.to_vec(),
         }
+    }
+}
+
+/// [`Geometry`]'s kernel-side twin, paired for the same reason. The tile constructor reads the
+/// two in step, counting the innermost extent in lines and dividing every coarser stride by the
+/// served width, so [`push`](Self::push) takes a dim's extent and stride together.
+///
+/// A bound operand reads its geometry off the tensor ([`of_tensor`](Self::of_tensor)); one with
+/// no address states it, which is what [`Tile::of_sink`] and [`Tile::of_source`] take.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub struct RuntimeGeometry {
+    pub(crate) shape: Coords<u32>,
+    pub(crate) strides: Coords<u32>,
+}
+
+#[cube]
+impl RuntimeGeometry {
+    /// An empty geometry, grown a dim at a time by `push`.
+    // A cube constructor, so there is no `Default` to implement: `default()` has no expansion
+    // and nothing inside a kernel could call it. Same as `Coords::new`.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> RuntimeGeometry {
+        RuntimeGeometry {
+            shape: Coords::<u32>::new(),
+            strides: Coords::<u32>::new(),
+        }
+    }
+
+    /// The geometry a launched tensor carries, over its first `rank` dims, the rank the
+    /// operand's projection addresses, which is not always the tensor's own.
+    pub fn of_tensor<E: CubePrimitive>(
+        tensor: &Tensor<E>,
+        #[comptime] rank: usize,
+    ) -> RuntimeGeometry {
+        let mut geometry = RuntimeGeometry::new();
+        #[unroll]
+        for i in 0..rank {
+            geometry.push(tensor.shape(i) as u32, tensor.stride(i) as u32);
+        }
+        geometry
+    }
+
+    /// One physical dim, coarsest first: how far it runs, and the scalar stride that steps it.
+    pub fn push(&mut self, extent: u32, stride: u32) {
+        self.shape.push(extent);
+        self.strides.push(stride);
     }
 }

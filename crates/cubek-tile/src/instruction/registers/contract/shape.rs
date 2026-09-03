@@ -90,9 +90,9 @@ impl ContractShape {
     /// Whether a 2-D reading describes both operands, and the axes it reads them over.
     ///
     /// The question the leaf routes on. A contraction the operand carries as one run of axes has a
-    /// `k` edge — one axis, several partitioning one, or a convolution's taps beside its channels
-    /// — and reads as a matrix. One it does not is read a cell at a time.
-    pub fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
+    /// `k` edge (one axis, several partitioning one, or a convolution's taps beside its channels)
+    /// reads as a matrix. One it does not is read a cell at a time.
+    pub(crate) fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
         let lhs_axes = MatrixAxes::find(lhs, self.mr, self.kc)?;
         let rhs_axes = match self.contracted_per_step > 1 {
             true => MatrixAxes::find(rhs, self.cols, self.kc)?,
@@ -106,13 +106,13 @@ impl ContractShape {
     /// Asked, not stored: a gathered operand has no matrix at all, which is the whole reason the
     /// N-D nest exists, and this same shape is what it runs from. An operand whose contracted axis
     /// is partitioned reads as one `k` edge over several axes, and only the edges say which.
-    pub fn lhs_axes(&self, lhs: &Space) -> MatrixAxes {
+    pub(crate) fn lhs_axes(&self, lhs: &Space) -> MatrixAxes {
         MatrixAxes::of(lhs, self.mr, self.kc)
     }
 
     /// The rhs's twin. A folded step lines it along the contraction, so its matrix is `(col, k)`;
     /// at one contracted value per step it lines along the accumulator and reads `(k, col)`.
-    pub fn rhs_axes(&self, rhs: &Space) -> MatrixAxes {
+    pub(crate) fn rhs_axes(&self, rhs: &Space) -> MatrixAxes {
         match self.contracted_per_step > 1 {
             true => MatrixAxes::of(rhs, self.cols, self.kc),
             false => MatrixAxes::of(rhs, self.kc, self.cols),
@@ -120,7 +120,7 @@ impl ContractShape {
     }
 
     /// The accumulator's column axes with their extents.
-    pub fn column_edge(&self) -> Vec<(Axis, usize)> {
+    pub(crate) fn column_edge(&self) -> Vec<(Axis, usize)> {
         (self.acc_axes.col_split..self.space.rank())
             .map(|p| (self.space.axis_at(p), self.space.extent_at(p)))
             .collect()
@@ -128,7 +128,7 @@ impl ContractShape {
 
     /// The contracted axes with theirs, which the accumulator cannot size: a contracted axis is by
     /// definition absent from it, so the extents come off the operands' merged space.
-    pub fn reduce_edge(&self) -> Vec<(Axis, usize)> {
+    pub(crate) fn reduce_edge(&self) -> Vec<(Axis, usize)> {
         self.reduce
             .iter()
             .copied()
@@ -137,7 +137,7 @@ impl ContractShape {
     }
 
     /// The accumulator's batch axes: everything above the row edge.
-    pub fn batch_extents(&self) -> Vec<usize> {
+    pub(crate) fn batch_extents(&self) -> Vec<usize> {
         (0..self.acc_axes.row_split)
             .map(|p| self.space.extent_at(p))
             .collect()
@@ -157,7 +157,7 @@ impl ContractShape {
 
     /// Whether the lane fan-out's fixed extracts stay in step with the coordinate
     /// `lane_component` decodes on the flat walk.
-    pub fn lane_index_exact(&self) -> bool {
+    pub(crate) fn lane_index_exact(&self) -> bool {
         self.reduce.len() == 1
             || self.reduce_extents[self.reduce_extents.len() - 1].is_multiple_of(self.lw)
     }

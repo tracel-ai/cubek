@@ -1,6 +1,6 @@
 //! The decode gemv's serving geometry, in the split-axis spelling.
 //!
-//! `y = W · x` with `W` the weight's physical `[d_out, d_in]` buffer as the *lhs* — the
+//! `y = W · x` with `W` the weight's physical `[d_out, d_in]` buffer as the *lhs*, the
 //! orientation a decode step streams, where the contraction runs along the buffer's contiguous
 //! direction. `K` is spelled `(KB, KI)`, so one scale per block is the operand omitting `KI`.
 //!
@@ -26,18 +26,6 @@ const N: Axis = Axis(1);
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
 
-/// `edge`-wide tiles dealt across `lanes` lanes of the plane.
-fn unit(edge: usize, spread: Spread, lanes: usize) -> Cut {
-    Cut::new(
-        edge,
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread,
-            coverage: Coverage::Instances(lanes),
-        },
-    )
-}
-
 /// The partials fold through the sink's element between `K` steps.
 #[cube(launch)]
 fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
@@ -62,7 +50,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 /// The activation is read *scalar* here, and has to be: a promoted block lines its cells along
 /// the accumulator, so a rhs lined along the contraction folds a whole step into one cell and
 /// `RegisterData::mma_scaled` refuses it. Which is why the shipping shape below keeps its
-/// accumulator in memory — the two are a trade, not a ladder.
+/// accumulator in memory: the two are a trade, not a ladder.
 #[cube(launch)]
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
@@ -123,8 +111,8 @@ fn serving_geometry(promoted: bool) {
     let groups = plane / group_lanes;
     let rows_per_lane = 2;
     let rows_per_plane = groups * rows_per_lane;
-    let planes = 2;
-    let rows_per_cube = planes * rows_per_plane;
+    let num_planes = 2;
+    let rows_per_cube = num_planes * rows_per_plane;
     let d_out = rows_per_cube * 2;
 
     let span = 1i32 << bits;
@@ -158,28 +146,29 @@ fn serving_geometry(promoted: bool) {
     let space = Tiling::over(&mut ops, &[(M, d_out), (N, n), (KB, blocks), (KI, block)])
         // A strip of output rows per cube, walking all of `K`.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axis(M, Cut::cube(CubeAxis::X, rows_per_cube))
-                .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
+                .walk(&[(N, n), (KB, blocks), (KI, block)]);
             if promoted {
                 o.3.stage(Residence::Register);
             }
         })
         // One plane per group of rows.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::plane(rows_per_plane))
-                .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(planes(), &[(M, rows_per_plane)]).walk(&[
+                (N, n),
+                (KB, blocks),
+                (KI, block),
+            ]);
         })
         // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
         // stored word each along `KI`, so a step reads one contiguous span of the block.
         .instruction(Instruction::registers(rows_per_lane * factor), |l, _| {
-            l.axis(M, unit(rows_per_lane, Spread::Contiguous, groups))
-                .axis(N, Cut::sequential(n))
-                .axis(KB, Cut::sequential(1))
-                .axis(KI, unit(factor, Spread::Interleaved, group_lanes));
+            l.distribute(lanes().instances(groups), &[(M, rows_per_lane)])
+                .distribute(
+                    lanes().instances(group_lanes).interleaved(),
+                    &[(KI, factor)],
+                )
+                .walk(&[(N, n), (KB, 1)]);
         })
         .build();
 

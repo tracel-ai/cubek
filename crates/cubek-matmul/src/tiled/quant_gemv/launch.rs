@@ -13,8 +13,8 @@
 
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_tile::{
-    Buffering, ComputeScope, Coverage, CubeAxis, Cut, Distribution, Instruction, PhysicalAxisMap,
-    Projection, Spread, Tiling, WalkOrder,
+    Buffering, CubeAxis, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder, cubes, lanes,
+    planes,
 };
 
 use crate::{
@@ -59,22 +59,6 @@ pub struct QuantGemvBindings<R: Runtime> {
     pub out: TensorBinding<R>,
 }
 
-/// `edge`-wide tiles dealt across `lanes` lanes of the plane.
-///
-/// Not [`Cut::unit`], twice over: that constructor hardwires [`Spread::Contiguous`] where the
-/// fold wants lanes reading neighbouring words, and it defers the lane count to whatever the
-/// launcher resolves, where the blueprint derived its edges *from* that count on the host.
-fn unit(edge: usize, spread: Spread, lanes: usize) -> Cut {
-    Cut::new(
-        edge,
-        Distribution::Spatial {
-            scope: ComputeScope::Unit,
-            spread,
-            coverage: Coverage::Instances(lanes),
-        },
-    )
-}
-
 /// `y = (W ⊗ s) · x`, one launch.
 #[allow(clippy::result_large_err)]
 pub fn launch_ref<R: Runtime>(
@@ -112,39 +96,37 @@ pub fn launch_ref<R: Runtime>(
         // A strip of output rows per cube, walking all of `K`. Nothing is staged: the weight is
         // read exactly once, so there is no reuse for a stage to amortize.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::cube(CubeAxis::X, blueprint.rows_per_cube))
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(cubes(CubeAxis::X), &[(M, blueprint.rows_per_cube)])
+                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
         })
         // One plane per group of rows.
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.axis(M, Cut::plane(blueprint.rows_per_plane))
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, Cut::sequential(blocks))
-                .axis(KI, Cut::sequential(block));
+            l.distribute(planes(), &[(M, blueprint.rows_per_plane)])
+                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
         })
         // The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving
         // the contraction between them. Each takes one stored word of `KI`, and where a group
-        // reaches past one block it takes whole blocks of `KB` — a cut cuts one axis or the
-        // other and cannot straddle two. The partials the lanes hold drain inside the plane.
+        // reaches past one block it takes whole blocks of `KB` — a distribution deals one axis
+        // or the other and cannot straddle two. The partials the lanes hold drain inside the plane.
         .instruction(
             Instruction::registers(blueprint.rows_per_lane * factor),
             |l, _| {
-                l.axis(
-                    M,
-                    unit(
-                        blueprint.rows_per_lane,
-                        Spread::Contiguous,
-                        blueprint.groups(),
-                    ),
+                // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words.
+                // The lane counts are the blueprint's, derived on the host from the plane width:
+                // their product with the row groups is exactly it.
+                l.distribute(
+                    lanes().instances(blueprint.groups()),
+                    &[(M, blueprint.rows_per_lane)],
                 )
-                .axis(N, Cut::sequential(problem.rows))
-                .axis(KB, unit(1, Spread::Interleaved, blueprint.block_lanes))
-                .axis(
-                    KI,
-                    unit(factor, Spread::Interleaved, blueprint.inside_lanes),
-                );
+                .distribute(
+                    lanes().instances(blueprint.block_lanes).interleaved(),
+                    &[(KB, 1)],
+                )
+                .distribute(
+                    lanes().instances(blueprint.inside_lanes).interleaved(),
+                    &[(KI, factor)],
+                )
+                .walk(&[(N, problem.rows)]);
             },
         )
         .build();

@@ -1,11 +1,21 @@
-//! The per-axis comptime map keyed on [`Axis`].
+//! The opaque axis label every layout and space concept is keyed on, and the per-axis
+//! map built on it. A client gives a label meaning (matmul's `M`/`N`/`K`, reduce's reduce
+//! axis); the vocabulary stays agnostic.
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, MAX_AXES};
+/// Inline capacity for per-axis allocations in small vectors (spills to heap if exceeded).
+pub(crate) const MAX_AXES: usize = 6;
+
+/// Inline capacity for per-level allocations in small vectors (spills to heap if exceeded).
+pub(crate) const MAX_LEVELS: usize = 6;
+
+/// A labeled axis. The `u8` is a client-assigned index, not a position.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Axis(pub u8);
 
 /// A comptime map from [`Axis`] to a value, in declared order. This is the
-/// canonical axis order and the order a [`Region`](super::Region)'s coordinates come in.
+/// canonical axis order and the order a [`Region`](crate::Region)'s coordinates come in.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ByAxis<T: Copy> {
     entries: SmallVec<[(Axis, T); MAX_AXES]>,

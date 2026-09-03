@@ -86,7 +86,7 @@ pub trait Pipelined: CubeType {
     );
 }
 
-/// Walk `op_space` region by region through a ring of `depth` slots.
+/// Walk `walk`'s regions one by one through a ring of `depth` slots.
 ///
 /// The prologue primes slots `0..depth - 1` with the first `depth - 1` regions. Lap `p` then
 /// visits regions `p * depth + j` for each slot `j`: it fills the region one lap ahead into the
@@ -99,17 +99,17 @@ pub trait Pipelined: CubeType {
 #[cube]
 pub(crate) fn pipelined_walk<P: Pipelined>(
     op: &mut P,
-    op_space: Space,
+    walk: Walk,
     #[comptime] out: Space,
     #[comptime] depth: usize,
 ) {
-    let mut ring = op.ring(comptime!(op_space.clone()), out, depth);
+    // The walk carries the space its regions are cut from, which is the one a slot is sized to.
+    let mut ring = op.ring(comptime!(walk.space.clone()), out, depth);
     // Re-bound through `comptime!`: `#[unroll(flag)]` only unrolls when the macro can see `flag`
     // as a comptime binding, and silently rolls the loop otherwise.
     let unrolled = op.unrolled(&ring);
     let unroll = comptime!(unrolled);
     let has_fixed = ring.has_fixed();
-    let walk = Walk::over(op_space);
     let total = walk.total();
 
     // A fixed operand's window never moves, so region 0's is every region's. Later slots reusing

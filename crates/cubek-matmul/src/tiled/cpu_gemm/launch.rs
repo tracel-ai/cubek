@@ -3,8 +3,8 @@
 use cubecl::{Runtime, client::ComputeClient, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Cut, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
-    Tiling, WalkOrder,
+    Axis, Buffering, CubeAxis, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
+    Tiling, WalkOrder, cubes, planes,
 };
 
 use crate::{
@@ -172,11 +172,13 @@ pub fn launch_ref<R: Runtime>(
     // A cube owns a tile of `planes.m × planes.n` leaves; each plane (a CPU worker thread)
     // owns one leaf.
     let leaf = blueprint.instruction;
-    let planes = blueprint.planes;
-    let cube_m = planes.m * leaf.m;
-    let cube_n = planes.n * leaf.n;
+    let plane_grid = blueprint.planes;
+    let cube_m = plane_grid.m * leaf.m;
+    let cube_n = plane_grid.n * leaf.n;
 
     let batch_axes: Vec<_> = batch.iter().map(|&p| batch_axis(p)).collect();
+    // One tile of every batch axis, which is what each level states of them.
+    let batch_tiles: Vec<_> = batch_axes.iter().map(|&a| (a, 1)).collect();
     let extents: Vec<_> = (batch_axes.iter().zip(&batch))
         .map(|(&a, &p)| (a, out_batches[p]))
         .chain([(M, m), (N, n), (K, k)])
@@ -191,10 +193,10 @@ pub fn launch_ref<R: Runtime>(
     let mut ops = MatmulOperands::new(dtypes);
     let space = Tiling::over(&mut ops, &extents)
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.axes(&batch_axes, Cut::cube(CubeAxis::Z, 1))
-                .axis(M, Cut::cube(CubeAxis::X, cube_m))
-                .axis(N, Cut::cube(CubeAxis::Y, cube_n))
-                .axis(K, Cut::sequential(k));
+            l.distribute(cubes(CubeAxis::Z), &batch_tiles)
+                .distribute(cubes(CubeAxis::X), &[(M, cube_m)])
+                .distribute(cubes(CubeAxis::Y), &[(N, cube_n)])
+                .walk(&[(K, k)]);
             o.out.stage_as(Residence::Register, dtypes.acc_register);
         })
         // A CPU backend: a wide scalar register budget to unroll against, the dual-path edge
@@ -204,10 +206,10 @@ pub fn launch_ref<R: Runtime>(
                 config: RegisterBlock::new(256).split_edge(),
             },
             |l, _| {
-                l.axes(&batch_axes, Cut::sequential(1))
-                    .axis(M, Cut::plane(leaf.m))
-                    .axis(N, Cut::plane(leaf.n))
-                    .axis(K, Cut::sequential(leaf.k));
+                l.distribute(planes(), &[(M, leaf.m)])
+                    .distribute(planes(), &[(N, leaf.n)])
+                    .walk(&batch_tiles)
+                    .walk(&[(K, leaf.k)]);
             },
         )
         .build();

@@ -8,44 +8,14 @@ use super::gcd;
 use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection, Scale};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
-/// what step in the source one of its cells is, plus the projection the stage is addressed by.
+/// what step in the source one of its cells is, plus the projection addressing it.
 ///
-/// A gathered operand's sub-tile reads a *window* of its buffer, and several logical cells read the
-/// same physical one (that is what a gather is). Staging the logical tile therefore replicates
-/// elements, roughly by the tap count. Staging the window instead holds each element once, and the
-/// gather stays where it already was, at the leaf's read through
-/// [`AxisProjection`](crate::AxisProjection).
-///
-/// The window on physical axis `pa` is the set of offsets `Σ aᵢ·sᵢ` its terms reach, with
-/// `0 ≤ aᵢ < eᵢ`. Two numbers describe it:
-///
-/// - its **step** `g = gcd{ sᵢ : eᵢ > 1 }`, since every reachable offset is a multiple of `g`, so
-///   the stage stores every `g`-th one and drops the rest;
-/// - its **extent** `1 + Σ (eᵢ - 1)·(sᵢ/g)`, the bounding box of what is left.
-///
-/// Offsets the terms cannot reach but the box still spans (taps `{0, 1}` at stride `3` reach
-/// `{0, 1, 3, 4, …}`, whose step is `1`) stay as padding: they are filled and never read. Sizing
-/// them out exactly is a numeric-semigroup problem, and the step already covers what a stride or a
-/// dilation produces.
-///
-/// So the compacted box is not always smaller than the logical tile it replaces. It wins when the
-/// taps outrun the stride and the windows overlap (the usual convolution), and loses when the
-/// stride outruns them: `3` output steps of `2` taps at stride `3` are `6` logical cells over a
-/// box of `8`, two of which are padding. A gathered stage is sized by its window either way, so
-/// that case costs both the extra smem and the gmem reads that fill it.
-///
-/// A term whose axis does not move (`eᵢ = 1`) sits at a fixed offset the window's origin absorbs,
-/// so its coefficient is unobservable: the only coordinate it is ever multiplied by is `0`. It is
-/// emitted as `1` rather than as `sᵢ/g`, which need not divide, so the compacted projection still
-/// satisfies [`Projection::validate`] (a `0` coefficient would read as "this axis addresses no
-/// physical axis"). A [`Dynamic`](crate::Scale) one is exempt: pinning it would drop its slot from
-/// the coefficient carrier the stage inherits from its source.
-///
-/// A `Dynamic` coefficient or divisor is sized by its bound rather than its value. The step goes to
-/// `1` wherever one moves (a runtime coefficient need share no factor with anything, so there is no
-/// lattice to quotient by), and the extent is the widest field the bound admits, which dominates
-/// every window the launch can then ask for. The compacted mapping keeps the term dynamic: the box
-/// is comptime, addressing it is not.
+/// A gathered sub-tile reads a *window*, and several logical cells read the same physical one, so
+/// staging the logical tile replicates by roughly the tap count; staging the window holds each
+/// element once and leaves the gather at the leaf's read. The window on `pa` is the offsets
+/// `Sum aa*ss` its terms reach: step `g = gcd{ ss : ee > 1 }`, extent `1 + Sum (ee - 1)*(ss/g)`,
+/// the rest padding. Not always smaller: it wins when taps outrun the stride and the windows
+/// overlap (the usual convolution), loses when the stride outruns them.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
     steps: SmallVec<[usize; MAX_AXES]>,
@@ -55,10 +25,9 @@ pub struct Compaction {
 
 impl Compaction {
     /// Compact `projection`'s window, `extent_of` giving each logical axis's extent over the
-    /// sub-tile being staged. A [`direct`](Projection::direct) projection compacts to itself: every
-    /// step is `1` and every extent is the axis's own, so a plain operand's stage is the tile it
-    /// always was. `vector_size` is the width the stage is served at, threaded through to
-    /// [`Projection::validate`].
+    /// sub-tile staged. A [`direct`](Projection::direct) projection compacts to itself, so a plain
+    /// operand's stage is the tile it always was. `vector_size` is the width the stage is served
+    /// at, threaded through to [`Projection::validate`].
     pub fn of(
         projection: &Projection,
         vector_size: usize,
@@ -171,7 +140,7 @@ impl Compaction {
     /// Whether the window has no holes to skip, so a fill reads the source box straight through and
     /// emits exactly what a direct operand's fill does. True for every direct operand, and for a
     /// gather whose taps land on consecutive offsets (a unit-dilation convolution, at any stride).
-    pub fn is_dense(&self) -> bool {
+    pub(crate) fn is_dense(&self) -> bool {
         self.steps.iter().all(|&g| g == 1)
     }
 
@@ -187,7 +156,7 @@ impl Compaction {
     /// That rounding is only sound for a *padded* stage, one served wider than the source it is
     /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
     /// extent that is not a whole number of source lines, on every path a fill can take.
-    pub fn line_extents(&self, vector_size: usize) -> Vec<usize> {
+    pub(crate) fn line_extents(&self, vector_size: usize) -> Vec<usize> {
         let last = self.extents.len() - 1;
         assert!(
             self.steps[last] == 1,

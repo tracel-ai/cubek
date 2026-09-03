@@ -21,7 +21,7 @@
 //! price of the atomics; the gap from `data_parallel` is what either of them buys. The split that
 //! wins at `splits = 1` is not a split at all, which is the control.
 
-use crate::definition::{MatmulElems, compute_peak_ops_per_s};
+use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::{
     CubeCount, CubeDim, Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -31,11 +31,13 @@ use cubecl::{
     ir::{ElemType, FloatKind, Type},
     prelude::*,
 };
-use cubek_test_utils::{CatalogEntry, HostData, HostDataType, RunSamples, TileInput};
+use cubek_test_utils::{
+    CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
+};
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Cut, Instruction, Monoid,
+    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Instruction, Monoid,
     PhysicalAxisMap, Projection, RegisterBlock, Residence, Semiring, Space, TileArg, TileArgLaunch,
-    TileSpec, Tiling, WalkOrder,
+    TileSpec, Tiling, WalkOrder, cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -149,44 +151,43 @@ impl Mapping {
 
     /// The contraction's space. `N` rides the cubes in every mapping, so only the treatment of
     /// `K` differs.
-    fn space(self, problem: Problem, lanes: usize) -> Space {
+    fn space(self, problem: Problem, plane_size: usize) -> Space {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
-                })
-                .build(),
-            Mapping::Workspace { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(KB, Cut::cube(CubeAxis::Z, 1))
-                        .axis(KI, Cut::sequential(k / splits))
-                })
-                .build(),
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                            .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                            .walk(&[(M, m)]);
+                    })
+                    .build()
+            }
+            Mapping::Workspace { .. } => {
+                Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, k / splits)])
+                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                            .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                            .walk(&[(M, m), (KI, k / splits)]);
+                    })
+                    .build()
+            }
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Tiling::new()
-                .extents(&[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::cube(CubeAxis::X, COLS))
-                        .axis(K, Cut::cube(CubeAxis::Z, k / splits))
+            Mapping::AtomicLanes { .. } => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                        .walk(&[(M, m)]);
                 })
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                    l.axis(M, Cut::sequential(m))
-                        .axis(N, Cut::sequential(COLS))
-                        .axis(K, Cut::unit(k / splits / lanes))
+                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                    l.distribute(lanes(), &[(K, k / splits / plane_size)])
+                        .walk(&[(M, m), (N, COLS)]);
                 })
                 .build()
-                .resolve_lanes(lanes),
+                .resolve_lanes(plane_size),
         }
         .with_instruction(INSTRUCTION)
     }
@@ -194,12 +195,11 @@ impl Mapping {
     /// The fold pass's space, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Space {
         let Problem { m, n, .. } = problem;
-        Tiling::new()
-            .extents(&[(M, m), (N, n), (KB, self.splits())])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l| {
-                l.axis(M, Cut::cube(CubeAxis::X, 1))
-                    .axis(N, Cut::cube(CubeAxis::Y, FOLD_COLS))
-                    .axis(KB, Cut::sequential(self.splits()))
+        Tiling::over(&mut (), &[(M, m), (N, n), (KB, self.splits())])
+            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                l.distribute(cubes(CubeAxis::X), &[(M, 1)])
+                    .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
+                    .walk(&[(KB, self.splits())]);
             })
             .build()
             .with_instruction(INSTRUCTION)
@@ -506,13 +506,11 @@ pub fn bench(
     verify(&client, mapping)?;
 
     let bound = Bound::new(&client, mapping, *problem).samples(num_samples);
-    let flops = 2.0 * problem.m as f64 * problem.n as f64 * problem.k as f64;
-    let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
     let durations = bound
         .run(TimingMethod::Device)
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
-    Ok(RunSamples::new(durations).with_flops(flops, compute_peak_ops_per_s(&client, &elems)))
+    Ok(RunSamples::new(durations))
 }
 
 /// Shapes with too few output tiles to fill a device, which is the whole reason to spend cubes on
@@ -595,6 +593,33 @@ impl cubek_test_utils::Category for Category {
 
     fn strategies(&self) -> Vec<CatalogEntry<Strategy>> {
         strategies()
+    }
+
+    /// The contraction itself, which every mapping of it performs alike. The workspace mapping's
+    /// second buffer and second pass are not counted: they are what that mapping costs to reach
+    /// the same answer, and the row's duration already carries them.
+    fn work(&self, problem: &Problem) -> Option<CategoryWork> {
+        let dtype = f32::elem_type_native();
+        let size = dtype.size();
+        let cost = MatmulCost {
+            batches: 1,
+            m: problem.m,
+            n: problem.n,
+            k: problem.k,
+            elems: MatmulGlobalElems {
+                lhs: dtype,
+                rhs: dtype,
+                out: dtype,
+            },
+        };
+        Some(CategoryWork {
+            compute: Some(ComputeWork {
+                ops: cost.compute_ops(),
+                key: cost.compute_key(&client()),
+            }),
+            bytes_read: (problem.m * problem.k + problem.k * problem.n) * size,
+            bytes_written: problem.m * problem.n * size,
+        })
     }
 
     fn bench(
