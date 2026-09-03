@@ -23,9 +23,10 @@ full = ["extended"]
 [dependencies]
 cubek-tile = { workspace = true }
 
-bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
+
+bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 rand = { workspace = true }

@@ -27,9 +27,10 @@ testing = ["dep:cubek-test-utils", "cubecl/test-runtime"]
 benchmarks = ["testing"]
 
 [dependencies]
+cubek-test-utils = { workspace = true, optional = true }
+
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
-cubek-test-utils = { workspace = true, optional = true }
 
 [dev-dependencies]
 cubek-test-utils = { workspace = true }

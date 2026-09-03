@@ -18,9 +18,10 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
 cubecl-common = { workspace = true }
+
+bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 

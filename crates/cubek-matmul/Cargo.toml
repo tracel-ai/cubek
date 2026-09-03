@@ -34,14 +34,16 @@ cubek-std = { workspace = true }
 cubek-tile = { workspace = true, optional = true }
 cubek-test-utils = { workspace = true, optional = true }
 
-bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true }
+
+bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-cubecl = { workspace = true, features = ["test-runtime"] }
 cubek-matmul = { workspace = true, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }
 cubek-quant = { workspace = true, features = ["kernels"] }
+
+cubecl = { workspace = true, features = ["test-runtime"] }

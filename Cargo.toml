@@ -15,22 +15,6 @@ rust-version = "1.92"
 version = "0.3.0-pre.3"
 
 [workspace.dependencies]
-### For local development. ###
-# cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
-# cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
-# cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
-# cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
-### For the main cubek branch. ###
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
-cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
-### For releases ###
-# cubecl = { version = "=0.11.0-pre.3", default-features = false }
-# cubecl-common = { version = "=0.11.0-pre.3", default-features = false }
-# cubecl-environment = { version = "=0.11.0-pre.3", default-features = false }
-# cubecl-ir = { version = "=0.11.0-pre.3", default-features = false }
-
 ### Internal cubek crates ###
 # Declared here so each consumer Cargo.toml can use `workspace = true` instead of
 # repeating the path and version.
@@ -48,6 +32,23 @@ cubek-std = { path = "crates/cubek-std", version = "=0.3.0-pre.3", default-featu
 cubek-test-utils = { path = "crates/cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
 cubek-tile = { path = "crates/cubek-tile", version = "=0.3.0-pre.3", default-features = false }
 
+### For local development. ###
+# cubecl = { path = "../cubecl/crates/cubecl", default-features = false }
+# cubecl-common = { path = "../cubecl/crates/cubecl-common", default-features = false }
+# cubecl-environment = { path = "../cubecl/crates/cubecl-environment", default-features = false }
+# cubecl-ir = { path = "../cubecl/crates/cubecl-ir", default-features = false }
+### For the main cubek branch. ###
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
+cubecl-environment = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "a79e7166445969389c08e0baad92ff67a91138ca", default-features = false }
+### For releases ###
+# cubecl = { version = "=0.11.0-pre.3", default-features = false }
+# cubecl-common = { version = "=0.11.0-pre.3", default-features = false }
+# cubecl-environment = { version = "=0.11.0-pre.3", default-features = false }
+# cubecl-ir = { version = "=0.11.0-pre.3", default-features = false }
+
+
 log = { default-features = false, version = "0.4.22" }
 
 serde = { version = "1.0.204", default-features = false, features = [
@@ -60,7 +61,6 @@ rand = { version = "0.10.0", default-features = false, features = [
 ] } # std_rng is for no_std
 
 # Testing
-
 bytemuck = "1.16.1"
 half = { version = "2.5", features = [
     "alloc",
