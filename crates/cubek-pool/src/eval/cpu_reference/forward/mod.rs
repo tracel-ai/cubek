@@ -8,7 +8,7 @@ pub use max_pool::{run_max_pool, run_max_pool_with_indices};
 
 use super::{f32_elem_type, i32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{PoolForwardProblem, PoolMode};
-use crate::eval::cpu_reference::{cpu_reference_pool, decode_index, geometry::PoolGeometry};
+use crate::eval::cpu_reference::{cpu_reference_pool, geometry::PoolGeometry};
 use crate::{pool2d, pool2d_with_indices};
 use cubecl::{TestRuntime, client::ComputeClient};
 use cubek_test_utils::{
@@ -34,19 +34,6 @@ pub(crate) fn get_window_coords<const N: usize>(
         in_coords[d + 1] = id_signed as usize;
     }
     Some(in_coords)
-}
-
-pub(crate) fn decode_index_simple(index: usize, shape: &[usize]) -> Vec<usize> {
-    let strides = row_major_strides_vec(shape);
-    decode_index(index, shape, &strides)
-}
-
-pub(crate) fn row_major_strides_vec(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
-    for i in (0..shape.len() - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
 }
 
 pub fn strategy_result(
