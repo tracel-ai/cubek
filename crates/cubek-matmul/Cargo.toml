@@ -29,12 +29,10 @@ cpu-reference = ["dep:cubek-test-utils", "cubek-std/testing"]
 benchmarks = ["cpu-reference", "dep:cubek-quant", "cubecl/test-runtime"]
 
 [dependencies]
-cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.3", default-features = false, features = [
-    "kernels",
-], optional = true }
-cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.3", default-features = false }
-cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false, optional = true }
+cubek-quant = { workspace = true, optional = true, features = ["kernels"] }
+cubek-std = { workspace = true }
+cubek-tile = { workspace = true, optional = true }
+cubek-test-utils = { workspace = true, optional = true }
 
 bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib"] }
@@ -44,8 +42,6 @@ serde = { workspace = true }
 
 [dev-dependencies]
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-matmul = { path = ".", default-features = false, features = ["cpu-reference"] }
-cubek-test-utils = { path = "../cubek-test-utils", version = "=0.3.0-pre.3", default-features = false }
-cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.3", features = [
-    "kernels",
-] }
+cubek-matmul = { workspace = true, features = ["cpu-reference"] }
+cubek-test-utils = { workspace = true }
+cubek-quant = { workspace = true, features = ["kernels"] }

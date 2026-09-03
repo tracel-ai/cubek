@@ -26,7 +26,7 @@ benchmarks = ["cpu-reference", "cubecl/test-runtime"]
 
 [dependencies]
 cubecl = { workspace = true }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false, optional = true }
+cubek-test-utils = { workspace = true, optional = true }
 num-complex = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -34,4 +34,4 @@ num-complex = { workspace = true }
 cubecl = { workspace = true, features = ["test-runtime"] }
 cubecl-common = { workspace = true }
 cubek-fft = { path = ".", features = ["cpu-reference"] }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false }
+cubek-test-utils = { workspace = true }

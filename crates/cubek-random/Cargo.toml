@@ -26,8 +26,8 @@ benchmarks = ["dep:cubek-test-utils", "cubecl/test-runtime"]
 cubecl = { workspace = true }
 cubecl-common = { workspace = true }
 cubecl-environment = { workspace = true }
-cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.3", default-features = false }
-cubek-test-utils = { path = "./../cubek-test-utils/", version = "=0.3.0-pre.3", default-features = false, optional = true }
+cubek-std = { workspace = true }
+cubek-test-utils = { workspace = true, optional = true }
 
 num-traits = { workspace = true }
 rand = { workspace = true }

@@ -63,14 +63,14 @@ fft = ["cubek-fft"]
 
 [dependencies]
 cubecl = { workspace = true }
-cubek-attention = { path = "../cubek-attention", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-interpolate = { path = "../cubek-interpolate", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-pool = { path = "../cubek-pool", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-convolution = { path = "../cubek-convolution", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-matmul = { path = "../cubek-matmul", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-quant = { path = "../cubek-quant", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-random = { path = "../cubek-random", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-reduce = { path = "../cubek-reduce", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-fft = { path = "../cubek-fft", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-std = { path = "../cubek-std", version = "=0.3.0-pre.3", default-features = false, optional = true }
-cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false, optional = true }
+cubek-attention = { workspace = true, optional = true }
+cubek-convolution = { workspace = true, optional = true }
+cubek-fft = { workspace = true, optional = true }
+cubek-interpolate = { workspace = true, optional = true }
+cubek-matmul = { workspace = true, optional = true }
+cubek-pool = { workspace = true, optional = true }
+cubek-quant = { workspace = true, optional = true }
+cubek-random = { workspace = true, optional = true }
+cubek-reduce = { workspace = true, optional = true }
+cubek-std = { workspace = true, optional = true }
+cubek-tile = { workspace = true, optional = true }
