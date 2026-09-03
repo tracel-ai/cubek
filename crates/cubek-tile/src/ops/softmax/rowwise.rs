@@ -174,11 +174,18 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Publish per-owned-row `values` into this factors tile, one cell per
-    /// score row. The caller syncs before any cross-unit read.
+    /// score row. The caller syncs before any cross-worker read.
+    ///
+    /// Takes the [`RowShare`] rather than a count, because it has to agree with
+    /// the leaf about who owns row `r` — and under
+    /// [`Plane`](RowShare::Plane) it also has to write each row once, where
+    /// every lane of the plane holds the value.
     ///
     /// A row lane at any rank: a fold's window on a split-wide tile is
     /// `{1, rows}`, the same cells as a plain `{rows}`.
-    pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] rpu: usize) {
+    pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] share: RowShare) {
+        let rpu = comptime!(share.rows());
+        let lanes = comptime!(share.lanes());
         let rows = comptime!(self.space.tile_size());
         comptime!(assert!(
             (0..self.space.rank())
@@ -191,9 +198,13 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
+        // One writer per row: the owning unit, or the owning plane's first
+        // lane — every other lane holds the same value and writing it again
+        // would be a race for nothing.
+        let writer = (UNIT_POS_X as usize).is_multiple_of(lanes);
         for ri in 0..rpu {
-            let r = UNIT_POS_X as usize * rpu + ri;
-            if r < rows {
+            let r = (UNIT_POS_X as usize / lanes) * rpu + ri;
+            if r < rows && writer {
                 view.write(r, Vector::cast_from(values[ri]));
             }
         }

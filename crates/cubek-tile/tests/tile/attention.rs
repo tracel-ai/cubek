@@ -72,7 +72,8 @@ fn attention_fold_kernel<W: Size>(
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
-    let rpu = comptime!(state.rows_per_unit);
+    let share = comptime!(state.share);
+    let rpu = comptime!(share.rows());
     let bound_s = bound as usize;
     sync_cube();
 
@@ -97,7 +98,7 @@ fn attention_fold_kernel<W: Size>(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, rpu);
+        factors.store_rows(&corr, share);
         sync_cube();
 
         // The mix folds the rescale in; stale cache beyond the attended
@@ -111,7 +112,7 @@ fn attention_fold_kernel<W: Size>(
     for ri in 0..rpu {
         recip[ri] = state.recip_l(ri);
     }
-    factors.store_rows(&recip, rpu);
+    factors.store_rows(&recip, share);
     sync_cube();
     acc.scale_rows(&factors);
     sync_cube();
@@ -356,7 +357,8 @@ fn attention_fold_cmma_kernel(
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
     let mut state = RowState::<f32>::new(row_space, units);
-    let rpu = comptime!(state.rows_per_unit);
+    let share = comptime!(state.share);
+    let rpu = comptime!(share.rows());
     let bound_s = bound as usize;
     sync_cube();
 
@@ -379,7 +381,7 @@ fn attention_fold_cmma_kernel(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, rpu);
+        factors.store_rows(&corr, share);
         sync_cube();
 
         acc.mix(&p, &vb, &factors, cols_bound);
@@ -390,7 +392,7 @@ fn attention_fold_cmma_kernel(
     for ri in 0..rpu {
         recip[ri] = state.recip_l(ri);
     }
-    factors.store_rows(&recip, rpu);
+    factors.store_rows(&recip, share);
     sync_cube();
     acc.scale_rows(&factors);
     sync_cube();
@@ -730,7 +732,7 @@ fn attention_fold_split_kernel<W: Size>(
 
     let kept = comptime!(Space::new(&[(R, rows)]));
     let mut state = RowState::<f32>::new(kept, team);
-    let rpu = comptime!(state.rows_per_unit);
+    let share = comptime!(state.share);
     let bound_s = bound as usize;
     sync_cube();
 
@@ -764,7 +766,7 @@ fn attention_fold_split_kernel<W: Size>(
                 materialized: false,
             };
             let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-            factors.store_rows(&corr, rpu);
+            factors.store_rows(&corr, share);
         }
         sync_cube();
 
@@ -777,8 +779,8 @@ fn attention_fold_split_kernel<W: Size>(
 
     // Publish each team's running state, merge across splits, drain with the
     // split weights and the normalizer folded in.
-    m_win.store_rows(&state.m, rpu);
-    l_win.store_rows(&state.l, rpu);
+    m_win.store_rows(&state.m, share);
+    l_win.store_rows(&state.l, share);
     sync_cube();
     factors_all.merge_splits(&m_all, &l_all, T);
     sync_cube();
