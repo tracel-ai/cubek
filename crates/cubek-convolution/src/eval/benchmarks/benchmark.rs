@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -29,8 +28,8 @@ pub fn bench(
     problem: &Conv2dProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = Conv2dBench::<half::f16> {
         problem: problem.clone(),
@@ -52,7 +51,7 @@ pub fn bench(
 struct Conv2dBench<MP> {
     problem: Conv2dProblem,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _phantom: PhantomData<MP>,
@@ -70,7 +69,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let input = make_uniform_4d(
             &client,
@@ -94,7 +93,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn execute(&self, (input, weight, bias): Self::Input) -> Result<(), String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let [n, _, h_in, w_in] = self.problem.input_shape;
         let [c_out, _, k_h, k_w] = self.problem.weight_shape;
         let [s_h, s_w] = self.problem.args.stride;
@@ -130,7 +129,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-conv2d-{}-{}-{}-{}",
             client.name(),

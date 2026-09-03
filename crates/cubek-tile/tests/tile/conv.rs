@@ -10,7 +10,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     zspace::{Shape, shape},
 };
@@ -80,7 +79,7 @@ fn run(
     in_v: usize,
     instruction: Instruction,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let in_data = ramp(in_shape.num_elements(), 7);
@@ -677,7 +676,7 @@ impl Conv1d {
         dynamic: Option<&[Axis]>,
         residence: &[Residence],
     ) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -912,7 +911,7 @@ impl Conv1d {
     /// a kernel that was compiled without knowing either. Their bounds are the exact values here,
     /// the tightest a stage can be sized at; `check_dynamic_padded` covers the staged schedule.
     fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -1110,7 +1109,7 @@ impl Conv1d {
         dynamic_scales: bool,
         residence: &[Residence],
     ) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -1751,7 +1750,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         ],
     ));
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let in_data = ramp(in_h * in_w * ci, 7);
     let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
@@ -1785,7 +1784,7 @@ fn conv2d_projected_matrix_view() {
     let matrices = oh * ow * rh;
     let (rows, cols) = (rw, ci);
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
         .dtype(f32_ty)
@@ -1862,7 +1861,7 @@ fn conv2d_fragment_matrix_view() {
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
         .dtype(f32_ty)
@@ -1933,7 +1932,7 @@ fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
 }
 
 fn conv1d_mma_leaf_with(io: MmaIOConfig) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // The *shape*, not just the feature: a backend can advertise manual mma and
     // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
     // instruction the hardware does not have: it reads back zeros, which looks
@@ -2328,7 +2327,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 
 #[test]
 fn resize1d_rational_dynamic() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let resize = Resize1d {
@@ -2429,7 +2428,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
 
 #[test]
 fn resize1d_dynamic_stage_read_before_fill() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let resize = Resize1d {

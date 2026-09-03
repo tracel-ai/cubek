@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     frontend::Float,
@@ -668,8 +667,8 @@ pub fn bench(
     problem: &MemcpyAsyncProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = MemcpyAsyncBench::<f32> {
         data_count: problem.data_count,
@@ -695,7 +694,7 @@ struct MemcpyAsyncBench<E> {
     window_size: usize,
     double_buffering: bool,
     strategy: CopyStrategyEnum,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _e: PhantomData<E>,
@@ -714,7 +713,7 @@ impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let a = make_uniform_1d::<E>(&client, self.data_count, 0);
         let b = make_uniform_1d::<E>(&client, self.window_size, 1);
@@ -740,7 +739,7 @@ impl<E: Float> Benchmark for MemcpyAsyncBench<E> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "memcpy_async-{}-{}-{:?}",
             client.name(),

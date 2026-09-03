@@ -144,7 +144,7 @@ impl PrngLaunchSettings {
 
 #[cfg(test)]
 mod tests {
-    use cubecl::{TestRuntime, std::tensor::TensorHandle};
+    use cubecl::std::tensor::TensorHandle;
 
     use super::*;
 
@@ -152,7 +152,7 @@ mod tests {
     /// nothing else checks that the two branches of the mapping stay in sync with it.
     #[test]
     fn inferred_maps_num_cpu_cores_to_blocked() {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();
 
         let expected = if client.properties().hardware.num_cpu_cores.is_some() {

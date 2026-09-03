@@ -1,9 +1,5 @@
 use cubecl::{CubeElement, ir::ElemType, prelude::Scalar};
-use cubecl::{
-    client::Client,
-    std::tensor::TensorHandle,
-    {Runtime, TestRuntime},
-};
+use cubecl::{client::Client, std::tensor::TensorHandle};
 use cubek_fft::{rfft_launch, rfft_launch_padded};
 #[cfg(feature = "heavy")]
 use cubek_test_utils::HostDataVec;
@@ -250,7 +246,7 @@ fn empty_tensor(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHa
 
 #[test]
 fn rfft_light_axis_last() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [1, 8].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
@@ -258,7 +254,7 @@ fn rfft_light_axis_last() {
 
 #[test]
 fn rfft_light_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [2, 8, 1].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -266,7 +262,7 @@ fn rfft_light_axis_1_strided() {
 
 #[test]
 fn rfft_light_axis_1_strided_trailing_batch() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [3, 8, 2].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -274,7 +270,7 @@ fn rfft_light_axis_1_strided_trailing_batch() {
 
 #[test]
 fn rfft_light_axis_0_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [8, 2].to_vec();
     let dim = 0;
     test_launch(client, signal_shape, dim);
@@ -282,7 +278,7 @@ fn rfft_light_axis_0_strided() {
 
 #[test]
 fn rfft_light_axis_last_n16() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [1, 16].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
@@ -290,20 +286,20 @@ fn rfft_light_axis_last_n16() {
 
 #[test]
 fn rfft_virtual_padding_axis_1_matches_materialized_zero_padding() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![2, 5, 3], 1, 5, 8);
 }
 
 #[test]
 fn rfft_virtual_padding_ignores_tail_after_signal_len() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![2, 7, 3], 1, 5, 8);
 }
 
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_3d_axis_last() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [5, 2, 2048].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
@@ -312,7 +308,7 @@ fn rfft_3d_axis_last() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_3d_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [5, 64, 1000].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -321,7 +317,7 @@ fn rfft_3d_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_3d_axis_0_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [128, 6, 1000].to_vec();
     let dim = 0;
     test_launch(client, signal_shape, dim);
@@ -330,7 +326,7 @@ fn rfft_3d_axis_0_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_4d_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [5, 256, 6, 42].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -339,7 +335,7 @@ fn rfft_4d_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_shared_memory_cap_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [1, 4096, 1].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -348,7 +344,7 @@ fn rfft_shared_memory_cap_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_large_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [1, 8192, 1].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -357,7 +353,7 @@ fn rfft_large_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_four_step_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [1, 16384, 1].to_vec();
     let dim = 1;
     test_launch(client, signal_shape, dim);
@@ -366,7 +362,7 @@ fn rfft_four_step_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_batched_large_axis_last() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [3, 8192].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
@@ -375,14 +371,14 @@ fn rfft_batched_large_axis_last() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_large_virtual_padding_matches_materialized_zero_padding() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![1, 5000], 1, 5000, 8192);
 }
 
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_nyquist_bin_large_sizes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     for &n_fft in &[8192usize, 16384] {
@@ -458,7 +454,7 @@ fn rfft_nyquist_bin_large_sizes() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_3d_batch_singleton_dim() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [22, 1, 2048].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);
@@ -467,7 +463,7 @@ fn rfft_3d_batch_singleton_dim() {
 #[test]
 #[cfg(feature = "heavy")]
 fn rfft_dispatch_more_than_wgpu_x_axis_limit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let signal_shape = [65_536, 2].to_vec();
     let dim = signal_shape.len() - 1;
     test_launch(client, signal_shape, dim);

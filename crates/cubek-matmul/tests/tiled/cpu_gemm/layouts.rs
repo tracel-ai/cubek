@@ -3,8 +3,8 @@
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, client::Client, frontend::Scalar, ir::AddressType,
-    prelude::*, zspace::Shape, zspace::shape,
+    CubeCount, CubeDim, client::Client, frontend::Scalar, ir::AddressType, prelude::*,
+    zspace::Shape, zspace::shape,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
@@ -180,7 +180,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         tile_size: tile,
     } = dims;
     let out_batch = lhs_batch.max(rhs_batch);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }

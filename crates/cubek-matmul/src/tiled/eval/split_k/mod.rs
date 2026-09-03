@@ -36,7 +36,7 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime,
+    CubeCount, CubeDim,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -298,7 +298,7 @@ impl Benchmark for SplitKBench {
     fn name(&self) -> String {
         format!(
             "{}-split-k-{}-m{}-n{}-k{}",
-            &self.client.name(),
+            self.client.name(),
             self.mapping.tag(),
             self.problem.m,
             self.problem.n,
@@ -366,8 +366,8 @@ pub fn bench(
     problem: &SplitKProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let mapping = strategy.mapping;
 

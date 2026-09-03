@@ -12,7 +12,6 @@
 //! grid exactly once, and that a share starting late reads the regions it was given.
 
 use cubecl::{
-    Runtime, TestRuntime,
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
     prelude::*,
@@ -87,7 +86,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            client: <TestRuntime as Runtime>::client(&Default::default()),
+            client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
             space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
@@ -258,7 +257,7 @@ const BLOCK_K: usize = 4;
 /// `rhs` is where the right operand lives at the level *below* the distribution, which is the one
 /// that walks a share step by step and the only one that can stage anything.
 fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: Residence) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -387,7 +386,7 @@ fn runs_that_straddle_a_tile_boundary_still_sum_to_the_whole() {
 
 /// The drain folds, so a device without a float atomic add cannot run any of this.
 fn folds_atomically() -> bool {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let folds = client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -434,7 +433,7 @@ fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
 /// cover one step of it.
 #[test]
 fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !folds_atomically() {
         return;
     }

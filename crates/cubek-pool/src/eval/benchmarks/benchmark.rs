@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::Client,
     future,
@@ -18,8 +17,8 @@ pub fn bench(
     problem: &PoolProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
 
     let bench = PoolBench {
@@ -41,7 +40,7 @@ pub fn bench(
 
 struct PoolBench {
     problem: PoolProblem,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     dtype: ElemType,
     indices_dtype: ElemType,
@@ -49,6 +48,9 @@ struct PoolBench {
 }
 
 #[derive(Clone)]
+// One value per benchmark iteration, so boxing the backward arm to even the
+// variants out would only add an allocation to what it measures.
+#[allow(clippy::large_enum_variant)]
 enum PoolBenchInput {
     Forward(TensorHandle),
     Backward {

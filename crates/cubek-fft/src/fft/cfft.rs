@@ -85,7 +85,8 @@ pub(crate) fn factor_four_step(n_fft: usize, max_shared_n_fft: usize) -> (usize,
 ///
 /// Both directions are unnormalized, so `Inverse` after `Forward` scales by
 /// `n` (the length along `dim`); divide by `n` yourself if you need it.
-pub fn cfft<R: Runtime>(
+pub fn cfft(
+    client: &Client,
     input_re: TensorHandle,
     input_im: TensorHandle,
     dim: usize,
@@ -108,7 +109,6 @@ pub fn cfft<R: Runtime>(
         "CFFT requires power-of-2 length"
     );
 
-    let client = <R as Runtime>::client(&Default::default());
     let shape = input_re.shape().clone();
     let num_elems = shape.iter().product::<usize>();
 
@@ -118,7 +118,7 @@ pub fn cfft<R: Runtime>(
         TensorHandle::new_contiguous(shape.clone(), client.empty(num_elems * dtype.size()), dtype);
 
     cfft_launch_any_size(
-        &client,
+        client,
         CfftBindings {
             input_re: input_re.binding(),
             input_im: input_im.binding(),

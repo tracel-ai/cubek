@@ -20,13 +20,15 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
+cubek-tile = { workspace = true }
+
 cubecl = { workspace = true, features = ["stdlib"] }
 cubecl-common = { workspace = true, features = ["fp8"] }
-cubek-tile = { path = "../cubek-tile", version = "=0.3.0-pre.3", default-features = false }
 
 half.workspace = true
 serde = { workspace = true }
 
 [dev-dependencies]
+cubek-test-utils = { workspace = true }
+
 cubecl = { workspace = true, features = ["test-runtime"] }
-cubek-test-utils = { path = "../cubek-test-utils", default-features = false }

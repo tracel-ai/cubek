@@ -7,9 +7,7 @@
 
 use crate::attention::forward::assert_result;
 use crate::attention::forward::launcher::test_launch;
-use cubecl::{
-    Runtime, TestRuntime, client::Client, ir::AddressType, prelude::Scalar, zspace::Shape,
-};
+use cubecl::{client::Client, ir::AddressType, prelude::Scalar, zspace::Shape};
 use cubek_attention::forward::definition::{
     AccumulatorPrecision, AttentionDims, AttentionElems, AttentionGlobalTypes, AttentionIdent,
     AttentionOptions, AttentionProblem,
@@ -71,7 +69,7 @@ fn problem(
 
 #[test]
 fn causal_square_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), true, false),
@@ -81,7 +79,7 @@ fn causal_square_unit() {
 
 #[test]
 fn causal_square_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), true, false),
@@ -91,7 +89,7 @@ fn causal_square_blackbox() {
 
 #[test]
 fn causal_rect_q_lt_kv_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (32, 128, 32, 32), true, false),
@@ -101,7 +99,7 @@ fn causal_rect_q_lt_kv_unit() {
 
 #[test]
 fn causal_rect_q_lt_kv_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (32, 128, 32, 32), true, false),
@@ -111,7 +109,7 @@ fn causal_rect_q_lt_kv_blackbox() {
 
 #[test]
 fn causal_rect_q_gt_kv_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (128, 32, 32, 32), true, false),
@@ -121,7 +119,7 @@ fn causal_rect_q_gt_kv_unit() {
 
 #[test]
 fn causal_rect_q_gt_kv_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (128, 32, 32, 32), true, false),
@@ -136,7 +134,7 @@ fn causal_rect_q_gt_kv_blackbox() {
 
 #[test]
 fn causal_decode_single_query_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (1, 128, 32, 32), true, false),
@@ -146,7 +144,7 @@ fn causal_decode_single_query_unit() {
 
 #[test]
 fn causal_cached_prefill_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (4, 128, 32, 32), true, false),
@@ -156,7 +154,7 @@ fn causal_cached_prefill_unit() {
 
 #[test]
 fn causal_cached_prefill_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (16, 128, 32, 32), true, false),
@@ -170,7 +168,7 @@ fn causal_cached_prefill_blackbox() {
 
 #[test]
 fn causal_odd_shapes_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (20, 44, 32, 32), true, false),
@@ -180,7 +178,7 @@ fn causal_odd_shapes_unit() {
 
 #[test]
 fn causal_odd_shapes_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (20, 44, 32, 32), true, false),
@@ -192,7 +190,7 @@ fn causal_odd_shapes_blackbox() {
 
 #[test]
 fn masked_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), false, true),
@@ -202,7 +200,7 @@ fn masked_unit() {
 
 #[test]
 fn masked_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), false, true),
@@ -212,7 +210,7 @@ fn masked_blackbox() {
 
 #[test]
 fn masked_causal_combined_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), true, true),
@@ -222,7 +220,7 @@ fn masked_causal_combined_unit() {
 
 #[test]
 fn masked_causal_combined_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), (64, 64, 32, 32), true, true),
@@ -240,7 +238,7 @@ fn masked_causal_combined_blackbox() {
 /// - a scattered pattern elsewhere.
 fn fully_masked_rows(strategy: Strategy) {
     let (seq_q, seq_kv, head_dim, val_dim) = (16usize, 16usize, 16usize, 16usize);
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = problem(
         f16_dtypes(&client),
         (seq_q, seq_kv, head_dim, val_dim),
@@ -356,7 +354,7 @@ fn fully_masked_rows(strategy: Strategy) {
 fn broadcast_mask(strategy: Strategy) {
     let (batch, num_heads) = (2usize, 2usize);
     let (seq_q, seq_kv, head_dim, val_dim) = (32usize, 32usize, 16usize, 16usize);
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = AttentionProblem {
         dims: AttentionDims {
             batch,

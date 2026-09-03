@@ -1,8 +1,6 @@
 //! Shared helpers for the extended (forced-blueprint) tier.
 
-use cubecl::{
-    Runtime, TestRuntime, client::Client, frontend::Scalar, ir::AddressType, zspace::shape,
-};
+use cubecl::{client::Client, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize, stage::SwizzleModes};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
@@ -21,7 +19,7 @@ use cubek_std::{
 };
 
 pub(crate) fn client() -> Client {
-    TestRuntime::client(&Default::default())
+    cubecl::test_device().client()
 }
 
 pub(crate) fn f16_elems() -> MatmulGlobalElems {

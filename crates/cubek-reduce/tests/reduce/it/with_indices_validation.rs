@@ -5,7 +5,7 @@
 //! it had the values layout, producing silently wrong data. These tests pin
 //! that such calls are rejected before launch instead.
 
-use cubecl::{TestRuntime, config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
+use cubecl::{config::autotune::AutotuneLevel, prelude::*, zspace::Shape};
 use cubek_reduce::{
     ReduceError, ReduceStrategy, ReduceWithIndicesDtypes,
     components::instructions::ReduceOperationConfig,
@@ -36,7 +36,7 @@ fn try_launch_config(
     indices_shape: [usize; 2],
     indices_strides: Vec<usize>,
 ) -> Result<(), ReduceError> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let input_dtype = f32::elem_type_native();
     let u32_dtype = u32::elem_type_native();

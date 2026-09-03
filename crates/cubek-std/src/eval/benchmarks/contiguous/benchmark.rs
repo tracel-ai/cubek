@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::Client,
     future,
@@ -16,8 +15,8 @@ pub fn bench(
     problem: &ContiguousProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
 
     let bench = IntoContiguousBench {
@@ -40,7 +39,7 @@ pub fn bench(
 struct IntoContiguousBench {
     shape: Vec<usize>,
     dims: Vec<(usize, usize)>,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     dtype: ElemType,
     samples: usize,

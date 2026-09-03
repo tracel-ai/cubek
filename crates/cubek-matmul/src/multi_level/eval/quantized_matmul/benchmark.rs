@@ -1,7 +1,6 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
     client::Client,
     future,
@@ -30,8 +29,8 @@ pub fn bench(
     problem: &QuantizedMatmulProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     validate_spec(problem)?;
     let elems = matmul_elems::<f32>();

@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = ReduceBench::<f32> {
         shape: problem.shape.clone(),
@@ -73,7 +72,7 @@ struct ReduceBench<E> {
     config: ReduceOperationConfig,
     kind: ReduceBenchKind,
     strategy: ReduceStrategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _e: PhantomData<E>,
@@ -87,7 +86,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let elem = E::elem_type_native();
 
         let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))

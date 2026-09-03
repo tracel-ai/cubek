@@ -10,7 +10,7 @@
 
 #![cfg(feature = "cpu-reference")]
 
-use cubecl::{Runtime, TestRuntime, client::Client, prelude::Scalar, zspace::Shape};
+use cubecl::{client::Client, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     backward::{
         BackwardConfig, flash_attention_backward, flash_attention_backward_dkdv,
@@ -45,7 +45,7 @@ struct BackwardInputs {
 }
 
 fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> AttentionProblem {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     AttentionProblem {
         dims: AttentionDims {
             batch: 1,
@@ -169,7 +169,7 @@ const EPS: f32 = 1e-3;
 /// Run the prepass kernel and compare its `D` output against the CPU
 /// reference. Expected to fail until the kernel lands.
 fn run_prepass(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     // We need O for the prepass: generate it by running the CPU forward.
@@ -234,7 +234,7 @@ fn o_data_to_vec(dbg: &FlashAttentionBackwardDebug) -> Vec<f32> {
 /// Run the dQ kernel with CPU-computed `lse` and `D`, compare its output
 /// against the CPU reference's dQ. Expected to fail until the kernel lands.
 fn run_dq(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -301,7 +301,7 @@ fn run_dq(problem: AttentionProblem) {
 }
 
 fn run_dkdv(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -380,7 +380,7 @@ fn run_dkdv(problem: AttentionProblem) {
 }
 
 fn run_end_to_end(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -500,7 +500,7 @@ fn upload_row(
 /// kernels land it'll start checking. Tolerance is generous because finite
 /// differences in fp32 are noisy; bf16 will need looser bounds again.
 fn run_gradcheck(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(

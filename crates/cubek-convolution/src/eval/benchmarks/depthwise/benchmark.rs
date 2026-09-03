@@ -1,7 +1,6 @@
 //! Timing one depthwise problem under one tiling.
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &DepthwiseProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = DepthwiseBench {
         problem: *problem,
@@ -42,7 +41,7 @@ pub fn bench(
 struct DepthwiseBench {
     problem: DepthwiseProblem,
     strategy: DepthwiseStrategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
 }
@@ -102,7 +101,7 @@ impl Benchmark for DepthwiseBench {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!("{}-depthwise-{}", client.name(), dtype()).to_lowercase()
     }
 

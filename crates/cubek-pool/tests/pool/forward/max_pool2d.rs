@@ -1,12 +1,12 @@
 use super::{make_problem, run_pool_test};
-use cubecl::{Runtime, TestRuntime, zspace::Shape};
+use cubecl::zspace::Shape;
 use cubek_pool::definition::MaxPoolOptions;
 
 const MAX_POOL2D_TOLERANCE: f32 = 0.0;
 
 #[test]
 fn test_max_pool2d() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 4, 4, 2]),
         false,
@@ -17,7 +17,7 @@ fn test_max_pool2d() {
 
 #[test]
 fn test_max_pool2d_strided_no_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 6, 6, 4]),
         false,
@@ -28,7 +28,7 @@ fn test_max_pool2d_strided_no_pad() {
 
 #[test]
 fn test_max_pool2d_dilated() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 8, 8, 3]),
         false,
@@ -39,7 +39,7 @@ fn test_max_pool2d_dilated() {
 
 #[test]
 fn test_max_pool2d_non_square_asymmetric() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 5, 7, 3]),
         false,
@@ -50,7 +50,7 @@ fn test_max_pool2d_non_square_asymmetric() {
 
 #[test]
 fn test_max_pool2d_ceil_mode() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 5, 5, 4]),
         false,
@@ -61,7 +61,7 @@ fn test_max_pool2d_ceil_mode() {
 
 #[test]
 fn test_max_pool2d_with_indices() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 3, 3, 2]),
         true,

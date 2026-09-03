@@ -3,10 +3,7 @@
 //! strides) and converts to the real [`ConcreteLayout`]. Production carries no such enum: it reads
 //! the storage-tiling depth + strides straight off each binding, so this lives with the tests.
 
-use cubecl::{
-    Runtime,
-    prelude::{TensorArg, TensorBinding},
-};
+use cubecl::prelude::{TensorArg, TensorBinding};
 use cubek_matmul::definition::MatmulSetupError;
 use cubek_std::MatrixLayout;
 use cubek_tile::{Axis, ConcreteLayout, PhysicalAxis, StorageTiling};

@@ -27,7 +27,9 @@ pub fn compute_key(client: &Client, elems: &MatmulElems) -> ThroughputKey {
 /// The device's measured arithmetic peak, in ops/s, for a bench row over these register
 /// types to be judged against. `None` when the probe reports nothing usable.
 pub fn compute_peak_ops_per_s(client: &Client, elems: &MatmulElems) -> Option<f64> {
-    let peak = measure_peak_throughput(client, compute_key(client, elems)).ops_per_s();
+    let peak = measure_peak_throughput(client, compute_key(client, elems))
+        .ok()?
+        .ops_per_s();
 
     (peak > 0.0).then_some(peak)
 }

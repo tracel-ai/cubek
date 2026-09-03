@@ -8,7 +8,6 @@
 
 use cubecl::config::autotune::AutotuneLevel;
 use cubecl::{
-    TestRuntime,
     ir::{ElemType, FloatKind, UIntKind},
     prelude::*,
     zspace::Shape,
@@ -29,7 +28,7 @@ use cubek_test_utils::{
 /// values. The rows are designed to hit every interesting slice:
 /// `[0,0,0,0]` (empty), `[1,1,1,1]` (full), `[0,1,0,0]` (mixed).
 fn reduce_mask(config: ReduceOperationConfig) -> Vec<f32> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = Shape::new([3, 4]);
     #[rustfmt::skip]

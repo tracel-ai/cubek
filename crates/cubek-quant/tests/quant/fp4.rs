@@ -9,12 +9,7 @@
 //! cannot represent, and leaves an `int4` clamped to ±6 wearing fp4's name. That degradation is
 //! what these tests exist to catch: it raises no error and costs accuracy on every weight.
 
-use cubecl::{
-    client::Client,
-    features::TypeUsage,
-    prelude::*,
-    {TestRuntime, zspace::shape},
-};
+use cubecl::{client::Client, features::TypeUsage, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
@@ -53,7 +48,7 @@ fn every_code() -> Vec<f32> {
 /// Round trip `data` at an exact scale of one, so the reconstruction is the codec's answer and
 /// nothing else. `global` rides along for the two-level scheme, which needs the binding.
 fn round_trip(scheme: &QuantScheme, data: &[f32]) -> Vec<f32> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let shape = shape![1, BLOCK];
 
     let input = f32_tensor(&client, data, shape.clone());
@@ -217,7 +212,7 @@ mod mx {
     /// Round trip one block at `scale`, which the codec stores as `ue8m0` and may round up.
     /// `None` where the runtime cannot address the scale.
     fn round_trip_at(scale: f32, data: &[f32]) -> Option<Vec<f32>> {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         if !addressable(&client) {
             return None;
         }

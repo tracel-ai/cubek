@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     calculate_cube_count_elemwise,
     client::Client,
@@ -33,8 +32,8 @@ pub fn bench(
     problem: &UnaryProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = UnaryBench::<f32> {
         shape: problem.shape.clone(),
@@ -56,7 +55,7 @@ pub fn bench(
 struct UnaryBench<E> {
     shape: Vec<usize>,
     vectorization: VectorSize,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _e: PhantomData<E>,
@@ -67,7 +66,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let storage = E::elem_type_native();
 
         let make = |seed: u64| -> TensorHandle {
@@ -108,7 +107,7 @@ impl<E: Float> Benchmark for UnaryBench<E> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         format!(
             "unary-{}-{}-{:?}",

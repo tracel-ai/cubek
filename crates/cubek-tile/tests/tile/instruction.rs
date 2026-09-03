@@ -1,7 +1,7 @@
 //! Unit tests for the leaf instructions in `instruction/` and the 1-D register folds in
 //! `instruction/registers/horizontal.rs`.
 
-use cubecl::{Runtime, TestRuntime, client::Client, prelude::*, zspace::Shape};
+use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Monoid,
@@ -154,7 +154,7 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
 
 #[test]
 fn test_hsum_and_array_sum() {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([4]))
         .dtype(f32::elem_type_native())
         .custom(vec![1.0, 2.0, 3.0, 4.0])
@@ -183,7 +183,7 @@ fn test_hsum_and_array_sum() {
 
 #[test]
 fn test_extrema_max_min() {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([4]))
         .dtype(f32::elem_type_native())
         .custom(vec![3.0, 1.0, 7.0, 2.0])
@@ -214,7 +214,7 @@ fn test_extrema_max_min() {
 
 #[test]
 fn test_logsumexp_step() {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let (input_handle, _data) = TestInput::builder(client.clone(), Shape::new([2]))
         .dtype(f32::elem_type_native())
         .custom(vec![2.0, 5.0])
@@ -250,7 +250,7 @@ fn test_logsumexp_step() {
 
 #[test]
 fn test_plane_and_group_primitives() {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let output_handle = TestInput::builder(client.clone(), Shape::new([60]))
         .dtype(f32::elem_type_native())
         .zeros()

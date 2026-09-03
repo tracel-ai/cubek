@@ -16,7 +16,8 @@ use crate::{
 };
 
 /// Inverse Real-valued Fast Fourier Transform.
-pub fn irfft<R: Runtime>(
+pub fn irfft(
+    client: &Client,
     spectrum_re: TensorHandle,
     spectrum_im: TensorHandle,
     dim: usize,
@@ -29,8 +30,6 @@ pub fn irfft<R: Runtime>(
         spectrum_im.shape()
     );
 
-    let client = <R as Runtime>::client(&Default::default());
-
     let mut signal_shape = spectrum_re.shape().clone();
     signal_shape[dim] = (spectrum_re.shape()[dim] - 1) * 2;
     let num_elems = signal_shape.iter().product::<usize>();
@@ -41,7 +40,7 @@ pub fn irfft<R: Runtime>(
     );
 
     irfft_launch(
-        &client,
+        client,
         spectrum_re.binding(),
         spectrum_im.binding(),
         signal.clone().binding(),

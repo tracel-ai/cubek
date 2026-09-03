@@ -1,4 +1,4 @@
-use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
+use cubecl::{features::TypeUsage, ir::ElemType, ir::FloatKind, prelude::*};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     eval::cpu_reference::matmul_cpu_reference,
@@ -82,12 +82,12 @@ fn block_scheme(value: QuantValue, block_size: impl AsRef<[u8]>) -> QuantScheme 
 /// `cubek_quant::quantize_native` currently requires for `QuantStore::Native`.
 /// Returns `true` if the caller should proceed.
 fn native_quant_supported() -> bool {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     i8::supported_uses(&client).contains(TypeUsage::Conversion)
 }
 
 fn run_quantized_matmul(case: QuantizedMatmulCase) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let lhs_dtype = match case.lhs_scheme {
         Some(scheme) => InputDataType::Quantized(scheme),

@@ -1,4 +1,4 @@
-use cubecl::{Runtime, TestRuntime, prelude::Scalar};
+use cubecl::prelude::Scalar;
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems},
     definition::{MatmulPrecision, MatrixPrecision},
@@ -29,8 +29,8 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         problem: &Conv2dProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
         strategy_result(client, spec, strategy.clone(), dtypes, seeds[0], seeds[1])
     }
@@ -41,8 +41,8 @@ impl cubek_test_utils::Correctness for Conv2dCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let (spec, dtypes) = build_spec_and_dtypes::<half::f16>(problem);
         cpu_reference_result(client, spec, dtypes, seeds[0], seeds[1], progress)
     }

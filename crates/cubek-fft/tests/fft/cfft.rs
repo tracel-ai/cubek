@@ -1,4 +1,4 @@
-use cubecl::{Runtime, TestRuntime, ir::ElemType, prelude::Scalar, std::tensor::TensorHandle};
+use cubecl::{ir::ElemType, prelude::Scalar, std::tensor::TensorHandle};
 use cubek_fft::{CfftBindings, FftMode, cfft, cfft_launch_any_size};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, TestInput, TestOutcome,
@@ -37,7 +37,7 @@ fn combine_re_im(re: ValidationResult, im: ValidationResult) -> ValidationResult
 /// Forward then inverse along `dim` recovers the input scaled by `n` (the
 /// transform is unnormalized in both directions).
 fn cfft_roundtrip_case(signal_shape: Vec<usize>, dim: usize) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let n = signal_shape[dim] as f32;
 
@@ -134,7 +134,7 @@ fn cfft_roundtrip_batched_larger() {
 
 #[test]
 fn cfft_wrapper_roundtrip() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let signal_shape = [2, 8].to_vec();
     let dim = 1;
@@ -150,9 +150,15 @@ fn cfft_wrapper_roundtrip() {
         .generate_with_f32_host_data();
 
     let (spectrum_re, spectrum_im) =
-        cfft::<TestRuntime>(input_re, input_im, dim, dtype, FftMode::Forward);
-    let (recovered_re, recovered_im) =
-        cfft::<TestRuntime>(spectrum_re, spectrum_im, dim, dtype, FftMode::Inverse);
+        cfft(&client, input_re, input_im, dim, dtype, FftMode::Forward);
+    let (recovered_re, recovered_im) = cfft(
+        &client,
+        spectrum_re,
+        spectrum_im,
+        dim,
+        dtype,
+        FftMode::Inverse,
+    );
 
     let actual_re = HostData::from_tensor_handle(&client, recovered_re, HostDataType::F32);
     let actual_im = HostData::from_tensor_handle(&client, recovered_im, HostDataType::F32);

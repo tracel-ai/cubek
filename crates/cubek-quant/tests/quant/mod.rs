@@ -1,4 +1,4 @@
-use cubecl::{Runtime, prelude::*};
+use cubecl::prelude::*;
 use cubek_quant::scheme::ScaleDtype;
 mod fp4;
 mod fp8;

@@ -14,7 +14,6 @@
 //! the evidence for that + a regression guard on the vectorized tiled path.
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -169,7 +168,7 @@ impl Benchmark for TiledBench {
         let planes = self.strategy.planes;
         format!(
             "{}-cpu-gemm-tiled-{}-p{}x{}",
-            &self.client.name(),
+            self.client.name(),
             packing,
             planes.m,
             planes.n,
@@ -194,8 +193,8 @@ pub fn bench(
     problem: &TiledProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = TiledBench {

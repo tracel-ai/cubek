@@ -23,7 +23,7 @@
 
 use crate::definition::{MatmulCost, MatmulGlobalElems};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime,
+    CubeCount, CubeDim,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     features::AtomicUsage,
@@ -467,8 +467,8 @@ pub fn bench(
     problem: &Problem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let mapping = strategy.mapping;
     let splits = mapping.splits();
 

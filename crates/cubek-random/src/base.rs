@@ -236,7 +236,7 @@ pub fn to_unit_interval_open<N: Size>(int_random: Vector<u32, N>) -> Vector<f32,
 
 #[cfg(test)]
 mod tests {
-    use cubecl::{TestRuntime, std::tensor::TensorHandle};
+    use cubecl::std::tensor::TensorHandle;
 
     use super::*;
     use crate::{
@@ -334,7 +334,7 @@ mod tests {
         let shape = vec![100_003];
         let elements: usize = shape.iter().product();
 
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();
         let zeros = vec![0.0f32; elements];
         let output = TensorHandle::new_contiguous(
@@ -393,7 +393,7 @@ mod tests {
         shape: Vec<usize>,
         launch: impl FnOnce(&Client, TensorBinding, ElemType) -> Result<(), LaunchError>,
     ) -> Vec<f32> {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();
 
         let zeros = vec![0.0f32; shape.iter().product()];

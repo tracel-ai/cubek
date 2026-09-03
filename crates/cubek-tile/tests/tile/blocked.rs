@@ -10,7 +10,7 @@
 //! at all, then one adds them; the last two split an axis the *output* spans, which is the shape a
 //! per-column-block scale needs and the one the accumulator's edges had to be derived to allow.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
@@ -65,7 +65,7 @@ fn one_contracted_axis_is_the_reference() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -124,7 +124,7 @@ fn a_partitioned_axis_contracts_the_same() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -202,7 +202,7 @@ fn scales_omit_the_axis_inside_the_block() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -303,7 +303,7 @@ fn a_split_output_axis_contracts_the_same() {
     let (rows, blocks, inside, depth) = (4, 2, 4, 8);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -385,7 +385,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
     let (rows, blocks, inside, depth) = (4, 2, 4, 8);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -491,7 +491,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
     let (rows, blocks, inside, depth) = (4, 2, 4, 8);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -589,7 +589,7 @@ fn scales_are_served_several_at_a_time() {
     let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -697,7 +697,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
     let (rows, blocks, inside, depth) = (4, 4, 2, 8);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -798,7 +798,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
     let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -910,7 +910,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
     let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);
     let cols = blocks * inside;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let scale_dtype = f16::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();

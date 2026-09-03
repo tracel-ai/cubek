@@ -7,9 +7,10 @@
 //! stores `lse = m + ln(l)`. Checked against direct (non-online) host math,
 //! including exact zeros and exact -inf lse on fully-masked rows.
 
+use cubecl::features::Plane;
 use cubecl::std::tensor::layout::CoordsDyn;
-use cubecl::{Runtime, TestRuntime, client::Client, prelude::*, zspace::Shape};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubecl::{client::Client, prelude::*, zspace::Shape};
+use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
     Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
 };
@@ -30,6 +31,7 @@ fn softmax_walk_kernel(
     #[comptime] space: Space,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
+    #[comptime] lanes: usize,
     #[comptime] causal: bool,
     #[comptime] materialized: bool,
     #[comptime] num_blocks: usize,
@@ -50,21 +52,32 @@ fn softmax_walk_kernel(
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
     let kept_space = comptime!(Space::new(&[(Q, rows)]));
-    let mut state = RowState::<f32>::new(kept_space, units);
-    let rpu = comptime!(state.rows_per_unit);
+    // One worker per row-slice, where a worker is a unit or a whole plane.
+    // `lanes == 1` is the unit arm, so everything below reads the same either
+    // way and the two differ in one call.
+    let mut state = match comptime!(lanes > 1) {
+        true => RowState::<f32>::over_planes(kept_space, units, lanes),
+        false => RowState::<f32>::new(kept_space, units),
+    };
+    let rpu = comptime!(state.share.rows());
+    let lane = UNIT_POS_X as usize % lanes;
+    let worker = UNIT_POS_X as usize / lanes;
     let mut acc = Array::<f32>::new(rpu);
     for ri in 0..rpu {
         acc[ri] = 0.0;
     }
 
     for blk in 0..num_blocks {
-        // Stage the block: each unit fills its own rows, so no syncs.
+        // Stage the block: each worker fills its own rows and, inside them,
+        // each lane the columns the leaf will read back — so no cell crosses a
+        // lane and no sync is owed on either arm.
         let gmem = score_gmem.view::<Const<1>>();
         let mut smem = score.view_mut::<Const<1>>();
         for ri in 0..rpu {
-            let r = UNIT_POS_X as usize * rpu + ri;
+            let r = worker * rpu + ri;
             if r < rows {
-                for c in 0..cols {
+                let mut c = lane;
+                while c < cols {
                     let mut src = CoordsDyn::new();
                     src.push(r as u32);
                     src.push((blk * cols + c) as u32);
@@ -72,6 +85,7 @@ fn softmax_walk_kernel(
                     dst.push(r as u32);
                     dst.push(c as u32);
                     smem.write(dst, gmem.read(src));
+                    c += lanes;
                 }
             }
         }
@@ -88,44 +102,99 @@ fn softmax_walk_kernel(
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
 
         // The block update `O = corr·O + P·V`, on a scalar accumulator.
+        // Each lane sums the columns it owns and the plane closes it, which is
+        // the value matmul's own shape; at one lane the reduction is the
+        // identity.
         let p_view = p.view::<Const<1>>();
         for ri in 0..rpu {
-            let r = UNIT_POS_X as usize * rpu + ri;
+            let r = worker * rpu + ri;
             if r < rows {
                 acc[ri] *= corr[ri];
-                for c in 0..cols {
+                let mut part = 0f32;
+                let mut c = lane;
+                while c < cols {
                     let mut pos = CoordsDyn::new();
                     pos.push(r as u32);
                     pos.push(c as u32);
-                    acc[ri] += p_view.read(pos).extract(0usize) * values[blk * cols + c];
+                    part += p_view.read(pos).extract(0usize) * values[blk * cols + c];
+                    c += lanes;
                 }
+                acc[ri] += match comptime!(lanes > 1) {
+                    true => plane_sum(part),
+                    false => part,
+                };
             }
         }
     }
 
+    // The state is worker-uniform, so one lane of each writes its rows.
     for ri in 0..rpu {
-        let r = UNIT_POS_X as usize * rpu + ri;
-        if r < rows {
+        let r = worker * rpu + ri;
+        if r < rows && lane == 0 {
             out[r] = acc[ri] * state.recip_l(ri);
             lse[r] = state.lse(ri);
         }
     }
 }
 
-/// Launch the walk kernel and check out/lse against direct host math.
+/// Launch the walk kernel at unit ownership and check out/lse against direct
+/// host math.
 fn run(
+    shape: (usize, usize, usize, usize),
+    bound_s: usize,
+    causal: bool,
+    mask_fn: Option<fn(usize, usize) -> bool>,
+) {
+    run_at(1, shape, bound_s, causal, mask_fn);
+}
+
+/// [`run`] at plane ownership, at the width this device commits to.
+///
+/// Skipped where it commits to none: a plane reduction over a fabricated or
+/// ranged width folds the wrong lanes and is silently wrong, which is why the
+/// arm takes its width from the caller rather than reading `PLANE_DIM`.
+fn run_planar(
+    shape: (usize, usize, usize, usize),
+    bound_s: usize,
+    causal: bool,
+    mask_fn: Option<fn(usize, usize) -> bool>,
+) {
+    let client: Client = cubecl::test_device().client();
+    let hardware = &client.properties().hardware;
+    let exact = hardware.plane_size_min == hardware.plane_size_max;
+    if !client.properties().features.plane.contains(Plane::Ops) || !exact {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device commits to no exact plane width".to_string(),
+        ))
+        .enforce();
+        return;
+    }
+    run_at(
+        hardware.plane_size_min as usize,
+        shape,
+        bound_s,
+        causal,
+        mask_fn,
+    );
+}
+
+/// The body both arms share: `lanes` units make one worker.
+fn run_at(
+    lanes: usize,
     (units, rows, cols, num_blocks): (usize, usize, usize, usize),
     bound_s: usize,
     causal: bool,
     mask_fn: Option<fn(usize, usize) -> bool>,
 ) {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
 
     // The CPU runtime caps units per cube at core count; ownership only needs
     // a consistent unit count, so clamp (rows_per_unit grows to compensate).
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
+    // A worker is a whole plane, so the cube holds a whole number of them.
+    let units = units.next_multiple_of(lanes);
 
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -189,6 +258,7 @@ fn run(
         gmem_space,
         block_space,
         units,
+        lanes,
         causal,
         mask_fn.is_some(),
         num_blocks,
@@ -305,7 +375,8 @@ fn softmax_smem_acc_kernel(
     let cols = comptime!(block_space.extent(S));
     let kept_space = comptime!(Space::new(&[(Q, rows)]));
     let mut state = RowState::<f32>::new(kept_space.clone(), units);
-    let rpu = comptime!(state.rows_per_unit);
+    let share = comptime!(state.share);
+    let rpu = comptime!(share.rows());
 
     let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::in_place()));
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
@@ -341,7 +412,7 @@ fn softmax_smem_acc_kernel(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, rpu);
+        factors.store_rows(&corr, share);
         sync_cube();
 
         // `O = corr·O`, every cell exactly once, whoever owns the rows.
@@ -379,7 +450,7 @@ fn softmax_smem_acc_kernel(
     for ri in 0..rpu {
         recip[ri] = state.recip_l(ri);
     }
-    factors.store_rows(&recip, rpu);
+    factors.store_rows(&recip, share);
     sync_cube();
     acc.scale_rows(&factors);
     sync_cube();
@@ -409,7 +480,7 @@ fn run_smem_acc(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: Client = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
@@ -549,10 +620,46 @@ fn direct_unit_masked() {
     run((1, 8, 8, 4), 27, false, Some(crafted_mask));
 }
 
-/// One row per unit across a full plane.
+/// One row per unit, a cube wide.
+#[test]
+fn one_row_per_unit_masked() {
+    run((32, 32, 16, 2), 30, false, Some(crafted_mask));
+}
+
+/// **Plane ownership**: a plane owns the row, its lanes split the columns and
+/// the reduction closes in the hardware. Same rows, same mask, same answer as
+/// [`one_row_per_unit_masked`] — the arm changes who computes, never what.
+///
+/// The mask is what makes it a real test of the split: a lane whose columns
+/// are all masked contributes the identity, and a max seeded on every lane
+/// must not survive as one row's answer.
 #[test]
 fn plane_masked() {
-    run((32, 32, 16, 2), 30, false, Some(crafted_mask));
+    run_planar((32, 32, 16, 2), 30, false, Some(crafted_mask));
+}
+
+/// Plane ownership with more rows than planes, so a plane folds several rows
+/// in sequence and its `rpp` slots must stay independent.
+#[test]
+fn plane_multi_rows_masked_causal() {
+    run_planar((64, 8, 16, 3), 40, true, Some(crafted_mask));
+}
+
+/// Plane ownership on a block narrower than the plane: most lanes contribute
+/// nothing to the row, so the reduction's identities are load-bearing — a sum
+/// seeded wrong or a max left at zero shows up here and nowhere else.
+#[test]
+fn plane_block_narrower_than_the_plane() {
+    run_planar((32, 4, 8, 2), 11, false, None);
+}
+
+/// Plane ownership over a fully-masked prefix: `l` stays exactly zero, the
+/// drain divides by it through the masked guard, and `lse` is -inf. The
+/// plane arm reaches that guard through a reduction where the unit arm does
+/// not, so it is worth its own case.
+#[test]
+fn plane_fully_masked_rows() {
+    run_planar((32, 16, 8, 2), 0, false, None);
 }
 
 /// Several rows per unit (rows/units = 2).

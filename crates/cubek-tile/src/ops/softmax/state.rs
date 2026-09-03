@@ -18,8 +18,49 @@ pub(crate) fn masked_recip<E: Float>(l: E) -> E {
     E::cast_from(l >= eps) * clamp_min(l, eps).recip()
 }
 
+/// How the score rows are shared out, and therefore how a row reduction closes.
+///
+/// The two arms compute the same softmax over the same cells; what differs is
+/// the worker. Stated once, here, because every op of the leaf has to agree
+/// with every other about who owns row `r` — and because the caller's own row
+/// loops ([`store_rows`](crate::Tile::store_rows)) have to agree with them too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RowShare {
+    /// One **unit** per row-slice: the reduction runs in that unit's own
+    /// registers over the whole row. No shuffles, no syncs, nothing asked of
+    /// the hardware — the arm a device with no plane ops still runs.
+    Unit { rows: usize },
+    /// One **plane** per row-slice: its lanes split the reduced axis and meet
+    /// in a plane reduction, so every lane leaves holding the row's state.
+    ///
+    /// Costs `lanes`× the workers on the same rows, which is the whole point:
+    /// a score tile of 8 rows keeps 8 units busy under `Unit` and a whole
+    /// 64-unit cube busy under `Plane`. In exchange the cube's x dim must be a
+    /// whole number of planes, and `lanes` must be the width the device
+    /// actually commits to — a plane reduction over a wrong width is silently
+    /// wrong rather than an error.
+    Plane { rows: usize, lanes: usize },
+}
+
+impl RowShare {
+    /// Rows one worker owns.
+    pub fn rows(&self) -> usize {
+        match self {
+            RowShare::Unit { rows } | RowShare::Plane { rows, .. } => *rows,
+        }
+    }
+
+    /// Units one worker spans: one, or the plane's width.
+    pub fn lanes(&self) -> usize {
+        match self {
+            RowShare::Unit { .. } => 1,
+            RowShare::Plane { lanes, .. } => *lanes,
+        }
+    }
+}
+
 /// Per-row running state `(m, l)` of the online softmax, in the owning
-/// unit's registers. Its space is the softmax's kept axes; the score axis it
+/// worker's registers. Its space is the softmax's kept axes; the score axis it
 /// omits is the reduced one. Allocated once before the walk, threaded through
 /// every [`Tile::softmax`](crate::Tile::softmax) call (or every
 /// [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
@@ -29,8 +70,10 @@ pub struct RowState<E: Float> {
     pub l: Array<E>,
     #[cube(comptime)]
     pub space: Space,
+    /// Who owns which rows. Under [`RowShare::Plane`] every lane of a plane
+    /// holds the same `(m, l)`, since a plane-reduced score is plane-uniform.
     #[cube(comptime)]
-    pub rows_per_unit: usize,
+    pub share: RowShare,
 }
 
 /// What one streamed [`absorb`](RowState::absorb) tells the row's
@@ -49,27 +92,47 @@ impl<E: Float> RowState<E> {
     /// `space` is the kept axes; `units` the number of units sharing the
     /// tile, unit u owning rows `[u*rpu, (u+1)*rpu)`.
     pub fn new(#[comptime] space: Space, #[comptime] units: usize) -> RowState<E> {
-        let rows_per_unit = comptime!(space.tile_size().div_ceil(units));
-        let mut m = Array::new(rows_per_unit);
-        let mut l = Array::new(rows_per_unit);
-        for i in 0..rows_per_unit {
+        let rows = comptime!(space.tile_size().div_ceil(units));
+        RowState::<E>::of(space, comptime!(RowShare::Unit { rows }))
+    }
+
+    /// [`new`](RowState::new) at plane ownership: `units` units of `lanes`
+    /// each, so `units / lanes` planes share the tile and plane `p` owns rows
+    /// `[p*rpp, (p+1)*rpp)`, its lanes splitting each row's reduced axis.
+    ///
+    /// `lanes` must be the width the device commits to
+    /// (`plane_size_min == plane_size_max`, and plane ops offered); one lane is
+    /// the degenerate case and gives back [`new`](RowState::new)'s arm, which is
+    /// what a CPU runtime gets.
+    pub fn over_planes(
+        #[comptime] space: Space,
+        #[comptime] units: usize,
+        #[comptime] lanes: usize,
+    ) -> RowState<E> {
+        let planes = comptime!(units.div_ceil(lanes));
+        let rows = comptime!(space.tile_size().div_ceil(planes));
+        RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
+    }
+
+    /// The state one worker holds, at whatever [`RowShare`] the caller states.
+    pub fn of(#[comptime] space: Space, #[comptime] share: RowShare) -> RowState<E> {
+        let rows = comptime!(share.rows());
+        let mut m = Array::new(rows);
+        let mut l = Array::new(rows);
+        for i in 0..rows {
             m[i] = E::min_value();
             l[i] = E::from_int(0);
         }
-        RowState::<E> {
-            m,
-            l,
-            space,
-            rows_per_unit,
-        }
+        RowState::<E> { m, l, space, share }
     }
 
     /// Absorb one block's row maxes and sums: `m = max_buf`,
     /// `l = corr*l + sum_buf`. Returns `corr = exp(m_old - m_new)` per row,
     /// the caller's accumulator rescale factor.
     pub fn update(&mut self, max_buf: &Array<E>, sum_buf: &Array<E>) -> Array<E> {
-        let mut corr = Array::new(self.rows_per_unit);
-        for i in 0..self.rows_per_unit {
+        let rows = comptime!(self.share.rows());
+        let mut corr = Array::new(rows);
+        for i in 0..rows {
             corr[i] = (self.m[i] - max_buf[i]).exp();
             self.l[i] = corr[i] * self.l[i] + sum_buf[i];
             self.m[i] = max_buf[i];

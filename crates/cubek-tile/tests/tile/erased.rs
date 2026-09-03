@@ -15,7 +15,6 @@
 //! near miss.
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     std::tensor::{ErasedTensor, WriteOnly},
     zspace::shape,
@@ -100,7 +99,7 @@ fn space() -> Space {
 }
 
 fn run(sink: bool) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = space();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -195,7 +194,7 @@ fn derived_sink_kernel<E: Float>(
 /// does, which is the only thing that makes a fused store a drop-in for the kernel it replaces.
 #[test]
 fn a_launcher_derived_spec_addresses_the_sink() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let launcher = space().launcher_over(&client, &[]);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -366,7 +365,7 @@ fn matmul_space() -> Space {
 }
 
 fn run_matmul(backed: Backed) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = matmul_space();
 
@@ -570,7 +569,7 @@ enum Erased {
 }
 
 fn run_masked(erased: Erased) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let launcher = masked_space().launcher(&client);
     let operand = Operand::new(&[ROW, COL], dtype);

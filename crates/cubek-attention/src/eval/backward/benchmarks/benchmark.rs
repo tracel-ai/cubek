@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -26,8 +25,8 @@ pub fn bench(
     spec: &AttentionSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
@@ -54,7 +53,7 @@ pub fn bench(
 struct BackwardBench<AP> {
     problem: AttentionProblem,
     strategy: BackwardStrategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _phantom: std::marker::PhantomData<AP>,
@@ -116,7 +115,7 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let row_shape = [
             self.problem.dims.batch,
             self.problem.dims.num_heads,
@@ -198,7 +197,7 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-attention-backward-{:?}-{}",
             client.name(),

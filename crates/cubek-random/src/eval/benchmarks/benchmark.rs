@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &RandomProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = RandomBench {
         shape: problem.shape.clone(),
@@ -82,7 +81,7 @@ impl Benchmark for RandomBench {
     fn name(&self) -> String {
         format!(
             "random-{}-{}-{:?}",
-            &self.client.name(),
+            self.client.name(),
             self.distribution.name(),
             self.shape,
         )

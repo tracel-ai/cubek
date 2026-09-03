@@ -6,7 +6,6 @@
 //! bias tensor and validates `out = lhs @ rhs + bias`.
 
 use cubecl::{
-    TestRuntime,
     frontend::Scalar,
     ir::AddressType,
     prelude::*,
@@ -35,7 +34,7 @@ use cubek_test_utils::{
 pub fn test_matmul_with_bias_simple_unit_f32() {
     type Algorithm = SimpleUnitAlgorithm;
 
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems();
 

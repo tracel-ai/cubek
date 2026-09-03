@@ -1,6 +1,8 @@
 use super::{
-    super::decompose_linear,
-    super::shape_divmod,
+    super::{
+        adaptive_end_index as end_index, adaptive_start_index as start_index, decompose_linear,
+        shape_divmod,
+    },
     pool2d::{Position, view4d},
 };
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
@@ -55,23 +57,6 @@ fn adaptive_avg_pool2d_direct<E: Numeric, N: Size>(
     let num_iw = iw_end - iw_start;
 
     output.write((b, oh, ow, c), sum / Vector::cast_from(num_ih * num_iw));
-}
-
-#[cube]
-fn start_index(output_size_index: usize, output_size: usize, input_size: usize) -> usize {
-    (output_size_index * input_size) / output_size
-}
-
-#[cube]
-fn end_index(output_size_index: usize, output_size: usize, input_size: usize) -> usize {
-    let index = (output_size_index + 1) * input_size;
-    let index = index.div_ceil(output_size);
-
-    if input_size < index {
-        input_size
-    } else {
-        index
-    }
 }
 
 pub(crate) fn adaptive_avg_pool2d_launch(

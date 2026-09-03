@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     client::Client,
     ir::{AddressType, OpaqueType, SemanticType},
     prelude::Scalar,
@@ -9,7 +8,7 @@ use cubek_matmul::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
 use cubek_std::MatrixLayout;
 
 pub(crate) fn client() -> Client {
-    TestRuntime::client(&Default::default())
+    cubecl::test_device().client()
 }
 
 pub(crate) fn f16_elems() -> MatmulGlobalElems {

@@ -15,7 +15,7 @@
 //! ([`Tile::copy`] refuses this outright: a compacted stage fill requires source and
 //! destination to share a projection, which a coarse source by definition does not.)
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
@@ -78,7 +78,7 @@ fn rhs_data() -> Vec<f32> {
 
 /// Launch [`coarse_lhs_matmul`] over `space` and return `c`.
 fn run(space: Space) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let (a, _) = TestInput::builder(client.clone(), shape![ROWS, BLOCKS])

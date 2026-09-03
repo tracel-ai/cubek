@@ -13,4 +13,22 @@ pub enum PoolError {
 
     #[error("Channel count mismatch: input has {input} but output has {output}")]
     ChannelMismatch { input: usize, output: usize },
+
+    #[error("{tensor} spatial dimensions must be non-zero, got {actual:?}")]
+    InvalidSpatialSize {
+        tensor: &'static str,
+        actual: Vec<usize>,
+    },
+
+    #[error("Output spatial shape mismatch: expected {expected:?} but got {actual:?}")]
+    OutputSizeMismatch {
+        expected: Vec<usize>,
+        actual: Vec<usize>,
+    },
+
+    #[error("Input gradient shape mismatch: expected {expected:?} but got {actual:?}")]
+    InputGradientShapeMismatch {
+        expected: Vec<usize>,
+        actual: Vec<usize>,
+    },
 }

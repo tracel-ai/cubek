@@ -1,5 +1,5 @@
+use cubecl::prelude::*;
 use cubecl::zspace::shape;
-use cubecl::{TestRuntime, prelude::*};
 use cubek_test_utils::{
     DataKind, HostData, HostDataType, StridedLayout, TestInput, ValidationResult,
     assert_equals_approx, assert_equals_approx_in_slice, print_tensor,
@@ -7,7 +7,7 @@ use cubek_test_utils::{
 
 #[test]
 fn eye_handle_row_major() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = [2, 3];
 
@@ -28,7 +28,7 @@ fn eye_handle_row_major() {
 
 #[test]
 fn eye_handle_col_major() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = [2, 3];
 
@@ -50,7 +50,7 @@ fn eye_handle_col_major() {
 
 #[test]
 fn arange_handle_row_major() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = shape![2, 3];
 
@@ -71,7 +71,7 @@ fn arange_handle_row_major() {
 
 #[test]
 fn arange_handle_col_major() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = shape![2, 3];
 
@@ -93,7 +93,7 @@ fn arange_handle_col_major() {
 
 #[test]
 fn custom_handle_row_major_col_major() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let contiguous_data = [9., 8., 7., 6., 5., 4.].to_vec();
 
@@ -113,7 +113,7 @@ fn custom_handle_row_major_col_major() {
 
 #[test]
 fn arange_handle_row_major_slice() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let shape = shape![2, 3];
 
@@ -136,7 +136,7 @@ fn arange_handle_row_major_slice() {
 
 #[test]
 fn fail_message_contains_aggregate_stats_and_examples() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // 6 elements, 3 of which are wrong by 1.0 each.
     let actual = TestInput::builder(client.clone(), shape![2, 3])
@@ -186,7 +186,7 @@ fn fail_message_contains_aggregate_stats_and_examples() {
 fn assert_equals_approx_in_slice_accepts_tensor_filter() {
     use cubek_test_utils::DimFilter;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // Same setup as `arange_handle_row_major_slice`: the second row of
     // `actual` differs (9, 9, 9) from the expected arange (3, 4, 5).
@@ -208,7 +208,7 @@ fn assert_equals_approx_in_slice_accepts_tensor_filter() {
 
 #[test]
 fn builder_matches_constructor() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // Builder form: defaults to f32 + RowMajor; finalizer picks the data kind.
     let from_builder = TestInput::builder(client.clone(), shape![2, 3])
@@ -232,7 +232,7 @@ fn builder_matches_constructor() {
 
 #[test]
 fn builder_overrides_stride_and_dtype() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // Builder with explicit stride override should match the constructor.
     let from_builder = TestInput::builder(client.clone(), shape![2, 3])
@@ -256,7 +256,7 @@ fn builder_overrides_stride_and_dtype() {
 
 #[test]
 fn builder_linspace_produces_evenly_spaced_values() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // 5 evenly-spaced values from 0.0 to 1.0 → step = 0.25.
     // Shape [1, 5] because RowMajor requires ≥ 2 dimensions.
@@ -278,7 +278,7 @@ fn builder_normal_distribution_within_statistical_bounds() {
     // `cubek_random::seed` is a global, so we don't pin bit-exact reproduction
     // (other tests racing on the same global would flake). Instead check that
     // the distribution's *empirical* mean / std stay within sample-size bounds.
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // Shape [1, N] because RowMajor requires ≥ 2 dimensions.
     let n: usize = 4096;
@@ -298,7 +298,7 @@ fn builder_normal_distribution_within_statistical_bounds() {
 
 #[test]
 fn host_data_typed_accessors_and_iter() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // arange tensor: values 0..6 in row-major order.
     let host = TestInput::builder(client.clone(), shape![2, 3])
@@ -322,7 +322,7 @@ fn host_data_typed_accessors_and_iter() {
 
 #[test]
 fn host_data_iter_respects_strides() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // Same logical 2x3 tensor, but stored col-major. The iterator must walk
     // the *logical* row-major order while resolving each cell through the
@@ -339,7 +339,7 @@ fn host_data_iter_respects_strides() {
 /// Run with `--nocapture` to see print
 #[test]
 fn playground_partial_mismatch() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let eps = 0.001f32;
 
     let expected = TestInput::builder(client.clone(), shape![4, 4])
@@ -381,7 +381,7 @@ fn playground_partial_mismatch() {
 fn print_tensors_skips_shape_mismatch() {
     use cubek_test_utils::print_tensors;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let a = TestInput::builder(client.clone(), shape![2, 3])
         .arange()
@@ -399,7 +399,7 @@ fn print_tensors_skips_shape_mismatch() {
 fn print_tensors_skips_rank_mismatch() {
     use cubek_test_utils::print_tensors;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let r2 = TestInput::builder(client.clone(), shape![2, 3])
         .arange()
@@ -418,7 +418,7 @@ fn print_tensor_is_no_op_in_correct_mode() {
     // test mode, so it is safe to leave in place once a test is debugged.
     // (We can't observe stdout in a parallel test runner, so we just exercise
     // the call path on a few ranks.)
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let r2 = TestInput::builder(client.clone(), shape![2, 3])
         .arange()
@@ -433,7 +433,7 @@ fn print_tensor_is_no_op_in_correct_mode() {
 
 #[test]
 fn pretty_print_handles_rank_3() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // 2 × 2 × 3 tensor: should print as two labeled 2×3 tables.
     let host = TestInput::builder(client.clone(), shape![2, 2, 3])
@@ -464,7 +464,7 @@ fn pretty_print_handles_rank_3() {
 fn pretty_print_slice_filters_rows_and_cols() {
     use cubek_test_utils::DimFilter;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // 2 × 4 arange: values 0..8 in row-major order.
     let host = TestInput::builder(client.clone(), shape![2, 4])
@@ -500,7 +500,7 @@ fn pretty_print_slice_filters_rows_and_cols() {
 fn pretty_print_slice_filters_leading_dims() {
     use cubek_test_utils::DimFilter;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     // 3 × 2 × 2: exercise filtering on the leading dim.
     let host = TestInput::builder(client.clone(), shape![3, 2, 2])
@@ -529,7 +529,7 @@ fn pretty_print_slice_filters_leading_dims() {
 fn builder_uniform_values_in_range() {
     // Range/property check rather than seed-stability: see the note on the
     // normal test above.
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let host = TestInput::builder(client.clone(), shape![4, 4])
         .uniform(7, -1.0, 1.0)

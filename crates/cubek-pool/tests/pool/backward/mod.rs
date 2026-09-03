@@ -1,4 +1,5 @@
 mod adaptive_avg_pool2d;
+mod adaptive_avg_pool3d;
 mod avg_pool2d;
 mod max_pool2d;
 

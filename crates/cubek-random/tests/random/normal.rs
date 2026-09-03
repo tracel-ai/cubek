@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
+use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_random::*;
 
 #[test]
@@ -33,7 +33,7 @@ fn normal_respects_68_95_99_rule() {
 }
 
 fn get_random_normal_data(shape: &[usize], mean: f32, std: f32) -> Vec<TestDType> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
     with_seed(0, || {

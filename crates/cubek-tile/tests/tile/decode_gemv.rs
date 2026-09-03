@@ -12,8 +12,7 @@
 //! built on the first.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
@@ -84,7 +83,7 @@ fn serving_geometry(promoted: bool) {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(

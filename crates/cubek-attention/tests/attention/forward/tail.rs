@@ -9,7 +9,7 @@
 //! no tail at all.
 
 use crate::attention::forward::launcher::{test_launch, test_launch_permuted, test_launch_scaled};
-use cubecl::{Runtime, TestRuntime, client::Client, ir::AddressType, prelude::Scalar};
+use cubecl::{client::Client, ir::AddressType, prelude::Scalar};
 use cubek_attention::{
     forward::definition::{
         AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions,
@@ -101,7 +101,7 @@ fn problem_causal(
 
 #[test]
 fn aligned_512_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f32_dtypes(&client), (512, 512, 64, 64)),
@@ -111,7 +111,7 @@ fn aligned_512_unit() {
 
 #[test]
 fn aligned_512_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (512, 512, 64, 64)),
@@ -125,7 +125,7 @@ fn aligned_512_unit_large_magnitude() {
 #[ignore = "BlackboxAcceleratedRoutine hardcodes f16 tiles, so f32 problems lose precision with \
             input magnitude; run once blackbox tile dtypes follow the global dtype"]
 fn aligned_512_blackbox_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (512, 512, 64, 64)),
@@ -139,7 +139,7 @@ fn aligned_512_blackbox_large_magnitude() {
 
 #[test]
 fn square_1500_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f32_dtypes(&client), (1500, 1500, 64, 64)),
@@ -149,7 +149,7 @@ fn square_1500_unit() {
 
 #[test]
 fn square_1500_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (1500, 1500, 64, 64)),
@@ -163,7 +163,7 @@ fn square_1500_unit_large_magnitude() {
 
 #[test]
 fn kv_tail_only_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (1024, 1500, 64, 64)),
@@ -175,7 +175,7 @@ fn kv_tail_only_unit_large_magnitude() {
 
 #[test]
 fn q_tail_only_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (1500, 1024, 64, 64)),
@@ -189,7 +189,7 @@ fn q_tail_only_unit_large_magnitude() {
 #[ignore = "BlackboxAcceleratedRoutine hardcodes f16 tiles, so f32 problems lose precision with \
             input magnitude; run once blackbox tile dtypes follow the global dtype"]
 fn kv_tail_blackbox_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (32, 1500, 64, 64)),
@@ -206,7 +206,7 @@ fn kv_tail_blackbox_large_magnitude() {
 
 #[test]
 fn cross_attention_prefill_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f32_dtypes(&client), (4, 1500, 64, 64)),
@@ -216,7 +216,7 @@ fn cross_attention_prefill_unit() {
 
 #[test]
 fn single_query_decode_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f32_dtypes(&client), (1, 1500, 64, 64)),
@@ -226,7 +226,7 @@ fn single_query_decode_unit() {
 
 #[test]
 fn causal_short_prefill_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem_causal(f32_dtypes(&client), (4, 4, 64, 64), true),
@@ -241,7 +241,7 @@ fn causal_short_prefill_unit() {
 
 #[test]
 fn permuted_inputs_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
         problem_heads(f32_dtypes(&client), 2, (64, 64, 32, 32)),
@@ -251,7 +251,7 @@ fn permuted_inputs_unit() {
 
 #[test]
 fn permuted_inputs_encoder_shape_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
         problem_heads(f32_dtypes(&client), 6, (1500, 1500, 64, 64)),
@@ -261,7 +261,7 @@ fn permuted_inputs_encoder_shape_unit() {
 
 #[test]
 fn permuted_inputs_causal_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
         problem_heads_causal(f32_dtypes(&client), 2, (64, 64, 32, 32), true),
@@ -271,7 +271,7 @@ fn permuted_inputs_causal_unit() {
 
 #[test]
 fn permuted_inputs_causal_encoder_shape_unit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
         problem_heads_causal(f32_dtypes(&client), 6, (1500, 1500, 64, 64), true),
@@ -281,7 +281,7 @@ fn permuted_inputs_causal_encoder_shape_unit() {
 
 #[test]
 fn permuted_inputs_blackbox() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_permuted(
         client.clone(),
         problem_heads(f32_dtypes(&client), 2, (64, 64, 32, 32)),
@@ -294,7 +294,7 @@ fn permuted_inputs_blackbox() {
 
 #[test]
 fn kv_tail_minimal_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (8, 43, 32, 32)),
@@ -306,7 +306,7 @@ fn kv_tail_minimal_unit_large_magnitude() {
 
 #[test]
 fn q_tail_minimal_unit_large_magnitude() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_scaled(
         client.clone(),
         problem(f32_dtypes(&client), (300, 64, 32, 32)),

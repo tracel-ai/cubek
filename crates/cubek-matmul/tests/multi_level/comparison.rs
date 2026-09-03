@@ -4,7 +4,6 @@
 
 #![cfg(all(feature = "benchmarks", feature = "tiled"))]
 
-use cubecl::Runtime;
 use cubek_matmul::{
     eval::benchmarks::gemm::GemmProblem, multi_level::Strategy as MultiLevel, strategy::Strategy,
     tiled::Strategy as Tiled,
@@ -263,7 +262,7 @@ fn gemm_cyclic_cmma_sweep() {
 #[test]
 #[ignore = "debug probe"]
 fn print_cmma_configs() {
-    let client = cubecl::TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     for c in client.properties().features.matmul.cmma.iter() {
         println!("{:?}", c);
     }

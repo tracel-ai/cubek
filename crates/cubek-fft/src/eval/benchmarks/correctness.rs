@@ -1,4 +1,3 @@
-use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::eval::benchmarks::problem::FftProblem;
@@ -17,8 +16,8 @@ impl cubek_test_utils::Correctness for FftCorrectness {
         problem: &FftProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let dim = problem.shape.len() - 1;
         fft_kernel_result(
             client,
@@ -36,8 +35,8 @@ impl cubek_test_utils::Correctness for FftCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let dim = problem.shape.len() - 1;
         cpu_reference_result(
             client,

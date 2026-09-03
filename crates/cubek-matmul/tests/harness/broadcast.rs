@@ -2,7 +2,7 @@
 //! A stride of 0 on a logical dimension means it is broadcast: every index along
 //! it shares one physical element.
 
-use cubecl::{Runtime, TestRuntime, ir::AddressType, zspace::shape};
+use cubecl::{ir::AddressType, zspace::shape};
 use cubek_matmul::{definition::MatmulProblem, strategy::Strategy};
 use cubek_std::MatrixLayout;
 use cubek_test_utils::{TestOutcome, ValidationResult};
@@ -94,7 +94,7 @@ pub(crate) fn passed(outcome: &TestOutcome) -> bool {
 /// run the shape on this backend (e.g. cmma without the feature) are skipped.
 pub(crate) fn assert_batch_broadcast(strategy: Strategy) {
     use MatrixLayout::{ColMajor as C, RowMajor as R};
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     for broadcast in [Broadcast::BatchLhs, Broadcast::BatchRhs] {
         let baseline = run_with_strides(
             client.clone(),

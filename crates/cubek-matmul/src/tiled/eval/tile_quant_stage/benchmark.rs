@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -56,8 +55,8 @@ pub fn bench(
     problem: &TileQuantStageProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let scheme = quant_scheme(problem.bn);
     let pack = scheme.num_quants();
@@ -198,7 +197,7 @@ impl Benchmark for TileQuantStageBench {
     fn name(&self) -> String {
         format!(
             "tile-quant-stage-{}-m{}-n{}-k{}-tk{}",
-            &self.client.name(),
+            self.client.name(),
             self.m,
             self.n,
             self.k,

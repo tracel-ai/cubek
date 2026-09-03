@@ -13,7 +13,7 @@
 //! binding whose shape counts *values* while the packing says how many sit in one stored word.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
+    bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
     std::tensor::TensorHandle, zspace::shape,
 };
 use cubecl_common::e2m1;
@@ -97,7 +97,7 @@ fn nvfp4_shaped_decode() {
     let depth = block * blocks;
     let factor = 32 / field.size_bits();
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -286,7 +286,7 @@ fn eight_bit_fields_unpack_on_read() {
     // A packed line serves a whole word, so this is the width the tile is read at.
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -361,7 +361,7 @@ fn four_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -439,7 +439,7 @@ fn fp4_codes_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -509,7 +509,7 @@ fn two_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -584,7 +584,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -702,7 +702,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -818,7 +818,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -959,7 +959,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1103,7 +1103,7 @@ fn several_lines_may_share_one_scale() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1244,7 +1244,7 @@ fn an_i8_operand_contracts_against_its_scales() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -1348,7 +1348,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1495,7 +1495,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1663,7 +1663,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(

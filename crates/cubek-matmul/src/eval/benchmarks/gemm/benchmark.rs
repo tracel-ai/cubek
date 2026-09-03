@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -33,8 +32,8 @@ fn bench_with<MP: MatmulPrecision>(
     strategy: &Strategy,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let elems = MatmulElems::new_deprecated::<MP>();
 
     let bench = GemmBench {
@@ -67,7 +66,7 @@ struct GemmBench {
     lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     dtypes: MatmulElems,
     samples: usize,
@@ -92,7 +91,7 @@ impl Benchmark for GemmBench {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let tl = matches!(self.lhs_layout, MatrixLayout::ColMajor);
         let tr = matches!(self.rhs_layout, MatrixLayout::ColMajor);
 
@@ -126,7 +125,7 @@ impl Benchmark for GemmBench {
     }
 
     fn execute(&self, (lhs, rhs): Self::Input) -> Result<Self::Output, String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let out = TensorHandle::empty(
             &client,
             vec![self.b, self.m, self.n],
@@ -150,7 +149,7 @@ impl Benchmark for GemmBench {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-matmul-Lhs<{}-{}-{}>-Rhs<{}-{}-{}>-{}-{}-{}",
             client.name(),

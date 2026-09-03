@@ -10,6 +10,7 @@
 //! then, on a real client.
 
 mod leaf;
+mod planewise;
 mod rowwise;
 mod state;
 

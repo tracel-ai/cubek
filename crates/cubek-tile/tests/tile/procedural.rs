@@ -2,7 +2,7 @@
 
 use core::f32::consts::PI;
 
-use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::shape};
+use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -349,7 +349,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            client: <TestRuntime as Runtime>::client(&Default::default()),
+            client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
             space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
@@ -537,7 +537,7 @@ fn linear_is_a_triangle_with_unit_support() {
 
 #[test]
 fn a_procedural_tile_works_over_an_integer_element_type() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = i32::elem_type_native();
     let space = Harness::new().space;
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -641,7 +641,7 @@ fn lanczos_matches_the_windowed_sinc() {
 
 #[test]
 fn direct_copy_masks_the_trailing_partial_tile() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
@@ -670,7 +670,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 
 #[test]
 fn divided_direct_copy_preserves_the_parent_bound() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let concrete = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {

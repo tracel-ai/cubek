@@ -16,7 +16,8 @@ use crate::{
 };
 
 /// Real-valued Fast Fourier Transform.
-pub fn rfft<R: Runtime>(
+pub fn rfft(
+    client: &Client,
     signal: TensorHandle,
     dim: usize,
     dtype: ElemType,
@@ -30,8 +31,6 @@ pub fn rfft<R: Runtime>(
         signal.shape()[dim].is_power_of_two(),
         "RFFT requires power-of-2 length"
     );
-    let client = <R as Runtime>::client(&Default::default());
-
     let mut spectrum_shape = signal.shape().clone();
     spectrum_shape[dim] = signal.shape()[dim] / 2 + 1;
 
@@ -48,7 +47,7 @@ pub fn rfft<R: Runtime>(
     );
 
     rfft_launch(
-        &client,
+        client,
         signal.binding(),
         spectrum_re.clone().binding(),
         spectrum_im.clone().binding(),

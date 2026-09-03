@@ -1,11 +1,12 @@
-//! The softmax leaf, composed from the [`rowwise`](super::rowwise) ops at the
-//! legacy `softmax_at` granularity.
+//! The softmax leaf, composed from the row ops at the legacy `softmax_at`
+//! granularity.
 //!
-//! Row ownership is dictated, not asked: each unit owns a fixed contiguous
-//! slice of the score tile's rows and keeps the running state for those rows
-//! in its own registers. No plane shuffles, no fragment-layout knowledge, no
-//! syncs (units touch only their own rows). A single unit owning all rows is
-//! the unit/CPU path; one row per unit is the plane path.
+//! Row ownership is the state's statement ([`RowShare`]) and this leaf's only
+//! branch: a worker owns a fixed contiguous slice of the score tile's rows and
+//! keeps their running state in its own registers, where the worker is a unit
+//! ([`rowwise`](super::rowwise)) or a plane whose lanes split the reduced axis
+//! ([`planewise`](super::planewise)). Neither arm reads a cell another worker
+//! wrote, so neither needs a sync; no fragment-layout knowledge either way.
 
 use cubecl::prelude::*;
 
@@ -50,15 +51,26 @@ impl<EA: Float> Tile<EA> {
             "softmax: vectorized tiles not supported yet"
         ));
 
-        let rpu = comptime!(state.rows_per_unit);
-        let mut max_buf = Array::<EA>::new(rpu);
-        let mut sum_buf = Array::<EA>::new(rpu);
+        let rows = comptime!(state.share.rows());
+        let mut max_buf = Array::<EA>::new(rows);
+        let mut sum_buf = Array::<EA>::new(rows);
 
-        self.scale_and_mask(scale, probe, mask, rpu);
-        self.row_max(&mut max_buf, &state.m, rpu);
-        self.exp_diff(&max_buf, rpu);
-        self.row_sum(&mut sum_buf, rpu);
-        self.write_rows_to(p, rpu);
+        match comptime!(state.share) {
+            RowShare::Unit { rows } => {
+                self.scale_and_mask(scale, probe, mask, rows);
+                self.row_max(&mut max_buf, &state.m, rows);
+                self.exp_diff(&max_buf, rows);
+                self.row_sum(&mut sum_buf, rows);
+                self.write_rows_to(p, rows);
+            }
+            RowShare::Plane { rows, lanes } => {
+                self.scale_and_mask_planar(scale, probe, mask, rows, lanes);
+                self.row_max_planar(&mut max_buf, &state.m, rows, lanes);
+                self.exp_diff_planar(&max_buf, rows, lanes);
+                self.row_sum_planar(&mut sum_buf, rows, lanes);
+                self.write_rows_to_planar(p, rows, lanes);
+            }
+        }
 
         state.update(&max_buf, &sum_buf)
     }

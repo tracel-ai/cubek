@@ -1,5 +1,5 @@
 #[cfg(feature = "heavy")]
-use cubecl::{Runtime, TestRuntime, prelude::Scalar};
+use cubecl::prelude::Scalar;
 #[cfg(feature = "heavy")]
 use cubek_fft::{irfft, rfft};
 //use cubefx_engine::{SignalSpec, phase_shift_effect};
@@ -9,7 +9,7 @@ use cubek_test_utils::{HostData, TestInput, assert_equals_approx};
 #[test]
 #[cfg(feature = "heavy")]
 fn large_fft_roundtrip() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let shape = [431, 2, 2048];
@@ -19,8 +19,8 @@ fn large_fft_roundtrip() {
         .uniform(42, -1., 1.)
         .generate_with_f32_host_data();
 
-    let (spectrum_re, spectrum_im) = rfft::<TestRuntime>(original_signal, shape.len() - 1, dtype);
-    let signal_back = irfft::<TestRuntime>(spectrum_re, spectrum_im, shape.len() - 1, dtype);
+    let (spectrum_re, spectrum_im) = rfft(&client, original_signal, shape.len() - 1, dtype);
+    let signal_back = irfft(&client, spectrum_re, spectrum_im, shape.len() - 1, dtype);
 
     assert_equals_approx(
         &HostData::from_tensor_handle(&client, signal_back, cubek_test_utils::HostDataType::F32),

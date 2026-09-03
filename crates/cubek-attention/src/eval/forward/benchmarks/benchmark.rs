@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -22,8 +21,8 @@ pub fn bench(
     spec: &AttentionSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
@@ -50,7 +49,7 @@ pub fn bench(
 struct AttentionBench<AP> {
     problem: AttentionProblem,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     samples: usize,
     _phantom: std::marker::PhantomData<AP>,
@@ -86,7 +85,7 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let query = make_uniform::<QG<AP>>(&client, self.problem.shape(AttentionIdent::Query), 0);
         let key = make_uniform::<KG<AP>>(&client, self.problem.shape(AttentionIdent::Key), 1);
@@ -105,7 +104,7 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<(), String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let out: TensorHandle = TensorHandle::empty(
             &client,
             self.problem.shape(AttentionIdent::Out),
@@ -130,7 +129,7 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-attention-{}-{}-{}-{}--{:?}",
             client.name(),

@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
@@ -18,8 +17,8 @@ pub fn bench(
     problem: &InterpolateProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let dtype = f32::elem_type_native();
 
@@ -43,7 +42,7 @@ pub fn bench(
 struct InterpolateBench {
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
-    device: <TestRuntime as Runtime>::Device,
+    device: cubecl::Device,
     client: Client,
     dtype: ElemType,
     samples: usize,

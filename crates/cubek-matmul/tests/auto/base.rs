@@ -2,7 +2,7 @@
 //! dispatch, whichever architecture is compiled behind it. It belongs to neither
 //! `tiled` nor `multi_level`, and stays correct when either is deleted.
 
-use cubecl::{Runtime, TestRuntime, ir::AddressType, zspace::shape};
+use cubecl::{ir::AddressType, zspace::shape};
 use cubek_matmul::{definition::MatmulProblem, strategy::Strategy};
 use cubek_std::MatrixLayout;
 
@@ -61,7 +61,7 @@ fn batch_broadcast_auto() {
 #[test]
 fn reported_m_broadcast() {
     use MatrixLayout::{ColMajor, RowMajor};
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let mut problem = MatmulProblem::from_parameters(
         4,
         256,

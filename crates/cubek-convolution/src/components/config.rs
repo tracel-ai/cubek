@@ -62,6 +62,11 @@ impl ConvolutionParams {
         params.padding[0..dims].copy_from_slice(&problem.padding);
         params
     }
+
+    pub(crate) fn has_non_unit_stride(&self) -> bool {
+        let dims = self.dimensionality.num_dims();
+        self.stride[..dims].iter().any(|&stride| stride != 1)
+    }
 }
 
 impl<M: GlobalConfig> Deref for ConvolutionConfig<M> {

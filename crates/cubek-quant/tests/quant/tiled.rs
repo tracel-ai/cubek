@@ -1,6 +1,5 @@
 use cubecl::{
-    Runtime, TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, std::tensor::TensorHandle,
-    zspace::Shape,
+    features::TypeUsage, ir::ElemType, prelude::*, std::tensor::TensorHandle, zspace::Shape,
 };
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
@@ -16,7 +15,7 @@ fn dequantize_tiled_native_per_tensor_matches_reference() {
 }
 
 fn dequantize_tiled_native_per_tensor(tensor_shape: &[usize]) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         return; // backend has no native i8 (e.g. wgpu); native dequant can't run here
     }

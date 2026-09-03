@@ -11,21 +11,21 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use cubecl::benchmark::TimingMethod;
+use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
     self, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
 };
-use cubecl::{Runtime, TestRuntime, client::Client};
 
 use crate::{HostData, Progress};
 
 /// The client every category scores against: `measure_peak_throughput` is
-/// always run on `<TestRuntime as Runtime>::Device::default()`, so the
+/// always run on `cubecl::test_device()`, so the
 /// process-wide peak memo below can key on [`ThroughputKey`] alone.
 pub fn client() -> Client {
-    let device = <TestRuntime as Runtime>::Device::default();
-    <TestRuntime as Runtime>::client(&device)
+    let device = cubecl::test_device();
+    device.client()
 }
 
 /// Process-wide memo of measured peaks.
@@ -62,10 +62,16 @@ fn curve_ceiling(access: MemoryAccess, bytes: usize) -> f64 {
 ///
 /// The unit comes from the key's own mode rather than from the caller, so a
 /// memo keyed on the key alone cannot serve one resource's rate to another.
+///
+/// NaN when the device has no peak for the key, which leaves the resource
+/// unscored rather than dividing by a ceiling that does not exist.
 fn peak_per_s(key: ThroughputKey) -> f64 {
     let mut peaks = PEAKS.lock().expect("peaks mutex is not poisoned");
     *peaks.entry(key).or_insert_with(|| {
-        let value = measure_peak_throughput(&client(), key);
+        let Ok(value) = measure_peak_throughput(&client(), key) else {
+            return f64::NAN;
+        };
+
         match key.mode {
             ThroughputMode::ComputeDirect { .. } | ThroughputMode::ComputeCmma { .. } => {
                 value.ops_per_s()

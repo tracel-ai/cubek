@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     ir::{ElemType, FloatKind},
     prelude::*,
     std::tensor::TensorHandle,
@@ -240,7 +239,7 @@ impl TestCase {
         values_reference: impl FnOnce(&HostData, usize) -> HostData,
         indices_reference: impl FnOnce(&HostData, usize) -> HostData,
     ) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
         let u32_dtype = u32::elem_type_native();
 
@@ -340,7 +339,7 @@ impl TestCase {
         epsilon: f32,
         distribution: Distribution,
     ) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
 
         let input = TestInput::builder(client.clone(), self.shape.clone())

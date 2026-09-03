@@ -339,7 +339,6 @@ pub fn mma_load_lhs_from_shared<E: Numeric, ES: Size, L: Numeric, R: Numeric, A:
         &def,
         MatrixIdent::A,
         matrix_layout,
-        tile_size,
         mma_io_config,
     );
 }
@@ -360,7 +359,6 @@ pub fn mma_load_rhs_from_shared<E: Numeric, ES: Size, R: Numeric, L: Numeric, A:
         &def,
         MatrixIdent::B,
         matrix_layout,
-        tile_size,
         mma_io_config,
     );
 }
@@ -381,7 +379,6 @@ pub fn mma_load_acc_from_shared<E: Numeric, ES: Size, A: Numeric, L: Numeric, R:
         &def,
         MatrixIdent::Accumulator,
         matrix_layout,
-        tile_size,
         mma_io_config,
     );
 }

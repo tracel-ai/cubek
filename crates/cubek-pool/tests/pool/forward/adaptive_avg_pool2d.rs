@@ -1,12 +1,12 @@
 use super::{make_problem, run_pool_test};
-use cubecl::{Runtime, TestRuntime, zspace::Shape};
+use cubecl::zspace::Shape;
 use cubek_pool::definition::AdaptiveAvgPoolOptions;
 
 const ADAPTIVE_AVG_POOL_TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_adaptive_avg_pool2d_global() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 7, 7, 512]),
         false,
@@ -26,7 +26,7 @@ fn test_adaptive_avg_pool2d_global() {
 
 #[test]
 fn test_adaptive_avg_pool2d_square_downsample() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 8, 8, 4]),
         false,
@@ -46,7 +46,7 @@ fn test_adaptive_avg_pool2d_square_downsample() {
 
 #[test]
 fn test_adaptive_avg_pool2d_non_square() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 10, 6, 8]),
         false,
@@ -66,7 +66,7 @@ fn test_adaptive_avg_pool2d_non_square() {
 
 #[test]
 fn test_adaptive_avg_pool2d_uneven_indices() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 13, 13, 1]),
         false,
@@ -86,7 +86,7 @@ fn test_adaptive_avg_pool2d_uneven_indices() {
 
 #[test]
 fn test_adaptive_avg_pool2d_identity() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 4, 4, 16]),
         false,
@@ -106,7 +106,7 @@ fn test_adaptive_avg_pool2d_identity() {
 
 #[test]
 fn test_adaptive_avg_pool2d_upsample_logic() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 2, 2, 4]),
         false,
