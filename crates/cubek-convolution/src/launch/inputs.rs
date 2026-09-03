@@ -3,10 +3,13 @@ use cubek_std::InputBinding;
 
 use crate::components::ConvolutionOperation;
 
-/// Spatial convolution arguments (stride / padding / dilation per spatial dim).
+/// Spatial convolution arguments (stride / beginning padding / dilation per spatial dim).
+///
+/// End padding is represented by the spatial extent of the output binding.
 #[derive(Clone, Debug)]
 pub struct ConvolutionArgs<const N_SPATIAL: usize> {
     pub stride: [usize; N_SPATIAL],
+    /// Padding at the beginning of each spatial dimension.
     pub padding: [usize; N_SPATIAL],
     pub dilation: [usize; N_SPATIAL],
 }

@@ -59,6 +59,49 @@ pub fn test_algo(
     partition_buffering: PartitionBuffering,
     convolution_size: ConvolutionSize,
 ) {
+    test_algo_with_padding_end(
+        algorithm,
+        dtypes,
+        tiling_scheme,
+        swizzle,
+        partition_buffering,
+        convolution_size,
+        None,
+    );
+}
+
+/// Run the same launcher/reference comparison with zero beginning padding and
+/// nonzero end padding. Cubek receives only beginning padding; the asymmetric
+/// end is represented by the caller-provided output shape.
+pub fn test_algo_asymmetric(
+    algorithm: ConvAlgorithm,
+    dtypes: MatmulElems,
+    tiling_scheme: TilingScheme,
+    swizzle: SwizzleModes,
+    partition_buffering: PartitionBuffering,
+    convolution_size: ConvolutionSize,
+) {
+    test_algo_with_padding_end(
+        algorithm,
+        dtypes,
+        tiling_scheme,
+        swizzle,
+        partition_buffering,
+        convolution_size,
+        Some(vec![3, 1]),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn test_algo_with_padding_end(
+    algorithm: ConvAlgorithm,
+    dtypes: MatmulElems,
+    tiling_scheme: TilingScheme,
+    swizzle: SwizzleModes,
+    partition_buffering: PartitionBuffering,
+    convolution_size: ConvolutionSize,
+    padding_end: Option<Vec<i32>>,
+) {
     let client = TestRuntime::client(&Default::default());
     let plane_dim = client.properties().hardware.plane_size_max;
 
@@ -66,13 +109,19 @@ pub fn test_algo(
     let batches = 2;
     let kernel_size = vec![4, 3];
     let stride = vec![1, 1];
-    let padding = vec![3, 1];
+    let padding = if padding_end.is_some() {
+        vec![0, 0]
+    } else {
+        vec![3, 1]
+    };
+    let padding_end = padding_end.unwrap_or_else(|| padding.clone());
     let dilation = vec![3, 2];
 
     let out_h = calculate_conv_output_size(
         kernel_size[0],
         stride[0],
         padding[0],
+        padding_end[0],
         dilation[0],
         convolution_size.h,
     );
@@ -80,6 +129,7 @@ pub fn test_algo(
         kernel_size[1],
         stride[1],
         padding[1],
+        padding_end[1],
         dilation[1],
         convolution_size.w,
     );
@@ -224,11 +274,14 @@ pub fn test_algo(
 pub fn calculate_conv_output_size(
     kernel_size: u32,
     stride: u32,
-    padding: i32,
+    padding_begin: i32,
+    padding_end: i32,
     dilation: u32,
     size_in: usize,
 ) -> usize {
-    (size_in + 2 * padding as usize - dilation as usize * (kernel_size as usize - 1) - 1)
+    (size_in + padding_begin as usize + padding_end as usize
+        - dilation as usize * (kernel_size as usize - 1)
+        - 1)
         / stride as usize
         + 1
 }

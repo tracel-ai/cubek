@@ -22,13 +22,14 @@ struct Case {
     k: usize,
     stride: usize,
     dilation: usize,
-    padding: usize,
+    /// Padding at the beginning and end of each spatial dimension.
+    padding: (usize, usize),
 }
 
 impl Case {
     fn out_size(&self) -> usize {
         let reach = self.dilation * (self.k - 1) + 1;
-        (self.size + 2 * self.padding - reach) / self.stride + 1
+        (self.size + self.padding.0 + self.padding.1 - reach) / self.stride + 1
     }
 
     /// Small integers on a short period, so every accumulation is exact in `f32` and the
@@ -51,9 +52,9 @@ impl Case {
                         for rh in 0..self.k {
                             for rw in 0..self.k {
                                 let h = (oh * self.stride + rh * self.dilation) as isize
-                                    - self.padding as isize;
+                                    - self.padding.0 as isize;
                                 let w = (ow * self.stride + rw * self.dilation) as isize
-                                    - self.padding as isize;
+                                    - self.padding.0 as isize;
                                 if h < 0 || w < 0 || h >= size as isize || w >= size as isize {
                                     continue;
                                 }
@@ -132,7 +133,7 @@ impl Case {
             },
             ConvolutionArgs::<2> {
                 stride: [self.stride; 2],
-                padding: [self.padding; 2],
+                padding: [self.padding.0; 2],
                 dilation: [self.dilation; 2],
             },
             self.c,
@@ -197,7 +198,7 @@ fn depthwise_3x3_padded() {
         k: 3,
         stride: 1,
         dilation: 1,
-        padding: 1,
+        padding: (1, 1),
     }
     .check_every_tiling();
 }
@@ -212,7 +213,7 @@ fn depthwise_3x3_unpadded() {
         k: 3,
         stride: 1,
         dilation: 1,
-        padding: 0,
+        padding: (0, 0),
     }
     .check_every_tiling();
 }
@@ -227,7 +228,7 @@ fn depthwise_3x3_stride_2() {
         k: 3,
         stride: 2,
         dilation: 1,
-        padding: 1,
+        padding: (1, 1),
     }
     .check_every_tiling();
 }
@@ -242,7 +243,7 @@ fn depthwise_5x5_dilated() {
         k: 5,
         stride: 1,
         dilation: 2,
-        padding: 4,
+        padding: (4, 4),
     }
     .check_every_tiling();
 }
@@ -258,7 +259,7 @@ fn depthwise_channels_not_a_whole_number_of_cubes() {
         k: 3,
         stride: 1,
         dilation: 1,
-        padding: 1,
+        padding: (1, 1),
     }
     .check_every_tiling();
 }
@@ -274,10 +275,26 @@ fn depthwise_strided_weight() {
         k: 3,
         stride: 1,
         dilation: 1,
-        padding: 1,
+        padding: (1, 1),
     }
     .check_with_weight_gap(DepthwiseTiling::default(), 2)
     .unwrap();
+}
+
+/// End-only padding extends the output without changing the projection offset. The output size
+/// divides every spatial tile used here, so correctness can't come from a ragged-tile guard.
+#[test]
+fn depthwise_3x3_end_padding() {
+    Case {
+        b: 1,
+        c: 32,
+        size: 8,
+        k: 3,
+        stride: 1,
+        dilation: 1,
+        padding: (0, 2),
+    }
+    .check_every_tiling();
 }
 
 /// The filter must carry exactly one channel's filter for every input/output channel. Reject the
