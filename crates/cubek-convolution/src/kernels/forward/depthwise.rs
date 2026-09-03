@@ -313,6 +313,8 @@ pub fn launch_depthwise<R: Runtime>(
     let ragged_c = !geometry.c.is_multiple_of(tile_c);
     let ragged_oh = !geometry.oh.is_multiple_of(tiling.rows);
     let ragged_ow = !geometry.ow.is_multiple_of(tiling.cols);
+    let check_h = geometry.should_check_height_bounds();
+    let check_w = geometry.should_check_width_bounds();
     let [ph, pw] = geometry.padding;
     let [sh, sw] = geometry.stride;
     let [dh, dw] = geometry.dilation;
@@ -330,13 +332,13 @@ pub fn launch_depthwise<R: Runtime>(
             PhysicalAxisMap::of(C),
         ],
     ))
-    // The padded border reads outside the input, and the guard is what makes it read as zero.
-    // Unpadded and evenly tiled, every read is in bounds by construction and the comparison is
-    // paid for nothing.
+    // A padded border can be represented by either the beginning padding in the projection or
+    // the output binding extending far enough for the final window to overhang the input. Guard
+    // from the actual first and last accessed coordinates so end-only padding is covered too.
     .boundaries(&[
         None,
-        guard(ph > 0 || ragged_oh),
-        guard(pw > 0 || ragged_ow),
+        guard(check_h || ragged_oh),
+        guard(check_w || ragged_ow),
         guard(ragged_c),
     ]);
 
@@ -369,6 +371,8 @@ pub fn launch_depthwise<R: Runtime>(
 /// The problem, in the terms the space is built from. NHWC throughout.
 struct Geometry {
     b: usize,
+    ih: usize,
+    iw: usize,
     oh: usize,
     ow: usize,
     c: usize,
@@ -413,6 +417,8 @@ impl Geometry {
 
         Ok(Self {
             b: tensors.out.shape[0],
+            ih: tensors.input.shape[1],
+            iw: tensors.input.shape[2],
             oh: tensors.out.shape[1],
             ow: tensors.out.shape[2],
             c: input_channels,
@@ -429,6 +435,28 @@ impl Geometry {
     /// How many taps one filter has.
     fn taps(&self) -> usize {
         self.rh * self.rw
+    }
+
+    fn should_check_height_bounds(&self) -> bool {
+        spatial_bounds_required(
+            self.ih,
+            self.oh,
+            self.rh,
+            self.stride[0],
+            self.padding[0],
+            self.dilation[0],
+        )
+    }
+
+    fn should_check_width_bounds(&self) -> bool {
+        spatial_bounds_required(
+            self.iw,
+            self.ow,
+            self.rw,
+            self.stride[1],
+            self.padding[1],
+            self.dilation[1],
+        )
     }
 
     /// The filter as `[kh, kw, c]`, contiguous.
@@ -456,6 +484,22 @@ impl Geometry {
             .into_contiguous(client)?
             .into_data())
     }
+}
+
+fn spatial_bounds_required(
+    input_size: usize,
+    output_size: usize,
+    kernel_size: usize,
+    stride: usize,
+    padding: usize,
+    dilation: usize,
+) -> bool {
+    let first = -(padding as i64);
+    let last = (output_size as i64 - 1) * stride as i64
+        + (kernel_size as i64 - 1) * dilation as i64
+        - padding as i64;
+
+    first < 0 || last >= input_size as i64
 }
 
 /// The plane width the channel tile is sized to.
