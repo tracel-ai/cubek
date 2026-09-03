@@ -4,6 +4,11 @@
 //! the software instruction; which one a call reaches is the space's
 //! [`instruction`](crate::Space::instruction) and nothing else.
 //!
+//! Trailing-two-axes convention (the matmul's, and [`columns`](super::columns)'s): the two axes a
+//! matmul contracts are each tile's *last* two, and an axis above them is one the caller's walk has
+//! already fixed — a batch, a KV head. Those must span a single position here, because a fragment
+//! steps its rows by one physical stride and a [`Region`](crate::Region) puts a zero on them.
+//!
 //! Nothing lives in a fragment across a step. Each visit loads its operands, contracts, and stores
 //! the result back to shared memory, so the scalar work between two matmuls (the mask probe, the
 //! rescale) meets no fragment in flight: this leaf needs no fragment arithmetic and no accumulator
@@ -42,15 +47,15 @@ impl<EA: Float> Tile<EA> {
             &k.space
         ));
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
-        let cols = comptime!(self.space.extent_at(1));
-        let head_dim = comptime!(q.space.extent_at(1));
+        let cols = comptime!(trailing(&self.space).1);
+        let head_dim = comptime!(trailing(&q.space).1);
         let out = self.retiled(comptime!(tiled(&self.space, m, n)));
         let q = q.retiled(comptime!(tiled(&q.space, m, kc)));
         let k = k.retiled(comptime!(tiled(&k.space, n, kc)));
 
         let grid = comptime!(cols / n);
         let steps = comptime!(head_dim / kc);
-        let visits = comptime!((self.space.extent_at(0) / m) * grid);
+        let visits = comptime!((trailing(&self.space).0 / m) * grid);
         // Each plane takes every `planes`-th fragment, from wherever the launch put it in the
         // cube. The stride is never zero: a cube narrower than a plane cannot run a plane
         // instruction at all, and a zero step would hang rather than refuse.
@@ -104,8 +109,8 @@ impl<EA: Float> Tile<EA> {
             &val.space
         ));
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
-        let val_dim = comptime!(self.space.extent_at(1));
-        let cols = comptime!(p.space.extent_at(1));
+        let val_dim = comptime!(trailing(&self.space).1);
+        let cols = comptime!(trailing(&p.space).1);
 
         self.scale_rows(factors);
         sync_cube();
@@ -116,7 +121,7 @@ impl<EA: Float> Tile<EA> {
 
         let grid = comptime!(val_dim / n);
         let steps = comptime!(cols / kc);
-        let visits = comptime!((self.space.extent_at(0) / m) * grid);
+        let visits = comptime!((trailing(&self.space).0 / m) * grid);
         // Every `planes`-th fragment, as in `score_fragments`.
         let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
         let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
@@ -197,18 +202,30 @@ impl Contraction {
     /// col-major from a `{cols, k}` window, row-major from a `{k, cols}` one.
     fn of(matmul: Matmul, out: &Space, lhs: &Space, rhs: &Space) -> Self {
         let layout = matmul.rhs_layout();
-        assert!(
-            out.rank() == 2 && lhs.rank() == 2 && rhs.rank() == 2,
-            "{matmul}: a fragment leaf reads rank-2 tiles ({out:?}, {lhs:?}, {rhs:?}); stage the \
-             rows as one axis"
-        );
-        let (rows, cols) = (out.extent_at(0), out.extent_at(1));
-        let contracted = lhs.extent_at(1);
+        for space in [out, lhs, rhs] {
+            assert!(
+                space.rank() >= 2,
+                "{matmul}: a fragment leaf contracts two axes, and {space:?} has fewer"
+            );
+            // A rank the walk has already pinned is spanned, not iterated: a KV head cut one to a
+            // cube, a batch. Anything wider would have to ride the flat index, which a fragment —
+            // one origin and one row stride — cannot address.
+            for i in 0..space.rank() - 2 {
+                assert!(
+                    space.extent_at(i) == 1,
+                    "{matmul}: {space:?} carries {} positions above the two axes it contracts; \
+                     window them to one, or stage the rows as a single axis",
+                    space.extent_at(i)
+                );
+            }
+        }
+        let (rows, cols) = trailing(out);
+        let contracted = trailing(lhs).1;
         // A visit covers the box the level the instruction sits on cuts, or the whole tile where
         // that level cut nothing.
         let (acc_box, lhs_box) = (out.sub_tile_space(), lhs.sub_tile_space());
-        let (m, n) = (acc_box.extent_at(0), acc_box.extent_at(1));
-        let (lhs_rows, k) = (lhs_box.extent_at(0), lhs_box.extent_at(1));
+        let (m, n) = trailing(&acc_box);
+        let (lhs_rows, k) = trailing(&lhs_box);
         let stored = match layout {
             MatrixLayout::ColMajor => (cols, contracted),
             MatrixLayout::RowMajor => (contracted, cols),
@@ -217,11 +234,11 @@ impl Contraction {
             }
         };
         assert!(
-            lhs.extent_at(0) == rows,
+            trailing(lhs).0 == rows,
             "{matmul}: the lhs is {lhs:?}, not the {rows}x{contracted} this accumulator contracts"
         );
         assert!(
-            (rhs.extent_at(0), rhs.extent_at(1)) == stored,
+            trailing(rhs) == stored,
             "{matmul}: the rhs is {rhs:?}, not the {}x{} window a {layout:?} operand is read \
              from here",
             stored.0,
@@ -239,7 +256,11 @@ impl Contraction {
         );
         // The contracted axis is the lhs's own label: the rhs may carry another for the same axis
         // (a value block's positions are the score's columns), and the edges have to be one thing.
-        let (row, col, con) = (out.axis_at(0), out.axis_at(1), lhs.axis_at(1));
+        let (row, col, con) = (
+            out.axis_at(out.rank() - 2),
+            out.axis_at(out.rank() - 1),
+            lhs.axis_at(lhs.rank() - 1),
+        );
         Contraction {
             matmul,
             m,
@@ -284,16 +305,30 @@ fn fragment<E: Numeric>(#[comptime] role: MatrixIdent, #[comptime] mma: Contract
     )
 }
 
-/// `space` cut into `e0 × e1` windows, whatever it stated: the fragment grid is one fact, and a
-/// leaf that reads it off the accumulator applies it to every operand.
+/// `space` cut into `e0 × e1` windows on its trailing two axes, whatever it stated: the fragment
+/// grid is one fact, and a leaf that reads it off the accumulator applies it to every operand. An
+/// axis above those two spans its single position, so the grid over it is one window wide.
 fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
-    let (a0, a1) = (space.axis_at(0), space.axis_at(1));
-    Tiling::over(
-        &mut (),
-        &[(a0, space.extent_at(0)), (a1, space.extent_at(1))],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.walk(&[(a0, e0), (a1, e1)]);
-    })
-    .build()
+    let rank = space.rank();
+    let extents: Vec<_> = space.axes().map(|a| (a, space.extent(a))).collect();
+    let cuts: Vec<_> = extents
+        .iter()
+        .enumerate()
+        .map(|(i, &(axis, extent))| match i {
+            i if i == rank - 2 => (axis, e0),
+            i if i == rank - 1 => (axis, e1),
+            _ => (axis, extent),
+        })
+        .collect();
+    Tiling::over(&mut (), &extents)
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.walk(&cuts);
+        })
+        .build()
+}
+
+/// The extents of `space`'s trailing two axes — the two a matmul contracts.
+fn trailing(space: &Space) -> (usize, usize) {
+    let rank = space.rank();
+    (space.extent_at(rank - 2), space.extent_at(rank - 1))
 }

@@ -255,8 +255,11 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     /// ([`Tile::merge_splits`]) and drains with the weights folded in.
     pub fn publish(&self, m_win: &mut Tile<EA>, l_win: &mut Tile<EA>, acc_win: &mut Tile<EA>) {
         let rows = comptime!(self.rows);
-        m_win.store_rows(&self.state.m, rows);
-        l_win.store_rows(&self.state.l, rows);
+        // The fold's own share: one worker owning every row, which is what puts
+        // lane 0 in range and every other lane past it.
+        let share = comptime!(self.state.share);
+        m_win.store_rows(&self.state.m, share);
+        l_win.store_rows(&self.state.l, share);
 
         let d = comptime!(self.lines * self.width);
         comptime!(assert!(
