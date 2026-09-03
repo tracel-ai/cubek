@@ -9,16 +9,16 @@ use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
-use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
+use cubecl::{client::Client, ir::ElemType, prelude::*};
 use cubek_tile::{Geometry, Residence};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
 /// Resolves the strategy against the device and the problem, then dispatches on the mode.
-pub(crate) fn interpolate_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn interpolate_launch(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     strategy: InterpolateStrategy,
@@ -54,16 +54,16 @@ pub(crate) fn interpolate_launch<R: Runtime>(
         TileGeometry::from_blueprint(blueprint, output.shape[3], hardware.plane_size_max as usize);
     let residence = blueprint.input_residence;
     match options.mode {
-        InterpolateMode::Nearest(_) => launch::<R, NearestFilter>(
+        InterpolateMode::Nearest(_) => launch::<NearestFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Bilinear => launch::<R, BilinearFilter>(
+        InterpolateMode::Bilinear => launch::<BilinearFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Bicubic => launch::<R, BicubicFilter>(
+        InterpolateMode::Bicubic => launch::<BicubicFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Lanczos3 => launch::<R, Lanczos3Filter>(
+        InterpolateMode::Lanczos3 => launch::<Lanczos3Filter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
     }
@@ -74,10 +74,10 @@ pub(crate) fn interpolate_launch<R: Runtime>(
 /// Capacity is only knowable once the space is built and its vectorization solved, so the fallback
 /// reads the refusal rather than predicting it. Nothing has been dispatched by then.
 #[allow(clippy::too_many_arguments)]
-fn launch<R: Runtime, F: SeparableFilterFamily>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+fn launch<F: SeparableFilterFamily>(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
@@ -85,10 +85,10 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
     fallback: Option<Residence>,
 ) -> Result<(), InterpolateError> {
     let Some(fallback) = fallback.filter(|_| residence == Residence::Smem) else {
-        return dispatch::<R, F>(client, input, output, options, dtype, geometry, residence);
+        return dispatch::<F>(client, input, output, options, dtype, geometry, residence);
     };
 
-    match dispatch::<R, F>(
+    match dispatch::<F>(
         client,
         input.clone(),
         output.clone(),
@@ -98,16 +98,16 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         residence,
     ) {
         Err(InterpolateError::SharedMemoryLimitExceeded { .. }) => {
-            dispatch::<R, F>(client, input, output, options, dtype, geometry, fallback)
+            dispatch::<F>(client, input, output, options, dtype, geometry, fallback)
         }
         result => result,
     }
 }
 
-fn dispatch<R: Runtime, F: SeparableFilterFamily>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+fn dispatch<F: SeparableFilterFamily>(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
@@ -216,7 +216,7 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
         .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build();
-    interpolate_tile_kernel::launch::<F, R>(
+    interpolate_tile_kernel::launch::<F>(
         client,
         launch.cube_count(),
         launch.cube_dim(),

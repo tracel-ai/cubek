@@ -1,7 +1,7 @@
 //! Launch wiring for the Cmma routine: one entry ([`launch_ref`]) serving both
 //! deliveries; the blueprint decides, and only the operand construction differs.
 
-use cubecl::{Runtime, client::ComputeClient, ir::FloatKind, prelude::*};
+use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
@@ -61,11 +61,11 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
 /// [`MatmulProblem`], and resolve the [`CmmaBlueprint`]. Returns the problem, the
 /// plan, and the output's broadcast batch shape.
 #[allow(clippy::result_large_err, clippy::type_complexity)]
-fn setup<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: &InputBinding<R>,
-    rhs: &InputBinding<R>,
-    out: &TensorBinding<R>,
+fn setup(
+    client: &Client,
+    lhs: &InputBinding,
+    rhs: &InputBinding,
+    out: &TensorBinding,
     strategy: &BlueprintStrategy<(), CmmaRoutine>,
     dtypes: &MatmulElems,
     acc: ElemType,
@@ -206,11 +206,11 @@ fn tile_space(
 /// [`CmmaDelivery`]. A TMA plan is fully validated by then, so on CUDA it runs or fails to
 /// compile, never silently degrades.
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     strategy: &BlueprintStrategy<(), CmmaRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -243,7 +243,7 @@ pub fn launch_ref<R: Runtime>(
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // Either path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided::<R>(
+        CmmaDelivery::Copy => launch_strided(
             client,
             &launch,
             cube_count,
@@ -254,7 +254,7 @@ pub fn launch_ref<R: Runtime>(
             out,
             &out_batch_axes,
         ),
-        CmmaDelivery::Tma => launch_tma::<R>(
+        CmmaDelivery::Tma => launch_tma(
             client,
             &launch,
             cube_count,
@@ -276,15 +276,15 @@ pub fn launch_ref<R: Runtime>(
 /// bound to its [`Operand`](cubek_tile::Operand) by the shared
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
 #[allow(clippy::too_many_arguments)]
-fn launch_strided<R: Runtime>(
-    client: &ComputeClient<R>,
-    launch: &Launcher<'_, R>,
+fn launch_strided(
+    client: &Client,
+    launch: &Launcher<'_>,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     ops: &MatmulOperands,
-    lhs: TensorBinding<R>,
-    rhs: TensorBinding<R>,
-    out: TensorBinding<R>,
+    lhs: TensorBinding,
+    rhs: TensorBinding,
+    out: TensorBinding,
     out_batch_axes: &[Axis],
 ) {
     let v_a = launch.vector_size(
@@ -317,7 +317,7 @@ fn launch_strided<R: Runtime>(
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
-    cmma_kernel::launch::<Strided, R>(
+    cmma_kernel::launch::<Strided>(
         client,
         cube_count,
         cube_dim,
@@ -339,15 +339,15 @@ fn launch_strided<R: Runtime>(
 /// whole boxes, so vectorization and the batch-axis list don't apply). The out is strided
 /// under either delivery.
 #[allow(clippy::too_many_arguments)]
-fn launch_tma<R: Runtime>(
-    client: &ComputeClient<R>,
-    launch: &Launcher<'_, R>,
+fn launch_tma(
+    client: &Client,
+    launch: &Launcher<'_>,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     ops: &MatmulOperands,
-    lhs: TensorBinding<R>,
-    rhs: TensorBinding<R>,
-    out: TensorBinding<R>,
+    lhs: TensorBinding,
+    rhs: TensorBinding,
+    out: TensorBinding,
     out_batch_axes: &[Axis],
     blueprint: &CmmaBlueprint,
     (m, n, k): (usize, usize, usize),
@@ -355,12 +355,12 @@ fn launch_tma<R: Runtime>(
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
-    fn operand<E: Numeric, R: Runtime>(
+    fn operand<E: Numeric>(
         op: &Operand,
-        binding: TensorBinding<R>,
+        binding: TensorBinding,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
-    ) -> TmaTileArgLaunch<E, R> {
+    ) -> TmaTileArgLaunch<E> {
         let (map, transposed) = tma_operand(
             binding,
             1,
@@ -383,7 +383,7 @@ fn launch_tma<R: Runtime>(
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
-    cmma_kernel::launch::<Tma, R>(
+    cmma_kernel::launch::<Tma>(
         client,
         cube_count,
         cube_dim,

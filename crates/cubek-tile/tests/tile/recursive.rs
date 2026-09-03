@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 
 use cubecl::std::tensor::layout::CoordsDyn;
-use cubecl::{TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
 use cubek_tile::{Axis, Space, TileArg};
 
@@ -14,7 +14,7 @@ const N: Axis = Axis(1);
 /// An 8×8 tile, two nested levels of 2×2 sub-tiles
 #[test]
 fn recursive_two_level_tiled_view() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n) = (8usize, 8usize);
 
     let space = Space::new(&[(M, m), (N, n)]);
@@ -28,7 +28,7 @@ fn recursive_two_level_tiled_view() {
 
     // The copy kernel only reads/writes through the views: no partitioning, so the
     // spaces carry no partitioner.
-    copy_logical::launch::<TestRuntime>(
+    copy_logical::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),

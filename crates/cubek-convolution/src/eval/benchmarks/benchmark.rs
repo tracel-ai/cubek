@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -29,8 +28,8 @@ pub fn bench(
     problem: &Conv2dProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = Conv2dBench::<half::f16> {
         problem: problem.clone(),
@@ -52,18 +51,13 @@ pub fn bench(
 struct Conv2dBench<MP> {
     problem: Conv2dProblem,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     samples: usize,
     _phantom: PhantomData<MP>,
 }
 
-fn make_uniform_4d(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 4],
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn make_uniform_4d(client: &Client, shape: [usize; 4], dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .uniform(seed, 0.0, 1.0)
@@ -71,15 +65,11 @@ fn make_uniform_4d(
 }
 
 impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
-    type Input = (
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-    );
+    type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let input = make_uniform_4d(
             &client,
@@ -103,7 +93,7 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn execute(&self, (input, weight, bias): Self::Input) -> Result<(), String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let [n, _, h_in, w_in] = self.problem.input_shape;
         let [c_out, _, k_h, k_w] = self.problem.weight_shape;
         let [s_h, s_w] = self.problem.args.stride;
@@ -115,10 +105,10 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
 
         let elems = MatmulElems::new_deprecated::<MP>();
 
-        let out: TensorHandle<TestRuntime> =
+        let out: TensorHandle =
             TensorHandle::empty(&client, vec![n, c_out, h_out, w_out], elems.acc_global);
 
-        launch_ref::<TestRuntime, 2>(
+        launch_ref::<2>(
             &self.strategy,
             &self.client,
             ConvolutionInputs::Forward {
@@ -139,10 +129,10 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-conv2d-{}-{}-{}-{}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             LhsG::<MP>::elem_type_native(),
             LhsS::<MP>::elem_type_native(),
             AccR::<MP>::elem_type_native(),

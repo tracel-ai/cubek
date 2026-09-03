@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     ir::{ElemType, FloatKind},
     prelude::*,
     std::tensor::TensorHandle,
@@ -240,7 +239,7 @@ impl TestCase {
         values_reference: impl FnOnce(&HostData, usize) -> HostData,
         indices_reference: impl FnOnce(&HostData, usize) -> HostData,
     ) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
         let u32_dtype = u32::elem_type_native();
 
@@ -280,7 +279,7 @@ impl TestCase {
             &client,
             &[&values_handle.handle, &indices_handle.handle],
             |c| {
-                reduce_with_indices::<TestRuntime>(
+                reduce_with_indices(
                     c,
                     input_binding,
                     values_binding,
@@ -340,7 +339,7 @@ impl TestCase {
         epsilon: f32,
         distribution: Distribution,
     ) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let axis = self.axis.unwrap();
 
         let input = TestInput::builder(client.clone(), self.shape.clone())
@@ -368,7 +367,7 @@ impl TestCase {
         let input_binding = input_handle.binding();
         let output_binding = output_handle.clone().binding();
         let outcome = launch_and_capture_outcome(&client, &[&output_handle.handle], |c| {
-            reduce::<TestRuntime>(
+            reduce(
                 c,
                 input_binding,
                 output_binding,
@@ -407,11 +406,11 @@ impl TestCase {
 
     fn build_output_tensor(
         &self,
-        client: &cubecl::client::ComputeClient<TestRuntime>,
+        client: &cubecl::client::Client,
         output_dtype: ElemType,
         output_shape: &Shape,
         config: &ReduceOperationConfig,
-    ) -> TensorHandle<TestRuntime> {
+    ) -> TensorHandle {
         let axis = self.axis.unwrap();
         let is_parallel = self.stride[axis] == 1;
         let strides = match config {

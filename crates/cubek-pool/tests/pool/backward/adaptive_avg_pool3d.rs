@@ -1,6 +1,5 @@
 use crate::pool::{build_output_tensor, output_host_f32, validate_test};
 use cubecl::{
-    Runtime, TestRuntime,
     ir::{ElemType, FloatKind},
     prelude::*,
     zspace::Shape,
@@ -49,7 +48,7 @@ fn test_adaptive_avg_pool3d_backward_large_dimension_index_math() {
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_conserves_gradient_sum() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input = build_output_tensor(&client, vec![2, 5, 7, 4, 3], dtype);
     let (out_grad, out_grad_host) = TestInput::builder(client.clone(), [2, 3, 4, 3, 3])
@@ -85,7 +84,7 @@ fn test_adaptive_avg_pool3d_backward_conserves_gradient_sum() {
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_validates_output_and_input_gradient_shapes() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input = build_output_tensor(&client, vec![2, 5, 7, 4, 3], dtype);
     let options = AdaptiveAvgPoolOptions::new([3, 4, 3]);
@@ -121,7 +120,7 @@ fn test_adaptive_avg_pool3d_backward_validates_output_and_input_gradient_shapes(
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_rejects_zero_spatial_dimensions() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let input = build_output_tensor(&client, vec![1, 0, 2, 2, 1], dtype);
@@ -157,7 +156,7 @@ fn test_adaptive_avg_pool3d_backward_rejects_zero_spatial_dimensions() {
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_accepts_empty_batch_and_channels() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     for (input_shape, out_grad_shape) in [
@@ -181,7 +180,7 @@ fn test_adaptive_avg_pool3d_backward_accepts_empty_batch_and_channels() {
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_rejects_other_pool_modes() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input = build_output_tensor(&client, vec![1, 4, 4, 4, 1], dtype);
     let out_grad = build_output_tensor(&client, vec![1, 2, 2, 2, 1], dtype);
@@ -219,7 +218,7 @@ fn test_adaptive_avg_pool3d_backward_rejects_other_pool_modes() {
 
 #[test]
 fn test_adaptive_avg_pool3d_backward_f16_large_global_accumulates_in_f32() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = ElemType::Float(FloatKind::F16);
     let input_shape = vec![1, 41, 41, 41, 1];
     let input = build_output_tensor(&client, input_shape.clone(), dtype);
@@ -255,7 +254,7 @@ fn run_case(
     output_size: [usize; 3],
     seed: u64,
 ) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = PoolBackwardProblem {
         input_size,
         out_grad_shape: Shape::from(out_grad_shape),

@@ -7,11 +7,11 @@
 //! and inner scales narrow enough to be worth a second level in the first place.
 
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
     features::TypeUsage,
     prelude::*,
     std::tensor::TensorHandle,
-    {TestRuntime, zspace::Shape, zspace::shape},
+    {zspace::Shape, zspace::shape},
 };
 use cubecl_common::e4m3;
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
@@ -50,11 +50,11 @@ fn packed_f32() -> QuantScheme {
 }
 
 struct Fixture {
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     shape: Shape,
-    input: TensorHandle<TestRuntime>,
-    scale: TensorHandle<TestRuntime>,
-    global: TensorHandle<TestRuntime>,
+    input: TensorHandle,
+    scale: TensorHandle,
+    global: TensorHandle,
     data: Vec<f32>,
 }
 
@@ -76,7 +76,7 @@ fn fixture_with(
     scales: Vec<f32>,
     quant_level: impl Fn(usize) -> f32,
 ) -> Fixture {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let shape = shape![M, N];
 
     let data: Vec<f32> = (0..M * N)
@@ -225,7 +225,7 @@ fn ue4m3_block_scales_with_an_f32_global_scale_round_trip() {
     // rounded scale would hide an off-by-one in the storage type behind its own tolerance.
     const EXACT: [f32; 4] = [1.0, 1.5, 2.0, 3.0];
 
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     // Both are needed and they are separate capabilities: `i8` for the native value storage, e4m3
     // for the inner scales. The CPU runtime has the first and not the second, so guarding on `i8`
     // alone lets this run somewhere it cannot work.

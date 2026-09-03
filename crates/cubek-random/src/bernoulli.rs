@@ -1,4 +1,4 @@
-use cubecl::{CubeType, Runtime, prelude::*, std::tensor::ViewMut};
+use cubecl::{CubeType, prelude::*, std::tensor::ViewMut};
 
 use crate::{OutputSlots, PrngBlueprint, PrngState, PrngStrategy, RandomFamily};
 
@@ -54,27 +54,27 @@ impl PrngArgs for Bernoulli {
 
     const VECTORS_PER_DRAW: usize = 1;
 
-    fn args<R: Runtime>(self) -> BernoulliLaunch<R> {
+    fn args(self) -> BernoulliLaunch {
         BernoulliLaunch::new(self.probability)
     }
 }
 
 /// Pseudo-random generator with bernoulli distribution
-pub fn random_bernoulli<R: Runtime>(
-    client: &ComputeClient<R>,
+pub fn random_bernoulli(
+    client: &Client,
     probability: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random_bernoulli_with_strategy(client, probability, out, dtype, PrngStrategy::Inferred)
 }
 
-pub(crate) fn random_bernoulli_with_strategy<R: Runtime>(
-    client: &ComputeClient<R>,
+pub(crate) fn random_bernoulli_with_strategy(
+    client: &Client,
     probability: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
 ) -> Result<(), LaunchError> {
-    random::<BernoulliFamily, R>(client, Bernoulli { probability }, out, dtype, strategy)
+    random::<BernoulliFamily>(client, Bernoulli { probability }, out, dtype, strategy)
 }

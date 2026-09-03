@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -22,8 +21,8 @@ pub fn bench(
     spec: &AttentionSpec,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),
@@ -50,17 +49,17 @@ pub fn bench(
 struct AttentionBench<AP> {
     problem: AttentionProblem,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     samples: usize,
     _phantom: std::marker::PhantomData<AP>,
 }
 
 struct AttentionInputs {
-    query: TensorHandle<TestRuntime>,
-    key: TensorHandle<TestRuntime>,
-    value: TensorHandle<TestRuntime>,
-    mask: Option<TensorHandle<TestRuntime>>,
+    query: TensorHandle,
+    key: TensorHandle,
+    value: TensorHandle,
+    mask: Option<TensorHandle>,
 }
 
 impl Clone for AttentionInputs {
@@ -74,11 +73,7 @@ impl Clone for AttentionInputs {
     }
 }
 
-fn make_uniform<T: Numeric>(
-    client: &ComputeClient<TestRuntime>,
-    shape: [usize; 4],
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn make_uniform<T: Numeric>(client: &Client, shape: [usize; 4], seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(T::elem_type_native())
         .uniform(seed, 0., 1.)
@@ -90,7 +85,7 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let query = make_uniform::<QG<AP>>(&client, self.problem.shape(AttentionIdent::Query), 0);
         let key = make_uniform::<KG<AP>>(&client, self.problem.shape(AttentionIdent::Key), 1);
@@ -109,8 +104,8 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     }
 
     fn execute(&self, input: Self::Input) -> Result<(), String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
-        let out: TensorHandle<TestRuntime> = TensorHandle::empty(
+        let client = self.device.client();
+        let out: TensorHandle = TensorHandle::empty(
             &client,
             self.problem.shape(AttentionIdent::Out),
             self.problem.global_dtypes.out,
@@ -134,10 +129,10 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-attention-{}-{}-{}-{}--{:?}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             QG::<AP>::elem_type_native(),
             KG::<AP>::elem_type_native(),
             VG::<AP>::elem_type_native(),

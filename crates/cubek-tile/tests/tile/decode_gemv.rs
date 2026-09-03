@@ -12,8 +12,7 @@
 //! built on the first.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
@@ -84,7 +83,7 @@ fn serving_geometry(promoted: bool) {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -172,7 +171,7 @@ fn serving_geometry(promoted: bool) {
         })
         .build();
 
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![d_out, d_in],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -239,7 +238,7 @@ fn serving_geometry(promoted: bool) {
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     let kernel_space = launcher.space().clone();
     if promoted {
-        decode_gemv_promoted::launch::<TestRuntime>(
+        decode_gemv_promoted::launch(
             &client,
             count,
             dim,
@@ -253,7 +252,7 @@ fn serving_geometry(promoted: bool) {
             [dtype, dtype],
         );
     } else {
-        decode_gemv::launch::<TestRuntime>(
+        decode_gemv::launch(
             &client,
             count,
             dim,

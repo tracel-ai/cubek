@@ -44,9 +44,9 @@ pub(crate) struct PrngLaunchSettings {
 }
 
 impl PrngLaunchSettings {
-    pub(crate) fn new<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
+    pub(crate) fn new(
+        client: &Client,
+        output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,
         strategy: PrngStrategy,
@@ -65,11 +65,7 @@ impl PrngLaunchSettings {
         }
     }
 
-    fn interleaved<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
-        dtype: ElemType,
-    ) -> Self {
+    fn interleaved(client: &Client, output: &TensorBinding, dtype: ElemType) -> Self {
         let size = output.size();
 
         // Every lane already draws its own decorrelated stream (see `PrngState::seeded`),
@@ -95,9 +91,9 @@ impl PrngLaunchSettings {
         }
     }
 
-    fn blocked<R: Runtime>(
-        client: &ComputeClient<R>,
-        output: &TensorBinding<R>,
+    fn blocked(
+        client: &Client,
+        output: &TensorBinding,
         dtype: ElemType,
         vectors_per_draw: usize,
     ) -> Self {
@@ -148,7 +144,7 @@ impl PrngLaunchSettings {
 
 #[cfg(test)]
 mod tests {
-    use cubecl::{TestRuntime, std::tensor::TensorHandle};
+    use cubecl::std::tensor::TensorHandle;
 
     use super::*;
 
@@ -156,7 +152,7 @@ mod tests {
     /// nothing else checks that the two branches of the mapping stay in sync with it.
     #[test]
     fn inferred_maps_num_cpu_cores_to_blocked() {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();
 
         let expected = if client.properties().hardware.num_cpu_cores.is_some() {
@@ -165,7 +161,7 @@ mod tests {
             PrngBlueprint::Interleaved
         };
 
-        let output = TensorHandle::<TestRuntime>::empty(&client, vec![64, 64], dtype);
+        let output = TensorHandle::empty(&client, vec![64, 64], dtype);
         let settings =
             PrngLaunchSettings::new(&client, &output.binding(), dtype, 1, PrngStrategy::Inferred);
 

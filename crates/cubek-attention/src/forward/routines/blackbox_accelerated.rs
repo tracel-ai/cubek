@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, Runtime, client::ComputeClient, prelude::Scalar};
+use cubecl::{CubeDim, client::Client, prelude::Scalar};
 use cubek_matmul::multi_level::{
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
     routines::find_instruction_size,
@@ -45,9 +45,9 @@ impl Routine for BlackboxAcceleratedRoutine {
     type Strategy = BlackboxAcceleratedStrategy;
     type Blueprint = AttentionBlueprint;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
         let dtypes = AttentionElems::from_global_types(
@@ -74,20 +74,19 @@ impl Routine for BlackboxAcceleratedRoutine {
     }
 }
 
-fn blueprint<R: Runtime>(
+fn blueprint(
     problem: &AttentionProblem,
-    device: &DeviceSettings<R>,
+    device: &DeviceSettings,
     dtypes: &AttentionElems,
     strategy: BlueprintStrategy<BlackboxAcceleratedRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
         BlueprintStrategy::Forced(attention_blueprint) => validate(problem, attention_blueprint),
         BlueprintStrategy::Inferred(strategy) => {
-            let is_supported = |client: &ComputeClient<R>, mma| {
-                client.properties().features.matmul.cmma.contains(&mma)
-            };
+            let is_supported =
+                |client: &Client, mma| client.properties().features.matmul.cmma.contains(&mma);
 
-            let supported_sizes = |client: &ComputeClient<R>, lhs_ty, rhs_ty, acc_ty| {
+            let supported_sizes = |client: &Client, lhs_ty, rhs_ty, acc_ty| {
                 client
                     .properties()
                     .features
@@ -106,7 +105,7 @@ fn blueprint<R: Runtime>(
                 )
             };
 
-            let tile_size_score_matmul = find_instruction_size::<R, _, _>(
+            let tile_size_score_matmul = find_instruction_size::<_, _>(
                 &device.client,
                 (dtypes.query_tile, dtypes.key_value_tile, dtypes.softmax_acc),
                 (
@@ -121,7 +120,7 @@ fn blueprint<R: Runtime>(
             )
             .map_err(map_err)?;
 
-            let values_matmul = find_instruction_size::<R, _, _>(
+            let values_matmul = find_instruction_size::<_, _>(
                 &device.client,
                 (
                     dtypes.softmax_lhs,

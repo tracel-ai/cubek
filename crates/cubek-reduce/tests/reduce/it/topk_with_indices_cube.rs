@@ -13,7 +13,6 @@
 //! insert/merge are unrolled over `k`), unlike the `heavy` suites.
 
 use cubecl::{
-    Runtime, TestRuntime,
     config::autotune::AutotuneLevel,
     zspace::{Shape, Strides},
 };
@@ -30,8 +29,8 @@ use crate::reduce::it::test_case::TestCase;
 /// just as much as for the fused one; every GPU backend passes. The affected
 /// tests skip that runtime so the pre-existing bug does not fail the CPU CI job.
 fn cpu_runtime() -> bool {
-    let client = TestRuntime::client(&Default::default());
-    <TestRuntime as Runtime>::name(&client) == "cpu"
+    let client = cubecl::test_device().client();
+    client.name() == "cpu"
 }
 
 fn cube_strategy(use_planes: bool) -> ReduceStrategy {

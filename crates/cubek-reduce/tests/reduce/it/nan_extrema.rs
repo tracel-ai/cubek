@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime, TestRuntime,
     config::autotune::AutotuneLevel,
     features::{Plane, TypeUsage},
     prelude::Scalar,
@@ -14,12 +13,12 @@ use cubek_reduce::{
 use super::test_case::TestCase;
 
 fn supports_plane() -> bool {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     client.properties().features.plane.contains(Plane::Ops)
 }
 
 fn supports_f16_arithmetic() -> bool {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     half::f16::supported_uses(&client).contains(TypeUsage::Arithmetic)
 }
 

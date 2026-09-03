@@ -9,24 +9,24 @@ use crate::forward::definition::{AttentionBlueprint, AttentionProblem};
 /// Create the input runtime arguments for a attention kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteInputsFactory: LaunchArg {
-    fn create<R: Runtime>(
-        query: TensorBinding<R>,
-        key: TensorBinding<R>,
-        value: TensorBinding<R>,
-        mask: Option<TensorBinding<R>>,
+    fn create(
+        query: TensorBinding,
+        key: TensorBinding,
+        value: TensorBinding,
+        mask: Option<TensorBinding>,
         selection: &AttentionBlueprint,
         problem: &AttentionProblem,
-    ) -> Self::RuntimeArg<R>;
+    ) -> Self::RuntimeArg;
 }
 
 /// Create the output runtime argument for a attention kernel that works on concrete inputs and
 /// output (not fused).
 pub trait ConcreteOutputFactory: LaunchArg {
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         selection: &AttentionBlueprint,
         problem: &AttentionProblem,
-    ) -> Self::RuntimeArg<R>;
+    ) -> Self::RuntimeArg;
 }
 
 pub trait FloatLine: Clone + 'static {
@@ -1056,14 +1056,14 @@ pub struct TensorInputs<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine
 impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> ConcreteInputsFactory
     for TensorInputs<Q, K, V, M>
 {
-    fn create<R: Runtime>(
-        query: TensorBinding<R>,
-        key: TensorBinding<R>,
-        value: TensorBinding<R>,
-        mask: Option<TensorBinding<R>>,
+    fn create(
+        query: TensorBinding,
+        key: TensorBinding,
+        value: TensorBinding,
+        mask: Option<TensorBinding>,
         _selection: &AttentionBlueprint,
         _problem: &AttentionProblem,
-    ) -> Self::RuntimeArg<R> {
+    ) -> Self::RuntimeArg {
         TensorInputsLaunch::new(
             query.into_tensor_arg(),
             key.into_tensor_arg(),
@@ -1077,11 +1077,11 @@ impl<Q: FloatLine, K: FloatLine, V: FloatLine, M: NumericLine> ConcreteInputsFac
 }
 
 impl<EG: Numeric, EGS: Size> ConcreteOutputFactory for Tensor<Vector<EG, EGS>> {
-    fn create<R: Runtime>(
-        out: TensorBinding<R>,
+    fn create(
+        out: TensorBinding,
         _selection: &AttentionBlueprint,
         _problem: &AttentionProblem,
-    ) -> Self::RuntimeArg<R> {
+    ) -> Self::RuntimeArg {
         out.into_tensor_arg()
     }
 }

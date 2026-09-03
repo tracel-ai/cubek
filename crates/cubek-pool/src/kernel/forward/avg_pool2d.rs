@@ -7,7 +7,7 @@ use super::{
 };
 use crate::definition::{AvgPoolOptions, PoolError};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::tensor::ViewMut,
@@ -89,10 +89,10 @@ impl<T: Numeric, N: Size> Pool2dDirectStrategy<T, N> for AvgPoolStrategy {
     }
 }
 
-pub(crate) fn avg_pool2d_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn avg_pool2d_launch(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: AvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -117,7 +117,7 @@ pub(crate) fn avg_pool2d_launch<R: Runtime>(
     let padded_0 = in_h as u32 + 2u32 * options.window.padding[0] as u32;
     let padded_1 = in_w as u32 + 2u32 * options.window.padding[1] as u32;
 
-    pool2d_direct::launch::<AvgPoolStrategy, R>(
+    pool2d_direct::launch::<AvgPoolStrategy>(
         client,
         cube_count,
         cube_dim,

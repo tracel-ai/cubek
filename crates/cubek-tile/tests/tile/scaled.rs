@@ -14,7 +14,7 @@
 //! The scales resolve at their own granularity through their own projection: a plain `KB` for a
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
@@ -96,7 +96,7 @@ fn two_levels_fold_in_order() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -131,7 +131,7 @@ fn two_levels_fold_in_order() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    two_level_scaled_matmul::launch::<TestRuntime>(
+    two_level_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -197,7 +197,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     // Small integers, so the reference is exact.
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -228,7 +228,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -290,7 +290,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
     let (per_region, inside) = (1, block / 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -320,7 +320,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -386,7 +386,7 @@ fn a_scale_over_no_axis_covers_everything() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -416,7 +416,7 @@ fn a_scale_over_no_axis_covers_everything() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -476,7 +476,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
     let (per_region, inside) = (2, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -506,7 +506,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -570,7 +570,7 @@ fn f16_scales_are_read_as_f16() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let scale_dtype = f16::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -601,7 +601,7 @@ fn f16_scales_are_read_as_f16() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -663,7 +663,7 @@ fn scales_over_the_columns_scale_the_rhs() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -693,7 +693,7 @@ fn scales_over_the_columns_scale_the_rhs() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -755,7 +755,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
     let (per_region, inside) = (1, block / 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -785,7 +785,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -846,7 +846,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
     let (per_region, inside) = (2, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -876,7 +876,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .build()
         .with_instruction(Instruction::registers(16));
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -940,7 +940,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -974,7 +974,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    scaled_matmul_promoted::launch::<TestRuntime>(
+    scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1062,7 +1062,7 @@ fn rhs_scales_are_served_several_at_a_time() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -1097,7 +1097,7 @@ fn rhs_scales_are_served_several_at_a_time() {
     let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
     residence[0] = Residence::Register;
 
-    wide_rhs_scaled_matmul_promoted::launch::<TestRuntime>(
+    wide_rhs_scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1183,7 +1183,7 @@ fn lhs_scales_are_served_several_at_a_time() {
     let (cols, block, blocks, lanes) = (4, 4, 4, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -1218,7 +1218,7 @@ fn lhs_scales_are_served_several_at_a_time() {
             config: RegisterBlock::new(64).lane_fanout(),
         });
 
-    wide_lhs_scaled_matmul::launch::<TestRuntime>(
+    wide_lhs_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

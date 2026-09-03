@@ -6,7 +6,6 @@
 //! bias tensor and validates `out = lhs @ rhs + bias`.
 
 use cubecl::{
-    TestRuntime,
     frontend::Scalar,
     ir::AddressType,
     prelude::*,
@@ -35,7 +34,7 @@ use cubek_test_utils::{
 pub fn test_matmul_with_bias_simple_unit_f32() {
     type Algorithm = SimpleUnitAlgorithm;
 
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems();
 
@@ -136,12 +135,12 @@ fn add_bias_to_reference(reference: &mut HostData, bias: &HostData) {
 }
 
 fn launch_with_bias<A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     problem: &MatmulProblem,
-    lhs: &TensorHandle<TestRuntime>,
-    rhs: &TensorHandle<TestRuntime>,
-    bias: &TensorHandle<TestRuntime>,
-    out: &TensorHandle<TestRuntime>,
+    lhs: &TensorHandle,
+    rhs: &TensorHandle,
+    bias: &TensorHandle,
+    out: &TensorHandle,
     dtypes: &MatmulElems,
 ) -> Result<(), String> {
     let vector_sizes = AvailableVectorSizes::from_type_sizes(
@@ -231,7 +230,7 @@ fn launch_with_bias<A: BatchMatmulRoutine<()>>(
     );
     let output = TensorOutputLaunch::new(out_view, out_batch);
 
-    A::launch::<TensorArgs, TestRuntime>(
+    A::launch::<TensorArgs>(
         client,
         launch_info.cube_dim,
         launch_info.cube_count_plan.resolve(),

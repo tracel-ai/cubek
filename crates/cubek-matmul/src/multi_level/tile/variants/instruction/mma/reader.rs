@@ -151,7 +151,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size / stage_vector_size) as u32;
 
-    let start = ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout);
+    let start = ldmatrix_offset::<A, B, CD>(stride, def, stage_vector_size, ident, layout);
     let start = tile.stage_offset(start);
 
     let row_slice = &tile.container[start as usize..(start + width) as usize];
@@ -165,7 +165,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
 
 /// Where in the stage lane `UNIT_POS_PLANE` starts its `ldmatrix` row.
 #[cube]
-pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
+pub(crate) fn ldmatrix_offset<A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] stage_vector_size: VectorSize,

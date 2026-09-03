@@ -10,7 +10,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     zspace::{Shape, shape},
 };
@@ -80,7 +79,7 @@ fn run(
     in_v: usize,
     instruction: Instruction,
 ) -> (HostData, Vec<f32>, Vec<f32>) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let in_data = ramp(in_shape.num_elements(), 7);
@@ -110,7 +109,7 @@ fn run(
     let w_spec = TileSpec::direct(w_axes).residence(&in_spec.residence);
     let out_binding = out_handle.clone().binding();
     match in_v {
-        1 => conv_kernel::launch::<TestRuntime>(
+        1 => conv_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -120,7 +119,7 @@ fn run(
             space.with_instruction(instruction),
             f32_ty,
         ),
-        2 => conv_kernel_lined::launch::<TestRuntime>(
+        2 => conv_kernel_lined::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -677,7 +676,7 @@ impl Conv1d {
         dynamic: Option<&[Axis]>,
         residence: &[Residence],
     ) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -747,7 +746,7 @@ impl Conv1d {
             .subspace(&[OH, CO])
             .build();
 
-        conv_kernel::launch::<TestRuntime>(
+        conv_kernel::launch(
             &client,
             launch.cube_count(),
             launch.cube_dim(),
@@ -912,7 +911,7 @@ impl Conv1d {
     /// a kernel that was compiled without knowing either. Their bounds are the exact values here,
     /// the tightest a stage can be sized at; `check_dynamic_padded` covers the staged schedule.
     fn check_dynamic(&self, tile_oh: usize, tile_co: usize) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -953,7 +952,7 @@ impl Conv1d {
             .zeros()
             .generate_without_host_data();
 
-        conv_kernel_dynamic::launch::<TestRuntime>(
+        conv_kernel_dynamic::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -1110,7 +1109,7 @@ impl Conv1d {
         dynamic_scales: bool,
         residence: &[Residence],
     ) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let space = Tiling::over(
@@ -1167,7 +1166,7 @@ impl Conv1d {
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
         if dynamic_scales {
-            conv_kernel_all_dynamic::launch::<TestRuntime>(
+            conv_kernel_all_dynamic::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -1184,7 +1183,7 @@ impl Conv1d {
                 f32_ty,
             );
         } else {
-            conv_kernel_dynamic_padding::launch::<TestRuntime>(
+            conv_kernel_dynamic_padding::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -1727,7 +1726,7 @@ struct Conv2dViewSetup {
     space: Space,
     in_spec: TileSpec,
     in_data: Vec<f32>,
-    in_handle: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    in_handle: cubecl::std::tensor::TensorHandle,
 }
 
 fn setup_conv2d_view() -> Conv2dViewSetup {
@@ -1751,7 +1750,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         ],
     ));
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let in_data = ramp(in_h * in_w * ci, 7);
     let (in_handle, _) = TestInput::builder(client.clone(), shape![in_h, in_w, ci])
@@ -1785,14 +1784,14 @@ fn conv2d_projected_matrix_view() {
     let matrices = oh * ow * rh;
     let (rows, cols) = (rw, ci);
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![matrices, rows, cols])
         .dtype(f32_ty)
         .zeros()
         .generate_without_host_data();
 
-    projected_matrix_kernel::launch::<TestRuntime>(
+    projected_matrix_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1862,14 +1861,14 @@ fn conv2d_fragment_matrix_view() {
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![rows, cols])
         .dtype(f32_ty)
         .zeros()
         .generate_without_host_data();
 
-    fragment_matrix_kernel::launch::<TestRuntime>(
+    fragment_matrix_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1933,7 +1932,7 @@ fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
 }
 
 fn conv1d_mma_leaf_with(io: MmaIOConfig) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // The *shape*, not just the feature: a backend can advertise manual mma and
     // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
     // instruction the hardware does not have: it reads back zeros, which looks
@@ -1991,7 +1990,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         .zeros()
         .generate_without_host_data();
 
-    conv_mma_kernel::launch::<TestRuntime>(
+    conv_mma_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2328,7 +2327,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
 
 #[test]
 fn resize1d_rational_dynamic() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let resize = Resize1d {
@@ -2375,7 +2374,7 @@ fn resize1d_rational_dynamic() {
         .zeros()
         .generate_without_host_data();
 
-    conv_kernel_rational_dynamic::launch::<TestRuntime>(
+    conv_kernel_rational_dynamic::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2429,7 +2428,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
 
 #[test]
 fn resize1d_dynamic_stage_read_before_fill() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let resize = Resize1d {
@@ -2465,7 +2464,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         .custom(ramp(resize.in_len * resize.ci, 7))
         .generate_with_f32_host_data();
 
-    conv_kernel_rational_dynamic_stage_read::launch::<TestRuntime>(
+    conv_kernel_rational_dynamic_stage_read::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

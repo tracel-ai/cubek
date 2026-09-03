@@ -7,7 +7,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     zspace::{Shape, shape},
 };
@@ -117,7 +116,7 @@ fn run(
     c_axes: &[Axis],
     space: Space,
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let (a_len, b_len) = (a_shape.num_elements(), b_shape.num_elements());
@@ -135,7 +134,7 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    reduce_matmul_kernel::launch::<TestRuntime>(
+    reduce_matmul_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -374,7 +373,7 @@ fn run_reduce_with_vw(
     in_vw: usize,
     in_residence: &[Residence],
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let in_len = in_shape.num_elements();
 
@@ -392,7 +391,7 @@ fn run_reduce_with_vw(
 
     match in_vw {
         1 => {
-            reduce_kernel::launch::<TestRuntime>(
+            reduce_kernel::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -407,7 +406,7 @@ fn run_reduce_with_vw(
             );
         }
         4 => {
-            reduce_kernel_v4::launch::<TestRuntime>(
+            reduce_kernel_v4::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
@@ -666,7 +665,7 @@ fn run_reduce_checked(
     monoid: Monoid,
     in_residence: &[Residence],
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
@@ -681,7 +680,7 @@ fn run_reduce_checked(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    reduce_kernel::launch::<TestRuntime>(
+    reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -837,14 +836,14 @@ fn test_reduce_axis_max_nondivisible_k() {
 fn check_procedural_reduce(stage: StagePlan) {
     let (m, k, tk) = (4, 6, 4);
     let space = nondivisible_k_space(m, k, tk, Buffering::SINGLE);
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let output = TestInput::builder(client.clone(), shape![m])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
 
-    procedural_reduce_kernel::launch::<TestRuntime>(
+    procedural_reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1065,7 +1064,7 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
 /// Tests that LaneShare::Plane seeds with 0 and folds across lanes combining with accumulator.
 #[test]
 fn test_reduce_axis_sum_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
@@ -1091,7 +1090,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
 #[test]
 fn test_reduce_axis_max_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
@@ -1119,7 +1118,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
 #[test]
 fn test_reduce_axis_min_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
@@ -1171,7 +1170,7 @@ fn resident_fold_kernel<E: Numeric>(
 
 #[test]
 fn resident_max_over_lane_split_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = plane_size * kr;
@@ -1197,7 +1196,7 @@ fn resident_max_over_lane_split_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1241,7 +1240,7 @@ fn resident_max_over_lane_split_k() {
             whether that is a cubek defect or an unsupported combination is not yet established \
             , it is not what the walk fix addresses"]
 fn resident_max_over_lane_group_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, kr, n) = (8usize, 2usize, 2usize);
     let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
@@ -1266,7 +1265,7 @@ fn resident_max_over_lane_group_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

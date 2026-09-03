@@ -7,9 +7,7 @@ use cubecl::{
     std::FastDivmod,
 };
 
-pub(crate) fn shape_divmod<R: Runtime>(
-    binding: &TensorBinding<R>,
-) -> SequenceArg<R, FastDivmod<usize>> {
+pub(crate) fn shape_divmod(binding: &TensorBinding) -> SequenceArg<FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for dim in binding.shape.iter() {
         out_seq.push(*dim);

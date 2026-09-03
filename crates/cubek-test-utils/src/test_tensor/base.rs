@@ -1,5 +1,4 @@
 use cubecl::{
-    TestRuntime,
     ir::ElemType,
     prelude::*,
     std::tensor::TensorHandle,
@@ -24,7 +23,7 @@ use crate::test_tensor::{
 /// while keeping the original unquantized data on the host for reference.
 pub struct QuantizationInfo {
     /// The scale tensor on the device.
-    pub scale: TensorHandle<TestRuntime>,
+    pub scale: TensorHandle,
     /// The quantization scheme (e.g., Symmetric, Tensor-wise, etc.)
     pub scheme: QuantScheme,
     /// The original unquantized shape of the tensor.
@@ -40,7 +39,7 @@ pub struct QuantizationInfo {
 /// (unless it's a dummy quantization for testing purposes).
 pub struct TestTensor {
     /// The device handle.
-    pub handle: TensorHandle<TestRuntime>,
+    pub handle: TensorHandle,
     /// The host data, usually stored in f32 for easy reference comparison.
     pub host: HostData,
     /// Optional quantization info.
@@ -108,15 +107,12 @@ impl TestInput {
     /// `.arange()`,
     /// `.eye()`, `.zeros()`, `.uniform(seed, lo, hi)`, `.bernoulli(seed, p)`,
     /// or `.custom(data)` to produce a [`TestInput`] ready to generate.
-    pub fn builder(
-        client: ComputeClient<TestRuntime>,
-        shape: impl Into<Shape>,
-    ) -> TestInputBuilder {
+    pub fn builder(client: Client, shape: impl Into<Shape>) -> TestInputBuilder {
         TestInputBuilder::new(client, shape.into())
     }
 
     pub fn new(
-        client: ComputeClient<TestRuntime>,
+        client: Client,
         shape: impl Into<Shape>,
         dtype: impl Into<InputDataType>,
         layout: impl Into<LayoutSpec>,
@@ -146,15 +142,15 @@ impl TestInput {
         }
     }
 
-    pub fn generate_with_f32_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+    pub fn generate_with_f32_host_data(self) -> (TensorHandle, HostData) {
         self.generate_with_host_data(HostDataType::F32)
     }
 
-    pub fn generate_with_f64_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+    pub fn generate_with_f64_host_data(self) -> (TensorHandle, HostData) {
         self.generate_with_host_data(HostDataType::F64)
     }
 
-    pub fn generate_with_bool_host_data(self) -> (TensorHandle<TestRuntime>, HostData) {
+    pub fn generate_with_bool_host_data(self) -> (TensorHandle, HostData) {
         self.generate_with_host_data(HostDataType::Bool)
     }
 
@@ -185,7 +181,7 @@ impl TestInput {
     }
 
     // Public API returning only TensorHandle
-    pub fn generate_without_host_data(self) -> TensorHandle<TestRuntime> {
+    pub fn generate_without_host_data(self) -> TensorHandle {
         let (shape, strides, dtype) = (
             self.base_spec.shape.clone(),
             self.base_spec.strides(),
@@ -208,10 +204,7 @@ impl TestInput {
         handle
     }
 
-    pub fn generate_with_host_data(
-        self,
-        host_data_type: HostDataType,
-    ) -> (TensorHandle<TestRuntime>, HostData) {
+    pub fn generate_with_host_data(self, host_data_type: HostDataType) -> (TensorHandle, HostData) {
         let client = self.base_spec.client.clone();
         let tensor_handle = self.generate_without_host_data();
         let host_data =
@@ -221,7 +214,7 @@ impl TestInput {
 }
 
 pub struct BaseInputSpec {
-    pub client: ComputeClient<TestRuntime>,
+    pub client: Client,
     pub shape: Shape,
     pub dtype: ElemType,
     pub layout: LayoutSpec,
@@ -266,14 +259,14 @@ pub enum Distribution {
 ///     .generate_with_f32_host_data();
 /// ```
 pub struct TestInputBuilder {
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     shape: Shape,
     dtype: Option<InputDataType>,
     layout: LayoutSpec,
 }
 
 impl TestInputBuilder {
-    fn new(client: ComputeClient<TestRuntime>, shape: Shape) -> Self {
+    fn new(client: Client, shape: Shape) -> Self {
         Self {
             client,
             shape,

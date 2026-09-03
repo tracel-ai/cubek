@@ -1,5 +1,5 @@
 use crate::harness::test_matmul_strategy;
-use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
+use cubecl::{frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     multi_level::{
@@ -64,7 +64,7 @@ impl GemvTestCase {
     }
 
     pub(crate) fn test(self) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let problem = self.to_problem();
 
         test_matmul_strategy(client, problem, self.strategy);

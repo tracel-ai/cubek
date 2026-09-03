@@ -1,16 +1,13 @@
 use cubecl::features::Plane;
 use cubecl::frontend::CompilationArg;
-use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, cube, prelude::*, std::tensor::TensorHandle,
-    zspace::Shape,
-};
+use cubecl::{CubeCount, CubeDim, cube, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
 use cubek_reduce::eval::cpu_reference::contiguous_strides;
 use cubek_test_utils::{InputDataType, StridedLayout, TestInput};
 
 #[test]
 fn test_topk_plane_reduce_inplace() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client.properties().features.plane.contains(Plane::Ops) {
         return;
     }
@@ -47,7 +44,7 @@ fn test_topk_plane_reduce_inplace() {
 
     let output_handle = build_output_tensor(&client, storage_type, &shape);
 
-    launch_plane_reduce_inplace::launch::<TestRuntime>(
+    launch_plane_reduce_inplace::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new(&client, num_threads),
@@ -64,10 +61,10 @@ fn test_topk_plane_reduce_inplace() {
 }
 
 fn build_output_tensor(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
+    client: &cubecl::client::Client,
     output_dtype: ElemType,
     output_shape: &Shape,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let strides = contiguous_strides(output_shape);
     TestInput::builder(client.clone(), output_shape.clone())
         .dtype(output_dtype)
@@ -134,7 +131,7 @@ fn assert_plane_topk_custom_values(
 
 #[test]
 fn test_topk_plane_topk_insert() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client.properties().features.plane.contains(Plane::Ops) {
         return;
     }
@@ -185,7 +182,7 @@ fn test_topk_plane_topk_insert() {
 
     let storage_type = f32::elem_type_native();
 
-    launch_plane_topk_insert::launch::<TestRuntime>(
+    launch_plane_topk_insert::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new(&client, num_threads),

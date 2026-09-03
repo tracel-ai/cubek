@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     cmma::MatrixLayout,
     future,
     prelude::*,
@@ -23,8 +22,8 @@ pub fn bench(
     problem: &GemvProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = GemvBench {
@@ -57,26 +56,26 @@ struct GemvBench {
     lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 #[derive(Clone)]
 struct GemvInputs {
-    lhs: TensorHandle<TestRuntime>,
-    rhs: TensorHandle<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    lhs: TensorHandle,
+    rhs: TensorHandle,
+    out: TensorHandle,
 }
 
 fn make_tensor_with_layout(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     row_major_shape: [usize; 3],
     layout: MatrixLayout,
     dtype: ElemType,
     seed: u64,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     match layout {
         MatrixLayout::RowMajor => TestInput::builder(client.clone(), Shape::new(row_major_shape))
             .dtype(dtype)
@@ -104,7 +103,7 @@ impl Benchmark for GemvBench {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
 
         let (lhs_row_major_shape, rhs_row_major_shape, out_shape) = match self.kind {
             ProblemKind::VecMat => (

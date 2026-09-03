@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -18,8 +17,8 @@ pub fn bench(
     problem: &PoolProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
 
     let bench = PoolBench {
@@ -41,26 +40,29 @@ pub fn bench(
 
 struct PoolBench {
     problem: PoolProblem,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     dtype: ElemType,
     indices_dtype: ElemType,
     samples: usize,
 }
 
 #[derive(Clone)]
+// One value per benchmark iteration, so boxing the backward arm to even the
+// variants out would only add an allocation to what it measures.
+#[allow(clippy::large_enum_variant)]
 enum PoolBenchInput {
-    Forward(TensorHandle<TestRuntime>),
+    Forward(TensorHandle),
     Backward {
-        input: TensorHandle<TestRuntime>,
-        out_grad: TensorHandle<TestRuntime>,
-        indices: Option<TensorHandle<TestRuntime>>,
+        input: TensorHandle,
+        out_grad: TensorHandle,
+        indices: Option<TensorHandle>,
     },
 }
 
 impl Benchmark for PoolBench {
     type Input = PoolBenchInput;
-    type Output = TensorHandle<TestRuntime>;
+    type Output = TensorHandle;
 
     fn prepare(&self) -> Self::Input {
         match &self.problem {
@@ -121,7 +123,7 @@ impl Benchmark for PoolBench {
         }
     }
 
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
+    fn execute(&self, input: Self::Input) -> Result<TensorHandle, String> {
         match (&self.problem, input) {
             (PoolProblem::Forward(PoolForward::D2(prob)), PoolBenchInput::Forward(input)) => {
                 let output_shape = &input.shape();

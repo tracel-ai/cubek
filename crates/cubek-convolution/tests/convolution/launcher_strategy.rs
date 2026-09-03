@@ -6,7 +6,6 @@
 //! output against a CPU reference via `cubek-test-utils`.
 
 use cubecl::{
-    TestRuntime,
     zspace::{Shape, shape},
     {ir::AddressType, prelude::*},
 };
@@ -102,7 +101,7 @@ fn test_algo_with_padding_end(
     convolution_size: ConvolutionSize,
     padding_end: Option<Vec<i32>>,
 ) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_dim = client.properties().hardware.plane_size_max;
 
     // Fixed for now; mirrors the parameters baked into the previous test suite.

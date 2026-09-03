@@ -11,7 +11,7 @@ use crate::{
     kernel::{interpolate_launch, interpolate_nearest_backward_launch},
 };
 use core::result::Result;
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 /// Interpolate operation
 ///
@@ -22,10 +22,10 @@ use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*}
 /// The strategy states what the launch optimizes for; the device and the problem decide the rest,
 /// so a caller that has measured nothing still gets a geometry built for the hardware it runs on.
 /// [`InterpolateStrategy::Forced`] pins every choice for one that has.
-pub fn interpolate<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn interpolate(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     strategy: InterpolateStrategy,
     dtype: ElemType,
@@ -43,11 +43,11 @@ pub fn interpolate<R: Runtime>(
 /// Note: only nearest mode is supported
 ///
 /// Expects input in NHWC layout.
-pub fn interpolate_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    input_grad: TensorBinding<R>,
+pub fn interpolate_backward(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    input_grad: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
 ) -> Result<(), InterpolateError> {

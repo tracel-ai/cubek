@@ -1,7 +1,6 @@
 //! Unit tests for [`Launcher`]: geometry read off the concrete space, kernel space dynamic.
 
 use cubecl::{
-    TestRuntime,
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
@@ -17,7 +16,7 @@ const K: Axis = Axis(2);
 
 #[test]
 fn launcher_geometry_matches_concrete_space() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     // X: 64/16 cube tiles, Y: 64/32, nothing on Z.
@@ -32,7 +31,7 @@ fn launcher_geometry_matches_concrete_space() {
 
 #[test]
 fn launcher_kernel_space_is_dynamic_concrete_is_not() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     for axis in [M, N, K] {
@@ -44,7 +43,7 @@ fn launcher_kernel_space_is_dynamic_concrete_is_not() {
 
 #[test]
 fn launcher_over_frees_only_the_listed_axes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M, K]);
 
     assert!(launch.space().is_dynamic(M));
@@ -57,7 +56,7 @@ fn launcher_over_frees_only_the_listed_axes() {
 #[test]
 #[should_panic(expected = "is not an axis of this space")]
 fn launcher_over_unknown_axis_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let _ = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[Axis(9)]);
 }
 
@@ -82,7 +81,7 @@ fn smem_operand(axes: &[Axis]) -> Operand {
     operand
 }
 
-fn binding(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBinding<TestRuntime> {
+fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
     let mut strides = vec![1usize; shape.len()];
     for i in (0..shape.len().saturating_sub(1)).rev() {
         strides[i] = strides[i + 1] * shape[i + 1];
@@ -92,7 +91,6 @@ fn binding(client: &ComputeClient<TestRuntime>, shape: &[usize]) -> TensorBindin
         handle: client.empty(len * size_of::<f32>()).binding(),
         strides: strides.into(),
         shape: shape.to_vec().into(),
-        runtime: core::marker::PhantomData,
     }
 }
 
@@ -118,7 +116,7 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
 
 #[test]
 fn arg_derives_check_from_subspace_overhang() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4); M and N divide everywhere.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
@@ -156,7 +154,7 @@ fn arg_derives_check_from_subspace_overhang() {
 /// modes on the grid fragments, which no [`Window`] ever reads.
 #[test]
 fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so K's coordinate is the one that needs the mode.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
@@ -178,7 +176,7 @@ fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
 
 #[test]
 fn arg_right_aligns_batches_and_drops_size_one() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
@@ -216,7 +214,7 @@ fn staged_operand(axes: &[Axis]) -> Operand {
 /// kernel it replaces, which is the whole thing `build_spec` is a shared derivation to prevent.
 #[test]
 fn spec_derives_what_a_bound_operand_derives() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so the derivation has a check to arm and something to say.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let operand = staged_operand(&[M, K]);
@@ -242,7 +240,7 @@ fn spec_derives_what_a_bound_operand_derives() {
 /// the derivation; hand-building a spec beside it is the drift `build_spec` exists to remove.
 #[test]
 fn spec_tunes_what_a_bound_operand_tunes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so the derivation arms a check there is something to disarm.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
     let operand = staged_operand(&[M, K]);
@@ -271,7 +269,7 @@ fn spec_tunes_what_a_bound_operand_tunes() {
 /// [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
 #[test]
 fn spec_returns_the_geometry_it_settled_on() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     let derived = launch
@@ -298,7 +296,7 @@ fn spec_returns_the_geometry_it_settled_on() {
 #[test]
 #[should_panic(expected = "batch dims but only 0 batch axes given")]
 fn spec_refuses_a_dim_it_cannot_label() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     let _ = launch
@@ -318,7 +316,7 @@ fn spec_refuses_a_dim_it_cannot_label() {
 /// the projection no longer has; the settled one is a dim shorter, and that is the one returned.
 #[test]
 fn spec_settles_a_broadcast_batch_dim_away() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
 
     // Three dims stated, the leading one broadcast over B1.
@@ -349,7 +347,7 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 #[test]
 #[should_panic(expected = "cannot be served 2 wide")]
 fn spec_refuses_a_width_the_geometry_cannot_serve() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
@@ -381,7 +379,7 @@ fn window(stride: usize, dilation: usize, offset: impl Into<Offset>) -> Projecti
 /// three logical axes, in the projection's own order.
 #[test]
 fn arg_gathered_states_its_own_mapping() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let input = launch
@@ -400,7 +398,7 @@ fn arg_gathered_states_its_own_mapping() {
 /// tap axis `K` is one of the two the gathered dim is addressed by.
 #[test]
 fn arg_gathered_derives_check_from_overhang() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4).
     let launch = batched_space(1, 1, 64, 64, 18).launcher_over(&client, &[N]);
 
@@ -428,7 +426,7 @@ fn arg_gathered_derives_check_from_overhang() {
 /// arms on the offset's sign alone. A forward shift cannot underflow and stays unchecked.
 #[test]
 fn arg_gathered_derives_check_from_underflow() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let padded = launch
@@ -462,7 +460,7 @@ fn arg_gathered_derives_check_from_underflow() {
 #[test]
 #[should_panic(expected = "nothing left to describe")]
 fn arg_gathered_alongside_a_subspace_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
     let _ = launch
         .arg(binding(&client, &[79, 64]))
@@ -476,7 +474,7 @@ fn arg_gathered_alongside_a_subspace_panics() {
 #[test]
 #[should_panic(expected = "addresses 2 dims but the operand has 3")]
 fn arg_gathered_rank_mismatch_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
     let _ = launch
         .arg(binding(&client, &[4, 79, 64]))
@@ -489,7 +487,7 @@ fn arg_gathered_rank_mismatch_panics() {
 #[test]
 #[should_panic(expected = "innermost physical axis")]
 fn arg_gathered_validates_the_innermost_dim() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[M]);
     let _ = launch
         .arg(binding(&client, &[64, 79]))
@@ -511,7 +509,7 @@ fn arg_gathered_validates_the_innermost_dim() {
 /// no operand answers for is reported by `witnessed_space`, at expansion.
 #[test]
 fn arg_gathered_dynamic_axis_is_accepted() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // `K` shares the gathered dim with `M`, so neither reads an extent off *this* operand.
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N, K]);
     let _ = launch
@@ -524,7 +522,7 @@ fn arg_gathered_dynamic_axis_is_accepted() {
 /// alongside the two that share a dim.
 #[test]
 fn arg_gathered_identity_axis_may_stay_dynamic() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
 
     let input = launch
@@ -540,7 +538,7 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
 /// into holds every window the launch can then ask for.
 #[test]
 fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
@@ -568,7 +566,7 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
 /// A static rational projection stages uncompacted into shared memory.
 #[test]
 fn arg_gathered_rational_stages() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
@@ -594,7 +592,7 @@ fn arg_gathered_rational_stages() {
 /// launch can ask for.
 #[test]
 fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
@@ -620,7 +618,7 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
 /// `over` reduces it away and what reaches the stage is a plain strided gather, which compacts.
 #[test]
 fn arg_gathered_cancelling_divisor_stages() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
@@ -648,7 +646,7 @@ fn arg_gathered_cancelling_divisor_stages() {
 
 #[test]
 fn vector_size_picks_widest_qualifying_line() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // Everything divides: N's leaf edge is 8, both inner extents are 64.
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
     // Off real bindings, not hand-written dims: the strides are the allocator's, so a pitched
@@ -670,7 +668,7 @@ fn vector_size_picks_widest_qualifying_line() {
 
 #[test]
 fn vector_size_falls_back_to_scalar() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
     let out = Geometry::from(&binding(&client, &[64, 64]));
 
@@ -705,7 +703,7 @@ fn vector_size_falls_back_to_scalar() {
 #[test]
 #[should_panic(expected = "not provably in bounds")]
 fn arg_checked_and_vectorized_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf, so the derived check is true: vectorizing must refuse.
     //
     // Two wide, not four: an axis overhanging a leaf of 4 has an extent 4 does not divide, so a
@@ -721,7 +719,7 @@ fn arg_checked_and_vectorized_panics() {
 
 #[test]
 fn arg_vectorized_with_outer_axis_overhang_succeeds() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // M = 63 overhangs its leaf (8); N = 64 divides cleanly.
     let launch = batched_space(1, 1, 63, 64, 16).launcher(&client);
     let arg = launch
@@ -741,7 +739,7 @@ fn arg_vectorized_with_outer_axis_overhang_succeeds() {
 /// the axes that cannot leave the buffer. Only `checked(false)` disarms outright.
 #[test]
 fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4); M divides, so no override can put a mask on it.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
 
@@ -766,7 +764,7 @@ fn tile_spec_boundaries_must_match_the_coordinate_rank() {
 
 #[test]
 fn arg_gathered_clamp_vectorized_exemption() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher_over(&client, &[N]);
     // 3 logical axes [M, K, N] mapped over 2 coordinate axes:
     // Spatial (M, K) on coordinate 0 (clamped), channel N on coordinate 1 (vectorized & in-bounds).
@@ -786,7 +784,7 @@ fn arg_gathered_clamp_vectorized_exemption() {
 #[test]
 #[should_panic(expected = "innermost dim")]
 fn vector_size_axis_must_label_innermost() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
     let lhs = binding(&client, &[64, 16]);
     // lhs's innermost dim is K, not N: asking for N-lines over it is a labeling bug.
@@ -796,7 +794,7 @@ fn vector_size_axis_must_label_innermost() {
 #[test]
 #[should_panic(expected = "batch axes given")]
 fn arg_more_batch_dims_than_axes_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(4, 3, 64, 64, 16).launcher(&client);
     let _ = launch
         .arg(binding(&client, &[4, 3, 64, 16]))
@@ -811,7 +809,7 @@ fn arg_more_batch_dims_than_axes_panics() {
 /// in-kernel assumption, so the launch is the one place a violation can still be seen: an
 /// in-kernel assert fires on a device thread, which surfaces as zeroed output.
 fn quantize(v: usize, scheme: QuantScheme) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
     let _ = StridedOperand::source(binding(&client, &[64, 16]))
         .space(&space)
@@ -882,7 +880,7 @@ fn quantized_packed_store_narrow_line_panics() {
 #[test]
 #[should_panic(expected = "never Smem-resident")]
 fn stage_width_without_smem_panics() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
     let _ = launch
         .arg(binding(&client, &[64, 16]))
@@ -896,7 +894,7 @@ fn stage_width_without_smem_panics() {
 #[test]
 #[should_panic(expected = "must be unvectorized")]
 fn stage_width_refuses_a_vectorized_operand() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let space = batched_space(1, 1, 64, 64, 16);
     let launch = space.launcher(&client);
     let mut operand = Operand::new(&[M, K], f32::elem_type_native());
@@ -914,7 +912,7 @@ fn stage_width_refuses_a_vectorized_operand() {
 #[test]
 #[should_panic(expected = "must widen the operand's own")]
 fn stage_width_must_widen() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let space = batched_space(1, 1, 64, 64, 16);
     let launch = space.launcher(&client);
     let mut operand = Operand::new(&[M, K], f32::elem_type_native());
@@ -929,7 +927,7 @@ fn stage_width_must_widen() {
 #[test]
 #[should_panic(expected = "not supported for quantized operands")]
 fn stage_width_refuses_quant() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let space = batched_space(1, 1, 64, 64, 16);
     let launch = space.launcher(&client);
     let mut operand = Operand::new(&[M, K], f32::elem_type_native());

@@ -60,17 +60,17 @@ impl PrngArgs for Uniform {
 
     const VECTORS_PER_DRAW: usize = 1;
 
-    fn args<R: Runtime>(self) -> UniformLaunch<R> {
+    fn args(self) -> UniformLaunch {
         UniformLaunch::new(self.lower_bound, self.upper_bound)
     }
 }
 
 /// Pseudo-random generator with uniform distribution
-pub fn random_uniform<R: Runtime>(
-    client: &ComputeClient<R>,
+pub fn random_uniform(
+    client: &Client,
     lower_bound: f32,
     upper_bound: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random_uniform_with_strategy(
@@ -83,15 +83,15 @@ pub fn random_uniform<R: Runtime>(
     )
 }
 
-pub(crate) fn random_uniform_with_strategy<R: Runtime>(
-    client: &ComputeClient<R>,
+pub(crate) fn random_uniform_with_strategy(
+    client: &Client,
     lower_bound: f32,
     upper_bound: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
 ) -> Result<(), LaunchError> {
-    random::<UniformFamily, R>(
+    random::<UniformFamily>(
         client,
         Uniform {
             lower_bound,

@@ -435,13 +435,13 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
     }
 }
 
-impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
+impl<E: Numeric> TmaTileArgLaunch<E> {
     /// Load a TMA tensor-map as a tile argument for `operand`, whose axes and per-level residences
     /// drive the spec. `dims` is the operand's logical runtime `(batch, rows, cols)`; `transposed`
     /// flags a col-major descriptor whose inner pair the layout swaps back. Width and storage do
     /// not apply to a tensor map, so the spec is built here rather than by the caller.
     pub fn tensor_map(
-        tensor_map: TensorMapArg<R, Tiled>,
+        tensor_map: TensorMapArg<Tiled>,
         operand: &Operand,
         dims: (u32, u32, u32),
         transposed: bool,

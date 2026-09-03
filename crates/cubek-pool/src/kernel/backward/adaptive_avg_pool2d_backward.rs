@@ -5,7 +5,7 @@ use super::super::{
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use crate::kernel::forward::{Position, view4d};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -64,11 +64,11 @@ fn adaptive_avg_pool2d_backward_direct<E: Numeric, N: Size>(
     output.write((b, ih, iw, c), grad_acc);
 }
 
-pub(crate) fn adaptive_avg_pool2d_backward_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn adaptive_avg_pool2d_backward_launch(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    output: TensorBinding,
     _options: AdaptiveAvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {

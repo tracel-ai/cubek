@@ -1,6 +1,5 @@
 use cubecl::{
-    Runtime,
-    client::ComputeClient,
+    client::Client,
     ir::{AddressType, ElemType, FloatKind},
     prelude::Scalar,
 };
@@ -98,7 +97,7 @@ impl AttentionGlobalTypes {
         }
     }
 
-    pub fn mask_dtype<R: Runtime>(client: &ComputeClient<R>) -> ElemType {
+    pub fn mask_dtype(client: &Client) -> ElemType {
         let props = client.properties();
         let u8_ty = u8::elem_type_native();
         let u32_ty = u32::elem_type_native();

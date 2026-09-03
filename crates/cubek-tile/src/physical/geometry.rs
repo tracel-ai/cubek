@@ -123,8 +123,8 @@ impl Display for LineMisfit {
     }
 }
 
-impl<R: Runtime> From<&TensorBinding<R>> for Geometry {
-    fn from(binding: &TensorBinding<R>) -> Self {
+impl From<&TensorBinding> for Geometry {
+    fn from(binding: &TensorBinding) -> Self {
         Self {
             shape: binding.shape.to_vec(),
             strides: binding.strides.to_vec(),

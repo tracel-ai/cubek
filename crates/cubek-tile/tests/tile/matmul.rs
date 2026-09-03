@@ -2,7 +2,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    TestRuntime,
     cmma::{MatrixIdent, MatrixLayout},
     features::TypeUsage,
     ir::ElemType,
@@ -26,7 +25,7 @@ use super::references;
 /// fragment shapes they advertise, and an unsupported shape is rejected at
 /// compile time. Returns `false` (after enforcing a skip outcome) when the
 /// device doesn't advertise the exact configuration.
-fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -50,7 +49,7 @@ fn require_cmma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
 /// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
 /// not have: it reads back zeros, which looks like a leaf bug and is a missing
 /// guard.
-fn require_mma_8x8x8_f32(client: &ComputeClient<TestRuntime>) -> bool {
+fn require_mma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -279,7 +278,7 @@ fn matmul_cpu_big_k() {
 /// `M×N` sink; the fourth lane is padding and must not consume the next row's first live value.
 #[test]
 fn matmul_padded_rhs_stage_into_scalar_sink() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 3usize, 2usize);
     let dtype = f32::elem_type_native();
     let mut operands = (
@@ -310,7 +309,7 @@ fn matmul_padded_rhs_stage_into_scalar_sink() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -339,7 +338,7 @@ fn matmul_padded_rhs_stage_into_scalar_sink() {
 /// row after it, `block::commit`'s masked lanes are all that keeps the write inside the output.
 #[test]
 fn matmul_padded_rhs_stage_single_row_sink() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (1usize, 3usize, 2usize);
     let dtype = f32::elem_type_native();
     let mut operands = (
@@ -370,7 +369,7 @@ fn matmul_padded_rhs_stage_single_row_sink() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -399,7 +398,7 @@ fn matmul_padded_rhs_stage_single_row_sink() {
 /// padding). Exercises non-multiple tail across multi-line stages.
 #[test]
 fn matmul_padded_rhs_stage_multi_line() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 5usize, 2usize);
     let dtype = f32::elem_type_native();
     let mut operands = (
@@ -430,7 +429,7 @@ fn matmul_padded_rhs_stage_multi_line() {
         .build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -461,7 +460,7 @@ fn matmul_padded_rhs_stage_multi_line() {
 /// final lhs line must contribute exactly three K values.
 #[test]
 fn matmul_padded_lhs_stage_direct_tail() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 2usize, 3usize);
     let dtype = f32::elem_type_native();
     let mut operands = (
@@ -496,7 +495,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
     let b_op = launcher.bind(&operands.1, b.handle().binding()).build();
     let c_op = launcher.bind(&operands.2, c.handle().binding()).build();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -527,7 +526,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
 /// Geometry and allocation use the concrete space; the kernel keys on the K-dynamic one.
 #[test]
 fn matmul_cpu_dynamic_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 4usize);
     let partitioner = Partitioner::row_major(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
@@ -552,7 +551,7 @@ fn matmul_cpu_dynamic_k() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -755,7 +754,7 @@ fn check_matmul_batched(
     tile_edge: usize,
     batch_edge: usize,
 ) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let dtype = f32::elem_type_native();
     let vector_size = 1;
@@ -796,7 +795,7 @@ fn check_matmul_batched(
     let cube_count = space.cube_count();
     let cube_dim = CubeDim::new_single();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         cube_count,
         cube_dim,
@@ -837,7 +836,7 @@ fn check_matmul_batched(
 /// fills the omitted axis back wholesale. Single tile per matrix (`t³`) with
 /// `batch_edge = 1`, so each output batch element is its own walk point.
 fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partitioner]) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let dtype = f32::elem_type_native();
     let vector_size = 1;
@@ -878,7 +877,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
     let cube_count = out.cube_count();
     let cube_dim = CubeDim::new_single();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         cube_count,
         cube_dim,
@@ -905,7 +904,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, partitioners: &[Partit
 fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
     // The CPU register lowering reads both operands where they lie: the inputs state no
     // residence, so the level materializes nothing and the walk is the plain recursion.
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
 
     let tile_edge = partitioner.edge(M);
@@ -922,7 +921,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .tile(&[tile_edge, tile_edge])
         .uniform(4242, 10., 100.);
 
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1102,7 +1101,7 @@ fn matmul_multilevel_tiled_stage() {
 /// invariant operand fills its slot once, above the loop.
 #[test]
 fn matmul_staged_invariant_lhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
     let dtype = f32::elem_type_native();
     let mut ops = (
@@ -1135,7 +1134,7 @@ fn matmul_staged_invariant_lhs() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1168,7 +1167,7 @@ fn matmul_staged_invariant_lhs() {
 /// plain plan describes. Its operands' residence columns lose the padded entry with it.
 #[test]
 fn matmul_a_level_that_cuts_nothing_is_dropped() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
     let dtype = f32::elem_type_native();
     let operands = || {
@@ -1218,7 +1217,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1255,7 +1254,7 @@ fn matmul_a_level_that_cuts_nothing_is_dropped() {
 /// win is on GPU where the warp's lanes divide N.
 #[test]
 fn register_matmul_unit_spread_n() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, k, nr) = (4usize, 8usize, 2usize);
@@ -1279,7 +1278,7 @@ fn register_matmul_unit_spread_n() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1323,7 +1322,7 @@ fn register_matmul_unit_spread_n() {
 /// the correctness-driven staged unroll. Tensor-core only.
 #[test]
 fn cmma_matmul_staged_n_walk_partition() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -1384,7 +1383,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1416,7 +1415,7 @@ fn cmma_matmul_staged_n_walk_partition() {
 /// Exercises the unrolled pipelined walk (unroll == true) with register partition selection.
 #[test]
 fn cmma_matmul_double_buffered_plane_stage() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -1476,7 +1475,7 @@ fn cmma_matmul_double_buffered_plane_stage() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1527,7 +1526,7 @@ fn matmul_double_buffered() {
 /// while one knob said both.
 #[test]
 fn matmul_double_buffered_with_only_the_lhs_staged() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
     let partitioner = Partitioner::row_major(
         ByAxis::new(&[(M, tile_edge), (N, tile_edge), (K, tile_edge)]),
@@ -1559,7 +1558,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1600,7 +1599,7 @@ fn check_matmul_multilevel(
     stage: StageStorage,
     residence: &[Residence],
 ) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let final_edge = l1.edge(M);
     let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, m), (N, n), (K, k)])
@@ -1627,7 +1626,7 @@ fn check_matmul_multilevel(
         .tile(&[final_edge, final_edge])
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1657,7 +1656,7 @@ fn check_matmul_multilevel(
 /// Drives the staged lowering `launch_staged_matmul` for `C = A @ B`. Every caller stages its one
 /// level, so the inputs take [`Residence::Smem`] there.
 fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tile_edge = partitioner.edge(M);
     let dtype = f32::elem_type_native();
     let space = Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner.clone());
@@ -1680,7 +1679,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1713,7 +1712,7 @@ fn check_matmul(m: usize, n: usize, k: usize, partitioner: Partitioner) {
 /// would drop what `c` holds and turn every `c += a·b` in the workspace into `c = a·b`.
 #[test]
 fn mma_folds_onto_what_c_holds() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 4usize, 4usize);
     let dtype = f32::elem_type_native();
     // The whole contraction lands at the leaf, so `mm` here would overwrite. `mma` must not.
@@ -1744,7 +1743,7 @@ fn mma_folds_onto_what_c_holds() {
         .tile(&[tile_edge, tile_edge])
         .arange();
 
-    launch_staged_matmul_accumulate::launch::<TestRuntime>(
+    launch_staged_matmul_accumulate::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -1887,7 +1886,7 @@ fn launch_promoted_matmul<E: Numeric, EA: Numeric, V: Size>(
 /// through the sink's on every visit.
 #[test]
 fn register_matmul_promoted_accumulator() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // One block per instance (a 1x1 partition at the leaf), K walked in four steps: every
     // step returns to the same promoted accumulator, which is the round trip this removes.
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
@@ -1915,7 +1914,7 @@ fn register_matmul_promoted_accumulator() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1967,7 +1966,7 @@ fn launch_tropical_matmul<E: Numeric>(
 /// by cell and a leaf that kept the ordinary `fma` cannot land on these numbers.
 #[test]
 fn tropical_matmul_in_place() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
     let partitioner = Partitioner::row_major(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
@@ -1992,7 +1991,7 @@ fn tropical_matmul_in_place() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_tropical_matmul::launch::<TestRuntime>(
+    launch_tropical_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2029,7 +2028,7 @@ fn tropical_matmul_in_place() {
 /// adding under anything else is refused, at the scope and again at the block.
 #[test]
 fn tropical_matmul_promoted() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
     let partitioner = Partitioner::row_major(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
@@ -2054,7 +2053,7 @@ fn tropical_matmul_promoted() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_tropical_matmul::launch::<TestRuntime>(
+    launch_tropical_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2093,7 +2092,7 @@ fn tropical_matmul_promoted() {
 /// store is a real vector write and the numbers are right on every runtime.
 #[test]
 fn register_matmul_promoted_cube_plane() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 16usize);
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
@@ -2121,7 +2120,7 @@ fn register_matmul_promoted_cube_plane() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2217,7 +2216,7 @@ fn lined_lhs_space(m: usize, n: usize, k: usize) -> Space {
 /// reaching its element by a comptime `extract` rather than a dynamic one.
 #[test]
 fn register_matmul_lined_lhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
     let space = lined_lhs_space(m, n, k);
 
@@ -2233,7 +2232,7 @@ fn register_matmul_lined_lhs() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_cpu_matmul_lined::launch::<TestRuntime>(
+    launch_cpu_matmul_lined::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2259,7 +2258,7 @@ fn register_matmul_lined_lhs() {
 /// accumulator never round-trips to the output between `K` steps.
 #[test]
 fn register_matmul_promoted_lined_lhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
     let space = lined_lhs_space(m, n, k);
 
@@ -2275,7 +2274,7 @@ fn register_matmul_promoted_lined_lhs() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_promoted_matmul_lined::launch::<TestRuntime>(
+    launch_promoted_matmul_lined::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2333,7 +2332,7 @@ fn folded_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
 /// The 2-D nest at a folded step: four contracted values per `fma` instead of one.
 #[test]
 fn register_matmul_folded_step() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
     let space = lined_lhs_space(m, n, k);
 
@@ -2349,7 +2348,7 @@ fn register_matmul_folded_step() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2376,7 +2375,7 @@ fn register_matmul_folded_step() {
 /// numbers off the rolled body, whose local arrays are indexed at runtime.
 #[test]
 fn register_matmul_folded_step_rolled() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
     let space = lined_lhs_space(m, n, k);
 
@@ -2391,7 +2390,7 @@ fn register_matmul_folded_step_rolled() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2418,7 +2417,7 @@ fn register_matmul_folded_step_rolled() {
 /// them. The reduce nest steps by the served width, so each step lands on a line start.
 #[test]
 fn register_matmul_folded_step_two_contracted_axes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
     let k = k1 * k2;
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k1), (K2, k2)])
@@ -2438,7 +2437,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
-    launch_matmul_folded::launch::<TestRuntime>(
+    launch_matmul_folded::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2484,7 +2483,7 @@ fn launch_matmul_folded_quant<I: Numeric, E: Numeric, BV: Size>(
 /// and fold run with a decode added on the read.
 #[test]
 fn register_matmul_folded_step_quant_q8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_folded_step_quant(client, QuantValue::Q8S, (4, 4, 8), 4);
 }
 
@@ -2492,13 +2491,13 @@ fn register_matmul_folded_step_quant_q8() {
 /// vectors reach the factor, so it skips on WGSL-bound targets.
 #[test]
 fn register_matmul_folded_step_quant_q4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_folded_step_quant(client, QuantValue::Q4S, (4, 4, 16), 4);
 }
 
 /// Drive [`launch_matmul_folded_quant`] and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[j,p]`.
 fn run_folded_step_quant(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     value: QuantValue,
     (m, n, k): (usize, usize, usize),
     bm: usize,
@@ -2530,7 +2529,7 @@ fn run_folded_step_quant(
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_matmul_folded_quant::launch::<TestRuntime>(
+    launch_matmul_folded_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2577,7 +2576,7 @@ fn run_folded_step_quant(
 /// `cargo test-metal`.
 #[test]
 fn cmma_fragment_roundtrip() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -2590,7 +2589,7 @@ fn cmma_fragment_roundtrip() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    cmma_roundtrip::launch::<TestRuntime>(
+    cmma_roundtrip::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2653,7 +2652,7 @@ fn cmma_roundtrip<E: Numeric>(
 /// the register reference. Tensor-core only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -2670,7 +2669,7 @@ fn cmma_matmul_8x8x8() {
         .untiled()
         .zeros();
 
-    cmma_matmul::launch::<TestRuntime>(
+    cmma_matmul::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2695,7 +2694,7 @@ fn cmma_matmul_8x8x8() {
 /// tensor-core matmul runs in f32. `C = (A·scale)·B`. Needs both cmma and native i8.
 #[test]
 fn cmma_matmul_quant_per_tensor_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -2735,7 +2734,7 @@ fn cmma_matmul_quant_per_tensor_8x8x8() {
     let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -2810,7 +2809,7 @@ fn cmma_matmul_staged_k_walk_strided_stage() {
 /// dropped rather than quietly running the other correct path.
 #[test]
 fn matmul_leaf_stated_by_operands() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
     let dtype = f32::elem_type_native();
     let mut ops = (
@@ -2839,7 +2838,7 @@ fn matmul_leaf_stated_by_operands() {
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -2873,7 +2872,7 @@ fn check_cmma_matmul_k_walk(k: usize, buffering: Buffering) {
 /// The one level always stages, whatever it buffers: a cmma leaf cannot consume the global inputs
 /// directly, so it first materializes them in shared memory.
 fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: StageStorage) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -2905,7 +2904,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -2941,7 +2940,7 @@ fn check_cmma_matmul_k_walk_v(k: usize, buffering: Buffering, v: usize, stage: S
 /// `cargo test-metal` / `test-cuda` on a backend that advertises manual mma.
 #[test]
 fn mma_matmul_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_mma_8x8x8_f32(&client) {
         return;
     }
@@ -2975,7 +2974,7 @@ fn mma_matmul_8x8x8() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3009,7 +3008,7 @@ fn mma_matmul_8x8x8() {
 /// four K steps. Tensor-core only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_plane_partitioned_stage() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3050,7 +3049,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3084,7 +3083,7 @@ fn cmma_matmul_plane_partitioned_stage() {
 /// Tensor-core only; run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3130,7 +3129,7 @@ fn cmma_matmul_multi_fragment_partition() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3236,7 +3235,7 @@ fn cmma_matmul<E: Numeric>(
 /// score matmul of attention (`Q · Kᵀ`, `K` stored `{S, D}`) in miniature. Tensor-core only.
 #[test]
 fn cmma_matmul_transposed_rhs_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3254,7 +3253,7 @@ fn cmma_matmul_transposed_rhs_8x8x8() {
         .untiled()
         .zeros();
 
-    cmma_matmul_transposed_rhs::launch::<TestRuntime>(
+    cmma_matmul_transposed_rhs::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3430,7 +3429,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
 /// fragment then reads the whole `8×8` smem. Validates block windowing into the matmul stage.
 #[test]
 fn cmma_matmul_quant_block_m_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3470,7 +3469,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3514,7 +3513,7 @@ fn cmma_matmul_quant_block_m_8x8x8() {
 /// quantized-weight matmul.
 #[test]
 fn cmma_matmul_quant_block_k_8x8x8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3554,7 +3553,7 @@ fn cmma_matmul_quant_block_k_8x8x8() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    cmma_matmul_quant::launch::<TestRuntime>(
+    cmma_matmul_quant::launch(
         &client,
         CubeCount::Static(1, 1, 1),
         CubeDim::new_3d(32, 1, 1),
@@ -3614,7 +3613,7 @@ fn cmma_matmul_quant_double_buffered_k_walk() {
 /// that is a quarter the size.
 #[test]
 fn mma_matmul_quant_until_read() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     // The shape, not just the feature; see `require_mma_8x8x8_f32`. The `f32`
     // triple, not the stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is
     // the *walk*, walked 8 deep, and `A` decodes at the read, so
@@ -3669,7 +3668,7 @@ fn mma_matmul_quant_until_read() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3710,7 +3709,7 @@ fn mma_matmul_quant_until_read() {
 /// The one level always stages, whatever it buffers: a cmma leaf cannot consume the global inputs
 /// directly, so it first materializes them in shared memory.
 fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3759,7 +3758,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3804,7 +3803,7 @@ fn check_cmma_matmul_quant_k_walk(k: usize, buffering: Buffering) {
 /// Tensor-core only.
 #[test]
 fn cmma_matmul_quant_block_m_k_walk() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3853,7 +3852,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3898,7 +3897,7 @@ fn cmma_matmul_quant_block_m_k_walk() {
 /// Tensor-core only.
 #[test]
 fn cmma_matmul_quant_block_k_k_walk() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -3947,7 +3946,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -3992,7 +3991,7 @@ fn cmma_matmul_quant_block_k_k_walk() {
 /// Tensor-core only.
 #[test]
 fn cmma_matmul_quant_block_k_k_walk_vectorized() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
@@ -4041,7 +4040,7 @@ fn cmma_matmul_quant_block_k_k_walk_vectorized() {
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_resident_matmul_quant::launch::<TestRuntime>(
+    launch_resident_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -4120,7 +4119,7 @@ fn matmul_triple_buffered_vectorized() {
 /// hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
 #[test]
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         // L0: the whole output, K in two steps. `promote` mirrors this level's *sub-tile*, so the
@@ -4158,7 +4157,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
         .uniform(4242, 10., 100.);
 
-    launch_resident_matmul::launch::<TestRuntime>(
+    launch_resident_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -4261,7 +4260,7 @@ fn check_matmul_dims_vectorized(
     residence_a: &[Residence],
     residence_b: &[Residence],
 ) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (edge, v) = (4usize, 2usize);
     let builder = Partitioner::row_major(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
@@ -4295,7 +4294,7 @@ fn check_matmul_dims_vectorized(
         .untiled()
         .zeros();
 
-    launch_staged_matmul::launch::<TestRuntime>(
+    launch_staged_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),
@@ -4389,7 +4388,7 @@ fn register_partitioner(tm: usize, tn: usize, tk: usize) -> Partitioner {
 /// Native i8 `A`, one scale per `bm`-row block, through the register leaf.
 #[test]
 fn register_matmul_quant_native_block_m() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -4440,7 +4439,7 @@ fn register_matmul_quant_native_block_m() {
 /// exercise every branch of the leaf's quant dispatch (lhs/rhs × native/packed).
 #[test]
 fn register_matmul_quant_native_direct_serve() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -4488,7 +4487,7 @@ fn register_matmul_quant_native_direct_serve() {
 /// Packed-u32 Q8S `A` (4 values per word along `K`), served in whole-word lines.
 #[test]
 fn register_matmul_quant_packed_q8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_register_matmul_quant_packed(client, (8, 8, 8), 4, QuantValue::Q8S, 4);
 }
 
@@ -4496,13 +4495,13 @@ fn register_matmul_quant_packed_q8() {
 /// whose vectors reach the packing factor (cpu/cuda; WGSL-bound targets cap at 4).
 #[test]
 fn register_matmul_quant_packed_q4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_register_matmul_quant_packed(client, (8, 8, 16), 8, QuantValue::Q4S, 4);
 }
 
 /// Build a packed `A` spanning the scheme's signed range and run the register matmul.
 fn run_register_matmul_quant_packed(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     tk: usize,
     value: QuantValue,
@@ -4552,14 +4551,14 @@ fn run_register_matmul_quant_packed(
 /// stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     residence: &[Residence],
-    a_arg: TensorArg<TestRuntime>,
+    a_arg: TensorArg,
     a_dtype: ElemType,
     scheme: QuantScheme,
-    scales_arg: TensorArg<TestRuntime>,
+    scales_arg: TensorArg,
     scale_vals: Vec<f32>,
     bm: usize,
     q: Vec<f32>,
@@ -4579,7 +4578,7 @@ fn run_register_matmul_quant(
         .zeros();
     let e_dtype = f32::elem_type_native();
 
-    launch_staged_matmul_quant::launch::<TestRuntime>(
+    launch_staged_matmul_quant::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -4643,7 +4642,7 @@ fn launch_staged_matmul_quant_rhs<I: Numeric, E: Numeric, V: Size>(
 /// family `metabolic`'s gemv ships (`q8s`, packed-u32, block scales along `d_out`).
 #[test]
 fn register_matmul_quant_rhs_packed_q8() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_register_matmul_quant_rhs(
         client,
         (8, 8, 8),
@@ -4659,7 +4658,7 @@ fn register_matmul_quant_rhs_packed_q8() {
 /// The `q4s` twin (8 values per word): needs 8-wide bindings, so cpu/cuda only.
 #[test]
 fn register_matmul_quant_rhs_packed_q4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_register_matmul_quant_rhs(
         client,
         (8, 16, 8),
@@ -4676,7 +4675,7 @@ fn register_matmul_quant_rhs_packed_q4() {
 /// what every projection degenerates to during token-by-token generation.
 #[test]
 fn register_matmul_quant_rhs_gemv_row() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     run_register_matmul_quant_rhs(
         client,
         (1, 8, 8),
@@ -4693,7 +4692,7 @@ fn register_matmul_quant_rhs_gemv_row() {
 /// selector emits (`M = 1` leaves nothing else to spread).
 #[test]
 fn register_matmul_quant_rhs_gemv_row_multi_cube() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 1), (N, 16), (K, 8)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.distribute(cubes(CubeAxis::X), &[(N, 4)])
@@ -4722,7 +4721,7 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 /// round-trip.
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 1), (N, 8), (K, 8)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(M, 1), (N, 4), (K, 4)]);
@@ -4750,7 +4749,7 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
 /// stage the cmma leaf still uses, and to the sync-free direct serve above.
 #[test]
 fn register_matmul_quant_rhs_staged_packed_smem() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
@@ -4776,7 +4775,7 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
 /// cmma leaf is forced into; same numbers either way, which is the point of checking it.
 #[test]
 fn register_matmul_quant_rhs_staged_dequantized_smem() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
@@ -4802,7 +4801,7 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 /// happens (or happens twice) fails by that factor.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
@@ -4826,7 +4825,7 @@ fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
 /// the global scale folds in the gmem read itself and the stage carries plain served values.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plan = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
@@ -4853,7 +4852,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 #[test]
 #[should_panic(expected = "cannot decode as it reads")]
 fn quant_until_read_refused_by_a_cmma_register_stage() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let scheme = QuantScheme::default()
         .per_block([1, 4], ScaleDtype::F32)
         .with_store(QuantStore::PackedU32(0))
@@ -4890,7 +4889,7 @@ fn quant_until_read_refused_by_a_cmma_register_stage() {
 /// `C[i,j] = Σ_p A[i,p] · q_b[p,j] · scale[p, j/bn]`.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant_rhs(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     (m, n, k): (usize, usize, usize),
     plan: Partitioner,
     value: QuantValue,
@@ -4966,7 +4965,7 @@ fn run_register_matmul_quant_rhs(
         .vectorize(pack)
         .build();
     let b_arg = b_op.arg();
-    launch_staged_matmul_quant_rhs::launch::<TestRuntime>(
+    launch_staged_matmul_quant_rhs::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -5032,7 +5031,7 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
 /// the promoted result proves nothing.
 #[test]
 fn register_matmul_lane_group_fold() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
@@ -5049,7 +5048,7 @@ fn register_matmul_lane_group_fold() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_cpu_matmul::launch::<TestRuntime>(
+    launch_cpu_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -5071,7 +5070,7 @@ fn register_matmul_lane_group_fold() {
 /// told rather than assume.
 #[test]
 fn register_matmul_promoted_lane_group_fold() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
@@ -5089,7 +5088,7 @@ fn register_matmul_promoted_lane_group_fold() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul::launch::<TestRuntime>(
+    launch_promoted_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -5105,13 +5104,7 @@ fn register_matmul_promoted_lane_group_fold() {
 }
 
 /// `c == a·b` for the two `arange` operands the fold tests share.
-fn assert_matmul_arange(
-    client: &ComputeClient<TestRuntime>,
-    handle: TensorHandle<TestRuntime>,
-    m: usize,
-    n: usize,
-    k: usize,
-) {
+fn assert_matmul_arange(client: &Client, handle: TensorHandle, m: usize, n: usize, k: usize) {
     let output = HostData::from_tensor_handle(client, handle, HostDataType::F32);
     let expected: Vec<f32> = (0..m * n)
         .map(|idx| {
@@ -5155,7 +5148,7 @@ fn launch_promoted_matmul_quant<I: Numeric, E: Numeric, EA: Numeric>(
 /// wrongly and a reference that decoded the same way wrongly would agree.
 #[test]
 fn register_matmul_promoted_accumulator_quant() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let (m, n, k, edge, bm) = (4usize, 4usize, 8usize, 4usize, 4usize);
     let scheme = QuantScheme::default()
         .per_block([bm as u8, k as u8], ScaleDtype::F32)
@@ -5196,7 +5189,7 @@ fn register_matmul_promoted_accumulator_quant() {
         .untiled()
         .uniform(4242, 10., 100.);
 
-    launch_promoted_matmul_quant::launch::<TestRuntime>(
+    launch_promoted_matmul_quant::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

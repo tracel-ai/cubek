@@ -1,6 +1,5 @@
 //! Validation of the forward kernel.
 
-use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
     InterpolateBlueprint, InterpolateStrategy, Residence,
     definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
@@ -64,7 +63,7 @@ fn kernel_run(
     input_shape: [usize; 4],
     output_size: [usize; 2],
 ) -> (Result<(), InterpolateError>, HostData, HostData) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(input_shape, output_size, options);
     let (input, input_data) = TestInput::builder(client.clone(), problem.input_shape())
         .uniform(123, -3.0, 3.0)
@@ -108,7 +107,7 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
     let input_shape = [1, 64, 64, 64];
     let output_size = [2, 2];
 
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(input_shape, output_size, options);
     let blueprint =
         InterpolateStrategy::MinimizeLatency.blueprint(&client.properties().hardware, &problem);

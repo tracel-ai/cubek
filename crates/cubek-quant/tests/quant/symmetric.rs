@@ -3,7 +3,7 @@ use cubecl::{
     ir::FloatKind,
     server::CopyDescriptor,
     std::tensor::TensorHandle,
-    {TestRuntime, zspace::shape},
+    {zspace::shape},
 };
 use cubek_quant::{scheme::QuantMode, scheme::QuantScheme, scheme::QuantStore, scheme::QuantValue};
 
@@ -21,7 +21,7 @@ fn test_quantization_symmetric_block() {
 
 fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
     let mode = QuantMode::Symmetric;
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let shape = shape![m, n];
 
     let num_elems: usize = m * n;
@@ -136,7 +136,7 @@ fn test_quantization_tensor_symmetric(m: usize, n: usize, value: QuantValue) {
 
 fn test_quantization_block_symmetric(m: usize, n: usize, value: QuantValue, block_size: usize) {
     let mode = QuantMode::Symmetric;
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let shape = shape![m, n];
 
     let num_elems: usize = m * n;

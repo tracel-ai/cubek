@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, ir::AddressType, prelude::*, zspace::shape};
+use cubecl::{ir::AddressType, prelude::*, zspace::shape};
 use cubek_convolution::{
     ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
@@ -42,7 +42,7 @@ fn run_backward_data_case(
     stride: usize,
     expected_per_position: &[f32],
 ) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtypes = MatmulElems::from_single_dtype(half::f16::elem_type_native());
 
     let batches = 1;

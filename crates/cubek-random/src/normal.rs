@@ -79,29 +79,29 @@ impl PrngArgs for Normal {
 
     const VECTORS_PER_DRAW: usize = 2;
 
-    fn args<R: Runtime>(self) -> NormalLaunch<R> {
+    fn args(self) -> NormalLaunch {
         NormalLaunch::new(self.mean, self.std)
     }
 }
 
 /// Pseudo-random generator with normal distribution
-pub fn random_normal<R: Runtime>(
-    client: &ComputeClient<R>,
+pub fn random_normal(
+    client: &Client,
     mean: f32,
     std: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
     random_normal_with_strategy(client, mean, std, out, dtype, PrngStrategy::Inferred)
 }
 
-pub(crate) fn random_normal_with_strategy<R: Runtime>(
-    client: &ComputeClient<R>,
+pub(crate) fn random_normal_with_strategy(
+    client: &Client,
     mean: f32,
     std: f32,
-    out: TensorBinding<R>,
+    out: TensorBinding,
     dtype: ElemType,
     strategy: PrngStrategy,
 ) -> Result<(), LaunchError> {
-    random::<NormalFamily, R>(client, Normal { mean, std }, out, dtype, strategy)
+    random::<NormalFamily>(client, Normal { mean, std }, out, dtype, strategy)
 }

@@ -4,7 +4,7 @@ pub(crate) use nearest::reference_nearest_backward;
 
 use super::{f32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{InterpolateBackwardProblem, InterpolateMode, InterpolateOptions};
-use cubecl::{TestRuntime, client::ComputeClient};
+use cubecl::client::Client;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
@@ -12,7 +12,7 @@ use cubek_test_utils::{
 use crate::interpolate_backward;
 
 pub fn kernel_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: InterpolateBackwardProblem,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -57,7 +57,7 @@ pub fn kernel_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: InterpolateBackwardProblem,
     seed: u64,
     progress: Option<&Progress>,

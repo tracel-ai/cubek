@@ -5,7 +5,7 @@
 //! forced-blueprint tiling-scheme sweep lives in the `extended` tier.
 
 use crate::attention::forward::launcher::test_launch;
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, ir::AddressType, prelude::Scalar};
+use cubecl::{client::Client, ir::AddressType, prelude::Scalar};
 use cubek_attention::{
     forward::definition::{
         AccumulatorPrecision, AttentionDims, AttentionGlobalTypes, AttentionOptions,
@@ -15,14 +15,14 @@ use cubek_attention::{
     forward::routines::blackbox_accelerated::BlackboxAcceleratedStrategy,
 };
 
-fn f16_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f16_dtypes(client: &Client) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
     )
 }
 
-fn f32_dtypes<R: Runtime>(client: &ComputeClient<R>) -> AttentionGlobalTypes {
+fn f32_dtypes(client: &Client) -> AttentionGlobalTypes {
     AttentionGlobalTypes::from_single_float_dtype(
         f32::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(client),
@@ -69,7 +69,7 @@ fn problem(
 
 #[test]
 fn f16_very_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), 8, 8, 8, 8),
@@ -79,7 +79,7 @@ fn f16_very_small() {
 
 #[test]
 fn f16_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), 128, 128, 64, 64),
@@ -89,7 +89,7 @@ fn f16_small() {
 
 #[test]
 fn f16_hd_smaller_than_vd() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), 64, 64, 32, 64),
@@ -99,7 +99,7 @@ fn f16_hd_smaller_than_vd() {
 
 #[test]
 fn f32_very_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f32_dtypes(&client), 8, 8, 8, 8),
@@ -109,7 +109,7 @@ fn f32_very_small() {
 
 #[test]
 fn blackbox_accelerated_f16_very_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), 8, 8, 8, 8),
@@ -119,7 +119,7 @@ fn blackbox_accelerated_f16_very_small() {
 
 #[test]
 fn blackbox_accelerated_f16_small() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch(
         client.clone(),
         problem(f16_dtypes(&client), 128, 128, 64, 64),
