@@ -3,14 +3,11 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::multi_level::{
-    TileSize,
-    tile::{
-        StridedTile,
-        variants::{LoadMethod, MmaIOConfig},
-    },
+use crate::multi_level::tile::{
+    StridedTile,
+    variants::{LoadMethod, MmaIOConfig},
 };
-use cubek_std::{MatrixLayout, as_cmma_layout, from_cmma_layout};
+use cubek_std::{MatrixLayout, as_cmma_layout};
 
 /// Load an MMA fragment from a strided tile.
 #[cube]
@@ -28,7 +25,6 @@ pub fn mma_load_strided<
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] tile_size: TileSize,
     #[comptime] config: MmaIOConfig,
 ) {
     let vector_layout = def.vector_layout(ident);
@@ -44,7 +40,7 @@ pub fn mma_load_strided<
             }
         }
         LoadMethod::LoadMatrix => {
-            load_ldmatrix(tile, fragment, def, transposed, ident, layout, tile_size);
+            load_ldmatrix(tile, fragment, def, transposed, ident, layout);
         }
     }
 }
@@ -147,7 +143,6 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     #[comptime] transposed: bool,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] tile_size: TileSize,
 ) {
     let stage_vector_size = tile.container.vector_size().comptime();
     let stride = tile.unvectorized_stride();
@@ -156,8 +151,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     let num_regs = def.vectors_per_lane(ident);
     let width = (16 / elem_size / stage_vector_size) as u32;
 
-    let start =
-        ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout, tile_size);
+    let start = ldmatrix_offset::<V, A, B, CD>(stride, def, stage_vector_size, ident, layout);
     let start = tile.stage_offset(start);
 
     let row_slice = &tile.container[start as usize..(start + width) as usize];
@@ -169,8 +163,7 @@ fn load_ldmatrix<E: Numeric, N: Size, V: Numeric, NV: Size, A: Numeric, B: Numer
     }
 }
 
-/// This logic is horrible and hard to reason about, and very hardcoded. But can't figure out a
-/// better way to do it.
+/// Where in the stage lane `UNIT_POS_PLANE` starts its `ldmatrix` row.
 #[cube]
 pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     stride: u32,
@@ -178,41 +171,23 @@ pub(crate) fn ldmatrix_offset<E: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     #[comptime] stage_vector_size: VectorSize,
     #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] tile_size: TileSize,
 ) -> u32 {
-    let expected_layout = from_cmma_layout(def.vector_layout(ident)).comptime();
     let (stride_row, stride_col) = match layout {
         MatrixLayout::RowMajor => (stride, 1),
         MatrixLayout::ColMajor => (1, stride),
     };
 
-    let elem_size = E::size().comptime();
     let num_regs = def.vectors_per_lane(ident).comptime() as u32;
-    let width = 16 / elem_size as u32;
-    // Height is always 8, and lanes are divided into blocks of 8.
+    let vector_size = def.vector_size(ident).comptime() as u32;
+    // Lanes are divided into blocks of 8, one per row of the sub-matrix.
     let height = 8;
-
-    let (total_rows, total_cols) = match ident {
-        MatrixIdent::A => (tile_size.m(), tile_size.k()),
-        MatrixIdent::B => (tile_size.k(), tile_size.n()),
-        MatrixIdent::Accumulator => (tile_size.m(), tile_size.n()),
-    };
-    // tile is treated as row-major, if col-major the tile shape is just inverted
-    let total_cols = match expected_layout {
-        MatrixLayout::RowMajor => total_cols,
-        MatrixLayout::ColMajor => total_rows,
-    };
 
     //  Indices are wrapped for < 4 registers.
     let lane = UNIT_POS_PLANE;
     let sub_lane = lane % height;
     let nth_matrix = lane / height % num_regs;
 
-    let tiles_col = total_cols / height;
-
-    // Tiles are arranged in column-major fashion
-    let row_offs = (nth_matrix % tiles_col) * 8;
-    let col_offs = (nth_matrix / tiles_col) * width;
+    let (row_offs, col_offs) = def.position_of_nth(0, nth_matrix * vector_size, ident);
 
     let (row, col) = match layout {
         MatrixLayout::RowMajor => (row_offs + sub_lane, col_offs),
