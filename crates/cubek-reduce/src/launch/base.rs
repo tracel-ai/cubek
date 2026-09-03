@@ -95,6 +95,27 @@ fn prepare_reduce_launch<Run: Runtime>(
         vectorization_mode,
         &strategy.vectorization,
     );
+    // The rolled top-k selection network (`k * k > TOPK_UNROLL_BUDGET`) keeps
+    // per-lane accumulator and finalize arrays whose dynamic indexing places
+    // them in per-thread local memory, and their footprint scales with
+    // `k * vector_size` (about 48 bytes per slot at width 8). Past roughly
+    // 4 KiB per thread the NVIDIA Vulkan driver corrupts memory around the
+    // local-memory window (observed on 610.62 with an RTX 5090, with both the
+    // SPIR-V and the WGSL compiler: k = 64 at width 8 is clean, k = 96 faults):
+    // the kernel still returns correct results, but a later dispatch dies with
+    // `VK_ERROR_DEVICE_LOST`. Keep the rolled path scalar - its cost is
+    // dominated by the k-slot selection network, not the input read - so the
+    // slots shrink about six-fold, which holds k = 300, the object-detection
+    // case that exposed this, comfortably below the fault threshold.
+    let (vector_size_input, vector_size_output) = match &problem.instruction {
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k)
+            if *k * *k > crate::components::instructions::TOPK_UNROLL_BUDGET =>
+        {
+            (1, 1)
+        }
+        _ => (vector_size_input, vector_size_output),
+    };
+
     // Both fused outputs share this width, so it must be legal for the index dtype too.
     // Cap to the largest width the index dtype supports that does not exceed the values
     // width (widths are powers of two, so the cap still divides the layout constraints the

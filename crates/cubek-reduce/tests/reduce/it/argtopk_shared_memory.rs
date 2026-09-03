@@ -3,8 +3,8 @@
 //! Before the clamp, the inferred Cube blueprint sized its shared allocation from
 //! plane geometry alone, so `ArgTopK(k)` requested `8 * k * cube_width` bytes and the
 //! launch was rejected once `k` passed ~12 on a 99 KiB device, even though a narrower
-//! cube fit. Gated behind `heavy` like the other cube tests (the kernels are slow to
-//! compile, the top-k insert/merge are unrolled over `k`).
+//! cube fit. Gated behind `heavy` like the other cube tests, whose kernels are
+//! slow to compile.
 
 #![cfg(feature = "heavy")]
 
@@ -45,8 +45,8 @@ fn run_wide_argtopk(k: usize) {
 #[test]
 fn argtopk_k13_inferred_cube_launches() {
     // The smallest k that failed to launch before the fix (8 * 13 * 1024 = 106496
-    // bytes vs the 101376-byte Ada limit). Larger k is launchable too, but the
-    // top-k codegen is unrolled over k and compiles slowly (a separate issue), so
-    // a single representative k keeps this suite fast.
+    // bytes vs the 101376-byte Ada limit). Larger k is launchable too, but a cube
+    // kernel is slow to compile whatever k it is built for, so a single
+    // representative k keeps this suite fast.
     run_wide_argtopk(13);
 }

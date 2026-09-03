@@ -149,6 +149,25 @@ impl<X: CubePrimitive> Value<X> {
     }
 }
 
+/// How much fully-unrolled top-k selection work is worth emitting, counted in
+/// copies of a loop body.
+///
+/// The selection networks below are `k`-by-`k`: every candidate walks all `k`
+/// accumulator slots. Unrolling both levels keeps the accumulator in registers
+/// with constant slot indices, which is worth a lot — rolled, the slots move to
+/// scratch memory and every step becomes a load/store. Measured on a
+/// `32x512x4095` `ArgTopK` (device timing, RTX 5090 / Vulkan), unrolling is
+/// worth 5.8x at `k = 32` and 2.2x at `k = 64`.
+///
+/// But the emitted kernel grows with the product, so a flat cap on `k` prices
+/// the three nest shapes wrong: `topk_finalize_*` is `k * k * vector_size`, not
+/// `k * k`, and is the first to become unaffordable. Budgeting the product
+/// instead lets the square nests unroll further than the cubic one, and stops
+/// all of them before the backend compiler does: past this budget the same
+/// selection runs as a plain runtime loop whose kernel size does not depend on
+/// `k` at all.
+pub(crate) const TOPK_UNROLL_BUDGET: usize = 1024;
+
 /// Plane-cooperative top-k insertion; the candidate's coordinate decides which
 /// algorithm runs, since winners are identified by their coordinate when one
 /// rides along and by lane id otherwise.
@@ -184,7 +203,7 @@ fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
     let mut local_best_val = item;
     let mut local_best_coord = coord;
 
-    #[unroll]
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning_val = plane_max(local_best_val);
         let winning_coord =
@@ -193,7 +212,7 @@ fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
         let mut insert_val = winning_val;
         let mut insert_coord = winning_coord;
 
-        #[unroll]
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
             let to_keep = select_many(
                 elements[j].equal(&insert_val),
@@ -228,7 +247,7 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
     let mut local_best_val = item;
     let lane_id = Vector::new(UNIT_POS_X);
 
-    #[unroll]
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning_val = plane_max(local_best_val);
         let is_match = local_best_val.equal(&winning_val);
@@ -236,7 +255,7 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
 
         let mut insert_val = winning_val;
 
-        #[unroll]
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
             let to_keep = elements[j].greater_than(&insert_val);
             let next_val = select_many(to_keep, insert_val, elements[j]);
@@ -276,12 +295,12 @@ fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
     let mut cursor = Vector::new(0u32);
     let lane_id = Vector::new(UNIT_POS_X);
 
-    #[unroll]
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
         let mut local_val = Vector::new(N::min_value());
         let mut local_coord = Vector::new(u32::MAX);
 
-        #[unroll]
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
             let is_pointed = cursor.equal(&Vector::new(j as u32));
             local_val = select_many(is_pointed, elements[j], local_val);
@@ -317,11 +336,11 @@ fn plane_topk_merge_values<N: Numeric, S: Size>(
     let mut cursor = Vector::new(0u32);
     let lane_id = Vector::new(UNIT_POS_X);
 
-    #[unroll]
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
         let mut local_val = Vector::new(N::min_value());
 
-        #[unroll]
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
             let is_pointed = cursor.equal(&Vector::new(j as u32));
             local_val = select_many(is_pointed, elements[j], local_val);
