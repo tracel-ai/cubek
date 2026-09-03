@@ -41,7 +41,7 @@ pub enum ProjectionMisfit {
         span: usize,
     },
     /// An axis whose dims do not multiply back to its extent — a storage-tiled axis whose
-    /// fragments were mis-stated, or a shape that is not this problem's.
+    /// fragments were misstated, or a shape that is not this problem's.
     Extent {
         axis: Axis,
         expected: usize,
@@ -157,7 +157,7 @@ impl Projection {
     ///
     /// Three things: the ranks agree, a disjoint projection does not alias, and every axis whose
     /// dims carry it alone multiplies back to its extent — which is what catches a storage-tiled
-    /// axis whose fragments were mis-stated. A shared dim is exempt from the last, since a
+    /// axis whose fragments were misstated. A shared dim is exempt from the last, since a
     /// window's spatial extent is not the product of its output and tap extents.
     pub fn verify(
         &self,
@@ -354,7 +354,7 @@ mod tests {
         assert!(p.verify(&g, extents).is_ok());
 
         // Claim m is 4×32 on a buffer whose fragments are 4×16, and it does not describe it.
-        let mis_stated = geometry(&[
+        let misstated = geometry(&[
             (2, 8 * 4 * 64 * 16 * 128 * 16),
             (8, 4 * 64 * 16 * 128 * 16),
             (4, 64 * 16 * 128 * 16),
@@ -364,7 +364,7 @@ mod tests {
             (16, 1),
         ]);
         assert_eq!(
-            p.verify(&mis_stated, extents),
+            p.verify(&misstated, extents),
             Err(ProjectionMisfit::Extent {
                 axis: M,
                 expected: 128,
