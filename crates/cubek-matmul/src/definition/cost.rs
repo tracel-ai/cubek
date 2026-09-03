@@ -31,7 +31,9 @@ pub fn compute_peak_ops_per_s<R: Runtime>(
     client: &ComputeClient<R>,
     elems: &MatmulElems,
 ) -> Option<f64> {
-    let peak = measure_peak_throughput(client, compute_key(client, elems)).ops_per_s();
+    let peak = measure_peak_throughput(client, compute_key(client, elems))
+        .ok()?
+        .ops_per_s();
 
     (peak > 0.0).then_some(peak)
 }
