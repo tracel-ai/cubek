@@ -139,10 +139,6 @@ impl Benchmark for InterpolateBench {
     /// Measure with device timestamps around the launch, so the reported duration is the
     /// kernel's rather than the host's view of launch, output allocation and sync.
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "interpolate-bench")
-            .map_err(|err| format!("{err:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "interpolate-bench", || self.execute(args))
     }
 }

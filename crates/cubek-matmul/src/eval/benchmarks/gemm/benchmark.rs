@@ -171,10 +171,6 @@ impl Benchmark for GemmBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "matmul-bench")
-            .map_err(|err| format!("{err:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "matmul-bench", || self.execute(args))
     }
 }

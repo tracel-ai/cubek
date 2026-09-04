@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use cubecl::benchmark::TimingMethod;
+use cubecl::benchmark::{ProfileDuration, TimingMethod};
 use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
@@ -19,6 +19,23 @@ use cubecl::throughput::{
 };
 
 use crate::{HostData, Progress};
+
+/// Times one launch on the device, failing the row when the launch itself failed.
+///
+/// Categories override [`Benchmark::profile`](cubecl::benchmark::Benchmark::profile) only to
+/// name their profiling scope. Writing that override by hand invites keeping the duration and
+/// dropping the launch result, which reports the time a failure took as a measurement.
+pub fn profile_launch<O: Send + 'static>(
+    client: &Client,
+    scope: &str,
+    launch: impl FnOnce() -> Result<O, String> + Send,
+) -> Result<ProfileDuration, String> {
+    let (launched, duration) = client
+        .profile(launch, scope)
+        .map_err(|err| format!("{err:?}"))?;
+
+    launched.map(|_| duration)
+}
 
 /// The client every category scores against: `measure_peak_throughput` is
 /// always run on `cubecl::test_device()`, so the

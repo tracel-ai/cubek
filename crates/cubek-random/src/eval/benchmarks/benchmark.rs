@@ -93,11 +93,6 @@ impl Benchmark for RandomBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .clone()
-            .profile(|| self.execute(args), "random-bench")
-            .map_err(|it| format!("{it:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "random-bench", || self.execute(args))
     }
 }

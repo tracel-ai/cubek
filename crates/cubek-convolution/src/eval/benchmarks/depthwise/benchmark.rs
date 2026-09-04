@@ -110,10 +110,6 @@ impl Benchmark for DepthwiseBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "depthwise-bench")
-            .map_err(|it| format!("{it:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "depthwise-bench", || self.execute(args))
     }
 }
