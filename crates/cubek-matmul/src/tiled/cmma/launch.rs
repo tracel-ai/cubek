@@ -6,7 +6,9 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
 };
-use cubek_tile::{Axis, Geometry, Launcher, Strided, Tma, TmaTileArgLaunch};
+use cubek_tile::{
+    Axis, Geometry, KernelForm, Launcher, Nest, Space, Strided, Tma, TmaTileArgLaunch,
+};
 
 use crate::{
     definition::{
@@ -179,7 +181,11 @@ pub fn launch_ref(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
     // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
-    let launch = Launcher::new(client, &extents, &cmma_levels(&blueprint, &batch_axes));
+    let launch = Launcher::new(
+        client,
+        &Nest::new(Space::new(&extents), cmma_levels(&blueprint, &batch_axes)),
+        KernelForm::Dynamic,
+    );
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 

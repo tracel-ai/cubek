@@ -176,7 +176,11 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
     });
 
@@ -325,7 +329,7 @@ fn packed_gemv<E: Numeric, V: Size>(
     // The accumulator lives in registers across the whole walk and drains once.
     let mut acc = c.block_accumulator::<E, E>(
         &x,
-        comptime!(Fragments::of(&c.space, &x.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &x.space, nest.below(0))),
         REGISTER_BLOCK,
         Monoid::Sum,
     );
@@ -695,7 +699,11 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
     });
 
@@ -808,7 +816,11 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
     });
 
@@ -926,13 +938,16 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     });
@@ -1061,13 +1076,16 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     });
@@ -1201,13 +1219,16 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     });
@@ -1319,7 +1340,11 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
     });
 
@@ -1438,13 +1463,16 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
@@ -1574,13 +1602,16 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
@@ -1668,7 +1699,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &x,
-        comptime!(Fragments::of(&c.space, &x.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &x.space, nest.below(0))),
         REGISTER_BLOCK,
         Monoid::Sum,
     );
@@ -1736,7 +1767,11 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
+        vec![],
+    )
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(N, bn)])
             .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
     });

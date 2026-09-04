@@ -49,7 +49,7 @@ impl CmmaBlueprint {
     pub fn stage_level(&self, batch: &[Axis]) -> Level {
         let (stage_m, stage_n) = self.stage();
         let stage_k = self.stage_k;
-        Level::cuts(&cmma_axes(batch), |l| {
+        Level::new(&cmma_axes(batch), |l| {
             l.distribute(cubes(CubeAxis::Z), &Self::batch_tiles(batch))
                 .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
                 .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
@@ -61,7 +61,7 @@ impl CmmaBlueprint {
     pub fn plane_level(&self, batch: &[Axis]) -> Level {
         let (i, c) = (self.instruction, self.partition);
         let stage_k = self.stage_k;
-        Level::cuts(&cmma_axes(batch), |l| {
+        Level::new(&cmma_axes(batch), |l| {
             l.distribute(planes(), &[(M, c.m * i.m)])
                 .distribute(planes(), &[(N, c.n * i.n)])
                 .walk(&Self::batch_tiles(batch))
@@ -72,7 +72,7 @@ impl CmmaBlueprint {
     /// The instruction's `K` steps through the partition.
     pub fn step_level(&self, batch: &[Axis]) -> Level {
         let (i, c) = (self.instruction, self.partition);
-        Level::cuts(&cmma_axes(batch), |l| {
+        Level::new(&cmma_axes(batch), |l| {
             l.walk(&Self::batch_tiles(batch))
                 .walk(&[(M, c.m * i.m), (N, c.n * i.n), (K, i.k)]);
         })
@@ -81,7 +81,7 @@ impl CmmaBlueprint {
     /// The fragment grid each step contracts.
     pub fn cell_level(&self, batch: &[Axis]) -> Level {
         let i = self.instruction;
-        Level::cuts(&cmma_axes(batch), |l| {
+        Level::new(&cmma_axes(batch), |l| {
             l.walk(&Self::batch_tiles(batch))
                 .walk(&[(M, i.m), (N, i.n), (K, i.k)]);
         })
@@ -122,7 +122,13 @@ pub fn cmma_kernel<
     let depth = comptime!(bp.buffering);
     let (i, c_grid) = comptime!((bp.instruction, bp.partition));
     // This plane's fragments: the partition's grid of the instruction's tile.
-    let fragments = comptime!(Fragments::new(c_grid.m, c_grid.n, i.m, i.n, i.k));
+    let fragments = comptime!(Fragments {
+        m_tiles: c_grid.m,
+        n_tiles: c_grid.n,
+        m: i.m,
+        n: i.n,
+        k: i.k,
+    });
     // The block a tiled stage groups: the instruction's tile, one of every batch axis.
     let block = comptime!(
         batch
@@ -145,7 +151,7 @@ pub fn cmma_kernel<
         &stages,
         &a,
         &b,
-        comptime!(StageStorage::tiled(&block)),
+        comptime!(StageStorage::Tiled { block }),
         depth,
     );
     pipelined(stages, &mut ring, |slot, stage| {

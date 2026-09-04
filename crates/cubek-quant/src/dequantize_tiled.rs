@@ -4,7 +4,9 @@ use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
-use cubek_tile::{Axis, DequantAt, Launcher, QuantTileArg, Space, StridedOperand, TileArg};
+use cubek_tile::{
+    Axis, DequantAt, KernelForm, Launcher, Nest, QuantTileArg, Space, StridedOperand, TileArg,
+};
 
 // Input axes
 const M: Axis = Axis(0);
@@ -51,7 +53,11 @@ pub fn launch_ref(
     // nothing to list and the grid is one cube.
     let extents = [(M, input.shape[0]), (N, input.shape[1])];
     let space = Space::new(&extents);
-    let launch = Launcher::over_static(client, &extents, &[]);
+    let launch = Launcher::new(
+        client,
+        &Nest::new(space.clone(), vec![]),
+        KernelForm::Static,
+    );
     let cube_count = launch.cube_count();
     let cube_dim = launch.cube_dim();
     let input_dtype = ElemType::from_quant_value(scheme.value);

@@ -91,7 +91,7 @@ macro_rules! output_arg {
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space() -> Nest {
-    Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+    Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
         level.walk(&[(ROW, 2), (COL, 3)]);
     })
 }
@@ -194,7 +194,7 @@ fn derived_sink_kernel<E: Float>(
 fn a_launcher_derived_spec_addresses_the_sink() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space().launcher_over(&client, &[]);
+    let launcher = Launcher::new(&client, &space(), KernelForm::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -261,7 +261,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         BLOCK,
         Monoid::Sum,
     );
@@ -303,7 +303,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     );
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         BLOCK,
         Monoid::Sum,
     );
@@ -345,7 +345,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         BLOCK,
         Monoid::Sum,
     );
@@ -373,7 +373,7 @@ enum Backed {
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Nest {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, edge), (N, edge), (K, edge)]);
     })
 }
@@ -501,7 +501,7 @@ const MASKED_ROWS: usize = 5;
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space() -> Nest {
-    Nest::over(&[(ROW, MASKED_ROWS), (COL, COLS)]).level(|level| {
+    Nest::new(Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]), vec![]).level(|level| {
         level.walk(&[(ROW, 2), (COL, 2)]);
     })
 }
@@ -581,7 +581,7 @@ enum Erased {
 fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = masked_space().launcher(&client);
+    let launcher = Launcher::new(&client, &masked_space(), KernelForm::Dynamic);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()

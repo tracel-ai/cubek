@@ -42,7 +42,7 @@ impl CpuGemmBlueprint {
         let leaf = self.instruction;
         let cube_m = self.planes.m * leaf.m;
         let cube_n = self.planes.n * leaf.n;
-        Level::cuts(&cpu_gemm_axes(batch), |l| {
+        Level::new(&cpu_gemm_axes(batch), |l| {
             l.distribute(cubes(CubeAxis::Z), &Self::batch_tiles(batch))
                 .distribute(cubes(CubeAxis::X), &[(M, cube_m)])
                 .distribute(cubes(CubeAxis::Y), &[(N, cube_n)])
@@ -53,7 +53,7 @@ impl CpuGemmBlueprint {
     /// One register block per plane, stepped through `K` in the leaf's depth.
     pub fn plane_level(&self, batch: &[Axis]) -> Level {
         let leaf = self.instruction;
-        Level::cuts(&cpu_gemm_axes(batch), |l| {
+        Level::new(&cpu_gemm_axes(batch), |l| {
             l.distribute(planes(), &[(M, leaf.m)])
                 .distribute(planes(), &[(N, leaf.n)])
                 .walk(&Self::batch_tiles(batch))
@@ -104,7 +104,13 @@ pub fn cpu_gemm_kernel<
     // The accumulator spans the cube's whole contraction: opened here, drained after it. One
     // block per plane, the instruction's shape.
     let leaf = comptime!(bp.instruction);
-    let fragments = comptime!(Fragments::new(1, 1, leaf.m, leaf.n, leaf.k));
+    let fragments = comptime!(Fragments {
+        m_tiles: 1,
+        n_tiles: 1,
+        m: leaf.m,
+        n: leaf.n,
+        k: leaf.k,
+    });
     let mut acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
 

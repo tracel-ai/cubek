@@ -88,7 +88,7 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+            nest: Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
                 level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
             }),
         }
@@ -303,7 +303,7 @@ fn stream_matmul<E: Numeric>(
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E>(
             &a_region,
-            comptime!(Fragments::of(
+            comptime!(Fragments::new(
                 &c_region.space,
                 &a_region.space,
                 nest.below(1)
@@ -351,7 +351,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E>(
             &a_region,
-            comptime!(Fragments::of(
+            comptime!(Fragments::new(
                 &c_region.space,
                 &a_region.space,
                 nest.below(1)
@@ -410,7 +410,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(MM, m), (NN, n), (KK, k)])
+    let nest = Nest::new(Space::new(&[(MM, m), (NN, n), (KK, k)]), vec![])
         // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
         // region of this level is one output tile and the index reaches through the level below.
         .level(|l| {
@@ -619,7 +619,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let nest = Nest::over(&[(MM, m), (NN, n), (KK, k)])
+        let nest = Nest::new(Space::new(&[(MM, m), (NN, n), (KK, k)]), vec![])
             .level(|l| {
                 l.distribute(
                     cubes(CubeAxis::X).instances(runs),

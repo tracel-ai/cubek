@@ -208,7 +208,7 @@ fn run(
 
 /// The one-axis reference: an ordinary `{M, N, K}` matmul through the 2-D register leaf.
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (N, tn), (K, k)]);
     });
     run(
@@ -224,7 +224,7 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
 
 /// [`plain`] with a leading batch axis both operands span.
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let nest = Nest::over(&[(B, b), (M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(B, b), (M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(B, 1), (M, tm), (N, tn), (K, k)]);
     });
     run(
@@ -261,7 +261,7 @@ fn split_k_whole_reduce_at_leaf() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::over(&[(M, m), (N, n), (K1, k1), (K2, k2)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)]);
     });
 
@@ -284,7 +284,7 @@ fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::over(&[(M, m), (N, n), (K1, k1), (K2, k2)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)]);
     });
 
@@ -307,7 +307,11 @@ fn split_k_with_a_batch_axis() {
     let (b, m, n, k1, k2) = (3, 4, 8, 2, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::over(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)]);
     });
 
@@ -369,7 +373,7 @@ fn run_reduce_staged(
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
 fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
     // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
@@ -454,7 +458,7 @@ fn run_reduce_with_vw(
 #[test]
 fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -469,7 +473,7 @@ fn test_reduce_axis_sum_2d_to_1d() {
 #[test]
 fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -484,7 +488,7 @@ fn test_reduce_axis_sum_walked_levels() {
 #[test]
 fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -501,7 +505,7 @@ fn test_reduce_axis_max_2d_to_1d() {
 #[test]
 fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -518,7 +522,7 @@ fn test_reduce_axis_min_2d_to_1d() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
-    let nest = Nest::over(&[(B, b), (M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(B, b), (M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(B, 1), (M, 2), (K, 4)]);
     });
 
@@ -577,7 +581,7 @@ fn test_reduce_axis_min_double_buffered() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -603,7 +607,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -633,7 +637,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -708,7 +712,7 @@ fn run_reduce_checked(
 }
 
 fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Nest {
-    Nest::over(&[(M, m), (K, k)]).level(|l| {
+    Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, m), (K, tk)]);
     })
 }
@@ -907,7 +911,7 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -937,7 +941,7 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -969,7 +973,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, tm), (K, tk)]);
     });
 
@@ -998,7 +1002,7 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
-    let nest = Nest::over(&[(B, b), (M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(B, b), (M, m), (K, k)]), vec![]).level(|l| {
         l.walk(&[(B, 1), (M, 2), (K, 8)]);
     });
 
@@ -1038,7 +1042,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
     });
 
@@ -1061,7 +1065,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
     });
 
@@ -1086,7 +1090,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::over(&[(M, m), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
     });
 
@@ -1126,7 +1130,7 @@ fn resident_fold_kernel<E: Numeric>(
     let mut out = output.tile(comptime!(nest.space.clone()));
     let mut acc = out.block_accumulator::<E, E>(
         &input,
-        comptime!(Fragments::of(&out.space, &input.space, nest.below(0))),
+        comptime!(Fragments::new(&out.space, &input.space, nest.below(0))),
         REGISTER_BLOCK,
         monoid,
     );
@@ -1145,7 +1149,7 @@ fn resident_max_over_lane_split_k() {
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = plane_size * kr;
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(K, kr)])
             .walk(&[(M, m), (N, n)]);
     });
@@ -1212,7 +1216,7 @@ fn resident_max_over_lane_group_k() {
     let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
     let m = groups;
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(groups), &[(M, 1)])
             .distribute(lanes(group_lanes).interleaved(), &[(K, kr)])
             .walk(&[(N, n)]);

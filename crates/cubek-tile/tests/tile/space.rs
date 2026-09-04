@@ -1,7 +1,7 @@
 //! Unit tests for [`Space`]
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, CubeAxis, Level, Nest, Space, cubes, lanes, leaf, overhangs};
+use cubek_tile::{Axis, CubeAxis, Level, Nest, Space, cubes, lanes};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -94,7 +94,7 @@ fn merge_conflicting_extent_panics() {
 
 fn sequential(edges: &[(Axis, usize)]) -> Level {
     let axes: Vec<Axis> = edges.iter().map(|&(a, _)| a).collect();
-    Level::cuts(&axes, |l| {
+    Level::new(&axes, |l| {
         l.walk(edges);
     })
 }
@@ -119,13 +119,10 @@ fn levels_chain_into_a_multi_level_scheme() {
     assert_eq!(level2.extent(M), 4);
     assert_eq!(level2.extent(N), 4);
     assert_eq!(
-        leaf(
-            &space,
-            &[
-                sequential(&[(M, 16), (N, 16)]),
-                sequential(&[(M, 4), (N, 4)])
-            ]
-        ),
+        space.leaf(&[
+            sequential(&[(M, 16), (N, 16)]),
+            sequential(&[(M, 4), (N, 4)])
+        ]),
         level2
     );
 }
@@ -147,7 +144,7 @@ fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Nest {
 }
 
 fn hangs(nest: &Nest, axis: Axis) -> bool {
-    overhangs(&nest.space, &nest.levels, axis)
+    nest.space.overhangs(&nest.levels, axis)
 }
 
 #[test]
@@ -183,7 +180,7 @@ fn overhangs_when_a_deeper_edge_misdivides_its_parent() {
 #[test]
 fn overhangs_with_no_level_never() {
     // No level: nothing to misdivide.
-    assert!(!overhangs(&Space::new(&[(M, 7)]), &[], M));
+    assert!(!Space::new(&[(M, 7)]).overhangs(&[], M));
 }
 
 #[test]
@@ -202,7 +199,7 @@ fn overhangs_dynamic_axis_panics() {
 /// collected.
 #[test]
 fn over_distributes_work() {
-    let nest = Nest::over(&[(M, 64), (N, 64), (K, 16)])
+    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![])
         .level(|l| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5),
@@ -226,11 +223,19 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
     let level = |l: &mut cubek_tile::LevelCuts| {
         l.walk(&[(M, 16), (N, 32), (K, 16)]);
     };
-    let one_line = Nest::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]).level(|l| {
+    let one_line = Nest::new(
+        Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
+        vec![],
+    )
+    .level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
         level(l);
     });
-    let a_dial_each = Nest::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]).level(|l| {
+    let a_dial_each = Nest::new(
+        Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
+        vec![],
+    )
+    .level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
             .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
         level(l);
@@ -248,7 +253,7 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
 /// inside another, so they are read as one index instead.
 #[test]
 fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
-    let nest = Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.distribute(
             cubes(CubeAxis::X).instances(5),
             &[(M, 16), (N, 32), (K, 16)],
@@ -263,7 +268,7 @@ fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
 /// axis's own tiles across the scope, which is what a cut has always meant.
 #[test]
 fn distributing_one_axis_with_a_count_is_a_dial() {
-    let nest = Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
             .walk(&[(N, 32), (K, 16)]);
     });
@@ -275,7 +280,7 @@ fn distributing_one_axis_with_a_count_is_a_dial() {
 /// reads as if the line were not there.
 #[test]
 fn distributing_no_axis_states_nothing() {
-    let nest = Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[])
             .walk(&[(M, 16), (N, 32), (K, 16)]);
     });
@@ -288,7 +293,7 @@ fn distributing_no_axis_states_nothing() {
 #[test]
 #[should_panic = "combine in registers"]
 fn distributing_work_across_lanes_is_refused() {
-    Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.distribute(lanes(4), &[(M, 16), (N, 32), (K, 16)]);
     });
 }
@@ -298,7 +303,7 @@ fn distributing_work_across_lanes_is_refused() {
 #[test]
 #[should_panic = "instances taking turns would leave no region long enough"]
 fn distributing_work_in_turns_is_refused() {
-    Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.distribute(
             cubes(CubeAxis::X).instances(5).interleaved(),
             &[(M, 16), (N, 32), (K, 16)],
@@ -310,7 +315,7 @@ fn distributing_work_in_turns_is_refused() {
 #[test]
 #[should_panic = "a level states each of its axes once"]
 fn an_axis_both_cut_and_distributed_is_refused() {
-    Nest::over(&[(M, 64), (N, 64), (K, 16)]).level(|l| {
+    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
         l.walk(&[(K, 16)]).distribute(
             cubes(CubeAxis::X).instances(5),
             &[(M, 16), (N, 32), (K, 16)],
@@ -326,10 +331,10 @@ fn an_axis_both_cut_and_distributed_is_refused() {
 /// kernel, so keeping it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
-    let plain = Nest::over(&[(M, 64), (N, 64)]).level(|l| {
+    let plain = Nest::new(Space::new(&[(M, 64), (N, 64)]), vec![]).level(|l| {
         l.walk(&[(M, 16), (N, 32)]);
     });
-    let nest = Nest::over(&[(M, 64), (N, 64)])
+    let nest = Nest::new(Space::new(&[(M, 64), (N, 64)]), vec![])
         .level(|l| {
             l.walk(&[(M, 16), (N, 32)]);
         })
@@ -341,5 +346,5 @@ fn a_level_that_cuts_nothing_is_kept() {
     assert_ne!(nest, plain);
     assert_eq!(nest.levels.len(), 2);
     assert_eq!(nest.at(0).child(&nest.space).extent(M), 16);
-    assert_eq!(leaf(&nest.space, &nest.levels).extent(M), 16);
+    assert_eq!(nest.space.leaf(&nest.levels).extent(M), 16);
 }

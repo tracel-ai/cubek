@@ -93,7 +93,7 @@ fn atomic_matmul<E: Numeric>(
         let a_cube = a.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(
             &a_cube,
-            comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))),
+            comptime!(Fragments::new(&c_cube.space, &a_cube.space, nest.below(1))),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -121,7 +121,7 @@ fn atomic_matmul_lanes<E: Numeric>(
         let b_cube = b.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(
             &a_cube,
-            comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))),
+            comptime!(Fragments::new(&c_cube.space, &a_cube.space, nest.below(1))),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -206,23 +206,26 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Nest::over(&[(M, m), (N, n), (K, k)])
-                .level(|l| {
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                         .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                         .walk(&[(M, m)]);
-                }),
-            Mapping::Workspace { .. } => {
-                Nest::over(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]).level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                        .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                        .walk(&[(M, m), (KI, k / splits)]);
                 })
             }
+            Mapping::Workspace { .. } => Nest::new(
+                Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
+                vec![],
+            )
+            .level(|l| {
+                l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                    .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                    .walk(&[(M, m), (KI, k / splits)]);
+            }),
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Nest::over(&[(M, m), (N, n), (K, k)])
+            Mapping::AtomicLanes { .. } => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
                 .level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                         .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
@@ -238,7 +241,7 @@ impl Mapping {
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Nest {
         let Problem { m, n, .. } = problem;
-        Nest::over(&[(M, m), (N, n), (KB, self.splits())]).level(|l| {
+        Nest::new(Space::new(&[(M, m), (N, n), (KB, self.splits())]), vec![]).level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 1)])
                 .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
                 .walk(&[(KB, self.splits())]);

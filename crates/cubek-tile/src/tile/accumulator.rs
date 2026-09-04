@@ -27,33 +27,23 @@ pub struct Fragments {
 }
 
 impl Fragments {
-    /// `m_tiles × n_tiles` fragments of `m × n × k`.
-    pub const fn new(m_tiles: usize, n_tiles: usize, m: usize, n: usize, k: usize) -> Self {
+    /// The shape an accumulator over `out` contracting `lhs` has under `levels`, the ones below
+    /// the site it opens at: what a kernel handed its levels reads off them. A blueprint that
+    /// holds the shape states the fields directly.
+    pub fn new(out: &Space, lhs: &Space, levels: &[Level]) -> Self {
+        let (m_tiles, n_tiles) = partition_shape(out, levels);
+        let leaf = out.leaf(levels);
+        let lhs_leaf = lhs.leaf(levels);
+        let axes = MatrixAxes::accumulator(&leaf, &lhs_leaf);
+        // The edges the accumulator's own axes give, not its last two: a split column group is
+        // one edge, and sizing the block off the innermost axis alone would cut it in half.
         Fragments {
             m_tiles,
             n_tiles,
-            m,
-            n,
-            k,
+            m: axes.rows(&leaf),
+            n: axes.cols(&leaf),
+            k: lhs_leaf.contracted_extent(out),
         }
-    }
-
-    /// The shape an accumulator over `out` contracting `lhs` has under `levels`, the ones below
-    /// the site it opens at: what a kernel handed its levels reads off them.
-    pub fn of(out: &Space, lhs: &Space, levels: &[Level]) -> Self {
-        let (m_tiles, n_tiles) = partition_shape(out, levels);
-        let fin = leaf(out, levels);
-        let lhs_fin = leaf(lhs, levels);
-        let axes = MatrixAxes::accumulator(&fin, &lhs_fin);
-        // The edges the accumulator's own axes give, not its last two: a split column group is
-        // one edge, and sizing the block off the innermost axis alone would cut it in half.
-        Fragments::new(
-            m_tiles,
-            n_tiles,
-            axes.rows(&fin),
-            axes.cols(&fin),
-            lhs_fin.contracted_extent(out),
-        )
     }
 }
 

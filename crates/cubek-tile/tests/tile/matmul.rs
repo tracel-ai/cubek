@@ -108,7 +108,7 @@ enum Serve {
 
 fn sequential(edges: &[(Axis, usize)]) -> Level {
     let axes: Vec<Axis> = edges.iter().map(|&(a, _)| a).collect();
-    Level::cuts(&axes, |l| {
+    Level::new(&axes, |l| {
         l.walk(edges);
     })
 }
@@ -475,7 +475,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         config,
         comptime!(semiring.add()),
     );
@@ -508,7 +508,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
         let b_o = b.at(&outer);
         let mut acc = c_o.block_accumulator::<EA, E>(
             &a_o,
-            comptime!(Fragments::of(&c_o.space, &a_o.space, nest.below(1))),
+            comptime!(Fragments::new(&c_o.space, &a_o.space, nest.below(1))),
             config,
             Monoid::Sum,
         );
@@ -537,7 +537,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         REGISTER_BLOCK,
         Monoid::Sum,
     );
@@ -581,7 +581,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         Monoid::Sum,
     );
     acc.zero();
@@ -613,7 +613,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         Monoid::Sum,
     );
     acc.zero();
@@ -622,10 +622,11 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
         &walk,
         &a,
         &b,
-        comptime!(StageStorage::tiled_at_leaf(
-            &Space::merge(&[&a.space, &b.space]),
-            &nest.levels
-        )),
+        comptime!(StageStorage::Tiled {
+            block: Space::merge(&[&a.space, &b.space])
+                .leaf(&nest.levels)
+                .extents()
+        }),
         depth,
     );
     pipelined(walk, &mut ring, |slot, region| {
@@ -653,7 +654,7 @@ fn mma_matmul_k_walk<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         io,
         Monoid::Sum,
     );
@@ -686,7 +687,7 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         io,
         Monoid::Sum,
     );
@@ -719,7 +720,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         Monoid::Sum,
     );
     acc.zero();
@@ -728,10 +729,11 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         &walk,
         &a,
         &b,
-        comptime!(StageStorage::tiled_at_leaf(
-            &Space::merge(&[&a.space, &b.space]),
-            &nest.levels
-        )),
+        comptime!(StageStorage::Tiled {
+            block: Space::merge(&[&a.space, &b.space])
+                .leaf(&nest.levels)
+                .extents()
+        }),
         depth,
     );
     pipelined(walk, &mut ring, |slot, region| {
@@ -763,7 +765,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         Monoid::Sum,
     );
     acc.zero();
@@ -772,10 +774,11 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         &walk,
         &a,
         &b,
-        comptime!(StageStorage::tiled_at_leaf(
-            &Space::merge(&[&a.space, &b.space]),
-            &nest.levels
-        )),
+        comptime!(StageStorage::Tiled {
+            block: Space::merge(&[&a.space, &b.space])
+                .leaf(&nest.levels)
+                .extents()
+        }),
         depth,
     );
     pipelined(walk, &mut ring, |slot, region| {
@@ -817,7 +820,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         Monoid::Sum,
     );
     acc.zero();
@@ -826,10 +829,11 @@ fn cmma_matmul_five_levels<E: Numeric>(
         &walk,
         &a,
         &b,
-        comptime!(StageStorage::tiled_at_leaf(
-            &Space::merge(&[&a.space, &b.space]),
-            &nest.levels
-        )),
+        comptime!(StageStorage::Tiled {
+            block: Space::merge(&[&a.space, &b.space])
+                .leaf(&nest.levels)
+                .extents()
+        }),
         depth,
     );
     pipelined(walk, &mut ring, |slot, region| {
@@ -982,7 +986,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         config,
         Monoid::Sum,
     );
@@ -1279,28 +1283,11 @@ fn matmul_one_tile_per_cube() {
         8,
         8,
         8,
-        Level::over(
-            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (
-                    M,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Cube(CubeAxis::X),
-                        spread: Spread::Contiguous,
-                        coverage: Coverage::Instances(2),
-                    },
-                ),
-                (
-                    N,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Cube(CubeAxis::Y),
-                        spread: Spread::Contiguous,
-                        coverage: Coverage::Instances(2),
-                    },
-                ),
-                (K, Distribution::Sequential),
-            ]),
-        ),
+        Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X).instances(2), &[(M, 4)])
+                .distribute(cubes(CubeAxis::Y).instances(2), &[(N, 4)])
+                .walk(&[(K, 4)]);
+        }),
         1,
     );
 }
@@ -1352,21 +1339,10 @@ fn matmul_contiguous_m_across_cubes() {
         16,
         8,
         8,
-        Level::over(
-            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (
-                    M,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Cube(CubeAxis::X),
-                        spread: Spread::Contiguous,
-                        coverage: Coverage::TilesEach(2),
-                    },
-                ),
-                (N, Distribution::Sequential),
-                (K, Distribution::Sequential),
-            ]),
-        ),
+        Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X).tiles_each(2), &[(M, 4)])
+                .walk(&[(N, 4), (K, 4)]);
+        }),
         1,
     );
 }
@@ -1377,21 +1353,10 @@ fn matmul_interleaved_m_across_cubes() {
         16,
         8,
         8,
-        Level::over(
-            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (
-                    M,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Cube(CubeAxis::X),
-                        spread: Spread::Interleaved,
-                        coverage: Coverage::Instances(2),
-                    },
-                ),
-                (N, Distribution::Sequential),
-                (K, Distribution::Sequential),
-            ]),
-        ),
+        Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X).instances(2).interleaved(), &[(M, 4)])
+                .walk(&[(N, 4), (K, 4)]);
+        }),
         1,
     );
 }
@@ -1619,25 +1584,15 @@ fn matmul_broadcast_lhs_only() {
 /// is what lets CpuGemm parallelise the whole batch on Z.
 #[test]
 fn matmul_broadcast_two_batch_axes_on_z() {
-    let z = || Distribution::Spatial {
-        scope: ComputeScope::Cube(CubeAxis::Z),
-        spread: Spread::Contiguous,
-        coverage: Coverage::TilesEach(1),
-    };
     check_matmul_broadcast(
         4,
         3,
         4,
-        &[Level::over(
-            ByAxis::new(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (B0, z()),
-                (B1, z()),
-                (M, Distribution::Sequential),
-                (N, Distribution::Sequential),
-                (K, Distribution::Sequential),
-            ]),
-        )],
+        &[Level::new(&[B0, B1, M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
+                .distribute(cubes(CubeAxis::Z), &[(B1, 1)])
+                .walk(&[(M, 4), (N, 4), (K, 4)]);
+        })],
     );
 }
 
@@ -1742,21 +1697,10 @@ fn matmul_cpu_cores_split_m() {
         16,
         8,
         8,
-        Level::over(
-            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (
-                    M,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Cube(CubeAxis::X),
-                        spread: Spread::Contiguous,
-                        coverage: Coverage::TilesEach(2),
-                    },
-                ),
-                (N, Distribution::Sequential),
-                (K, Distribution::Sequential),
-            ]),
-        ),
+        Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X).tiles_each(2), &[(M, 4)])
+                .walk(&[(N, 4), (K, 4)]);
+        }),
     );
 }
 
@@ -1766,21 +1710,10 @@ fn matmul_cpu_cores_split_m_planes() {
         16,
         8,
         8,
-        Level::over(
-            ByAxis::new(&[(M, 4), (N, 4), (K, 4)]),
-            ByAxis::new(&[
-                (
-                    M,
-                    Distribution::Spatial {
-                        scope: ComputeScope::Plane,
-                        spread: Spread::Contiguous,
-                        coverage: Coverage::TilesEach(2),
-                    },
-                ),
-                (N, Distribution::Sequential),
-                (K, Distribution::Sequential),
-            ]),
-        ),
+        Level::new(&[M, N, K], |l| {
+            l.distribute(planes().tiles_each(2), &[(M, 4)])
+                .walk(&[(N, 4), (K, 4)]);
+        }),
     );
 }
 
@@ -1876,7 +1809,7 @@ fn register_matmul_unit_spread_n() {
 
     let (m, k, nr) = (4usize, 8usize, 2usize);
     let n = plane_size * nr;
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(N, nr)])
             .walk(&[(M, m), (K, k)]);
     });
@@ -1938,7 +1871,7 @@ fn matmul_padded_rhs_stage_multi_line() {
 
 fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) {
     let client = cubecl::test_device().client();
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, m), (N, n), (K, k)]);
     });
     let a = TileInput::builder(&client, nest.space.project(&[M, K]))
@@ -1950,7 +1883,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
     let c = TileInput::builder(&client, nest.space.project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = nest.launcher(&client);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let b_op = launcher.arg(b.handle().binding()).subspace(&[K, N]).build();
     let c_op = launcher.arg(c.handle().binding()).subspace(&[M, N]).build();
@@ -1984,7 +1917,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
 fn matmul_padded_lhs_stage_direct_tail() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 2usize, 3usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         .level(|l| {
             l.walk(&[(M, m), (N, n), (K, k)]);
         })
@@ -2000,7 +1933,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
     let c = TileInput::builder(&client, nest.space.project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = nest.launcher(&client);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let b_op = launcher.arg(b.handle().binding()).subspace(&[K, N]).build();
     let c_op = launcher.arg(c.handle().binding()).subspace(&[M, N]).build();
@@ -2109,7 +2042,9 @@ enum StageLayout {
 impl StageLayout {
     fn storage(self, nest: &Nest) -> StageStorage {
         match self {
-            StageLayout::Tiled => StageStorage::tiled_at_leaf(&nest.space, &nest.levels),
+            StageLayout::Tiled => StageStorage::Tiled {
+                block: nest.space.leaf(&nest.levels).extents(),
+            },
             StageLayout::Strided => StageStorage::Strided,
         }
     }
@@ -2181,7 +2116,7 @@ fn check_matmul_multilevel(
 fn matmul_staged_invariant_lhs() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         .level(|l| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
@@ -2222,11 +2157,11 @@ fn matmul_staged_invariant_lhs() {
 fn matmul_a_level_that_cuts_nothing_is_kept() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let plain = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let plain = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, 4), (N, 4), (K, 4)]);
     });
     // The second level's edges are the first's: every axis's count is 1.
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         .level(|l| {
             l.walk(&[(M, 4), (N, 4), (K, 4)]);
         })
@@ -2630,7 +2565,7 @@ fn register_matmul_promoted_cube_plane() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 16usize);
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, m)])
                 .distribute(cubes(CubeAxis::Y), &[(N, n)])
@@ -2684,7 +2619,7 @@ fn register_matmul_promoted_cube_plane() {
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         // L0: the whole output, K in two steps. The block mirrors this level's *sub-tile*, so
         // the accumulator's grid is only cut a level down.
         .level(|l| {
@@ -2881,7 +2816,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
     let client = cubecl::test_device().client();
     let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
     let k = k1 * k2;
-    let nest = Nest::over(&[(M, m), (N, n), (K, k1), (K2, k2)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]), vec![]).level(|l| {
         l.walk(&[(M, m), (N, n), (K, k1), (K2, k2)]);
     });
 
@@ -3023,7 +2958,11 @@ fn run_folded_step_quant(
 /// point here is a plane carrying several cells at once.
 fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Nest {
     let groups = plane_size / group_lanes;
-    Nest::over(&[(M, groups), (N, n), (K, group_lanes * edge)]).level(|l| {
+    Nest::new(
+        Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
+        vec![],
+    )
+    .level(|l| {
         l.distribute(lanes(groups), &[(M, 1)])
             .distribute(lanes(group_lanes).interleaved(), &[(K, edge)])
             .walk(&[(N, n)]);
@@ -3472,7 +3411,7 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, edge), (N, edge), (K, edge)]);
     });
     let storage = layout.storage(&nest);
@@ -3518,7 +3457,7 @@ fn mma_matmul_8x8x8() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, edge), (N, edge), (K, edge)]);
     });
 
@@ -3559,7 +3498,7 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         // L0: the whole `16×16` output per cube, K walked in `8`-deep stages, double-buffered.
         .level(|l| {
             l.walk(&[(M, m), (N, n), (K, edge)]);
@@ -3609,7 +3548,7 @@ fn cmma_matmul_multi_fragment_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages.
         .level(|l| {
             l.walk(&[(M, m), (N, n), (K, stage_k)]);
@@ -3663,7 +3602,7 @@ fn cmma_matmul_staged_n_walk_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         // L0: whole output per cube, K walked in `stage_k`-deep double-buffered stages; the
         // accumulator opened here lives across the whole K walk below.
         .level(|l| {
@@ -3797,7 +3736,7 @@ fn check_cmma_matmul_quant_walk(
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, edge), (N, edge), (K, edge)]);
     });
 
@@ -3876,7 +3815,7 @@ fn mma_matmul_quant_until_read() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.walk(&[(M, edge), (N, edge), (K, edge)]);
     });
 
@@ -4232,7 +4171,7 @@ fn register_matmul_quant_rhs_gemv_row() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = cubecl::test_device().client();
-    let nest = Nest::over(&[(M, 1), (N, 16), (K, 8)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, 1), (N, 16), (K, 8)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(N, 4)])
             .walk(&[(M, 1), (K, 4)]);
     });
@@ -4255,7 +4194,7 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = cubecl::test_device().client();
-    let nest = Nest::over(&[(M, 1), (N, 8), (K, 8)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, 1), (N, 8), (K, 8)]), vec![]).level(|l| {
         l.walk(&[(M, 1), (N, 4), (K, 4)]);
     });
     run_register_matmul_quant_rhs(
@@ -4343,7 +4282,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 
 /// `4 × 8 × 16` walked in `4×4×4` tiles: four K regions per output tile.
 fn four_region_k_walk() -> Nest {
-    Nest::over(&[(M, 4), (N, 8), (K, 16)]).level(|l| {
+    Nest::new(Space::new(&[(M, 4), (N, 8), (K, 16)]), vec![]).level(|l| {
         l.walk(&[(M, 4), (N, 4), (K, 4)]);
     })
 }
@@ -4407,7 +4346,7 @@ fn run_register_matmul_quant_rhs(
 
     // Routine-like: the launcher derives geometry and argument wiring from the nest; the
     // quantized RHS goes through the source builder, which binds it at the storage width.
-    let launcher = nest.launcher(&client);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let mut scales = vec![b.scales_binding()];
     scales.extend(global_scale.map(|g| g.binding()));

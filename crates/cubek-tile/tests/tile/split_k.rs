@@ -106,7 +106,11 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Nest::over(&[(M, m), (N, n), (KB, splits), (KI, inside)]).level(|l| {
+    let split_space = Nest::new(
+        Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
+        vec![],
+    )
+    .level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
             .walk(&[(M, m), (N, n), (KI, inside)]);
     });
@@ -145,7 +149,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Nest::over(&[(M, m), (N, n), (KB, splits)]).level(|l| {
+    let fold_space = Nest::new(Space::new(&[(M, m), (N, n), (KB, splits)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(M, 1)])
             .walk(&[(N, n), (KB, splits)]);
     });
@@ -314,7 +318,7 @@ fn atomic_split_matmul<E: Numeric>(
     // fragment per region, drained once through the sink after it.
     let mut acc = c.block_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         REGISTER_BLOCK,
         Monoid::Sum,
     );
@@ -348,7 +352,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
             .walk(&[(M, m), (N, n)]);
     });
@@ -483,7 +487,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(lanes(plane_size), &[(N, per_lane)])
             .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
             .walk(&[(M, m)]);
@@ -561,7 +565,7 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(planes(), &[(K, k / num_planes)])
             .walk(&[(M, m), (N, n)]);
     });
@@ -662,7 +666,7 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
         l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
             .walk(&[(M, m), (N, n)]);
     });

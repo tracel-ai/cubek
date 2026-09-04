@@ -419,7 +419,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind: self.tile_kind.clone(),
             space,
-            descent: comptime!(Descent::root()),
+            descent: comptime!(Descent::default()),
         }
     }
 
@@ -512,7 +512,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(Descent::root()),
+            | TileKind::Procedural(_) => comptime!(Descent::default()),
         };
         Tile::<T> {
             tile_kind,
@@ -585,6 +585,26 @@ impl<T: Numeric> Tile<T> {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
             Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),
+        }
+    }
+
+    /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
+    /// grid, a single plane tile's `1 × 1` of its whole window.
+    pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
+        let rank = comptime!(self.space.rank());
+        let rows = comptime!(self.space.extent_at(rank - 2));
+        let cols = comptime!(self.space.extent_at(rank - 1));
+        match &self.tile_kind {
+            TileKind::PlanePartition(p) => {
+                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
+            }
+            TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::fragment_grid: only a plane-resident accumulator holds fragments")
+            }
         }
     }
 

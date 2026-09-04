@@ -47,7 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Nest, RegisterBlock, Semiring, TileArg, TileArgLaunch, cubes, lanes,
+    Axis, CubeAxis, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, cubes, lanes,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -167,12 +167,12 @@ impl Mapping {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+            Mapping::SeqK => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, 1)])
                     .walk(&[(M, m), (K, k)]);
             }),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Nest::over(&[(M, m), (N, n), (K, k)])
+            Mapping::NSpread { cols } => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
                 .level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, plane_size * cols)])
                         .walk(&[(M, m), (K, k)]);
@@ -184,7 +184,7 @@ impl Mapping {
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
-                Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+                Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, cols)])
                         .distribute(lanes(plane_size), &[(K, k / plane_size)])
                         .walk(&[(M, m)]);

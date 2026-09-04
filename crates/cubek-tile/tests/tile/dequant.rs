@@ -67,7 +67,11 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let nest = Nest::over(&[(ROW, rows), (CB, blocks), (CI, inside)]).level(|level| {
+    let nest = Nest::new(
+        Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
+        vec![],
+    )
+    .level(|level| {
         level.walk(&[(ROW, rows), (CB, blocks), (CI, inside)]);
     });
 
@@ -97,7 +101,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = nest.launcher(&client);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
     let w_op = launcher
         .arg(w_tensor.clone().binding())
         .gathered(split())

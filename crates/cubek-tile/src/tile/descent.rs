@@ -1,6 +1,6 @@
-//! What a plane-resident accumulator has been descended with: the [`Level`]s its ancestors' `at`s were handed, in
-//! nesting order. Recorded as the kernel walks, read back by the drain, which has to find each
-//! fragment's window in an output that was never walked.
+//! What a plane-resident accumulator has been descended with: the [`Level`]s its ancestors'
+//! `at`s were handed, in nesting order. Recorded as the kernel walks, read back by the drain,
+//! which has to find each fragment's window in an output that was never walked.
 //!
 //! One record is shared by every tile of one descent (the handle is cloned, not the levels), and
 //! each tile knows its own depth in it. A tile descended twice at the same depth must be given
@@ -17,15 +17,17 @@ pub struct Descent {
     depth: usize,
 }
 
-impl Descent {
-    /// A tile nothing has descended yet.
-    pub(crate) fn root() -> Self {
+/// A tile nothing has descended yet.
+impl Default for Descent {
+    fn default() -> Self {
         Descent {
             levels: Rc::new(RefCell::new(Vec::new())),
             depth: 0,
         }
     }
+}
 
+impl Descent {
     /// The child's descent under `level`: recorded at this depth the first time, checked against
     /// the record every time after.
     pub(crate) fn under(&self, level: &Level) -> Descent {

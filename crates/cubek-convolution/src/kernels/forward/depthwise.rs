@@ -89,6 +89,11 @@ impl DepthwiseSpace {
         vec![self.cube_level(), self.lane_level()]
     }
 
+    /// The extents and the levels together: what the launch sizes its grid from.
+    pub fn nest(&self) -> Nest {
+        Nest::new(Space::new(&self.extents()), self.levels())
+    }
+
     pub fn space(&self) -> Space {
         Space::new(&self.extents())
     }
@@ -104,7 +109,7 @@ impl DepthwiseSpace {
             tile_c,
             ..
         } = *self;
-        Level::cuts(&AXES, |l| {
+        Level::new(&AXES, |l| {
             l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
                 .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
                 .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
@@ -127,7 +132,7 @@ impl DepthwiseSpace {
             plane_size,
             ..
         } = *self;
-        Level::cuts(&AXES, |l| {
+        Level::new(&AXES, |l| {
             l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
                 .distribute(planes(), &[(OH, 1)])
                 .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
@@ -391,7 +396,7 @@ pub fn launch_depthwise(
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
     let plan = tiling.plan(&geometry, lanes, tile_c, width);
-    let launch = Launcher::over_static(client, &plan.extents(), &plan.levels());
+    let launch = Launcher::new(client, &plan.nest(), KernelForm::Static);
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and

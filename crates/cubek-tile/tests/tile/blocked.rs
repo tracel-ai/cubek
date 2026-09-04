@@ -101,7 +101,7 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (K, depth)]).level(|l| {
+    let nest = Nest::new(Space::new(&[(M, rows), (N, cols), (K, depth)]), vec![]).level(|l| {
         l.walk(&[(M, rows), (N, cols), (K, block)]);
     });
 
@@ -157,7 +157,11 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
     });
 
@@ -238,7 +242,11 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
     });
 
@@ -330,7 +338,11 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -412,7 +424,11 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -510,7 +526,11 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -619,7 +639,11 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -690,7 +714,7 @@ fn promoted_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         BLOCK,
         Monoid::Sum,
     );
@@ -725,7 +749,11 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -789,7 +817,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(nest.space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
-        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
         BLOCK,
         Monoid::Sum,
     );
@@ -832,7 +860,11 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 
@@ -947,7 +979,11 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
     });
 

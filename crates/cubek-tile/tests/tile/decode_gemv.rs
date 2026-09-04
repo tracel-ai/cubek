@@ -116,7 +116,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut out = out.tile(comptime!(nest.space.clone()));
     let mut acc = out.block_accumulator::<E, E>(
         &w,
-        comptime!(Fragments::of(&out.space, &w.space, nest.below(0))),
+        comptime!(Fragments::new(&out.space, &w.space, nest.below(0))),
         comptime!(RegisterBlock::new(budget)),
         Monoid::Sum,
     );
@@ -218,27 +218,27 @@ fn serving_geometry(promoted: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let nest = Nest::over(&[(M, d_out), (N, n), (KB, blocks), (KI, block)])
-        // A strip of output rows per cube, walking all of `K`.
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
-                .walk(&[(N, n), (KB, blocks), (KI, block)]);
-        })
-        // One plane per group of rows.
-        .level(|l| {
-            l.distribute(planes(), &[(M, rows_per_plane)]).walk(&[
-                (N, n),
-                (KB, blocks),
-                (KI, block),
-            ]);
-        })
-        // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
-        // stored word each along `KI`, so a step reads one contiguous span of the block.
-        .level(|l| {
-            l.distribute(lanes(groups), &[(M, rows_per_lane)])
-                .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
-                .walk(&[(N, n), (KB, 1)]);
-        });
+    let nest = Nest::new(
+        Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    // A strip of output rows per cube, walking all of `K`.
+    .level(|l| {
+        l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
+            .walk(&[(N, n), (KB, blocks), (KI, block)]);
+    })
+    // One plane per group of rows.
+    .level(|l| {
+        l.distribute(planes(), &[(M, rows_per_plane)])
+            .walk(&[(N, n), (KB, blocks), (KI, block)]);
+    })
+    // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
+    // stored word each along `KI`, so a step reads one contiguous span of the block.
+    .level(|l| {
+        l.distribute(lanes(groups), &[(M, rows_per_lane)])
+            .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
+            .walk(&[(N, n), (KB, 1)]);
+    });
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
     let budget = rows_per_lane * factor;
 
@@ -265,7 +265,7 @@ fn serving_geometry(promoted: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = nest.launcher_over(&client, &[]);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Static);
     let w_op = launcher
         .arg(w_tensor.binding())
         .gathered(Projection::new(

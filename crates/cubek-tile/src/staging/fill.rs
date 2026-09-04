@@ -437,7 +437,7 @@ mod tests {
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.walk(&[(M, 8), (N, 8), (K, 4)]);
         });
         let plan = SlotPlan::new(
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn a_fixed_operand_reuses_the_first_slots_buffer() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.walk(&[(M, 8), (N, 4), (K, 8)]);
         });
         let plan = SlotPlan::new(
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn a_tma_operand_is_never_fixed() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.walk(&[(M, 8), (N, 4), (K, 8)]);
         });
         let plan = SlotPlan::new(

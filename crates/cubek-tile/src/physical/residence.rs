@@ -14,24 +14,3 @@ pub enum StageStorage {
     },
     Strided,
 }
-
-impl StageStorage {
-    /// [`Tiled`](StageStorage::Tiled) at `block`, one edge per axis of the operation.
-    pub fn tiled(block: &[(Axis, usize)]) -> Self {
-        StageStorage::Tiled {
-            block: block.to_vec(),
-        }
-    }
-
-    /// [`tiled`](StageStorage::tiled) at the leaf `levels` reach below `space`: what a kernel
-    /// handed its levels reads off them.
-    pub fn tiled_at_leaf(space: &crate::Space, levels: &[crate::Level]) -> Self {
-        let leaf = crate::leaf(space, levels);
-        StageStorage::tiled(
-            &leaf
-                .axes()
-                .map(|axis| (axis, leaf.extent(axis)))
-                .collect::<Vec<_>>(),
-        )
-    }
-}

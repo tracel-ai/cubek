@@ -137,15 +137,19 @@ impl TileQuantStageBench {
         let tn = plane_size * un;
         let axes = [M, N, K];
         vec![
-            Level::cuts(&axes, |l| {
+            Level::new(&axes, |l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, tn)])
                     .walk(&[(M, self.m), (K, self.tk)]);
             }),
-            Level::cuts(&axes, |l| {
+            Level::new(&axes, |l| {
                 l.distribute(lanes(plane_size), &[(N, un)])
                     .walk(&[(M, self.m), (K, self.tk)]);
             }),
         ]
+    }
+
+    fn nest(&self) -> Nest {
+        Nest::new(Space::new(&self.extents()), self.levels())
     }
 
     fn space(&self) -> Space {
@@ -175,7 +179,7 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let launcher = Launcher::over_static(&self.client, &self.extents(), &self.levels());
+        let launcher = Launcher::new(&self.client, &self.nest(), KernelForm::Static);
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
         let b = launcher
             .arg(b.tile.handle().binding())

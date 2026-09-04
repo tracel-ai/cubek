@@ -69,7 +69,7 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Nest {
-    Nest::over(&[(M, ROWS), (N, COLS), (K, DEPTH)]).level(|l| {
+    Nest::new(Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]), vec![]).level(|l| {
         l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
     })
 }

@@ -1,7 +1,7 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubek_tile::{
-    Axis, Compaction, CubeAxis, Level, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock,
+    Axis, Compaction, CubeAxis, Level, LevelCuts, Nest, PhysicalAxisMap, Projection, RegisterBlock,
     Space, cubes, lanes, planes,
 };
 
@@ -55,6 +55,11 @@ impl InterpolateSpace {
         vec![self.cube_level(), self.plane_level(), self.lane_level()]
     }
 
+    /// The extents and the levels together: what the launch sizes its grid from.
+    pub fn nest(&self) -> Nest {
+        Nest::new(Space::new(&self.extents()), self.levels())
+    }
+
     pub fn space(&self) -> Space {
         Space::new(&self.extents())
     }
@@ -62,7 +67,7 @@ impl InterpolateSpace {
     /// This cube's box of the output, walked over the taps and its channel blocks.
     pub fn cube_level(&self) -> Level {
         let (taps, geometry) = (self.taps, self.geometry);
-        Level::cuts(&AXES, |level| {
+        Level::new(&AXES, |level| {
             level
                 .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
                 .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
@@ -78,7 +83,7 @@ impl InterpolateSpace {
     /// This plane's rows.
     pub fn plane_level(&self) -> Level {
         let (taps, geometry) = (self.taps, self.geometry);
-        Level::cuts(&AXES, |level| {
+        Level::new(&AXES, |level| {
             level
                 .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
                 .walk(&[
@@ -99,7 +104,7 @@ impl InterpolateSpace {
             "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
             geometry.lane_cols * geometry.lane_channels
         );
-        Level::cuts(&AXES, |level| {
+        Level::new(&AXES, |level| {
             lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
             lanes_over(
                 level,

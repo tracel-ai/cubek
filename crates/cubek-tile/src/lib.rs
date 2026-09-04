@@ -12,8 +12,8 @@
 //! ([`Tile::block_accumulator`], [`Tile::cmma_accumulator`], [`Tile::drain_cast_into`]), the
 //! fragments it loads ([`PlanePartition::cmma_fragments`]), the zero of what it holds where it
 //! holds it, and the instruction at the leaf ([`Tile::mm_with`], [`Tile::mma`]). The launch
-//! ([`Launcher`]) sizes the grid from the same levels the kernel's loops state, listed by the
-//! blueprint, and binds the tensors to the same extents.
+//! ([`Launcher`]) sizes the grid from the same levels the kernel's loops state, listed into a
+//! [`Nest`] by the blueprint, and binds the tensors to the same extents.
 #![allow(dead_code)]
 
 mod axis;

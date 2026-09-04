@@ -26,17 +26,12 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// `KB` (a distribution deals one axis or the other and cannot straddle two). The partials the
 /// lanes hold drain inside the plane.
 pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
-    Space::new(&quant_gemv_extents(problem))
-}
-
-/// The routine's axes and their extents, every one static.
-pub fn quant_gemv_extents(problem: &QuantGemvProblem) -> Vec<(Axis, usize)> {
-    vec![
+    Space::new(&[
         (M, problem.d_out),
         (N, problem.rows),
         (KB, problem.blocks()),
         (KI, problem.block),
-    ]
+    ])
 }
 
 const AXES: [Axis; 4] = [M, N, KB, KI];
@@ -54,7 +49,7 @@ impl QuantGemvBlueprint {
     /// A strip of output rows per cube, all of `K` walked.
     pub fn cube_level(&self, problem: &QuantGemvProblem) -> Level {
         let (block, blocks) = (problem.block, problem.blocks());
-        Level::cuts(&AXES, |l| {
+        Level::new(&AXES, |l| {
             l.distribute(cubes(CubeAxis::X), &[(M, self.rows_per_cube)])
                 .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
         })
@@ -63,7 +58,7 @@ impl QuantGemvBlueprint {
     /// One plane per group of rows.
     pub fn plane_level(&self, problem: &QuantGemvProblem) -> Level {
         let (block, blocks) = (problem.block, problem.blocks());
-        Level::cuts(&AXES, |l| {
+        Level::new(&AXES, |l| {
             l.distribute(planes(), &[(M, self.rows_per_plane)]).walk(&[
                 (N, problem.rows),
                 (KB, blocks),
@@ -78,7 +73,7 @@ impl QuantGemvBlueprint {
     /// plane width: their product with the row groups is exactly it.
     pub fn lane_level(&self, problem: &QuantGemvProblem) -> Level {
         let factor = problem.factor();
-        Level::cuts(&AXES, |l| {
+        Level::new(&AXES, |l| {
             l.distribute(lanes(self.groups()), &[(M, self.rows_per_lane)])
                 .distribute(lanes(self.block_lanes).interleaved(), &[(KB, 1)])
                 .distribute(lanes(self.inside_lanes).interleaved(), &[(KI, factor)])

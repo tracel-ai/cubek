@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, MAX_AXES};
+use crate::{Axis, ByAxis, Level, MAX_AXES};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -260,6 +260,37 @@ impl Space {
         self.extents.contains(axis)
     }
 
+    /// The static extents, in axis order.
+    pub fn extents(&self) -> Vec<(Axis, usize)> {
+        self.axes().map(|axis| (axis, self.extent(axis))).collect()
+    }
+
+    /// The leaf `levels` reach below this space: each level's child of the last.
+    pub fn leaf(&self, levels: &[Level]) -> Space {
+        levels
+            .iter()
+            .fold(self.clone(), |space, level| level.child(&space))
+    }
+
+    /// Whether `axis` overhangs its tiling under `levels`: some level's edge fails to divide the
+    /// extent handed to it (this space's at the first level, the parent edge below), leaving a
+    /// partial tile that needs masking. A [`Dynamic`](Extent::Dynamic) axis panics: the answer
+    /// is the concrete space's, never the kernel-form one's.
+    pub fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
+        assert!(
+            !self.is_dynamic(axis),
+            "Space::overhangs: axis {axis:?} is Dynamic; ask the concrete space"
+        );
+        let mut space = self.clone();
+        for level in levels {
+            if level.overhangs(&space, axis) {
+                return true;
+            }
+            space = level.child(&space);
+        }
+        false
+    }
+
     /// Whether `other` holds the same cells in the same order: the same axes at the same
     /// positions with the same extents. What a flat-indexing op checks.
     pub(crate) fn laid_out_like(&self, other: &Space) -> bool {
@@ -491,7 +522,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.distribute(cubes(CubeAxis::Y), &[(K, 4)])
                 .walk(&[(M, 4), (N, 4)]);
         });
@@ -512,7 +543,7 @@ mod contraction_tests {
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.distribute(planes(), &[(K, 4)]).walk(&[(M, 4), (N, 4)]);
         });
         assert_eq!(
@@ -527,7 +558,7 @@ mod contraction_tests {
     #[test]
     fn distributed_work_is_partial_to_the_output() {
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
         });
         assert_eq!(
@@ -545,15 +576,15 @@ mod contraction_tests {
         use cubecl::CubeCount;
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
         let levels = [
-            Level::cuts(&[M, N, K], |l| {
+            Level::new(&[M, N, K], |l| {
                 l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
             }),
-            Level::cuts(&[M, N, K], |l| {
+            Level::new(&[M, N, K], |l| {
                 l.walk(&[(M, 4), (N, 4), (K, 4)]);
             }),
         ];
         assert!(matches!(
-            cube_count(&space, &levels),
+            Nest::new(space, levels.to_vec()).cube_count(),
             CubeCount::Static(3, 1, 1)
         ));
     }
@@ -565,7 +596,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.distribute(cubes(CubeAxis::X), &[(N, 1)])
                 .distribute(cubes(CubeAxis::Z), &[(K, 8)])
                 .walk(&[(M, 4)]);
@@ -581,7 +612,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 4)]);
-        let level = Level::cuts(&[M, N, K], |l| {
+        let level = Level::new(&[M, N, K], |l| {
             l.distribute(cubes(CubeAxis::X), &[(N, 4)])
                 .walk(&[(M, 4), (K, 4)]);
         });

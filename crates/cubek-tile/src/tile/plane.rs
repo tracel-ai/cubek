@@ -242,7 +242,7 @@ impl<T: Numeric> PlanePartition<T> {
             // The fragments were sized from the statement alone, so a `Dynamic` extent here is
             // never read; the first partition level below reads its own edges off its child.
             space,
-            descent: comptime!(Descent::root()),
+            descent: comptime!(Descent::default()),
         }
     }
 
@@ -290,7 +290,7 @@ impl<T: Numeric> PlanePartition<T> {
                 n_tiles: t1,
             }),
             space: comptime!(window),
-            descent: comptime!(Descent::root()),
+            descent: comptime!(Descent::default()),
         }
     }
 
@@ -523,30 +523,7 @@ fn fragment_level(window: &Space, m_tiles: usize, n_tiles: usize) -> Level {
             (axis, extent / tiles)
         })
         .collect();
-    Level::cuts(&axes, |l| {
+    Level::new(&axes, |l| {
         l.walk(&cuts);
     })
-}
-
-#[cube]
-impl<T: Numeric> Tile<T> {
-    /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
-    /// grid, a single plane tile's `1 × 1` of its whole window.
-    pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
-        let rank = comptime!(self.space.rank());
-        let rows = comptime!(self.space.extent_at(rank - 2));
-        let cols = comptime!(self.space.extent_at(rank - 1));
-        match &self.tile_kind {
-            TileKind::PlanePartition(p) => {
-                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
-            }
-            TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::fragment_grid: only a plane-resident accumulator holds fragments")
-            }
-        }
-    }
 }

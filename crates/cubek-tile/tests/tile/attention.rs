@@ -180,15 +180,18 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let nest = Nest::over(&[
-        (G, g),
-        (QP, qp),
-        (S, s_total),
-        (D, d),
-        (V, val_dim),
-        (R, 1),
-        (C, 1),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[
             (G, g),
@@ -571,15 +574,18 @@ fn run_cmma<E: Float + CubeElement>(
 
     // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
     // in blocks and nothing else.
-    let nest = Nest::over(&[
-        (G, 1),
-        (QP, rows),
-        (S, s_total),
-        (D, d),
-        (V, val_dim),
-        (R, 1),
-        (C, 1),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (G, 1),
+            (QP, rows),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[
             (G, 1),
@@ -991,20 +997,20 @@ fn attention_fold_split_kernel<W: Size>(
     // This team's windows: one slice of rows per team, the levels stated here on the
     // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
-    let team_scores = comptime!(Level::cuts(&[R, C], |l| {
+    let team_scores = comptime!(Level::new(&[R, C], |l| {
         l.walk(&[(R, rows), (C, block)]);
     }));
     let tw = score_all.runtime_space().level(team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
     let row_axes = comptime!(row_extents.map(|(axis, _)| axis));
-    let team_rows = comptime!(Level::cuts(&row_axes, |l| {
+    let team_rows = comptime!(Level::new(&row_axes, |l| {
         l.walk(&[(T, 1), (R, rows)]);
     }));
     let rw = factors_all.runtime_space().level(team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let team_acc = comptime!(Level::cuts(&[R, V], |l| {
+    let team_acc = comptime!(Level::new(&[R, V], |l| {
         l.walk(&[(R, rows), (V, val_dim)]);
     }));
     let aw = acc_all.runtime_space().level(team_acc);
@@ -1160,15 +1166,18 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention nest, as in [`run`].
-    let nest = Nest::over(&[
-        (G, g),
-        (QP, qp),
-        (S, s_total),
-        (D, d),
-        (V, val_dim),
-        (R, 1),
-        (C, 1),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (G, g),
+            (QP, qp),
+            (S, s_total),
+            (D, d),
+            (V, val_dim),
+            (R, 1),
+            (C, 1),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[
             (G, g),
@@ -1370,7 +1379,11 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let nest = Nest::over(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]).level(|l| {
+    let nest = Nest::new(
+        Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
+        vec![],
+    )
+    .level(|l| {
         l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)]);
     });
 

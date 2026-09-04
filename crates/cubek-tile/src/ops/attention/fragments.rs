@@ -535,7 +535,7 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Level {
             _ => (axis, space.extent(axis)),
         })
         .collect();
-    Level::cuts(&axes, |l| {
+    Level::new(&axes, |l| {
         l.walk(&cuts);
     })
 }

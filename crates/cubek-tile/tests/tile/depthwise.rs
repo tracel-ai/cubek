@@ -132,14 +132,17 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let nest = Nest::over(&[
-            (B, self.b),
-            (OH, self.oh),
-            (OW, self.ow),
-            (C, self.c),
-            (RH, self.rh),
-            (RW, self.rw),
-        ])
+        let nest = Nest::new(
+            Space::new(&[
+                (B, self.b),
+                (OH, self.oh),
+                (OW, self.ow),
+                (C, self.c),
+                (RH, self.rh),
+                (RW, self.rw),
+            ]),
+            vec![],
+        )
         // Two levels, not one. A single all-`sequential` level puts the whole
         // convolution in one instance; the grid has to separate the output before
         // anything else about the kernel matters.

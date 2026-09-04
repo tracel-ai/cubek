@@ -1,23 +1,16 @@
 //! One decomposition [`Level`]: how each axis of a space is cut and dealt out, and the axes dealt
 //! as one. The value a kernel's loop states ([`Space::level`](crate::Space::level)), the value
 //! a [`Region`](crate::Region) carries down to `at`, and the value a launch sizes its grid from
-//! ([`cube_count`](crate::cube_count), [`cube_dim`](crate::cube_dim)). A blueprint hands the
-//! same value to both, one method per level, so the grid and the loops cannot disagree.
+//! ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one method per level, so
+//! the grid and the loops cannot disagree.
 //!
-//! Built by [`Level::cuts`], the constructor kernels and blueprints use: two verbs on a
-//! [`LevelCuts`] collector, [`distribute`](LevelCuts::distribute) for axes a hardware scope's
-//! workers take and [`walk`](LevelCuts::walk) for axes every one of them steps through. Between
-//! them they name each of the space's axes exactly once. [`Level::over`] is the raw form, edges
-//! and distributions by axis, for a test that spells a distribution out.
-
-use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
-
-/// The leaf `levels` reach below `space`: each level's child of the last.
-pub fn leaf(space: &Space, levels: &[Level]) -> Space {
-    levels.iter().fold(space.clone(), |s, l| l.child(&s))
-}
+//! Built by [`Level::new`]: two verbs on a [`LevelCuts`] collector,
+//! [`distribute`](LevelCuts::distribute) for axes a hardware scope's workers take and
+//! [`walk`](LevelCuts::walk) for axes every one of them steps through. Between them they name
+//! each of the space's axes exactly once.
 
 use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
+use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
 #[derive(Clone, Copy, Debug)]
@@ -115,7 +108,7 @@ impl Work {
         match self.dist.coverage() {
             Coverage::Instances(n) => n,
             Coverage::TilesEach(_) => panic!(
-                "Level::cuts: state how many instances share the work (`.instances(n)`); a \
+                "Level::new: state how many instances share the work (`.instances(n)`); a \
                  share of the whole cannot be derived from a grid whose length is only known at \
                  launch"
             ),
@@ -137,24 +130,24 @@ impl Level {
     /// The level `f` states over `axes`, which fix the canonical order (the last one is the
     /// fastest of a walk). The cuts may come in any order and are realigned to it; every axis
     /// must be named exactly once, by `walk` or `distribute`.
-    pub fn cuts(axes: &[Axis], f: impl FnOnce(&mut LevelCuts)) -> Level {
+    pub fn new(axes: &[Axis], f: impl FnOnce(&mut LevelCuts)) -> Level {
         let mut cuts = LevelCuts::new();
         f(&mut cuts);
         // Per axis first: it names the one that is wrong, where the count only says the total
         // is off.
         for &axis in axes {
             let stated = cuts.cuts.iter().filter(|&&(a, _)| a == axis).count();
-            assert!(stated > 0, "Level::cuts: axis {axis:?} has no cut");
+            assert!(stated > 0, "Level::new: axis {axis:?} has no cut");
             assert!(
                 stated == 1,
-                "Level::cuts: axis {axis:?} is cut {stated} times; a level states each of its \
+                "Level::new: axis {axis:?} is cut {stated} times; a level states each of its \
                  axes once, by `walk` or `distribute`"
             );
         }
         assert_eq!(
             cuts.cuts.len(),
             axes.len(),
-            "Level::cuts: {} cuts but {} axes",
+            "Level::new: {} cuts but {} axes",
             cuts.cuts.len(),
             axes.len()
         );
@@ -168,12 +161,6 @@ impl Level {
         let edges: Vec<_> = axes.iter().map(|&a| (a, cut(a).edge)).collect();
         let dists: Vec<_> = axes.iter().map(|&a| (a, cut(a).dist)).collect();
         Level::from_parts(ByAxis::new(&edges), ByAxis::new(&dists), cuts.work)
-    }
-
-    /// The level cutting each axis to `edges` and dealing it per `dists`, spelled out: what a
-    /// test states when the distribution itself is the subject.
-    pub fn over(edges: ByAxis<usize>, dists: ByAxis<Distribution>) -> Level {
-        Level::from_parts(edges, dists, None)
     }
 
     pub(crate) fn from_parts(
