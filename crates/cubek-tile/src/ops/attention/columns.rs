@@ -17,7 +17,7 @@ impl<EA: Float> Tile<EA> {
     /// [`score`](Tile::score) under the software instruction. Each unit streams whole `k` rows
     /// for its owned columns, so a gmem `k` is read once per team; `q` is read `cols` times over
     /// and belongs in shared memory.
-    pub(crate) fn score_columns<EI: Numeric>(
+    pub fn score_columns<EI: Numeric>(
         &mut self,
         q: &Tile<EI>,
         k: &Tile<EI>,
@@ -91,7 +91,7 @@ impl<EA: Float> Tile<EA> {
     /// vectorization divides, where widening starves the grid and narrowing starves the bus.
     ///
     /// The rescale rides the same visit because each cell has exactly one owner here.
-    pub(crate) fn mix_columns<EP: Numeric, EI: Numeric>(
+    pub fn mix_columns<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,

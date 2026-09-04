@@ -110,7 +110,7 @@ fn refuse_work_below(space: &Space) {
         child.is_final() || child.partitioner().work().is_none(),
         "distributed_mm: the level under this one distributes work too, and a share's own walk \
          deals every axis on its own. Distribute one axis across that scope instead \
-         (`distribute(planes(), ..)`, `distribute(lanes(), ..)`), which the walk under a share \
+         (`distribute(planes(), ..)`, `distribute(lanes(n), ..)`), which the walk under a share \
          honours like any other."
     );
 }

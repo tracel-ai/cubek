@@ -223,12 +223,28 @@ impl Space {
         self.with_dynamic(&axes)
     }
 
-    /// Resolve every `Unit` axis's deferred lane count to `Instances(plane_size)`. The
-    /// launch's stamping pass ([`Space::launcher`] applies it), so a partitioner declares a
-    /// `Unit` split without knowing the hardware warp width and geometry/walk only ever see
-    /// a concrete count.
-    pub fn resolve_lanes(mut self, plane_size: usize) -> Self {
-        self.partitioner = self.partitioner.resolve_lanes(plane_size);
+    /// Stamp the real `extents` onto this space's axes, keeping the partitioner: the launch's
+    /// concrete twin of a kernel-form space built with [`Tiling::axes`](crate::Tiling::axes),
+    /// which is what geometry, overhang and the launch grid are read off. Every listed axis must
+    /// be one of this space's.
+    pub fn with_extents(mut self, extents: &[(Axis, usize)]) -> Self {
+        for &(axis, _) in extents {
+            assert!(
+                self.contains(axis),
+                "Space::with_extents: {axis:?} is not an axis of this space"
+            );
+        }
+        let entries: Vec<_> = self
+            .axes()
+            .map(|a| {
+                let extent = match extents.iter().find(|&&(axis, _)| axis == a) {
+                    Some(&(_, n)) => Extent::Static(n),
+                    None => self.extents.get(a),
+                };
+                (a, extent)
+            })
+            .collect();
+        self.extents = Extents::fixed(ByAxis::new(&entries));
         self
     }
 

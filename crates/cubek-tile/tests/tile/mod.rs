@@ -6,6 +6,7 @@ mod decode_gemv;
 mod depthwise;
 mod dequant;
 mod erased;
+mod imperative;
 mod instruction;
 mod launcher;
 mod matmul;

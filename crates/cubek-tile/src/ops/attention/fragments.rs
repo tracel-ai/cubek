@@ -34,7 +34,7 @@ impl<EA: Float> Tile<EA> {
     /// Fragments whose columns all lie at or past `cols_bound` are skipped, their cells left to
     /// the softmax's mask probe. A fragment straddling the bound is computed whole, so the block
     /// the caller hands over must be readable to its edge.
-    pub(crate) fn score_fragments<EI: Numeric>(
+    pub fn score_fragments<EI: Numeric>(
         &mut self,
         q: &Tile<EI>,
         k: &Tile<EI>,
@@ -95,7 +95,7 @@ impl<EA: Float> Tile<EA> {
     /// Contraction steps at or past `cols_bound` are skipped: stale cache beyond the attended
     /// prefix (possibly NaN) must not ride a zero probability. A step straddling the bound is
     /// contracted whole, so the block must be readable to its edge.
-    pub(crate) fn mix_fragments<EP: Numeric, EI: Numeric>(
+    pub fn mix_fragments<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,

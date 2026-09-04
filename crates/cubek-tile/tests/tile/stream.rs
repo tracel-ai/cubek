@@ -469,11 +469,10 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 );
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.distribute(lanes(), &[(KK, 1)])
+                l.distribute(lanes(plane_size), &[(KK, 1)])
                     .walk(&[(MM, TILE_M), (NN, TILE_N)]);
             })
             .build()
-            .resolve_lanes(plane_size)
             .with_instruction(Instruction::registers(16));
 
         stream_matmul::launch::<TestRuntime>(

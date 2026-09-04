@@ -92,6 +92,61 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// [`smem_like`](MemData::smem_like) laid out as `storage` and, where `width` is stated,
+    /// served in lines that wide: both stated by the ring that allocates the stage rather than
+    /// derived from the operand's stages.
+    pub fn smem_like_stored(
+        operand: &Tile<T>,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+    ) -> Tile<T> {
+        let dequant_at = operand.dequant_at();
+        match comptime!(dequant_at) {
+            DequantAt::Load => {
+                let space = comptime!(operand.space.divide());
+                let projection = operand.projection();
+                let source_plan = operand.stage_plan();
+                let stage = comptime!({
+                    let mut stage = source_plan.descend();
+                    stage.storage = storage;
+                    stage
+                });
+                let source_width = operand.vector_size();
+                let vector_size = comptime!(match width {
+                    Some(width) => {
+                        assert!(
+                            source_width == 1,
+                            "MemData::smem_like_stored: a padded stage assembles its lines from \
+                             scalar source cells, so the operand it pads must be unvectorized \
+                             (it is served {source_width} wide)"
+                        );
+                        assert!(
+                            width > 1,
+                            "MemData::smem_like_stored: a padded stage width must widen the \
+                             operand's own 1-wide lines (got {width})"
+                        );
+                        width
+                    }
+                    None => source_plan.effective_width(source_width),
+                });
+                if comptime!(projection.is_direct()) {
+                    MemData::smem(space, vector_size, stage)
+                } else {
+                    MemData::smem_gathered(
+                        space,
+                        vector_size,
+                        stage,
+                        projection,
+                        &operand.runtime_map(),
+                        operand.window_signed(),
+                        operand.window_boundaries(),
+                    )
+                }
+            }
+            DequantAt::Read => MemData::smem_stored(operand),
+        }
+    }
+
     /// [`smem_like`](MemData::smem_like) in the element the operand is *stored* in rather than the
     /// one it serves: a quantized operand keeps its stored form (native `i8`, or `u32` words when
     /// the scheme packs several values each) and its scales, so the leaf dequantizes at the read

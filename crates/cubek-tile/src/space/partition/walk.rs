@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::walk_order::walk_index;
-use super::{ComputeScope, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles.
 #[derive(CubeType)]
@@ -35,7 +35,10 @@ pub struct Walk {
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
-    unroll: bool,
+    pub(crate) unroll: bool,
+    /// The order the steps visit the odometer in ([`reversed`](Walk::reversed)).
+    #[cube(comptime)]
+    order: WalkOrder,
 }
 
 #[cube]
@@ -126,8 +129,23 @@ impl Walk {
             scales,
             base: 0usize,
             steps,
+            order: comptime!(space.partitioner().order()),
             space,
             unroll: comptime!(false),
+        }
+    }
+
+    /// This walk with its steps visited last to first.
+    pub fn reversed(self) -> Walk {
+        Walk {
+            counts: self.counts,
+            positions: self.positions,
+            scales: self.scales,
+            base: self.base,
+            steps: self.steps,
+            space: comptime!(self.space.clone()),
+            unroll: comptime!(self.unroll),
+            order: comptime!(WalkOrder::Reversed),
         }
     }
 
@@ -148,6 +166,7 @@ impl Walk {
             steps: self.steps,
             space: comptime!(self.space.clone()),
             unroll: comptime!(unroll),
+            order: comptime!(self.order),
         }
     }
 
@@ -171,6 +190,7 @@ impl Walk {
             steps,
             space: comptime!(self.space.clone()),
             unroll: comptime!(self.unroll),
+            order: comptime!(self.order),
         }
     }
 
@@ -181,11 +201,7 @@ impl Walk {
 
     /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
-        let idx = self.base.fadd(walk_index(
-            i,
-            self.steps,
-            comptime!(self.space.partitioner().order()),
-        ));
+        let idx = self.base.fadd(walk_index(i, self.steps, comptime!(self.order)));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
@@ -291,7 +307,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
 /// it through the axis's shared-dim stride to the per-axis instance coordinate.
 #[cube]
-pub(crate) fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
+pub fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     match comptime!(unit) {
         ComputeScope::Cube(dim) => {
             let cube_pos = match comptime!(dim) {

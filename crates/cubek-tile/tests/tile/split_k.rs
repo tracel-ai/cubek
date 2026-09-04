@@ -467,12 +467,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
 
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(N, per_lane)])
+            l.distribute(lanes(plane_size), &[(N, per_lane)])
                 .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m)]);
         })
         .build()
-        .resolve_lanes(plane_size)
         .with_instruction(Instruction::registers(16));
 
     atomic_split_matmul::launch::<TestRuntime>(

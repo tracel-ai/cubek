@@ -183,11 +183,10 @@ impl Mapping {
                         .walk(&[(M, m)]);
                 })
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                    l.distribute(lanes(), &[(K, k / splits / plane_size)])
+                    l.distribute(lanes(plane_size), &[(K, k / splits / plane_size)])
                         .walk(&[(M, m), (N, COLS)]);
                 })
-                .build()
-                .resolve_lanes(plane_size),
+                .build(),
         }
         .with_instruction(INSTRUCTION)
     }

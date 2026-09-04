@@ -6,10 +6,7 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
 };
-use cubek_tile::{
-    Axis, Buffering, CubeAxis, Geometry, Instruction, Launcher, Operand, Residence, Space, Strided,
-    Tiling, Tma, TmaTileArgLaunch, WalkOrder, cubes, planes,
-};
+use cubek_tile::{Axis, Geometry, Launcher, Strided, Tma, TmaTileArgLaunch};
 
 use crate::{
     definition::{
@@ -19,9 +16,9 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
-        kernel::cmma_kernel,
+        kernel::{cmma_kernel, cmma_space},
     },
-    tiled::{K, M, MatmulOperands, N, batch_axis},
+    tiled::{K, M, N, batch_axis},
 };
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
@@ -145,62 +142,6 @@ fn setup<R: Runtime>(
     Ok((problem, blueprint, out_batches.to_vec()))
 }
 
-/// The routine's 4-level space with its operands' residences stated in place: the cube grid
-/// (double-buffered along `K`) stages both inputs into shared memory; one partition per
-/// plane; the contraction-step walk moves them into cmma fragments; the fragment grid the
-/// step contracts is walked statically. The accumulator states its own residence at the cube
-/// grid: `out` spans no contracted axis, so that level holds one region per cube, and a
-/// register-resident accumulator there spans the whole `K` walk below it. `batch` lists the
-/// surviving (extent > 1) output batch axes, one per cube on `Z`.
-fn tile_space(
-    blueprint: &CmmaBlueprint,
-    (m, n, k): (usize, usize, usize),
-    batch: &[(Axis, usize)],
-    dtypes: &MatmulElems,
-    acc: ElemType,
-) -> (Space, MatmulOperands) {
-    let (i, c) = (blueprint.instruction, blueprint.partition);
-    let (stage_m, stage_n) = blueprint.stage();
-    let stage_k = blueprint.stage_k;
-
-    // One tile of every batch axis, which is what each level states of them.
-    let batch_tiles: Vec<_> = batch.iter().map(|&(a, _)| (a, 1)).collect();
-    let extents: Vec<_> = batch
-        .iter()
-        .copied()
-        .chain([(M, m), (N, n), (K, k)])
-        .collect();
-
-    let mut ops = MatmulOperands::new(dtypes);
-    let space = Tiling::over(&mut ops, &extents)
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, o| {
-            l.distribute(cubes(CubeAxis::Z), &batch_tiles)
-                .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
-                .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
-                .walk(&[(K, stage_k)]);
-            o.a.stage_as(Residence::Smem, dtypes.lhs_stage);
-            o.b.stage_as(Residence::Smem, dtypes.rhs_stage);
-            o.out.stage_as(Residence::Register, acc);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(planes(), &[(M, c.m * i.m)])
-                .distribute(planes(), &[(N, c.n * i.n)])
-                .walk(&batch_tiles)
-                .walk(&[(K, stage_k)]);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&batch_tiles)
-                .walk(&[(M, c.m * i.m), (N, c.n * i.n), (K, i.k)]);
-            o.a.stage_as(Residence::Register, dtypes.lhs_register);
-            o.b.stage_as(Residence::Register, dtypes.rhs_register);
-        })
-        .instruction(Instruction::Cmma, |l, _| {
-            l.walk(&batch_tiles).walk(&[(M, i.m), (N, i.n), (K, i.k)]);
-        })
-        .build();
-    (space, ops)
-}
-
 /// The one entry for both deliveries: the shared geometry (space, launcher, out arg) is
 /// built once, and only the operand construction dispatches on the blueprint's
 /// [`CmmaDelivery`]. A TMA plan is fully validated by then, so on CUDA it runs or fails to
@@ -231,14 +172,26 @@ pub fn launch_ref<R: Runtime>(
         .filter(|&p| out_batches[p] > 1)
         .map(|p| (batch_axis(p), out_batches[p]))
         .collect();
-    let (space, ops) = tile_space(&blueprint, (m, n, k), &batch, dtypes, acc);
-
-    let launch = space.launcher(client);
+    let batch_axes: Vec<Axis> = batch.iter().map(|&(a, _)| a).collect();
+    let extents: Vec<_> = batch
+        .iter()
+        .copied()
+        .chain([(M, m), (N, n), (K, k)])
+        .collect();
+    // The kernel's own statement of the space, with this launch's extents stamped on for the
+    // grid and the geometry.
+    let launch = Launcher::new(client, cmma_space(&blueprint, &batch_axes), &extents);
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let (cube_count, cube_dim) = (launch.cube_count(), launch.cube_dim());
+    let elems = Elems {
+        lhs: dtypes.lhs_global,
+        rhs: dtypes.rhs_global,
+        out: dtypes.acc_global,
+        acc,
+    };
 
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // Either path runs the same kernel body and never branches on the delivery again.
@@ -248,7 +201,9 @@ pub fn launch_ref<R: Runtime>(
             &launch,
             cube_count,
             cube_dim,
-            &ops,
+            &blueprint,
+            &batch_axes,
+            elems,
             lhs,
             rhs,
             out,
@@ -259,17 +214,27 @@ pub fn launch_ref<R: Runtime>(
             &launch,
             cube_count,
             cube_dim,
-            &ops,
+            &blueprint,
+            &batch_axes,
+            elems,
             lhs,
             rhs,
             out,
             &out_batch_axes,
-            &blueprint,
             (m, n, k),
         ),
     }
 
     Ok(())
+}
+
+/// The element each operand is served at, and the accumulator's register element.
+#[derive(Clone, Copy)]
+struct Elems {
+    lhs: ElemType,
+    rhs: ElemType,
+    out: ElemType,
+    acc: ElemType,
 }
 
 /// The strided path: each operand lined at the widest width the launcher's gate allows,
@@ -281,39 +246,32 @@ fn launch_strided<R: Runtime>(
     launch: &Launcher<'_, R>,
     cube_count: CubeCount,
     cube_dim: CubeDim,
-    ops: &MatmulOperands,
+    blueprint: &CmmaBlueprint,
+    batch_axes: &[Axis],
+    elems: Elems,
     lhs: TensorBinding<R>,
     rhs: TensorBinding<R>,
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
 ) {
-    let v_a = launch.vector_size(
-        K,
-        &[(&Geometry::from(&lhs), ops.a.axes())],
-        ops.a.dtype().size(),
-    );
+    let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
     let a = launch
-        .bind(&ops.a, lhs)
+        .arg(lhs)
+        .subspace(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
         .build();
-    let v_b = launch.vector_size(
-        N,
-        &[(&Geometry::from(&rhs), ops.b.axes())],
-        ops.b.dtype().size(),
-    );
+    let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
     let b = launch
-        .bind(&ops.b, rhs)
+        .arg(rhs)
+        .subspace(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
         .build();
-    let v_c = launch.vector_size(
-        N,
-        &[(&Geometry::from(&out), ops.out.axes())],
-        ops.out.dtype().size(),
-    );
+    let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
-        .bind(&ops.out, out)
+        .arg(out)
+        .subspace(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
@@ -327,11 +285,12 @@ fn launch_strided<R: Runtime>(
         a.arg(),
         b.arg(),
         c.arg(),
-        launch.space().clone(),
-        ops.a.dtype(),
-        ops.b.dtype(),
-        ops.out.dtype(),
-        ops.out.current_dtype(),
+        blueprint.clone(),
+        batch_axes.to_vec(),
+        elems.lhs,
+        elems.rhs,
+        elems.out,
+        elems.acc,
     );
 }
 
@@ -344,19 +303,21 @@ fn launch_tma<R: Runtime>(
     launch: &Launcher<'_, R>,
     cube_count: CubeCount,
     cube_dim: CubeDim,
-    ops: &MatmulOperands,
+    blueprint: &CmmaBlueprint,
+    batch_axes: &[Axis],
+    elems: Elems,
     lhs: TensorBinding<R>,
     rhs: TensorBinding<R>,
     out: TensorBinding<R>,
     out_batch_axes: &[Axis],
-    blueprint: &CmmaBlueprint,
     (m, n, k): (usize, usize, usize),
 ) {
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
     fn operand<E: Numeric, R: Runtime>(
-        op: &Operand,
+        axes: &[Axis],
+        dtype: ElemType,
         binding: TensorBinding<R>,
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
@@ -366,20 +327,17 @@ fn launch_tma<R: Runtime>(
             1,
             MatrixLayout::RowMajor,
             box_dims,
-            op.dtype(),
+            dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, op, (1, rows, cols), transposed)
+        TmaTileArgLaunch::tensor_map_over(map, axes, (1, rows, cols), transposed)
     }
-    let a = operand(&ops.a, lhs, (stage_m, stage_k), (m as u32, k as u32));
-    let b = operand(&ops.b, rhs, (stage_k, stage_n), (k as u32, n as u32));
-    let v_out = launch.vector_size(
-        N,
-        &[(&Geometry::from(&out), ops.out.axes())],
-        ops.out.dtype().size(),
-    );
+    let a = operand(&[M, K], elems.lhs, lhs, (stage_m, stage_k), (m as u32, k as u32));
+    let b = operand(&[K, N], elems.rhs, rhs, (stage_k, stage_n), (k as u32, n as u32));
+    let v_out = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
-        .bind(&ops.out, out)
+        .arg(out)
+        .subspace(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();
@@ -393,10 +351,11 @@ fn launch_tma<R: Runtime>(
         a,
         b,
         c.arg(),
-        launch.space().clone(),
-        ops.a.dtype(),
-        ops.b.dtype(),
-        ops.out.dtype(),
-        ops.out.current_dtype(),
+        blueprint.clone(),
+        batch_axes.to_vec(),
+        elems.lhs,
+        elems.rhs,
+        elems.out,
+        elems.acc,
     );
 }

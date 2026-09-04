@@ -1,5 +1,5 @@
 use cubek_test_utils::CatalogEntry;
-use cubek_tile::Residence;
+use crate::InputStage;
 
 use crate::{InterpolateBlueprint, InterpolateStrategy};
 
@@ -55,10 +55,10 @@ pub enum BenchTarget {
 
 impl BenchTarget {
     /// The residences worth launching on this device.
-    fn residences(self) -> &'static [Residence] {
+    fn residences(self) -> &'static [InputStage] {
         match self {
-            BenchTarget::Gpu => &[Residence::Smem, Residence::InPlace],
-            BenchTarget::Cpu => &[Residence::InPlace],
+            BenchTarget::Gpu => &[InputStage::Smem, InputStage::InPlace],
+            BenchTarget::Cpu => &[InputStage::InPlace],
         }
     }
 
@@ -129,11 +129,11 @@ fn powers_of_two(max: usize) -> impl Iterator<Item = usize> {
 }
 
 fn kernel_entry(
-    residence: Residence,
+    residence: InputStage,
     (planes, rows, cols): (usize, usize, usize),
 ) -> CatalogEntry<InterpolateStrategy> {
     let (tag, label) = match residence {
-        Residence::Smem => ("smem", "staged"),
+        InputStage::Smem => ("smem", "staged"),
         _ => ("in_place", "in-place"),
     };
     CatalogEntry::new(
@@ -301,7 +301,7 @@ mod tests {
         for tier in TIERS {
             for entry in strategies_at(tier, BenchTarget::Cpu) {
                 if let InterpolateStrategy::Forced(blueprint) = entry.value {
-                    assert_ne!(blueprint.input_residence, Residence::Smem, "{}", entry.id);
+                    assert_ne!(blueprint.input_residence, InputStage::Smem, "{}", entry.id);
                 }
             }
         }

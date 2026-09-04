@@ -1072,10 +1072,9 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
     let k = plane_size * kr;
     let space = Tiling::over(&mut (), &[(M, m), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
 
@@ -1098,10 +1097,9 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
     let k = plane_size * kr;
     let space = Tiling::over(&mut (), &[(M, m), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
 
@@ -1126,10 +1124,9 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
     let k = plane_size * kr;
     let space = Tiling::over(&mut (), &[(M, m), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
 
@@ -1178,10 +1175,9 @@ fn resident_max_over_lane_split_k() {
 
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         .instruction(Instruction::registers(16), |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m), (N, n)]);
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m), (N, n)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
     let f32_ty = f32::elem_type_native();
@@ -1249,8 +1245,8 @@ fn resident_max_over_lane_group_k() {
 
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         .instruction(Instruction::registers(16), |l, _| {
-            l.distribute(lanes().instances(groups), &[(M, 1)])
-                .distribute(lanes().instances(group_lanes).interleaved(), &[(K, kr)])
+            l.distribute(lanes(groups), &[(M, 1)])
+                .distribute(lanes(group_lanes).interleaved(), &[(K, kr)])
                 .walk(&[(N, n)]);
         })
         .build();

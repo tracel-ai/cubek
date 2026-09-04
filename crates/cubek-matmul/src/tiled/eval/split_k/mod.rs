@@ -136,7 +136,7 @@ impl Mapping {
                         .walk(&[(M, m), (K, k)]);
                 })
                 .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                    l.distribute(lanes(), &[(N, cols)]).walk(&[(M, m), (K, k)]);
+                    l.distribute(lanes(plane_size), &[(N, cols)]).walk(&[(M, m), (K, k)]);
                 })
                 .build(),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
@@ -145,13 +145,12 @@ impl Mapping {
                 Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
                     .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                         l.distribute(cubes(CubeAxis::X), &[(N, cols)])
-                            .distribute(lanes(), &[(K, k / plane_size)])
+                            .distribute(lanes(plane_size), &[(K, k / plane_size)])
                             .walk(&[(M, m)]);
                     })
                     .build()
             }
         }
-        .resolve_lanes(plane_size)
     }
 
     fn rhs_layout(self) -> RhsLayout {

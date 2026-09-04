@@ -302,6 +302,44 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
+    /// This region of an operand loaded into cmma fragments, one per final tile of its grid:
+    /// what a level's [`Residence::Register`] statement builds under the tensor-core
+    /// instruction, built where the kernel reads it instead. `acc` is the accumulator the
+    /// fragments contract into, which fixes the fragment shape and the operand's role.
+    pub fn cmma_fragments<Acc: Numeric>(src: &Tile<T>, acc: &Tile<Acc>) -> Tile<T> {
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Cmma))
+    }
+
+    /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding, loaded by
+    /// `io`'s transports.
+    pub fn mma_fragments<Acc: Numeric>(
+        src: &Tile<T>,
+        acc: &Tile<Acc>,
+        #[comptime] io: MmaIOConfig,
+    ) -> Tile<T> {
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Mma { io }))
+    }
+
+    fn fragments_in<Acc: Numeric>(
+        src: &Tile<T>,
+        acc: &Tile<Acc>,
+        #[comptime] form: Instruction,
+    ) -> Tile<T> {
+        let gathered = src.gathered();
+        comptime!(assert!(
+            !gathered,
+            "PlanePartition::fragments: a gathered operand cannot load into fragments; stage it \
+             into shared memory first"
+        ));
+        let mut frags = PlanePartition::<T>::store(
+            comptime!(src.space.clone()),
+            comptime!(form),
+            comptime!(acc.space.clone()),
+        );
+        frags.copy_from(src);
+        frags
+    }
+
     /// Fill each tile from its final window of `src`, in the partition's row-major order.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
         #[unroll]
@@ -444,11 +482,6 @@ fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
                 Extent::Static(e) => Some(e.div_ceil(edge).div_ceil(n)),
                 Extent::Dynamic => None,
             },
-            Coverage::PlaneLanes => {
-                panic!(
-                    "Coverage::PlaneLanes: unresolved Unit lane count; launch through space.launcher(client)"
-                )
-            }
         },
     }
 }

@@ -1262,11 +1262,10 @@ fn register_matmul_unit_spread_n() {
     let n = plane_size * nr;
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(N, nr)]).walk(&[(M, m), (K, k)]);
+            l.distribute(lanes(plane_size), &[(N, nr)])
+                .walk(&[(M, m), (K, k)]);
         })
-        .build()
-        // The launcher's stamping pass: `lanes()`'s deferred count becomes `plane_size`.
-        .resolve_lanes(plane_size);
+        .build();
 
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(&client, space.project(&[M, K]))
@@ -5020,8 +5019,8 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
     let groups = plane_size / group_lanes;
     Tiling::over(&mut (), &[(M, groups), (N, n), (K, group_lanes * edge)])
         .instruction(Instruction::registers(edge * n), |l, _| {
-            l.distribute(lanes().instances(groups), &[(M, 1)])
-                .distribute(lanes().instances(group_lanes).interleaved(), &[(K, edge)])
+            l.distribute(lanes(groups), &[(M, 1)])
+                .distribute(lanes(group_lanes).interleaved(), &[(K, edge)])
                 .walk(&[(N, n)]);
         })
         .build()

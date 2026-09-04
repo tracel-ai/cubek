@@ -24,8 +24,7 @@ impl Space {
 
     /// `plane_size × plane_count`, plane length being the hardware's. `Unit` axes ride those
     /// lanes, so their instance product must be exactly `plane_size` or `1`; anything else idles
-    /// or races lanes. A deferred `PlaneLanes` count panics here: launch through
-    /// [`launcher`](Space::launcher), which stamps it.
+    /// or races lanes.
     pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
         let lanes = instances_count(self, ComputeScope::Unit);
@@ -73,13 +72,11 @@ pub struct Launcher<'c, R: Runtime> {
 
 impl Space {
     /// Creates a [`Launcher`] with all kernel space axes marked dynamic, so one compiled kernel
-    /// serves arbitrary shapes, resolving `Unit` lane counts from the device `plane_size`. Use
-    /// [`launcher_over`](Self::launcher_over) to keep specific axes static.
+    /// serves arbitrary shapes. Use [`launcher_over`](Self::launcher_over) to keep specific axes
+    /// static.
     pub fn launcher<R: Runtime>(self, client: &ComputeClient<R>) -> Launcher<'_, R> {
-        let plane_size = client.properties().hardware.plane_size_max as usize;
-        let concrete = self.resolve_lanes(plane_size);
-        let kernel = concrete.clone().all_dynamic();
-        Launcher::new(concrete, kernel, client)
+        let kernel = self.clone().all_dynamic();
+        Launcher::over(client, self, kernel)
     }
 
     /// Creates a [`Launcher`] where only the `dynamic` axes have dynamic extents, every other
@@ -98,15 +95,21 @@ impl Space {
                 "Space::launcher_over: {axis:?} is not an axis of this space"
             );
         }
-        let plane_size = client.properties().hardware.plane_size_max as usize;
-        let concrete = self.resolve_lanes(plane_size);
-        let kernel = concrete.clone().with_dynamic(dynamic);
-        Launcher::new(concrete, kernel, client)
+        let kernel = self.clone().with_dynamic(dynamic);
+        Launcher::over(client, self, kernel)
     }
 }
 
 impl<'c, R: Runtime> Launcher<'c, R> {
-    fn new(concrete: Space, kernel: Space, client: &'c ComputeClient<R>) -> Self {
+    /// The launcher for a kernel-form `space` (the one the kernel builds, its top extents
+    /// [`Dynamic`](crate::Extent) where one kernel serves every shape) and the real `extents` of
+    /// this launch, which the concrete twin takes for geometry, overhang and the grid.
+    pub fn new(client: &'c ComputeClient<R>, space: Space, extents: &[(Axis, usize)]) -> Self {
+        let concrete = space.clone().with_extents(extents);
+        Launcher::over(client, concrete, space)
+    }
+
+    fn over(client: &'c ComputeClient<R>, concrete: Space, kernel: Space) -> Self {
         Launcher {
             concrete,
             kernel,

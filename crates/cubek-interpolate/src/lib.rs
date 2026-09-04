@@ -4,7 +4,7 @@ pub mod eval;
 mod kernel;
 pub mod tune_key;
 
-pub use definition::{InterpolateBlueprint, InterpolateStrategy, Residence};
+pub use definition::{InputStage, InterpolateBlueprint, InterpolateStrategy};
 
 use crate::{
     definition::{InterpolateError, InterpolateMode, InterpolateOptions},

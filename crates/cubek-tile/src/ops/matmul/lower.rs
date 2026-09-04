@@ -186,7 +186,7 @@ impl<Acc: Numeric> Tile<Acc> {
     /// to state its size are different things (a gathered operand's bound is the receptive field
     /// its axes reach over, so it answers for neither), and an axis the output spans is one it
     /// writes, so its bound is the extent the walk must cover.
-    pub(crate) fn op_space<Lhs: Numeric, Rhs: Numeric>(
+    pub fn op_space<Lhs: Numeric, Rhs: Numeric>(
         &self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -201,6 +201,88 @@ impl<Acc: Numeric> Tile<Acc> {
             merged
         });
         witnessed_space(merged, self, lhs, rhs)
+    }
+}
+
+#[cube]
+impl<Acc: Numeric> Tile<Acc> {
+    /// `c = a · b` at a final memory tile through the software instruction run under `config`:
+    /// the leaf a kernel that walks its own levels reaches, stated with the register block it
+    /// runs rather than read off the space. `c` owns each cell outright here, so the block
+    /// starts from the identity and never reads `c` back.
+    pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        let init_from = self.request_init_from(comptime!(InitFrom::Identity));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+        }
+        self.mma_with(lhs, rhs, config, semiring);
+        self.request_init_from(comptime!(InitFrom::Cell));
+    }
+
+    /// `c += a · b` at a final memory tile through the software instruction run under `config`.
+    pub fn mma_with<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        comptime!(assert!(
+            self.space.is_final(),
+            "Tile::mma_with: the software instruction runs on a final tile; walk the levels above \
+             it first"
+        ));
+        let space = comptime!(self.space.clone());
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                contract::memory::<Acc, Lhs, Rhs>(g, lhs, rhs, space, config, semiring)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => panic!(
+                "Tile::mma_with: the software instruction contracts into a memory accumulator; a \
+                 register accumulator carries its own block (Tile::block_accumulator)"
+            ),
+        }
+    }
+
+    /// `c += (a ⊗ s) · b`, or its rhs twin, at a final memory tile through the software
+    /// instruction run under `config` ([`mma_scaled`](Tile::mma_scaled) for a kernel that walks
+    /// its own levels).
+    pub fn mma_scaled_with<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        scales: &Sequence<Tile<S>>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        comptime!(assert!(
+            self.space.is_final(),
+            "Tile::mma_scaled_with: the software instruction runs on a final tile; walk the \
+             levels above it first"
+        ));
+        let space = comptime!(self.space.clone());
+        match &mut self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                contract::memory_scaled::<Acc, Lhs, Rhs, S>(g, lhs, rhs, scales, space, config, semiring)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => panic!(
+                "Tile::mma_scaled_with: the software instruction contracts into a memory \
+                 accumulator"
+            ),
+        }
     }
 }
 

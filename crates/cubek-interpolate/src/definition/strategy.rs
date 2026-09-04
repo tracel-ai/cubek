@@ -2,7 +2,13 @@ use cubecl::ir::HardwareProperties;
 
 use crate::definition::{InterpolateError, InterpolateForwardProblem, mode_properties};
 
-pub use cubek_tile::Residence;
+/// Where the gathered input is read from: where it lies, or a shared-memory stage the cube fills
+/// once per block of its walk and every tap re-reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InputStage {
+    InPlace,
+    Smem,
+}
 
 /// Every choice the tile-backed interpolation launch makes.
 ///
@@ -21,7 +27,7 @@ pub use cubek_tile::Residence;
 /// so `InPlace` makes the whole tile operation in-place while `Smem` stages that input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InterpolateBlueprint {
-    pub input_residence: Residence,
+    pub input_residence: InputStage,
     pub planes_per_cube: usize,
     pub rows_per_plane: usize,
     pub cols_per_lane: usize,
@@ -31,7 +37,7 @@ pub struct InterpolateBlueprint {
 
 impl InterpolateBlueprint {
     pub const fn new(
-        input_residence: Residence,
+        input_residence: InputStage,
         planes_per_cube: usize,
         rows_per_plane: usize,
         cols_per_lane: usize,
@@ -191,10 +197,10 @@ impl InterpolateStrategy {
     /// Staging pays for the window the taps re-read, so one tap has nothing to stage. Only
     /// [`MinimizeLatency`](Self::MinimizeLatency) asks for it, and it never reaches here on a CPU
     /// because the intents collapse first: the launch refuses `Smem` there outright.
-    fn input_residence(&self, taps: usize) -> Residence {
+    fn input_residence(&self, taps: usize) -> InputStage {
         match self {
-            Self::MinimizeLatency if taps > 1 => Residence::Smem,
-            _ => Residence::InPlace,
+            Self::MinimizeLatency if taps > 1 => InputStage::Smem,
+            _ => InputStage::InPlace,
         }
     }
 }
@@ -326,13 +332,13 @@ mod tests {
             InterpolateStrategy::MaximizeThroughput
                 .blueprint(&hardware, &problem)
                 .input_residence,
-            Residence::InPlace
+            InputStage::InPlace
         );
         assert_eq!(
             InterpolateStrategy::MinimizeLatency
                 .blueprint(&hardware, &problem)
                 .input_residence,
-            Residence::Smem
+            InputStage::Smem
         );
     }
 
@@ -345,7 +351,7 @@ mod tests {
             InterpolateStrategy::MinimizeLatency
                 .blueprint(&gpu(), &problem)
                 .input_residence,
-            Residence::InPlace
+            InputStage::InPlace
         );
     }
 
@@ -372,7 +378,7 @@ mod tests {
         ] {
             let blueprint = strategy.blueprint(&hardware, &upsample());
 
-            assert_eq!(blueprint.input_residence, Residence::InPlace);
+            assert_eq!(blueprint.input_residence, InputStage::InPlace);
             // Twelve cores, floored to the eight a power-of-two extent reaches.
             assert_eq!(blueprint.planes_per_cube, 8);
             // A CPU plane is one lane, so the column run is the only column parallelism.
@@ -474,7 +480,7 @@ mod tests {
     /// A stated blueprint reaches the launch untouched, whatever the device reports.
     #[test]
     fn a_forced_blueprint_is_taken_as_stated() {
-        let blueprint = InterpolateBlueprint::new(Residence::Smem, 2, 8, 4).with_channel_block(3);
+        let blueprint = InterpolateBlueprint::new(InputStage::Smem, 2, 8, 4).with_channel_block(3);
 
         assert_eq!(
             InterpolateStrategy::Forced(blueprint).blueprint(&cpu(12), &upsample()),

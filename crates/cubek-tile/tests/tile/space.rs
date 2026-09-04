@@ -350,7 +350,7 @@ fn distributing_no_axis_states_nothing() {
 fn distributing_work_across_lanes_is_refused() {
     Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
         .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)]);
+            l.distribute(lanes(4), &[(M, 16), (N, 32), (K, 16)]);
         })
         .build();
 }

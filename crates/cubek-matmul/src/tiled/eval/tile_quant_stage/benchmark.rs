@@ -130,7 +130,7 @@ impl TileQuantStageBench {
                 o.1.stage(Residence::Smem);
             })
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.distribute(lanes(), &[(N, un)])
+                l.distribute(lanes(plane_size), &[(N, un)])
                     .walk(&[(M, self.m), (K, self.tk)]);
             })
             .build();

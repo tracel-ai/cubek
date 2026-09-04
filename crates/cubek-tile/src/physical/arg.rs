@@ -461,6 +461,26 @@ impl<E: Numeric, R: Runtime> TmaTileArgLaunch<E, R> {
             TileSpec::direct(axes).residence(&operand.residences()),
         )
     }
+
+    /// [`tensor_map`](Self::tensor_map) over the operand's `axes` alone, for a kernel that stages
+    /// the map itself and states no residence.
+    pub fn tensor_map_over(
+        tensor_map: TensorMapArg<R, Tiled>,
+        axes: &[Axis],
+        dims: (u32, u32, u32),
+        transposed: bool,
+    ) -> Self {
+        let batched = match axes.len() {
+            2 => false,
+            3 => true,
+            r => panic!(
+                "TmaTileArg: the descriptor is (batch, row, col); rank {r} operand unsupported"
+            ),
+        };
+        let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
+        let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
+        Self::new(view, TileSpec::direct(axes))
+    }
 }
 
 /// In-kernel tensor-map layout: aligns the operand's logical [`CoordsDyn`] to the descriptor's 3-D

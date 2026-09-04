@@ -163,9 +163,9 @@ fn serving_geometry(promoted: bool) {
         // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
         // stored word each along `KI`, so a step reads one contiguous span of the block.
         .instruction(Instruction::registers(rows_per_lane * factor), |l, _| {
-            l.distribute(lanes().instances(groups), &[(M, rows_per_lane)])
+            l.distribute(lanes(groups), &[(M, rows_per_lane)])
                 .distribute(
-                    lanes().instances(group_lanes).interleaved(),
+                    lanes(group_lanes).interleaved(),
                     &[(KI, factor)],
                 )
                 .walk(&[(N, n), (KB, 1)]);

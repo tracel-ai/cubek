@@ -30,7 +30,7 @@ const MAX_PLANES_PER_AXIS: usize = 4;
 
 /// The CMMA routine's launch-time input transport choice. This is deliberately separate from
 /// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
     #[default]
     Copy,
@@ -53,16 +53,18 @@ impl CmmaDelivery {
 
 /// Tiles per plane along `m`/`n`: the plane's resident fragment partition,
 /// sized so `A`/`B` fragments are reused across executes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Partition {
     pub m: usize,
     pub n: usize,
 }
 
 /// A fully-resolved plan: the tensor-core [`InstructionShape`], each plane's fragment
-/// [`Partition`], how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]), and how
-/// deep each double-buffered smem stage runs along `K` (`stage_k`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// [`Partition`], how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]), how
+/// deep each smem stage runs along `K` (`stage_k`) and how many stages are in flight
+/// (`buffering`). The kernel's comptime argument: [`cmma_space`](super::kernel::cmma_space)
+/// builds the space off it on both sides of the launch.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CmmaBlueprint {
     pub instruction: InstructionShape,
     pub partition: Partition,
@@ -70,6 +72,8 @@ pub struct CmmaBlueprint {
     /// K-stage depth in elements: a multiple of `instruction.k`, chosen by [`select`]
     /// against the shared-memory budget.
     pub stage_k: usize,
+    /// Stages in flight: `2` overlaps a stage's fill with the previous one's contraction.
+    pub buffering: usize,
     /// Launch-time transport for both inputs (the output always uses a regular buffer copy).
     pub delivery: CmmaDelivery,
 }
@@ -96,6 +100,7 @@ impl CmmaBlueprint {
             || p.m == 0
             || p.n == 0
             || self.stage_k == 0
+            || self.buffering == 0
         {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Cmma blueprint must be non-zero, got instruction {}x{}x{} \
@@ -336,6 +341,7 @@ impl CmmaRoutine {
                 n: planes_n,
             },
             stage_k,
+            buffering: 2,
             delivery,
         })
     }

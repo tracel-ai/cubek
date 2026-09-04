@@ -30,16 +30,14 @@ use cubek_tile::*;
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 
-/// What runs on the cells the last level cuts out.
+/// The register block the leaf runs under.
 ///
 /// 64 scalars is the register budget, which at four channels to a line is the same sixteen cells
 /// every tiling here blocks into. The edge split earns its second copy of the walk because a
 /// window this wide leaves most instances clear of the padded border, and they should not pay a
 /// guard for the few that straddle it. Lane fan-out does not: the lines run along the channel,
 /// not along `K`.
-const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64).split_edge(),
-};
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64).split_edge();
 
 // Output positions, the channel axis every operand shares, and the window taps.
 const B: Axis = Axis(0);
@@ -49,27 +47,111 @@ const C: Axis = Axis(3);
 const RH: Axis = Axis(4);
 const RW: Axis = Axis(5);
 
+/// The space one launch runs over, in the terms the kernel builds it from: the problem's
+/// extents and the tiling. The kernel's comptime argument, so the space the launch sizes its
+/// grid from is the space the kernel walks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DepthwiseSpace {
+    b: usize,
+    oh: usize,
+    ow: usize,
+    c: usize,
+    rh: usize,
+    rw: usize,
+    rows: usize,
+    cols: usize,
+    tile_c: usize,
+    width: usize,
+    plane_size: usize,
+}
+
+impl DepthwiseSpace {
+    /// Two levels. The first separates the output across the launch grid: an all-`sequential`
+    /// level would put the whole convolution in one instance, which is a correct kernel and a
+    /// useless one. The second separates what one cube took across the cube's own threads: rows
+    /// go to planes, channels to lanes. The taps stay `sequential` throughout: they are the
+    /// contraction, and every tap of one output position accumulates into the same register.
+    pub fn space(&self) -> Space {
+        let Self {
+            b,
+            oh,
+            ow,
+            c,
+            rh,
+            rw,
+            rows,
+            cols,
+            tile_c,
+            width,
+            plane_size,
+        } = *self;
+        Tiling::over(
+            &mut (),
+            &[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)],
+        )
+        // The channel axis takes X so that the fastest-moving cube index is the one memory is
+        // contiguous along.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
+                .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
+                .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
+                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
+                .walk(&[(RH, rh), (RW, rw)]);
+        })
+        // Rows across the cube's planes, channels across each plane's lanes. Columns stay
+        // sequential: they are the register block, not a split.
+        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            // Round-robin, so a lane holding several channel lines takes every
+            // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
+            // between what neighbouring lanes read and breaks the coalescing the whole NHWC
+            // layout is for.
+            l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
+                .distribute(planes(), &[(OH, 1)])
+                .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
+        })
+        .build()
+    }
+}
+
 /// `out[b, oh, ow, c] = Σ_{rh, rw} w[rh, rw, c] · input[b, oh*sh + rh*dh - ph, ow*sw + rw*dw - pw, c]`
 ///
-/// The same body the dense convolution runs. `C` being one of the accumulator's own axes is what
+/// The same leaf the dense convolution runs. `C` being one of the accumulator's own axes is what
 /// makes it batched rather than contracted; the leaf reads that off the spaces.
 ///
 /// The filter is the *lhs* and the map the rhs, which is not arbitrary: the leaf serves the rhs in
 /// lines along the accumulator's innermost axis, and that axis is the channel. The filter follows
-/// it there — one filter value per channel of the cell — which is what a batched contraction
+/// it there (one filter value per channel of the cell), which is what a batched contraction
 /// needs and what `V > 1` is.
+///
+/// Two levels: this cube's box of the output with the taps whole, then this lane's channel lines
+/// of this plane's row, whose column block the leaf walks with the whole tap window at each cell.
 #[cube(launch)]
 fn depthwise_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, V>,
     input: &TileArg<'_, E, V>,
     out: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    #[comptime] plan: DepthwiseSpace,
     #[define(E)] _dtype: ElemType,
 ) {
+    let space = comptime!(plan.space());
     let weight = weight.tile(comptime!(space.clone()));
     let input = input.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    out.mm(&weight, &input, Semiring::SUM_PROD);
+    let out = out.tile(space);
+
+    for cube in Walk::over(out.op_space(&weight, &input)) {
+        let out_cube = out.at(&cube);
+        let weight_cube = weight.at(&cube);
+        let input_cube = input.at(&cube);
+        for cell in Walk::over(out_cube.op_space(&weight_cube, &input_cube)) {
+            let mut out_cell = out_cube.at(&cell);
+            out_cell.mm_with(
+                &weight_cube.at(&cell),
+                &input_cube.at(&cell),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            );
+        }
+    }
 }
 
 /// How one cube's share of the output is shaped, and how the cube's threads divide it.
@@ -188,51 +270,22 @@ impl DepthwiseTiling {
         Ok(tile)
     }
 
-    /// The space this tiling implies for a problem of these extents.
-    ///
-    /// Two levels. The first separates the output across the launch grid — an all-`sequential`
-    /// level would put the whole convolution in one instance, which is a correct kernel and a
-    /// useless one. The second separates what one cube took across the cube's own threads: rows
-    /// go to planes, channels to lanes. The taps stay `sequential` throughout — they are the
-    /// contraction, and every tap of one output position accumulates into the same register.
-    fn space(&self, geometry: &Geometry, plane_size: usize, tile_c: usize, width: usize) -> Space {
-        let Self { rows, cols, .. } = *self;
-        let Geometry {
-            b,
-            oh,
-            ow,
-            c,
-            rh,
-            rw,
-            ..
-        } = *geometry;
-        Tiling::over(
-            &mut (),
-            &[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)],
-        )
-        // The channel axis takes X so that the fastest-moving cube index is the one memory is
-        // contiguous along.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
-                .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
-                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                .walk(&[(RH, rh), (RW, rw)]);
-        })
-        // Rows across the cube's planes, channels across each plane's lanes. Columns stay
-        // sequential: they are the register block, not a split.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            // Round-robin, so a lane holding several channel lines takes every
-            // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
-            // between what neighbouring lanes read and breaks the coalescing the whole NHWC
-            // layout is for.
-            l.distribute(lanes().interleaved(), &[(C, width)])
-                .distribute(planes(), &[(OH, 1)])
-                .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
-        })
-        .build()
-        .with_instruction(INSTRUCTION)
-        .resolve_lanes(plane_size)
+    /// The space this tiling implies for a problem of these extents, in the form the kernel
+    /// builds it from.
+    fn plan(&self, geometry: &Geometry, lanes: usize, tile_c: usize, width: usize) -> DepthwiseSpace {
+        DepthwiseSpace {
+            b: geometry.b,
+            oh: geometry.oh,
+            ow: geometry.ow,
+            c: geometry.c,
+            rh: geometry.rh,
+            rw: geometry.rw,
+            rows: self.rows,
+            cols: self.cols,
+            tile_c,
+            width,
+            plane_size: lanes,
+        }
     }
 }
 
@@ -303,7 +356,8 @@ pub fn launch_depthwise<R: Runtime>(
         &[&input, &weight, &out],
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
-    let space = tiling.space(&geometry, lanes, tile_c, width);
+    let plan = tiling.plan(&geometry, lanes, tile_c, width);
+    let launch = Launcher::new(client, plan.space(), &[]);
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
@@ -355,13 +409,13 @@ pub fn launch_depthwise<R: Runtime>(
 
     depthwise_kernel::launch::<R>(
         client,
-        space.cube_count(),
-        space.cube_dim(client),
+        launch.cube_count(),
+        launch.cube_dim(),
         width,
         TileArgLaunch::new(weight.into_tensor_arg(), w_spec),
         TileArgLaunch::new(input.into_tensor_arg(), in_spec),
         TileArgLaunch::new(out.into_tensor_arg(), out_spec),
-        space,
+        plan,
         dtype,
     );
 

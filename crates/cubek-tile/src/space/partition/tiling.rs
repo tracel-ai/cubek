@@ -4,7 +4,7 @@
 //! lives. Each level maps 1:1 to the [`Level`](super::Level) the [`Walk`](crate::Walk) consumes;
 //! no transpose.
 
-use crate::{Axis, ByAxis, Instruction, Space};
+use crate::{Axis, ByAxis, Extent, Instruction, Space};
 
 use super::{
     Buffering, ComputeScope, Distribution, Handout, OperandSet, Partitioner, Spatial, Spread,
@@ -70,7 +70,22 @@ impl Tiling {
         extents: &[(Axis, usize)],
     ) -> OperandTiling<'o, O> {
         OperandTiling {
-            extents: extents.to_vec(),
+            extents: extents
+                .iter()
+                .map(|&(axis, extent)| (axis, Extent::Static(extent)))
+                .collect(),
+            levels: Vec::new(),
+            instruction: None,
+            operands,
+        }
+    }
+
+    /// [`over`](Tiling::over) with every top extent [`Dynamic`](Extent::Dynamic): the kernel
+    /// form, resolved in-kernel from the tensors, so one compiled kernel serves every shape. The
+    /// launch stamps the real extents back on with [`Space::with_extents`].
+    pub fn axes<'o, O: OperandSet>(operands: &'o mut O, axes: &[Axis]) -> OperandTiling<'o, O> {
+        OperandTiling {
+            extents: axes.iter().map(|&axis| (axis, Extent::Dynamic)).collect(),
             levels: Vec::new(),
             instruction: None,
             operands,
@@ -82,7 +97,7 @@ impl Tiling {
 /// with [`level`](Self::level), end the chain with [`instruction`](Self::instruction) where
 /// something contracts at the last one, then [`build`](Self::build).
 pub struct OperandTiling<'o, O> {
-    extents: Vec<(Axis, usize)>,
+    extents: Vec<(Axis, Extent)>,
     levels: Vec<LevelSpec>,
     instruction: Option<Instruction>,
     operands: &'o mut O,
@@ -134,7 +149,7 @@ impl<O: OperandSet> OperandTiling<'_, O> {
         // A dropped level is one no operand stated anything at, so its stage is the padded
         // `InPlace`; dropping it here keeps the residence column one entry per surviving level.
         let kept = self.kept_levels();
-        let mut space = Space::new(&self.extents);
+        let mut space = Space::from_extents(&self.extents);
         for (level, _) in self.levels.iter().zip(&kept).filter(|&(_, &keep)| keep) {
             let edges = self.edges(level);
             let dists: Vec<_> = self
@@ -207,7 +222,8 @@ impl<O: OperandSet> OperandTiling<'_, O> {
     /// level left, which is not a fallback but the difference between a tile and its cell.
     fn kept_levels(&self) -> Vec<bool> {
         // The extents handed to the next level: the top extents, then each kept level's edges.
-        // Nothing is staged above the first level, so its parent buffers once.
+        // Nothing is staged above the first level, so its parent buffers once. A `Dynamic` top
+        // extent is never equal to an edge, so the first level under one is always kept.
         let mut parent = self.extents.clone();
         let mut parent_buffering = Buffering::SINGLE;
         let mut kept_any = false;
@@ -217,7 +233,11 @@ impl<O: OperandSet> OperandTiling<'_, O> {
             .iter()
             .enumerate()
             .map(|(index, level)| {
-                let edges = self.edges(level);
+                let edges: Vec<_> = self
+                    .edges(level)
+                    .into_iter()
+                    .map(|(axis, edge)| (axis, Extent::Static(edge)))
+                    .collect();
                 let last_standing = index == last && !kept_any;
                 let keep = edges != parent
                     || level.buffering != parent_buffering

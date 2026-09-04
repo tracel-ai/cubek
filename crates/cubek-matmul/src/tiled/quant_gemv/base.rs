@@ -28,7 +28,7 @@ use cubek_tile::{FieldDecode, field_decode};
 use crate::definition::MatmulSetupError;
 
 /// The shape of a decode gemv, in the units the plan reasons about.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct QuantGemvProblem {
     /// The weight's output dimension: rows of the lhs, and of the result.
     pub d_out: usize,
@@ -62,7 +62,7 @@ impl QuantGemvProblem {
 /// what the two `Unit` cuts on `(KB, KI)` state. Their instance product with the row groups is
 /// exactly the plane width — the engine's geometry contract, satisfied by construction in
 /// [`QuantGemvRoutine::blueprint`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct QuantGemvBlueprint {
     /// Output rows one cube covers.
     pub rows_per_cube: usize,

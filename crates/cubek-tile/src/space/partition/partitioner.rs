@@ -133,7 +133,7 @@ impl Work {
     pub(crate) fn instances(&self) -> usize {
         match self.dist.coverage() {
             Coverage::Instances(n) => n,
-            Coverage::TilesEach(_) | Coverage::PlaneLanes => panic!(
+            Coverage::TilesEach(_) => panic!(
                 "LevelCuts::distribute: state how many instances share the work \
                  (`.instances(n)`); a share of the whole cannot be derived from a grid whose \
                  length is only known at launch"
@@ -223,36 +223,6 @@ impl Partitioner {
         match self {
             Partitioner::Final => 0,
             Partitioner::Level(level) => 1 + level.next.depth(),
-        }
-    }
-
-    /// Resolve every level's deferred [`PlaneLanes`](super::Coverage::PlaneLanes) count to
-    /// `Instances(plane_size)`. The launch's single stamping pass, so geometry and the walk
-    /// only ever see concrete instance counts.
-    pub(crate) fn resolve_lanes(self, plane_size: usize) -> Partitioner {
-        match self {
-            Partitioner::Final => Partitioner::Final,
-            Partitioner::Level(level) => {
-                let Level {
-                    edges,
-                    dists,
-                    scope,
-                    work,
-                    order,
-                    buffering,
-                    next,
-                } = *level;
-                // Resolving lane counts keeps every axis `Spatial`, so the scope is unchanged.
-                Partitioner::Level(Box::new(Level {
-                    edges,
-                    dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
-                    scope,
-                    work,
-                    order,
-                    buffering,
-                    next: next.resolve_lanes(plane_size),
-                }))
-            }
         }
     }
 
@@ -399,7 +369,7 @@ mod tests {
         let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
             .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
                 l.distribute(planes(), &[(M, 4)])
-                    .distribute(lanes(), &[(N, 4)]);
+                    .distribute(lanes(4), &[(N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Lanes);

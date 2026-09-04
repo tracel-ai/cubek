@@ -78,6 +78,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
+        buffering: 2,
         delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
     }))
     .into();
@@ -149,6 +150,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
+            buffering: 2,
             delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
         }))
         .into()

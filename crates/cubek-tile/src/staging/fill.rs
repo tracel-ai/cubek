@@ -7,6 +7,7 @@
 //! `fill`/`consume` are hand-written expand methods because a `Drop` guard can't emit a barrier
 //! op in cubecl and `#[cube]` rejects `impl Trait` args.
 
+use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 use cubecl::zspace::SmallVec;
@@ -230,7 +231,79 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, depth)
+        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth)
+    }
+
+    /// Build the `depth` slots staging both operands into shared memory laid out as `storage`,
+    /// for a kernel walking `walk` itself: what a level's [`Residence::Smem`] statement builds,
+    /// stated where the ring is built instead. An operand the walk leaves fixed is filled once,
+    /// above the loop, and shares its buffer across the ring.
+    pub fn smem(
+        walk: &Walk,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] storage: StageStorage,
+        #[comptime] depth: usize,
+    ) -> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+        let lhs_source = lhs.stage_source();
+        let rhs_source = rhs.stage_source();
+        let plan = comptime!(SlotPlan::new(
+            &[
+                SlotOperand::new(Residence::Smem, lhs_source, &lhs.space),
+                SlotOperand::new(Residence::Smem, rhs_source, &rhs.space),
+            ],
+            &walk.space,
+        ));
+
+        let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
+        #[unroll]
+        for slot in 0..depth {
+            let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
+                slots.index(FIRST_SLOT).data.0.clone()
+            } else {
+                stage_smem(lhs, storage)
+            };
+            let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
+                slots.index(FIRST_SLOT).data.1.clone()
+            } else {
+                stage_smem(rhs, storage)
+            };
+            let staging = Staging::wrap(
+                (staged_lhs, staged_rhs),
+                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                comptime!(SmallVec::from_slice(&[
+                    plan.operand_plan(FIRST, slot),
+                    plan.operand_plan(SECOND, slot),
+                ])),
+            );
+            slots.push(staging);
+        }
+        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth)
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> RingFill for RingExpand<(Tile<Lhs>, Tile<Rhs>)> {
+    fn has_fixed(&self, scope: &Scope) -> bool {
+        self.slots
+            .__expand_index_method(scope, FIRST_SLOT.into_expand(scope))
+            .__expand_has_fixed_method(scope)
+    }
+
+    fn fill_fixed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand) {
+        let (lhs, rhs) = (self.sources.0.clone(), self.sources.1.clone());
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_fill_fixed_method(scope, &lhs, &rhs, region);
+    }
+
+    fn fill_streamed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand) {
+        let (lhs, rhs) = (self.sources.0.clone(), self.sources.1.clone());
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_fill_streamed_method(scope, &lhs, &rhs, region);
+    }
+
+    fn publish(&mut self, scope: &Scope, slot: usize) {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_publish_method(scope);
     }
 }
 
@@ -348,7 +421,77 @@ impl<T: Numeric> Ring<Tile<T>> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, depth)
+        Ring::wrap(slots, input.clone(), depth)
+    }
+
+    /// [`smem`](Ring::smem) for the sole operand `input`.
+    pub fn smem_single(
+        walk: &Walk,
+        input: &Tile<T>,
+        #[comptime] storage: StageStorage,
+        #[comptime] depth: usize,
+    ) -> Ring<Tile<T>> {
+        Ring::<Tile<T>>::smem_single_at(walk, input, storage, comptime!(None), depth)
+    }
+
+    /// [`smem_single`](Ring::smem_single) with the stage served in `width`-wide lines rather
+    /// than the operand's own: the buffer owns its layout, so an axis global memory could not
+    /// vectorize still reaches the leaf in lines. The operand must be scalar and unquantized,
+    /// and its reads past the real extent masked, which is the launch's to state.
+    pub fn smem_single_at(
+        walk: &Walk,
+        input: &Tile<T>,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+        #[comptime] depth: usize,
+    ) -> Ring<Tile<T>> {
+        let source = input.stage_source();
+        let plan = comptime!(SlotPlan::new(
+            &[SlotOperand::new(Residence::Smem, source, &input.space)],
+            &walk.space,
+        ));
+
+        let mut slots = Sequence::<Staging<Tile<T>>>::new();
+        #[unroll]
+        for slot in 0..depth {
+            let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
+                slots.index(FIRST_SLOT).data.clone()
+            } else {
+                stage_smem_at(input, storage, width)
+            };
+            let staging = Staging::wrap(
+                staged_input,
+                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),
+            );
+            slots.push(staging);
+        }
+        Ring::wrap(slots, input.clone(), depth)
+    }
+}
+
+impl<T: Numeric> RingFill for RingExpand<Tile<T>> {
+    fn has_fixed(&self, scope: &Scope) -> bool {
+        self.slots
+            .__expand_index_method(scope, FIRST_SLOT.into_expand(scope))
+            .__expand_has_fixed_method(scope)
+    }
+
+    fn fill_fixed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand) {
+        let input = self.sources.clone();
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_fill_fixed_method(scope, &input, region);
+    }
+
+    fn fill_streamed(&mut self, scope: &Scope, slot: usize, region: &RegionExpand) {
+        let input = self.sources.clone();
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_fill_streamed_method(scope, &input, region);
+    }
+
+    fn publish(&mut self, scope: &Scope, slot: usize) {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_publish_method(scope);
     }
 }
 
@@ -464,6 +607,24 @@ fn stage_operand<T: Numeric>(
         }
         Residence::Smem => MemData::smem_like(input),
     }
+}
+
+/// Allocate one shared-memory stage for `input` laid out as `storage`: [`stage_operand`]'s
+/// [`Smem`](Residence::Smem) arm with the layout stated by the ring that builds it rather than
+/// derived from the operand's stages.
+#[cube]
+fn stage_smem<T: Numeric>(input: &Tile<T>, #[comptime] storage: StageStorage) -> Tile<T> {
+    MemData::smem_like_stored(input, storage, comptime!(None))
+}
+
+/// [`stage_smem`] served at `width` where one is stated ([`Ring::smem_single_at`]).
+#[cube]
+fn stage_smem_at<T: Numeric>(
+    input: &Tile<T>,
+    #[comptime] storage: StageStorage,
+    #[comptime] width: Option<usize>,
+) -> Tile<T> {
+    MemData::smem_like_stored(input, storage, width)
 }
 
 #[cfg(test)]
