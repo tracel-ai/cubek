@@ -58,21 +58,19 @@ pub(crate) fn pack_order_key<N: Numeric, S: Size>(
         | Vector::<OrderKey, S>::cast_from(rank)
 }
 
-/// The key of a slot that has taken no candidate.
+/// The key of a slot that has taken no candidate: `last`, the value the unpacked
+/// accumulator starts from, at coordinate `u32::MAX`, so a row with nothing to
+/// rank reports the same value and index either way.
 ///
-/// It spells the last-ranked value at `u32::MAX` that the unpacked accumulator
-/// starts from, so a row with nothing to rank reports the same value and index
-/// either way.
+/// That coordinate's rank is zero, and it is written as zero rather than
+/// computed: the subtraction of a constant from itself is folded by the WGSL
+/// optimizer into a constant it cannot build for a vector type.
 #[cube]
 pub(crate) fn empty_order_key<N: Numeric, S: Size>(
+    last: Vector<N, S>,
     #[comptime] order: ValueOrder,
 ) -> Vector<OrderKey, S> {
-    let last = match comptime!(order) {
-        ValueOrder::Descending => N::min_value(),
-        ValueOrder::Ascending => N::max_value(),
-    };
-
-    pack_order_key::<N, S>(Vector::new(last), Vector::new(u32::MAX), order)
+    Vector::<OrderKey, S>::cast_from(order_bits::<N, S>(last, order)) << Vector::new(32u64)
 }
 
 /// The better-ranked of two keys, whichever [`ValueOrder`] built them.

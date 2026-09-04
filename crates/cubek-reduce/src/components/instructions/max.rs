@@ -6,7 +6,8 @@ use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, ReduceRequirements,
         ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand, ValueOrder,
-        better_order_key, order_key_coordinate, order_key_value, pack_order_key, packs_into_key,
+        better_order_key, empty_order_key, order_key_coordinate, order_key_value, pack_order_key,
+        packs_into_key,
     },
     precision::ReducePrecision,
 };
@@ -135,9 +136,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
             Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                keys: Value::new_single(pack_order_key::<P::EA, P::SI>(
+                keys: Value::new_single(empty_order_key::<P::EA, P::SI>(
                     Vector::new(max_identity::<P::EA>()),
-                    Vector::new(u32::MAX),
                     ValueOrder::Descending,
                 )),
             }

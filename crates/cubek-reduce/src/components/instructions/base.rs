@@ -306,7 +306,7 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
         let is_winner = local_best.equal(&winning);
         local_best = select_many(
             is_winner,
-            empty_order_key::<N, S>(ValueOrder::Descending),
+            empty_order_key::<N, S>(Vector::new(N::min_value()), ValueOrder::Descending),
             local_best,
         );
     }
@@ -324,7 +324,8 @@ pub fn plane_topk_key_merge<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local = empty_order_key::<N, S>(ValueOrder::Descending);
+        let mut local =
+            empty_order_key::<N, S>(Vector::new(N::min_value()), ValueOrder::Descending);
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {

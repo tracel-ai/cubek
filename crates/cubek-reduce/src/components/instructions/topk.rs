@@ -290,7 +290,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_keys::<P>(this);
 
         if comptime!(packed) {
-            let empty = empty_order_key::<P::EA, P::SI>(ValueOrder::Descending);
+            let empty = empty_order_key::<P::EA, P::SI>(
+                Vector::new(P::EA::min_value()),
+                ValueOrder::Descending,
+            );
 
             let mut keys = Array::new(comptime!(this.k));
             #[unroll]
@@ -624,7 +627,9 @@ fn topk_finalize_keys<P: ReducePrecision>(
 ) -> Array<OrderKey> {
     let vector_size = keys[0].vector_size().comptime();
 
-    let empty = empty_order_key::<P::EA, P::SI>(ValueOrder::Descending).extract(0usize);
+    let empty =
+        empty_order_key::<P::EA, P::SI>(Vector::new(P::EA::min_value()), ValueOrder::Descending)
+            .extract(0usize);
 
     let mut topk = Array::new(k);
     #[unroll]
