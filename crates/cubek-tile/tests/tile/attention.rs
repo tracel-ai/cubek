@@ -37,6 +37,7 @@ fn attention_fold_kernel<W: Size>(
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] budget: usize,
+    #[comptime] in_place: bool,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -97,13 +98,22 @@ fn attention_fold_kernel<W: Size>(
             causal,
             materialized: false,
         };
-        let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        acc.rescale_rows(&corr, share);
+        if comptime!(in_place) {
+            let corr = score.softmax_in_place(&mut state, &probe, &mask_tile, scale);
+            acc.rescale_rows(&corr, share);
+        } else {
+            let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
+            acc.rescale_rows(&corr, share);
+        }
         sync_cube();
 
-        // The mix folds the rescale in; stale cache beyond the attended
-        // prefix must not ride a zero probability into the accumulator.
-        acc.mix(&p, &vb, cols_bound);
+        // Stale cache beyond the attended prefix must not ride a zero
+        // probability into the accumulator.
+        if comptime!(in_place) {
+            acc.mix(&score, &vb, cols_bound);
+        } else {
+            acc.mix(&p, &vb, cols_bound);
+        }
         sync_cube();
     }
 
@@ -134,6 +144,7 @@ fn run(
     bound_s: usize,
     causal: bool,
     vec: usize,
+    in_place: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
@@ -225,6 +236,7 @@ fn run(
         causal,
         block,
         budget,
+        in_place,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -272,19 +284,26 @@ fn run(
 /// The decode shape: one query per group member, no causal, ragged prefix.
 #[test]
 fn fold_decode_gqa() {
-    run((32, 4, 1, 64, 16, 16, 16), 50, false, 2);
+    run((32, 4, 1, 64, 16, 16, 16), 50, false, 2, false);
 }
 
 /// Prefill with GQA and causal: the probe's `q_rows` row→query mapping.
 #[test]
 fn fold_prefill_gqa_causal() {
-    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2);
+    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, false);
 }
 
 /// Scalar reads (vector width 1), block not dividing the prefix.
 #[test]
 fn fold_scalar_odd_bound() {
-    run((16, 4, 4, 24, 8, 8, 4), 13, true, 1);
+    run((16, 4, 4, 24, 8, 8, 4), 13, true, 1, false);
+}
+
+/// The probabilities left in place over the scores on the column arm: the register mix reads the
+/// score tile as P and no P tile is written.
+#[test]
+fn fold_in_place() {
+    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, true);
 }
 
 /// The same fold with both matmuls on tensor cores: the score and mix leaves state
@@ -297,10 +316,10 @@ fn fold_scalar_odd_bound() {
 /// fragment across a barrier.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
-fn attention_fold_cmma_kernel(
-    q: &TileArg<'_, f32, Const<1>>,    // {QP, D}
-    k: &TileArg<'_, f32, Const<1>>,    // {S, D}
-    v: &TileArg<'_, f32, Const<1>>,    // {S, V}
+fn attention_fold_cmma_kernel<E: Float>(
+    q: &TileArg<'_, E, Const<1>>,      // {QP, D}
+    k: &TileArg<'_, E, Const<1>>,      // {S, D}
+    v: &TileArg<'_, E, Const<1>>,      // {S, V}
     mask: &TileArg<'_, u32, Const<1>>, // 1-cell dummy (materialized = false)
     out: &mut Tensor<f32>,             // [QP·V] flat
     scale: f32,
@@ -311,6 +330,7 @@ fn attention_fold_cmma_kernel(
     #[comptime] block: usize,
     #[comptime] frag: usize,
     #[comptime] planes: usize,
+    #[comptime] in_place: bool,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -329,7 +349,7 @@ fn attention_fold_cmma_kernel(
             })
             .build()
     );
-    let mut q_s = MemData::<f32>::smem(q_space, 1usize, comptime!(StagePlan::in_place()));
+    let mut q_s = MemData::<E>::smem(q_space, 1usize, comptime!(StagePlan::in_place()));
     q_s.copy_from(&q);
 
     // With `planes > 1` the space states each plane's slice of the grid above the instruction:
@@ -372,11 +392,20 @@ fn attention_fold_cmma_kernel(
             causal,
             materialized: false,
         };
-        let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        acc.rescale_rows(&corr, share);
+        if comptime!(in_place) {
+            let corr = score.softmax_in_place(&mut state, &probe, &mask_tile, scale);
+            acc.rescale_rows(&corr, share);
+        } else {
+            let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
+            acc.rescale_rows(&corr, share);
+        }
         sync_cube();
 
-        acc.mix(&p, &vb, cols_bound);
+        if comptime!(in_place) {
+            acc.mix(&score, &vb, cols_bound);
+        } else {
+            acc.mix(&p, &vb, cols_bound);
+        }
         sync_cube();
     }
 
@@ -427,7 +456,7 @@ fn sliced(extents: &[(Axis, usize); 2], planes: usize, frag: usize) -> Space {
 /// `spanned` gives `k` and `v` a leading axis the launch spans rather than iterates — the shape a
 /// client's cache has, where a KV head is an axis of the operand and a cube owns one position of
 /// it.
-fn run_cmma(
+fn run_cmma<E: Float + CubeElement>(
     (units, rows, s_total, block, d, val_dim, frag): (
         usize,
         usize,
@@ -441,6 +470,7 @@ fn run_cmma(
     causal: bool,
     spanned: bool,
     planes: usize,
+    in_place: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
     if planes > 1 {
@@ -455,15 +485,16 @@ fn run_cmma(
         }
     }
     let f32_ty = f32::elem_type_native();
+    let e_ty = E::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
-        cfg.a_type == f32_ty
-            && cfg.b_type == f32_ty
+        cfg.a_type == e_ty
+            && cfg.b_type == e_ty
             && cfg.cd_type == f32_ty
             && (cfg.m as usize, cfg.n as usize, cfg.k as usize) == (frag, frag, frag)
     });
     if !supported {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device has no {frag}x{frag}x{frag} f32 cmma fragment"
+            "device has no {frag}x{frag}x{frag} {e_ty:?} cmma fragment accumulating at f32"
         )))
         .enforce();
         return;
@@ -475,7 +506,7 @@ fn run_cmma(
         |i: usize, salt: usize| ((i * 2654435761 + salt * 40503) % 2048) as f32 / 512. - 2.;
 
     let (q_handle, q_data) = TestInput::builder(client.clone(), Shape::new([rows, d]))
-        .dtype(f32_ty)
+        .dtype(e_ty)
         .custom((0..rows * d).map(|i| wobble(i, 1)).collect())
         .generate_with_f32_host_data();
     // The spanned arm binds the same values under one more dim: same cells, one axis above the
@@ -488,11 +519,11 @@ fn run_cmma(
         }
     };
     let (k_handle, k_data) = TestInput::builder(client.clone(), kv_shape(s_total, d))
-        .dtype(f32_ty)
+        .dtype(e_ty)
         .custom((0..s_total * d).map(|i| wobble(i, 2)).collect())
         .generate_with_f32_host_data();
     let (v_handle, v_data) = TestInput::builder(client.clone(), kv_shape(s_total, val_dim))
-        .dtype(f32_ty)
+        .dtype(e_ty)
         .custom((0..s_total * val_dim).map(|i| wobble(i, 3) / 2.).collect())
         .generate_with_f32_host_data();
     let mask_handle = TestInput::builder(client.clone(), Shape::new([1]))
@@ -538,7 +569,7 @@ fn run_cmma(
         (&[S, D], &[S, V])
     };
 
-    attention_fold_cmma_kernel::launch::<TestRuntime>(
+    attention_fold_cmma_kernel::launch::<E, TestRuntime>(
         &client,
         CubeCount::new_single(),
         CubeDim::new_1d(units as u32),
@@ -567,6 +598,7 @@ fn run_cmma(
         block,
         frag,
         planes,
+        in_place,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -617,7 +649,7 @@ fn run_cmma(
 /// before it folded in, reads back here as zeros or as one block's answer.
 #[test]
 fn fold_cmma_single_fragment() {
-    run_cmma((32, 8, 16, 8, 8, 8, 8), 16, false, false, 1);
+    run_cmma::<f32>((32, 8, 16, 8, 8, 8, 8), 16, false, false, 1, false);
 }
 
 /// Fragments are owned, not shared, and a contraction deeper than one fragment closes: two planes
@@ -625,7 +657,7 @@ fn fold_cmma_single_fragment() {
 /// leaves whole fragments stale; a step dropped leaves half a dot product.
 #[test]
 fn fold_cmma_fragment_grid() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false, 1);
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 32, false, false, 1, false);
 }
 
 /// The attended prefix may end inside a block: the mask probe owns the tail, so score fragments
@@ -634,7 +666,7 @@ fn fold_cmma_fragment_grid() {
 /// accumulator.
 #[test]
 fn fold_cmma_causal_ragged_bound() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, false, 1);
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, false, 1, false);
 }
 
 /// The keys and values a client hands over are not bare matrices: a KV head is an axis of the
@@ -644,7 +676,7 @@ fn fold_cmma_causal_ragged_bound() {
 /// matrix here and returns zeros.
 #[test]
 fn fold_cmma_spanned_leading_axis() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true, 1);
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 1, false);
 }
 
 /// The space states each plane's slice of the grid, so a plane holds its slice's accumulators
@@ -654,14 +686,37 @@ fn fold_cmma_spanned_leading_axis() {
 /// against the wrong column, comes out here as a wrong row rather than zeros.
 #[test]
 fn fold_cmma_plane_slices() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2);
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, false);
 }
 
 /// A slice one fragment wide: `cn = 1`, so the reuse loop degenerates and the accumulator
 /// bookkeeping is all that is left to get wrong.
 #[test]
 fn fold_cmma_plane_slices_one_fragment_wide() {
-    run_cmma((64, 16, 32, 16, 16, 16, 8), 32, false, false, 2);
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 32, false, false, 2, false);
+}
+
+/// The probabilities left in place over the scores: the mix contracts the score tile itself,
+/// and no P tile is written. Same fold as `fold_cmma_plane_slices`; a mix reading stale scores
+/// (the pre-exponentiation cells, or the previous block's) comes out here as wrong rows.
+#[test]
+fn fold_cmma_in_place() {
+    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, true);
+}
+
+/// Half operands with the probabilities at the accumulate element: the mix's instruction takes
+/// P at f32 against values at f16, the mixed-type form the hand-written Metal kernels contract
+/// through. Skipped where the device states no half fragment accumulating at f32.
+#[test]
+fn fold_cmma_in_place_half_operands() {
+    run_cmma::<half::f16>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, true);
+}
+
+/// The same half operands through a written P tile at f32 — the mix is mixed-type either way,
+/// so a device that refuses it fails here as well, not only in place.
+#[test]
+fn fold_cmma_half_operands() {
+    run_cmma::<half::f16>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, false);
 }
 
 /// The split fold: teams on the cube's y dim each fold a disjoint slice of

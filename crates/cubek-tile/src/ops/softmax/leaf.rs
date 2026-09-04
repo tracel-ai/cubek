@@ -21,9 +21,39 @@ impl<EA: Float> Tile<EA> {
     /// rescale factor (1 for unowned slots). The caller owns the walk and
     /// the epilogue ([`RowState::recip_l`], [`RowState::lse`]). The reduced
     /// axis is the score axis absent from `state`'s space.
+    ///
+    /// [`softmax_in_place`](Tile::softmax_in_place) is the same step without
+    /// the P tile: the exponentiated scores *are* the probabilities, at the
+    /// score's own element.
     pub fn softmax<EP: Float>(
         &mut self,
         p: &mut Tile<EP>,
+        state: &mut RowState<EA>,
+        probe: &MaskProbe,
+        mask: &Tile<u32>,
+        scale: EA,
+    ) -> Array<EA> {
+        // Row-serial scalar reads; a vectorized leaf is a later drop-in swap.
+        let wp = p.vector_size();
+        comptime!(assert!(
+            wp == 1,
+            "softmax: vectorized tiles not supported yet"
+        ));
+        let corr = self.softmax_in_place(state, probe, mask, scale);
+        match comptime!(state.share) {
+            RowShare::Unit { rows } => self.write_rows_to(p, rows),
+            RowShare::Plane { rows, lanes } => self.write_rows_to_planar(p, rows, lanes),
+        }
+        corr
+    }
+
+    /// [`softmax`](Tile::softmax) with the probabilities left where the scores
+    /// were: after it, `self` holds the unnormalized P of this step, and is
+    /// what the value matmul ([`mix`](Tile::mix)) contracts. One tile, one
+    /// pass over it fewer, and no cast — the mix reads P at the accumulate
+    /// element, which its hardware arm takes against values at theirs.
+    pub fn softmax_in_place(
+        &mut self,
         state: &mut RowState<EA>,
         probe: &MaskProbe,
         mask: &Tile<u32>,
@@ -45,9 +75,8 @@ impl<EA: Float> Tile<EA> {
         ));
         // Row-serial scalar reads; a vectorized leaf is a later drop-in swap.
         let w = self.vector_size();
-        let wp = p.vector_size();
         comptime!(assert!(
-            w == 1 && wp == 1,
+            w == 1,
             "softmax: vectorized tiles not supported yet"
         ));
 
@@ -61,14 +90,12 @@ impl<EA: Float> Tile<EA> {
                 self.row_max(&mut max_buf, &state.m, rows);
                 self.exp_diff(&max_buf, rows);
                 self.row_sum(&mut sum_buf, rows);
-                self.write_rows_to(p, rows);
             }
             RowShare::Plane { rows, lanes } => {
                 self.scale_and_mask_planar(scale, probe, mask, rows, lanes);
                 self.row_max_planar(&mut max_buf, &state.m, rows, lanes);
                 self.exp_diff_planar(&max_buf, rows, lanes);
                 self.row_sum_planar(&mut sum_buf, rows, lanes);
-                self.write_rows_to_planar(p, rows, lanes);
             }
         }
 
