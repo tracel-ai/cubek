@@ -1,4 +1,7 @@
-use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
+use crate::components::{
+    instructions::{TopKKey, empty_topk_key, lowest_coordinate_matching},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -56,13 +59,16 @@ pub struct ReduceRequirements {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Multiple(usize),
+    /// Slots holding a [`TopKKey`](super::TopKKey) each, so the values and the
+    /// coordinates share one storage rather than two.
+    Keys(usize),
     Single,
 }
 
 impl AccumulatorFormat {
     pub fn len(&self) -> usize {
         match self {
-            AccumulatorFormat::Multiple(k) => *k,
+            AccumulatorFormat::Multiple(k) | AccumulatorFormat::Keys(k) => *k,
             AccumulatorFormat::Single => 1,
         }
     }
@@ -266,6 +272,72 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
         // Winner masking logic
         let is_winner = lane_id.equal(&winning_lane);
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+    }
+}
+
+/// Plane-cooperative insertion of one packed-key candidate per lane.
+///
+/// A key already carries the tie-break, so the plane's winner is a plain
+/// [`plane_max`] and the lane holding it is the lane whose key equals it: two
+/// lanes cannot hold the same key, since the coordinate is part of it.
+#[cube]
+pub fn plane_topk_key_insert<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<TopKKey, S>>,
+    item: Vector<TopKKey, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best = item;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning = plane_max(local_best);
+        let mut insert = winning;
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let to_keep = keys[j].greater_than(&insert);
+            let next = select_many(to_keep, insert, keys[j]);
+            keys[j] = select_many(to_keep, keys[j], insert);
+            insert = next;
+        }
+
+        let is_winner = local_best.equal(&winning);
+        local_best = select_many(is_winner, empty_topk_key::<N, S>(), local_best);
+    }
+}
+
+/// Plane-cooperative merge of per-lane packed-key accumulators.
+#[cube]
+pub fn plane_topk_key_merge<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<TopKKey, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_keys = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local = empty_topk_key::<N, S>();
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local = select_many(is_pointed, keys[j], local);
+        }
+
+        let winning = plane_max(local);
+        final_keys[i] = winning;
+
+        let is_cand = local.equal(&winning);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        keys[i] = final_keys[i];
     }
 }
 
@@ -491,6 +563,9 @@ pub struct Item<P: ReducePrecision> {
 pub struct Accumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
+    /// Top-k's packed keys, which replace `elements` and `args` rather than
+    /// joining them: exactly one of the two spellings is ever populated.
+    pub keys: Value<Vector<TopKKey, P::SI>>,
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
@@ -517,6 +592,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
         Accumulator::<P> {
             elements: Value::new_single(accumulator[index]),
             args: Value::new_None(),
+            keys: Value::new_None(),
         }
     }
 
@@ -568,6 +644,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
         Accumulator::<P> {
             elements: Value::new_single(accumulator.elements[index]),
             args,
+            keys: Value::new_None(),
         }
     }
 

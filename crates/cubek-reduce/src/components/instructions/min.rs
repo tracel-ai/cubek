@@ -108,6 +108,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         Accumulator::<P> {
             elements: Value::new_single(Vector::empty().fill(min_identity::<P::EA>())),
             args,
+            keys: Value::new_None(),
         }
     }
 

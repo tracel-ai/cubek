@@ -7,7 +7,10 @@ use crate::components::instructions::AccumulatorFormat;
 
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
-use crate::components::instructions::{Accumulator, Item, Value, ValueExpand};
+use crate::components::instructions::{
+    Accumulator, Item, TopKKey, Value, ValueExpand, empty_topk_key, pack_topk_key, packs_into_key,
+    plane_topk_key_insert, plane_topk_key_merge, topk_key_coordinate, topk_key_value,
+};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
@@ -40,6 +43,18 @@ impl ReduceFamily for TopK {
 impl ReduceWithIndicesFamily for TopK {
     type Instruction<P: ReducePrecision> = Self;
     type Config = TopKConfig;
+}
+
+/// Whether this reduction carries its coordinates inside packed keys.
+///
+/// Only a coordinate-tracking top-k has anything to pack, and only a device
+/// with 64-bit integers can compare one.
+#[cube]
+fn packs_keys<P: ReducePrecision>(this: &TopK) -> comptime_type!(bool) {
+    let tracks_coordinates = comptime!(this.output.has_indices());
+    let packs = packs_into_key::<P::EA>();
+
+    comptime!(tracks_coordinates && packs)
 }
 
 /// Insert `insert_val` into the descending-sorted `elements` (and its
@@ -90,12 +105,34 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
     }
 }
 
+/// [`topk_insert`] over packed keys: the ordering and the tie-break ride one
+/// comparison, and one selected pair swaps both halves of a slot.
+#[cube]
+pub(crate) fn topk_key_insert<S: Size>(
+    keys: &mut Array<Vector<TopKKey, S>>,
+    insert_key: Vector<TopKKey, S>,
+    #[comptime] k: usize,
+) {
+    let mut insert_key = insert_key;
+
+    for j in 0..k {
+        let to_keep = keys[j].greater_than(&insert_key);
+        let next_key = select_many(to_keep, insert_key, keys[j]);
+        keys[j] = select_many(to_keep, keys[j], insert_key);
+        insert_key = next_key;
+    }
+}
+
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
+    /// Empty when the accumulator is packed into `keys`.
     elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
-    /// Empty unless the instruction tracks coordinates; its length is the single
-    /// source of truth for whether coordinates are staged (see `read`/`write`).
+    /// Empty unless the instruction tracks coordinates in a separate slice; its
+    /// length is the single source of truth for whether coordinates are staged
+    /// (see `read`/`write`).
     args: Sequence<Shared<[Vector<u32, P::SI>]>>,
+    /// Empty unless the instruction packs its coordinates into its values.
+    keys: Sequence<Shared<[Vector<TopKKey, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -103,15 +140,18 @@ pub struct TopKSharedAccumulator<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
-        let has_coords = comptime!(inst.output.has_indices());
+        let packed = packs_keys::<P>(inst);
+        let has_coords = comptime!(inst.output.has_indices() && !packed);
 
-        // Both loops must be unrolled: a `Sequence` is built at expand time, so a
+        // Every loop must be unrolled: a `Sequence` is built at expand time, so a
         // runtime loop would run the body once and leave a single slice behind
         // whatever `k` is, and `read`/`write` would then index past the end.
         let mut elements = Sequence::new();
-        #[unroll]
-        for _ in 0..inst.k {
-            elements.push(Shared::new_slice(length));
+        if comptime!(!packed) {
+            #[unroll]
+            for _ in 0..inst.k {
+                elements.push(Shared::new_slice(length));
+            }
         }
 
         let mut args = Sequence::new();
@@ -122,55 +162,91 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             }
         }
 
+        let mut keys = Sequence::new();
+        if packed {
+            #[unroll]
+            for _ in 0..inst.k {
+                keys.push(Shared::new_slice(length));
+            }
+        }
+
         TopKSharedAccumulator::<P> {
             elements,
             args,
+            keys,
             k: inst.k,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let mut values = Array::new(accumulator.k);
-        #[unroll]
-        for i in 0..accumulator.k {
-            values[i] = accumulator.elements[i][index];
-        }
-
-        let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
-            let mut args = Array::new(accumulator.k);
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            let mut keys = Array::new(accumulator.k);
             #[unroll]
             for i in 0..accumulator.k {
-                args[i] = accumulator.args[i][index];
+                keys[i] = accumulator.keys[i][index];
             }
-            Value::new_Multiple(args)
-        } else {
-            Value::new_None()
-        };
 
-        Accumulator::<P> {
-            elements: Value::new_Multiple(values),
-            args,
+            Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                keys: Value::new_Multiple(keys),
+            }
+        } else {
+            let mut values = Array::new(accumulator.k);
+            #[unroll]
+            for i in 0..accumulator.k {
+                values[i] = accumulator.elements[i][index];
+            }
+
+            let num_args = comptime!(accumulator.args.len());
+            let args = if comptime!(num_args != 0) {
+                let mut args = Array::new(accumulator.k);
+                #[unroll]
+                for i in 0..accumulator.k {
+                    args[i] = accumulator.args[i][index];
+                }
+                Value::new_Multiple(args)
+            } else {
+                Value::new_None()
+            };
+
+            Accumulator::<P> {
+                elements: Value::new_Multiple(values),
+                args,
+                keys: Value::new_None(),
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        let values = item.elements.multiple();
-        #[unroll]
-        for i in 0..accumulator.k {
-            let acc = values[i];
-            let shared_acc = &mut accumulator.elements[i];
-            shared_acc[index] = acc;
-        }
-
-        let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
-            let args = item.args.multiple();
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            let keys = item.keys.multiple();
             #[unroll]
             for i in 0..accumulator.k {
-                let arg = args[i];
-                let shared_arg_acc = &mut accumulator.args[i];
-                shared_arg_acc[index] = arg;
+                let key = keys[i];
+                let shared_keys = &mut accumulator.keys[i];
+                shared_keys[index] = key;
+            }
+        } else {
+            let values = item.elements.multiple();
+            #[unroll]
+            for i in 0..accumulator.k {
+                let acc = values[i];
+                let shared_acc = &mut accumulator.elements[i];
+                shared_acc[index] = acc;
+            }
+
+            let num_args = comptime!(accumulator.args.len());
+            if comptime!(num_args != 0) {
+                let args = item.args.multiple();
+                #[unroll]
+                for i in 0..accumulator.k {
+                    let arg = args[i];
+                    let shared_arg_acc = &mut accumulator.args[i];
+                    shared_arg_acc[index] = arg;
+                }
             }
         }
     }
@@ -188,7 +264,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        comptime!(AccumulatorFormat::Multiple(this.k))
+        let packed = packs_keys::<P>(this);
+        let k = comptime!(this.k);
+
+        comptime!(if packed {
+            AccumulatorFormat::Keys(k)
+        } else {
+            AccumulatorFormat::Multiple(k)
+        })
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {
@@ -203,26 +286,45 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let mut elements = Array::new(comptime!(this.k));
-        #[unroll]
-        for i in 0..this.k {
-            elements[i] = Vector::new(P::EA::min_value());
-        }
+        let packed = packs_keys::<P>(this);
 
-        let args = if comptime!(this.output.has_indices()) {
-            let mut args = Array::new(comptime!(this.k));
+        if comptime!(packed) {
+            let empty = empty_topk_key::<P::EA, P::SI>();
+
+            let mut keys = Array::new(comptime!(this.k));
             #[unroll]
             for i in 0..this.k {
-                args[i] = Vector::new(u32::MAX);
+                keys[i] = empty;
             }
-            Value::new_Multiple(args)
-        } else {
-            Value::new_None()
-        };
 
-        Accumulator::<P> {
-            elements: Value::new_Multiple(elements),
-            args,
+            Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                keys: Value::new_Multiple(keys),
+            }
+        } else {
+            let mut elements = Array::new(comptime!(this.k));
+            #[unroll]
+            for i in 0..this.k {
+                elements[i] = Vector::new(P::EA::min_value());
+            }
+
+            let args = if comptime!(this.output.has_indices()) {
+                let mut args = Array::new(comptime!(this.k));
+                #[unroll]
+                for i in 0..this.k {
+                    args[i] = Vector::new(u32::MAX);
+                }
+                Value::new_Multiple(args)
+            } else {
+                Value::new_None()
+            };
+
+            Accumulator::<P> {
+                elements: Value::new_Multiple(elements),
+                args,
+                keys: Value::new_None(),
+            }
         }
     }
 
@@ -232,50 +334,80 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let elements = accumulator.elements.multiple_mut();
+        let packed = packs_keys::<P>(this);
 
-        match reduce_step {
-            ReduceStep::Plane => {
-                plane_topk_insert::<P::EA, P::SI>(
-                    elements,
-                    &mut accumulator.args,
-                    Vector::cast_from(item.elements),
-                    &item.args,
-                    this.k,
-                );
+        if comptime!(packed) {
+            let key =
+                pack_topk_key::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
+            let keys = accumulator.keys.multiple_mut();
+
+            match reduce_step {
+                ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(keys, key, this.k),
+                ReduceStep::Identity => topk_key_insert::<P::SI>(keys, key, this.k),
             }
-            ReduceStep::Identity => {
-                topk_insert::<P::EA, P::SI>(
-                    elements,
-                    &mut accumulator.args,
-                    Vector::cast_from(item.elements),
-                    &item.args,
-                    this.k,
-                );
+        } else {
+            let elements = accumulator.elements.multiple_mut();
+
+            match reduce_step {
+                ReduceStep::Plane => {
+                    plane_topk_insert::<P::EA, P::SI>(
+                        elements,
+                        &mut accumulator.args,
+                        Vector::cast_from(item.elements),
+                        &item.args,
+                        this.k,
+                    );
+                }
+                ReduceStep::Identity => {
+                    topk_insert::<P::EA, P::SI>(
+                        elements,
+                        &mut accumulator.args,
+                        Vector::cast_from(item.elements),
+                        &item.args,
+                        this.k,
+                    );
+                }
             }
         }
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        plane_topk_merge::<P::EA, P::SI>(
-            accumulator.elements.multiple_mut(),
-            &mut accumulator.args,
-            this.k,
-        );
+        let packed = packs_keys::<P>(this);
+
+        if comptime!(packed) {
+            plane_topk_key_merge::<P::EA, P::SI>(accumulator.keys.multiple_mut(), this.k);
+        } else {
+            plane_topk_merge::<P::EA, P::SI>(
+                accumulator.elements.multiple_mut(),
+                &mut accumulator.args,
+                this.k,
+            );
+        }
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let elements = accumulator.elements.multiple_mut();
-        let other_elements = other.elements.multiple();
+        let packed = packs_keys::<P>(this);
 
-        for i in 0..this.k {
-            topk_insert::<P::EA, P::SI>(
-                elements,
-                &mut accumulator.args,
-                other_elements[i],
-                &other.args.slot(i),
-                this.k,
-            );
+        if comptime!(packed) {
+            let keys = accumulator.keys.multiple_mut();
+            let other_keys = other.keys.multiple();
+
+            for i in 0..this.k {
+                topk_key_insert::<P::SI>(keys, other_keys[i], this.k);
+            }
+        } else {
+            let elements = accumulator.elements.multiple_mut();
+            let other_elements = other.elements.multiple();
+
+            for i in 0..this.k {
+                topk_insert::<P::EA, P::SI>(
+                    elements,
+                    &mut accumulator.args,
+                    other_elements[i],
+                    &other.args.slot(i),
+                    this.k,
+                );
+            }
         }
     }
 
@@ -288,28 +420,48 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        match accumulator.args {
-            Value::None => {
-                let values = topk_finalize_values::<P, Out>(&accumulator, this.k);
-                (Value::new_Multiple(values), Value::new_None())
-            }
-            Value::Multiple(_) => {
-                let (values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
+        let packed = packs_keys::<P>(this);
 
-                let mut out_values = Array::new(this.k);
-                let mut out_indices = Array::new(this.k);
-                #[unroll]
-                for i in 0..this.k {
-                    out_values[i] = Out::cast_from(values[i]);
-                    out_indices[i] = Idx::cast_from(coords[i]);
+        if comptime!(packed) {
+            let keys = topk_finalize_keys::<P>(accumulator.keys.multiple(), this.k);
+
+            let mut out_values = Array::new(this.k);
+            let mut out_indices = Array::new(this.k);
+            #[unroll]
+            for i in 0..this.k {
+                let key = Vector::<TopKKey, P::SI>::new(keys[i]);
+                out_values[i] = Out::cast_from(topk_key_value::<P::EA, P::SI>(key).extract(0usize));
+                out_indices[i] = Idx::cast_from(topk_key_coordinate::<P::SI>(key).extract(0usize));
+            }
+
+            (
+                Value::new_Multiple(out_values),
+                Value::new_Multiple(out_indices),
+            )
+        } else {
+            match accumulator.args {
+                Value::None => {
+                    let values = topk_finalize_values::<P, Out>(&accumulator, this.k);
+                    (Value::new_Multiple(values), Value::new_None())
                 }
+                Value::Multiple(_) => {
+                    let (values, coords) = topk_finalize_with_coords::<P>(&accumulator, this.k);
 
-                (
-                    Value::new_Multiple(out_values),
-                    Value::new_Multiple(out_indices),
-                )
+                    let mut out_values = Array::new(this.k);
+                    let mut out_indices = Array::new(this.k);
+                    #[unroll]
+                    for i in 0..this.k {
+                        out_values[i] = Out::cast_from(values[i]);
+                        out_indices[i] = Idx::cast_from(coords[i]);
+                    }
+
+                    (
+                        Value::new_Multiple(out_values),
+                        Value::new_Multiple(out_indices),
+                    )
+                }
+                Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
             }
-            Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
         }
     }
 
@@ -318,27 +470,46 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let acc_values = accumulator.elements.multiple();
-        let mut out_values = Array::new(this.k);
-        #[unroll]
-        for i in 0..this.k {
-            out_values[i] = Vector::cast_from(acc_values[i]);
-        }
+        let packed = packs_keys::<P>(this);
 
-        let indices = match &accumulator.args {
-            Value::None => Value::new_None(),
-            Value::Multiple(acc_args) => {
-                let mut out_indices = Array::new(this.k);
-                #[unroll]
-                for i in 0..this.k {
-                    out_indices[i] = Vector::cast_from(acc_args[i]);
-                }
-                Value::new_Multiple(out_indices)
+        if comptime!(packed) {
+            let keys = accumulator.keys.multiple();
+
+            let mut out_values = Array::new(this.k);
+            let mut out_indices = Array::new(this.k);
+            #[unroll]
+            for i in 0..this.k {
+                out_values[i] = Vector::cast_from(topk_key_value::<P::EA, P::SI>(keys[i]));
+                out_indices[i] = Vector::cast_from(topk_key_coordinate::<P::SI>(keys[i]));
             }
-            Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
-        };
 
-        (Value::new_Multiple(out_values), indices)
+            (
+                Value::new_Multiple(out_values),
+                Value::new_Multiple(out_indices),
+            )
+        } else {
+            let acc_values = accumulator.elements.multiple();
+            let mut out_values = Array::new(this.k);
+            #[unroll]
+            for i in 0..this.k {
+                out_values[i] = Vector::cast_from(acc_values[i]);
+            }
+
+            let indices = match &accumulator.args {
+                Value::None => Value::new_None(),
+                Value::Multiple(acc_args) => {
+                    let mut out_indices = Array::new(this.k);
+                    #[unroll]
+                    for i in 0..this.k {
+                        out_indices[i] = Vector::cast_from(acc_args[i]);
+                    }
+                    Value::new_Multiple(out_indices)
+                }
+                Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
+            };
+
+            (Value::new_Multiple(out_values), indices)
+        }
     }
 }
 
@@ -434,4 +605,40 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
     }
 
     (topk_vals, topk_coords)
+}
+
+/// [`topk_finalize_with_coords`] over packed keys, for the parallel layout.
+#[cube]
+fn topk_finalize_keys<P: ReducePrecision>(
+    keys: &Array<Vector<TopKKey, P::SI>>,
+    #[comptime] k: usize,
+) -> Array<TopKKey> {
+    let vector_size = keys[0].vector_size().comptime();
+
+    let empty = empty_topk_key::<P::EA, P::SI>().extract(0usize);
+
+    let mut topk = Array::new(k);
+    #[unroll]
+    for slot in 0..k {
+        topk[slot] = empty;
+    }
+
+    #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        #[unroll]
+        for j in 0..vector_size {
+            let mut key = keys[i].extract(j);
+
+            #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+            for slot in 0..k {
+                let current = topk[slot];
+                let keep = current > key;
+
+                topk[slot] = select(keep, current, key);
+                key = select(keep, key, current);
+            }
+        }
+    }
+
+    topk
 }

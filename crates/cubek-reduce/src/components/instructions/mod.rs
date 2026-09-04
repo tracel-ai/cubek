@@ -10,6 +10,7 @@ mod mixed;
 mod prod;
 mod sum;
 mod topk;
+mod topk_key;
 mod utils;
 
 pub use all::*;
@@ -24,4 +25,5 @@ pub use mixed::*;
 pub use prod::*;
 pub use sum::*;
 pub use topk::*;
+pub(crate) use topk_key::*;
 pub(crate) use utils::*;

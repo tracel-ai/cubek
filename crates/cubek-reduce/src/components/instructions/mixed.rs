@@ -3,7 +3,7 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK,
+    Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK, TopKKey,
 };
 use crate::{
     ReduceDtypes,
@@ -172,12 +172,14 @@ impl ReduceFamily for ReduceOperation {
 pub struct DynamicSharedAccumulator<P: ReducePrecision> {
     pub elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
     pub args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    pub keys: SharedAccumulatorKind<Vector<TopKKey, P::SI>>,
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
+    pub keys: Value<Vector<TopKKey, P::SI>>,
 }
 
 #[cube]
@@ -199,6 +201,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                 DynamicSharedAccumulator::<P> {
                     elements: SharedAccumulatorKind::new_Single(elements),
                     args,
+                    keys: SharedAccumulatorKind::new_None(),
                 }
             }
             AccumulatorFormat::Multiple(len) => {
@@ -212,6 +215,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),
                         args: SharedAccumulatorKind::new_None(),
+                        keys: SharedAccumulatorKind::new_None(),
                     }
                 } else {
                     let mut args = Sequence::new();
@@ -222,7 +226,21 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),
                         args: SharedAccumulatorKind::new_Multiple(args),
+                        keys: SharedAccumulatorKind::new_None(),
                     }
+                }
+            }
+            AccumulatorFormat::Keys(len) => {
+                let mut keys = Sequence::new();
+                #[unroll]
+                for _ in 0..len {
+                    keys.push(Shared::new_slice(length));
+                }
+
+                DynamicSharedAccumulator::<P> {
+                    elements: SharedAccumulatorKind::new_None(),
+                    args: SharedAccumulatorKind::new_None(),
+                    keys: SharedAccumulatorKind::new_Multiple(keys),
                 }
             }
         }
@@ -231,13 +249,19 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
         let elements = accumulator.elements.get(index);
         let args = accumulator.args.get(index);
+        let keys = accumulator.keys.get(index);
 
-        Accumulator::<P> { elements, args }
+        Accumulator::<P> {
+            elements,
+            args,
+            keys,
+        }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         accumulator.elements.set(index, item.elements);
         accumulator.args.set(index, item.args);
+        accumulator.keys.set(index, item.keys);
     }
 }
 
