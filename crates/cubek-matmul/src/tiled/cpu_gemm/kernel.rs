@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, CubeAxis, Fragments, Level, Monoid, RegisterBlock, Semiring, Space, TileArg, Walk,
-    cubes, planes,
+    Axis, CubeAxis, Fragments, Level, Monoid, RegisterBlock, Semiring, Space, TileArg, cubes,
+    planes,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -109,12 +109,18 @@ pub fn cpu_gemm_kernel<
     acc.zero();
 
     // This cube's box, K whole: one region.
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in c
+        .op_space(&a, &b)
+        .level(comptime!(bp.cube_level(&batch, k)))
+    {
         let acc_cube = acc.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         // This plane's block, stepped through K in the instruction's depth.
-        for step in Walk::over(acc_cube.op_space(&a_cube, &b_cube)) {
+        for step in acc_cube
+            .op_space(&a_cube, &b_cube)
+            .level(comptime!(bp.plane_level(&batch)))
+        {
             let mut acc_step = acc_cube.at(&step);
             acc_step.mma(&a_cube.at(&step), &b_cube.at(&step), Semiring::SUM_PROD);
         }

@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, CubeAxis, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Walk, cubes,
-    lanes, planes,
+    Axis, CubeAxis, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg, cubes, lanes,
+    planes,
 };
 
 use crate::tiled::{
@@ -138,19 +138,28 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     out.zero();
 
     // This cube's strip of rows.
-    for region in Walk::over(out.op_space(&w, &x)) {
+    for region in out
+        .op_space(&w, &x)
+        .level(comptime!(bp.cube_level(&problem)))
+    {
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scale_tiles, &region);
         // This plane's group of rows.
-        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
+        for region in out_cube
+            .op_space(&w_cube, &x_cube)
+            .level(comptime!(bp.plane_level(&problem)))
+        {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
             // This lane's rows against its share of the contraction.
-            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
+            for region in out_plane
+                .op_space(&w_plane, &x_plane)
+                .level(comptime!(bp.lane_level(&problem)))
+            {
                 let mut out_lane = out_plane.at(&region);
                 let scales_lane = at_all(&scales_plane, &region);
                 out_lane.mma_scaled_with(

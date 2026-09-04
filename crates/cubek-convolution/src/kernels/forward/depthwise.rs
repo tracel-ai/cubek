@@ -160,11 +160,17 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(space);
 
-    for region in Walk::over(out.op_space(&weight, &input)) {
+    for region in out
+        .op_space(&weight, &input)
+        .level(comptime!(plan.cube_level()))
+    {
         let out_cube = out.at(&region);
         let weight_cube = weight.at(&region);
         let input_cube = input.at(&region);
-        for cell in Walk::over(out_cube.op_space(&weight_cube, &input_cube)) {
+        for cell in out_cube
+            .op_space(&weight_cube, &input_cube)
+            .level(comptime!(plan.lane_level()))
+        {
             let mut out_cell = out_cube.at(&cell);
             out_cell.mm_with(
                 &weight_cube.at(&cell),

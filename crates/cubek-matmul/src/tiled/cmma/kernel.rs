@@ -10,7 +10,7 @@
 use cubecl::prelude::*;
 use cubek_tile::{
     Axis, CubeAxis, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring,
-    Space, StageStorage, TileArg, Walk, cubes, pipelined, planes,
+    Space, StageStorage, TileArg, cubes, pipelined, planes,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -140,24 +140,35 @@ pub fn cmma_kernel<
     acc.zero();
 
     // This cube's box, one stage of K per region, both inputs staged for it.
-    let stages = Walk::over(c.op_space(&a, &b));
+    let stages = c.op_space(&a, &b).level(comptime!(bp.stage_level(&batch)));
     let mut ring = Ring::smem(&stages, &a, &b, comptime!(StageStorage::tiled(&block)), depth);
     pipelined(stages, &mut ring, |slot, stage| {
         let acc_stage = acc.at(stage);
         slot.consume(|a_s, b_s| {
             // This plane's box of the stage.
-            for region in Walk::over(acc_stage.op_space(a_s, b_s)) {
+            for region in acc_stage
+                .op_space(a_s, b_s)
+                .level(comptime!(bp.plane_level(&batch)))
+            {
                 let acc_plane = acc_stage.at(&region);
                 let a_p = a_s.at(&region);
                 let b_p = b_s.at(&region);
                 // The instruction's K steps through the box, the operands loaded into
                 // fragments per step.
-                for step in Walk::over(acc_plane.op_space(&a_p, &b_p)).unrolled() {
+                for step in acc_plane
+                    .op_space(&a_p, &b_p)
+                    .level(comptime!(bp.step_level(&batch)))
+                    .unrolled()
+                {
                     let acc_step = acc_plane.at(&step);
                     let a_f = PlanePartition::<EL>::cmma_fragments(&a_p.at(&step), &acc_step);
                     let b_f = PlanePartition::<ER>::cmma_fragments(&b_p.at(&step), &acc_step);
                     // Every fragment of the partition, contracted through the instruction.
-                    for cell in Walk::over(acc_step.op_space(&a_f, &b_f)).unrolled() {
+                    for cell in acc_step
+                        .op_space(&a_f, &b_f)
+                        .level(comptime!(bp.cell_level(&batch)))
+                        .unrolled()
+                    {
                         let mut acc_cell = acc_step.at(&cell);
                         acc_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
                     }
