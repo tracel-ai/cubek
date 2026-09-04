@@ -153,7 +153,7 @@ impl Space {
         Space::from_extents(&extents)
     }
 
-    /// Every axis [`Dynamic`](Extent::Dynamic): the kernel form, its extents resolved in-kernel
+    /// Every axis dynamic: the kernel form, its extents resolved in-kernel
     /// from the tensors, so one compiled kernel serves every shape. The launch stamps the real
     /// extents on with [`with_extents`](Space::with_extents).
     pub fn dynamic(axes: &[Axis]) -> Self {
@@ -187,7 +187,7 @@ impl Space {
         self
     }
 
-    /// Every axis [`Dynamic`]: the kernel form for an operation whose problem dims are all
+    /// Every axis dynamic: the kernel form for an operation whose problem dims are all
     /// runtime (the common case; see [`with_dynamic`](Space::with_dynamic)).
     pub fn all_dynamic(self) -> Self {
         let axes: Vec<_> = self.axes().collect();
@@ -274,7 +274,7 @@ impl Space {
 
     /// Whether `axis` overhangs its tiling under `levels`: some level's edge fails to divide the
     /// extent handed to it (this space's at the first level, the parent edge below), leaving a
-    /// partial tile that needs masking. A [`Dynamic`](Extent::Dynamic) axis panics: the answer
+    /// partial tile that needs masking. A dynamic axis panics: the answer
     /// is the concrete space's, never the kernel-form one's.
     pub fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
         assert!(
