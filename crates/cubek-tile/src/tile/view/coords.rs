@@ -120,6 +120,11 @@ pub(crate) fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
 /// `acc` takes its coordinate from `acc_coords`, everything else (contracted by definition, since
 /// every operand axis falls in one or the other) comes from `reduce_coords`.
 ///
+/// `acc_coords` is indexed by `acc.position(axis)`, so it holds one entry per axis of the
+/// accumulator's *space*, in that space's order — not one per edge of whatever matrix a caller
+/// reads the accumulator as. A caller holding a `(row, col)` cell owes the unravel over each
+/// edge's axes before it gets here.
+///
 /// `width` is the operand's line width; only its innermost axis is addressed in lines (matching an
 /// `nd`/[`matrix_transparent`](crate::Tile::matrix_transparent) view), so it alone divides by
 /// `width`. `scale_acc_branch` decides whether that division also applies when the fastest axis

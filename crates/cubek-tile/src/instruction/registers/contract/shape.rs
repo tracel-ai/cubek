@@ -60,12 +60,13 @@ impl ContractShape {
             .collect::<Vec<_>>();
         let cols = acc_axes.cols(&space);
         let spread = if contracted_per_step > 1 { 1 } else { vw / aw };
-        // A spread block column holds `spread` scalar sink cells in its lanes and rounds up;
-        // otherwise a cell is `vw`-wide (or 1 at a folded step) and keeps counting whole lines.
+        // A spread block column rounds up, since its lanes hold whole sink cells and the last
+        // one may be short; every other cell width divides the column edge exactly.
+        let cell = column_cell_width(contracted_per_step, spread, vw);
         let nr = if spread > 1 {
-            cols.div_ceil(spread)
+            cols.div_ceil(cell)
         } else {
-            cols / (if contracted_per_step > 1 { 1 } else { vw })
+            cols / cell
         };
 
         let mr = acc_axes.rows(&space);
@@ -136,6 +137,40 @@ impl ContractShape {
             .collect()
     }
 
+    /// How many of the accumulator's innermost scalars one block column holds
+    /// ([`column_cell_width`]).
+    pub(crate) fn cell_width(&self) -> usize {
+        column_cell_width(self.contracted_per_step, self.spread, self.vw)
+    }
+
+    /// The extents `row` unravels over: the axes between the batch prefix and the columns, in the
+    /// accumulator's own order. One axis under [`MatrixAxes::accumulator`], which puts the row
+    /// edge immediately above the column group, so the unravel is the identity there.
+    pub(crate) fn row_extents(&self) -> Vec<usize> {
+        line_extents(
+            &self.space,
+            1,
+            self.acc_axes.row_split,
+            self.acc_axes.col_split,
+        )
+    }
+
+    /// The extents `col` unravels over: the column group, the innermost counted in the cells one
+    /// block column holds rather than in scalars, so the product is `nr`.
+    ///
+    /// Several axes wherever the lhs stops the column group short of the row edge, which is every
+    /// contraction whose accumulator carries axes no operand pairs it over — a depthwise
+    /// convolution's `[batch, out_h, out_w, channel]` against a filter spanning the channel and
+    /// the taps alone.
+    pub(crate) fn column_line_extents(&self) -> Vec<usize> {
+        line_extents(
+            &self.space,
+            self.cell_width(),
+            self.acc_axes.col_split,
+            self.space.rank(),
+        )
+    }
+
     /// The accumulator's batch axes: everything above the row edge.
     pub(crate) fn batch_extents(&self) -> Vec<usize> {
         (0..self.acc_axes.row_split)
@@ -160,5 +195,78 @@ impl ContractShape {
     pub(crate) fn lane_index_exact(&self) -> bool {
         self.reduce.len() == 1
             || self.reduce_extents[self.reduce_extents.len() - 1].is_multiple_of(self.lw)
+    }
+}
+
+/// How many of the accumulator's innermost scalars one block column holds: one at a folded step,
+/// `spread` where a wide rhs line spans several sink cells, and the rhs's own line otherwise.
+///
+/// `nr` counts in these and so do the extents `col` unravels over, so the rule is stated once
+/// here rather than spelled out at each of them.
+fn column_cell_width(contracted_per_step: usize, spread: usize, vw: usize) -> usize {
+    if contracted_per_step > 1 {
+        1
+    } else if spread > 1 {
+        spread
+    } else {
+        vw
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flat_space;
+
+    const B: Axis = Axis(0);
+    const OH: Axis = Axis(1);
+    const OW: Axis = Axis(2);
+    const C: Axis = Axis(3);
+    const RH: Axis = Axis(4);
+    const RW: Axis = Axis(5);
+
+    /// A depthwise-shaped contraction: the filter shares only the channel with the accumulator, so
+    /// `MatrixAxes::accumulator` stops the column group at the top and leaves `out_h`, `out_w` and
+    /// the channel all in it.
+    ///
+    /// The gather nest resolves an operand's read by `acc.position(axis)`, so the coordinate it
+    /// assembles has to carry one entry per axis of the accumulator's space. It used to carry
+    /// `batch… , row, col` regardless, which is one entry short per extra column axis and read
+    /// past the end of its own list.
+    #[test]
+    fn the_cell_coordinate_covers_every_accumulator_axis() {
+        let acc = flat_space(&[(B, 1), (OH, 1), (OW, 4), (C, 4)]);
+        let lhs = flat_space(&[(C, 4), (RH, 3), (RW, 3)]);
+        let rhs = flat_space(&[(B, 1), (OH, 1), (OW, 4), (C, 4), (RH, 3), (RW, 3)]);
+
+        let shape = ContractShape::new(&lhs, &rhs, acc.clone(), 1, 4, 4, 4);
+
+        assert_eq!(shape.acc_axes.col_split, 1);
+        assert_eq!(
+            shape.batch_extents().len()
+                + shape.row_extents().len()
+                + shape.column_line_extents().len(),
+            acc.rank()
+        );
+        assert_eq!(shape.row_extents().iter().product::<usize>(), shape.mr);
+        assert_eq!(
+            shape.column_line_extents().iter().product::<usize>(),
+            shape.nr
+        );
+    }
+
+    /// The plain batched matmul the nest was written against: one axis per edge, so both unravels
+    /// are the identity and the coordinate is `batch…, row, col` as before.
+    #[test]
+    fn a_single_axis_per_edge_leaves_the_coordinate_unchanged() {
+        let acc = flat_space(&[(B, 2), (OH, 4), (C, 8)]);
+        let lhs = flat_space(&[(B, 2), (OH, 4), (RH, 6)]);
+        let rhs = flat_space(&[(B, 2), (RH, 6), (C, 8)]);
+
+        let shape = ContractShape::new(&lhs, &rhs, acc.clone(), 1, 4, 4, 4);
+
+        assert_eq!(shape.batch_extents(), vec![2]);
+        assert_eq!(shape.row_extents(), vec![4]);
+        assert_eq!(shape.column_line_extents(), vec![2]);
     }
 }
