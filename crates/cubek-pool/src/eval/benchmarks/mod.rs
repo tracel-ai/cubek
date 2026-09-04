@@ -9,6 +9,7 @@ pub use correctness::PoolCorrectness;
 pub use problem::problems;
 pub use strategy::{PoolStrategy, strategies};
 
+use cubecl::benchmark::TimingMethod;
 use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, RunSamples};
 
@@ -45,6 +46,11 @@ impl cubek_test_utils::Category for Category {
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
     }
+
+    fn timing_method(&self) -> TimingMethod {
+        TimingMethod::Device
+    }
+
     fn correctness(
         &self,
     ) -> Option<&dyn cubek_test_utils::Correctness<Problem = PoolProblem, Strategy = PoolStrategy>>
