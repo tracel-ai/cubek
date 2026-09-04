@@ -12,110 +12,6 @@
 use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
-/// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
-#[derive(Clone, Copy, Debug)]
-struct Cut {
-    edge: usize,
-    dist: Distribution,
-}
-
-impl Cut {
-    fn sequential(edge: usize) -> Self {
-        Cut {
-            edge,
-            dist: Distribution::Sequential,
-        }
-    }
-}
-
-/// How finely a level separates its tiles: the smallest hardware scope any of its axes rides.
-/// Decided once, when the level is built, so no consumer re-folds the per-axis distributions.
-///
-/// The finest scope wins. A level with an axis on a cube dim and another on planes reaches
-/// inside a cube, and what a level separates inside a cube the cube's own cooperative
-/// transports already spread.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub(crate) enum LevelScope {
-    /// Every axis `Sequential`: one instance walks the whole grid.
-    Sequential,
-    /// Some axis rides a cube dim and none reaches inside a cube, so the level separates
-    /// exactly what the launch grid does.
-    Cubes,
-    /// Some axis rides the cube's planes.
-    Planes,
-    /// Some axis rides a plane's lanes.
-    Lanes,
-}
-
-impl LevelScope {
-    fn of(dist: Distribution) -> Self {
-        match dist.scope() {
-            None => LevelScope::Sequential,
-            Some(ComputeScope::Cube(_)) => LevelScope::Cubes,
-            Some(ComputeScope::Plane) => LevelScope::Planes,
-            Some(ComputeScope::Unit) => LevelScope::Lanes,
-        }
-    }
-
-    /// The coarse reading, for consumers that only ask whether the level spreads at all.
-    pub(crate) fn role(self) -> LevelRole {
-        match self {
-            LevelScope::Sequential => LevelRole::Partition,
-            LevelScope::Cubes | LevelScope::Planes | LevelScope::Lanes => LevelRole::Instance,
-        }
-    }
-}
-
-/// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
-/// A view over [`LevelScope`], never stored: the scope is the level's own state.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum LevelRole {
-    /// Spreads its tiles across hardware instances (`Spatial` on some axis).
-    Instance,
-    /// Partitions its tiles sequentially across a grid (every axis `Sequential`).
-    Partition,
-}
-
-/// Several axes' work distributed as one.
-///
-/// Dealing each axis on its own gives an instance the product of its per-axis runs, which is a
-/// box of the grid. These axes are read as a single index instead, so an instance takes a share
-/// of the whole rather than a box of it: the shares that no box can describe are exactly the ones
-/// that balance a grid its shape cannot divide.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct Work {
-    axes: Vec<Axis>,
-    dist: Spatial,
-}
-
-impl Work {
-    pub(crate) fn new(axes: Vec<Axis>, dist: Spatial) -> Self {
-        Work { axes, dist }
-    }
-
-    /// The axes read as one index.
-    pub(crate) fn axes(&self) -> &[Axis] {
-        &self.axes
-    }
-
-    pub(crate) fn scope(&self) -> ComputeScope {
-        self.dist.scope()
-    }
-
-    /// How many instances share the work. Pinned, not derived: the index's length is the whole
-    /// level's grid and can be runtime, so nothing here could divide it.
-    pub(crate) fn instances(&self) -> usize {
-        match self.dist.coverage() {
-            Coverage::Instances(n) => n,
-            Coverage::TilesEach(_) => panic!(
-                "Level::new: state how many instances share the work (`.instances(n)`); a \
-                 share of the whole cannot be derived from a grid whose length is only known at \
-                 launch"
-            ),
-        }
-    }
-}
-
 /// One decomposition level of a space: every axis's sub-tile edge and distribution, in the
 /// space's canonical axis order, plus the axes it distributes as one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -538,5 +434,109 @@ impl LevelCuts {
             }
         }
         self
+    }
+}
+
+/// Several axes' work distributed as one.
+///
+/// Dealing each axis on its own gives an instance the product of its per-axis runs, which is a
+/// box of the grid. These axes are read as a single index instead, so an instance takes a share
+/// of the whole rather than a box of it: the shares that no box can describe are exactly the ones
+/// that balance a grid its shape cannot divide.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Work {
+    axes: Vec<Axis>,
+    dist: Spatial,
+}
+
+impl Work {
+    pub(crate) fn new(axes: Vec<Axis>, dist: Spatial) -> Self {
+        Work { axes, dist }
+    }
+
+    /// The axes read as one index.
+    pub(crate) fn axes(&self) -> &[Axis] {
+        &self.axes
+    }
+
+    pub(crate) fn scope(&self) -> ComputeScope {
+        self.dist.scope()
+    }
+
+    /// How many instances share the work. Pinned, not derived: the index's length is the whole
+    /// level's grid and can be runtime, so nothing here could divide it.
+    pub(crate) fn instances(&self) -> usize {
+        match self.dist.coverage() {
+            Coverage::Instances(n) => n,
+            Coverage::TilesEach(_) => panic!(
+                "Level::new: state how many instances share the work (`.instances(n)`); a \
+                 share of the whole cannot be derived from a grid whose length is only known at \
+                 launch"
+            ),
+        }
+    }
+}
+
+/// How finely a level separates its tiles: the smallest hardware scope any of its axes rides.
+/// Decided once, when the level is built, so no consumer re-folds the per-axis distributions.
+///
+/// The finest scope wins. A level with an axis on a cube dim and another on planes reaches
+/// inside a cube, and what a level separates inside a cube the cube's own cooperative
+/// transports already spread.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub(crate) enum LevelScope {
+    /// Every axis `Sequential`: one instance walks the whole grid.
+    Sequential,
+    /// Some axis rides a cube dim and none reaches inside a cube, so the level separates
+    /// exactly what the launch grid does.
+    Cubes,
+    /// Some axis rides the cube's planes.
+    Planes,
+    /// Some axis rides a plane's lanes.
+    Lanes,
+}
+
+impl LevelScope {
+    fn of(dist: Distribution) -> Self {
+        match dist.scope() {
+            None => LevelScope::Sequential,
+            Some(ComputeScope::Cube(_)) => LevelScope::Cubes,
+            Some(ComputeScope::Plane) => LevelScope::Planes,
+            Some(ComputeScope::Unit) => LevelScope::Lanes,
+        }
+    }
+
+    /// The coarse reading, for consumers that only ask whether the level spreads at all.
+    pub(crate) fn role(self) -> LevelRole {
+        match self {
+            LevelScope::Sequential => LevelRole::Partition,
+            LevelScope::Cubes | LevelScope::Planes | LevelScope::Lanes => LevelRole::Instance,
+        }
+    }
+}
+
+/// Whether a level spreads its tiles across hardware at all, which is all most consumers ask.
+/// A view over [`LevelScope`], never stored: the scope is the level's own state.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum LevelRole {
+    /// Spreads its tiles across hardware instances (`Spatial` on some axis).
+    Instance,
+    /// Partitions its tiles sequentially across a grid (every axis `Sequential`).
+    Partition,
+}
+
+/// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
+#[derive(Clone, Copy, Debug)]
+struct Cut {
+    edge: usize,
+    dist: Distribution,
+}
+
+impl Cut {
+    fn sequential(edge: usize) -> Self {
+        Cut {
+            edge,
+            dist: Distribution::Sequential,
+        }
     }
 }
