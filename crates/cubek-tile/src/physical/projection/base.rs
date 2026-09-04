@@ -2,7 +2,7 @@
 //! module doc derives, assembled from one [`PhysicalAxisMap`] per physical axis.
 
 use crate::Addressed;
-use cubecl::zspace::SmallVec;
+use cubecl::zspace::{SmallVec, metadata::Metadata};
 
 use crate::{
     Axis, Composition, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale,
@@ -447,6 +447,67 @@ impl Projection {
         }
     }
 }
+impl Projection {
+    /// The projection `axes` have in the buffer `meta` describes: each axis
+    /// over as many physical axes as its metadata's [`Tiling`] gives it
+    /// fragments, in [`StorageTiling`]'s level-major order. An untiled tensor
+    /// gives [`direct`](Projection::direct).
+    ///
+    /// # Panics
+    ///
+    /// If the fragments of `axes` do not add up to the buffer's rank: the
+    /// caller binding the wrong operand to the wrong buffer.
+    pub fn stored(axes: &[Axis], meta: &Metadata) -> Self {
+        let fragments = meta.tiling.fragments(axes.len());
+        assert_eq!(
+            fragments.iter().sum::<usize>(),
+            meta.rank(),
+            "Projection::stored: {} axes stored as {fragments:?} fragments for a buffer of rank {}",
+            axes.len(),
+            meta.rank()
+        );
+        Projection::tiled(axes, StorageTiling::per_axis(&fragments))
+    }
+}
+
+#[cfg(test)]
+mod stored_tests {
+    use super::*;
+    use cubecl::zspace::Tiling;
+
+    /// A `[b, m, k]` buffer stored `[Bs, Mx, Ky, Mi, Kj]` projects as the
+    /// tiling a caller would have stated by hand, and an untiled one as
+    /// `direct`.
+    #[test]
+    fn stored_reads_the_tiling_off_the_metadata() {
+        let (b, m, k) = (Axis(19), Axis(20), Axis(21));
+        let meta = Metadata::new(
+            [2, 128, 344, 32, 32],
+            [128 * 344 * 1024, 344 * 1024, 1024, 32, 1],
+        )
+        .with_tiling(Tiling::new(&[1, 2, 2]).unwrap())
+        .unwrap();
+        assert_eq!(
+            Projection::stored(&[b, m, k], &meta),
+            Projection::tiled(&[b, m, k], StorageTiling::suffix(3, 1, 1))
+        );
+        let plain = Metadata::new([2, 4096, 11008], [4096 * 11008, 11008, 1]);
+        assert_eq!(
+            Projection::stored(&[b, m, k], &plain),
+            Projection::direct(&[b, m, k])
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "fragments for a buffer of rank")]
+    fn stored_refuses_axes_whose_fragments_miss_the_rank() {
+        let meta = Metadata::new([4, 4, 4, 4], [64, 16, 4, 1])
+            .with_tiling(Tiling::new(&[2, 2]).unwrap())
+            .unwrap();
+        Projection::stored(&[Axis(1), Axis(2), Axis(3)], &meta);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
