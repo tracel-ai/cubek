@@ -44,15 +44,15 @@ pub struct MemData<T: Numeric> {
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
-    /// What the plane's lanes are to these cells. The share is stamped across [`at`](Tile::at)s,
-    /// since the level that spreads an axis is consumed on the way down; the work is settled at
-    /// construction, being a fact about the whole space.
+    /// What the plane's lanes are to these cells. Both halves are stamped across
+    /// [`at`](Tile::at)s, since the level that spreads an axis is only known on the way down.
     #[cube(comptime)]
     pub(crate) lanes: Lanes,
-    /// What one instance holds of these cells, settled at construction: only the whole space can
-    /// tell a split from a cut whose edge is the whole axis. This and [`lanes`](Self::lanes) are
-    /// read by accumulators alone, and both are `Partial` on an operand merely orthogonal to a
-    /// split, where they mean nothing.
+    /// What one instance holds of these cells, stamped across [`at`](Tile::at)s like
+    /// [`lanes`](Self::lanes): each level's whole space still has the axis this operand's
+    /// projection dropped, which is what tells a split from a cut whose edge is the whole axis.
+    /// Both are read by accumulators alone, and both are `Partial` on an operand merely
+    /// orthogonal to a split, where they mean nothing.
     #[cube(comptime)]
     pub(crate) split_share: SplitShare,
     /// What the accumulation being lowered right now starts from ([`InitFrom`]). Not a claim about

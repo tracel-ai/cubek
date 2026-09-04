@@ -1,13 +1,11 @@
-//! How a level of the space splits, and the [`Walk`] it produces.
+//! How a level of the space splits ([`Level`]), and the [`Walk`] it produces.
 
 mod distribution;
-mod partitioner;
-mod tiling;
+mod level;
 mod walk;
 mod walk_order;
 
 pub use distribution::*;
-pub use partitioner::*;
-pub use tiling::*;
+pub use level::*;
 pub use walk::*;
 pub use walk_order::*;

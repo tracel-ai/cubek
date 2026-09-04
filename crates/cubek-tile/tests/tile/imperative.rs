@@ -24,22 +24,24 @@ fn ring_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] block: Level,
+    #[comptime] cell: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
 
     // The cube's walk: one block of K per region, both operands staged for it.
-    let walk = Walk::over(c.op_space(&a, &b));
+    let walk = c.op_space(&a, &b).level(comptime!(block.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
             // The block's own grid of final tiles, each contracted by the leaf.
-            for cell in Walk::over(c_block.op_space(a_s, b_s)) {
+            for cell in c_block.op_space(a_s, b_s).level(comptime!(cell.clone())) {
                 let mut c_cell = c_block.at(&cell);
                 c_cell.mma_with(
                     &a_s.at(&cell),
@@ -56,33 +58,34 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
         .level(|l| {
             l.walk(&[(M, m), (N, n), (K, block_k)]);
         })
         .level(|l| {
             l.walk(&[(M, tile), (N, tile), (K, tile)]);
-        })
-        .build();
+        });
 
-    let a = TileInput::builder(&client, space.project(&[M, K]))
+    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
         .tile(&[tile, tile])
         .arange();
-    let b = TileInput::builder(&client, space.project(&[K, N]))
+    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
         .tile(&[tile, tile])
         .arange();
-    let c = TileInput::builder(&client, space.project(&[M, N]))
+    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
     ring_matmul::launch(
         &client,
-        space.cube_count(),
+        nest.cube_count(),
         CubeDim::new_single(),
         a.arg(),
         b.arg(),
         c.arg(),
-        space,
+        nest.space.clone(),
+        nest.at(0),
+        nest.at(1),
         depth,
         dtype,
     );

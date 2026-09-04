@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, Launcher, StorageTiling};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Nest, Space, StorageTiling};
 
 use crate::{
     definition::{
@@ -12,7 +12,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{
         base::CpuGemmRoutine,
-        kernel::{cpu_gemm_kernel, cpu_gemm_space},
+        kernel::{cpu_gemm_kernel, cpu_gemm_levels},
     },
     tiled::{K, M, N, batch_axis},
 };
@@ -177,7 +177,14 @@ pub fn launch_ref(
 
     // The kernel's own statement of the space, with this launch's extents stamped on: geometry
     // off the concrete extents, overhang checks derived per operand, all inside the launcher.
-    let launch = Launcher::new(client, cpu_gemm_space(&blueprint, &batch_axes, k), &extents);
+    let launch = Launcher::new(
+        client,
+        &Nest::new(
+            Space::new(&extents),
+            cpu_gemm_levels(&blueprint, &batch_axes, k),
+        ),
+        KernelForm::Dynamic,
+    );
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher

@@ -57,16 +57,13 @@ impl<T: Numeric> ProceduralData<T> {
             });
             bound.push(extent);
         }
-        let bounded_axes = comptime!(
-            space
-                .axes()
-                .filter(|&a| !space.is_dynamic(a) && space.overhangs(a))
-                .collect::<Vec<_>>()
-        );
+        // Nothing has cut this tile yet: an axis overhangs once a level's edge fails to divide
+        // it, which `at` records on the way down.
+        let bounded_axes = comptime!(Vec::new());
         ProceduralData::<T> {
             origin,
             bound,
-            bounds_check: comptime!(!bounded_axes.is_empty()),
+            bounds_check: comptime!(false),
             bounded_axes,
             normalization: None,
             recipe,
@@ -80,17 +77,31 @@ impl<T: Numeric> ProceduralData<T> {
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = comptime!(space.axis_at(p));
-            let edge = comptime!(space.partitioner().edge(axis) as u32);
+            let edge = comptime!(region.level.edge(axis) as u32);
             origin.push(self.origin.at(p) + region.coord(axis).fcast::<u32>() * edge);
         }
+        // An axis this level cuts unevenly leaves a partial tile below; from here down every
+        // read along it is checked.
+        let bounded_axes = comptime!({
+            let mut axes = self.bounded_axes.clone();
+            for axis in space.axes() {
+                if !space.is_dynamic(axis)
+                    && region.level.overhangs(&space, axis)
+                    && !axes.contains(&axis)
+                {
+                    axes.push(axis);
+                }
+            }
+            axes
+        });
         ProceduralData::<T> {
             origin,
             bound: self.bound.clone(),
-            bounds_check: comptime!(self.bounds_check),
-            bounded_axes: comptime!(self.bounded_axes.clone()),
+            bounds_check: comptime!(!bounded_axes.is_empty()),
+            bounded_axes,
             normalization: comptime!(self.normalization.clone()),
             recipe: self.recipe.clone(),
-            space: comptime!(space.divide()),
+            space: comptime!(region.level.child(&space)),
             _marker: PhantomData,
         }
     }

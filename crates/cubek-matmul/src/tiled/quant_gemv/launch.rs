@@ -12,7 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{Launcher, PhysicalAxisMap, Projection};
+use cubek_tile::{KernelForm, Launcher, Nest, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -21,7 +21,7 @@ use crate::{
         M, N,
         quant_gemv::{
             base::{QuantGemvProblem, QuantGemvRoutine},
-            kernel::{KB, KI, quant_gemv_kernel, quant_gemv_space},
+            kernel::{KB, KI, quant_gemv_kernel, quant_gemv_levels, quant_gemv_space},
         },
     },
 };
@@ -76,7 +76,14 @@ pub fn launch_ref(
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch = Launcher::new(client, quant_gemv_space(&blueprint, problem), &[]);
+    let launch = Launcher::new(
+        client,
+        &Nest::new(
+            quant_gemv_space(problem),
+            quant_gemv_levels(&blueprint, problem),
+        ),
+        KernelForm::Static,
+    );
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;
     // the scales span `KB` alone and address it as it stands.

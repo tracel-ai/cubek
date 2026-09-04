@@ -31,18 +31,20 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
     #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(I)] _b_dtype: ElemType,
     #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let c = c.tile(space);
-    let cubes = Walk::over(c.op_space(&a, &b));
+    let c = c.tile(comptime!(space.clone()));
+    let cubes = c.op_space(&a, &b).level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&cubes, &a, &b, StageStorage::Strided, 1usize);
     pipelined(cubes, &mut ring, |slot, region| {
         let c_cube = c.at(region);
         slot.consume(|a_s, b_s| {
-            for region in Walk::over(c_cube.op_space(a_s, b_s)) {
+            for region in c_cube.op_space(a_s, b_s).level(comptime!(inner.clone())) {
                 let mut c_lane = c_cube.at(&region);
                 c_lane.mma_with(
                     &a_s.at(&region),
@@ -125,20 +127,35 @@ impl TileQuantStageBench {
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. The kernel stages both
     /// inputs at L0 and reads windows of the stage at L1, which is the staging this bench
     /// measures. The output stages nothing.
-    fn space(&self) -> Space {
+    fn extents(&self) -> Vec<(Axis, usize)> {
+        vec![(M, self.m), (N, self.n), (K, self.k)]
+    }
+
+    /// Two levels: a strip of `tn` columns per cube, `K` in `tk` steps; then `un` columns per
+    /// lane.
+    fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         let tn = plane_size * un;
-        Tiling::over(&[(M, self.m), (N, self.n), (K, self.k)])
-            .level(|l| {
+        let axes = [M, N, K];
+        vec![
+            Level::new(&axes, |l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, tn)])
                     .walk(&[(M, self.m), (K, self.tk)]);
-            })
-            .level(|l| {
+            }),
+            Level::new(&axes, |l| {
                 l.distribute(lanes(plane_size), &[(N, un)])
                     .walk(&[(M, self.m), (K, self.tk)]);
-            })
-            .build()
+            }),
+        ]
+    }
+
+    fn nest(&self) -> Nest {
+        Nest::new(Space::new(&self.extents()), self.levels())
+    }
+
+    fn space(&self) -> Space {
+        Space::new(&self.extents())
     }
 }
 
@@ -164,8 +181,7 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let space = self.space();
-        let launcher = Launcher::new(&self.client, space, &[]);
+        let launcher = Launcher::new(&self.client, &self.nest(), KernelForm::Static);
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
         let b = launcher
             .arg(b.tile.handle().binding())
@@ -191,6 +207,8 @@ impl Benchmark for TileQuantStageBench {
             b.arg(),
             c.arg(),
             launcher.space().clone(),
+            launcher.concrete().at(0),
+            launcher.concrete().at(1),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

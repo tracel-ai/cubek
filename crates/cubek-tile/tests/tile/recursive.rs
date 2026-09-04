@@ -34,7 +34,7 @@ fn recursive_two_level_tiled_view() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        space,
+        space.clone(),
         f32::elem_type_native(),
     );
 
@@ -64,7 +64,7 @@ fn copy_logical<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let mut output = output.tile(comptime!(space.clone()));
     let r = input.view::<Const<1>>();
     let mut w = output.view_mut::<Const<1>>();
     let shape = r.shape();

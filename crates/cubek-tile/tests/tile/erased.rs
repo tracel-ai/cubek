@@ -88,20 +88,18 @@ macro_rules! output_arg {
     };
 }
 
-/// The space both kernels walk, cut so the store is not one contiguous run,
+/// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
-fn space() -> Space {
-    Tiling::over(&[(ROW, ROWS), (COL, COLS)])
-        .level(|level| {
-            level.walk(&[(ROW, 2), (COL, 3)]);
-        })
-        .build()
+fn space() -> Nest {
+    Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
+        level.walk(&[(ROW, 2), (COL, 3)]);
+    })
 }
 
 fn run(sink: bool) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let space = space();
+    let nest = space();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -109,18 +107,18 @@ fn run(sink: bool) -> HostData {
     match sink {
         true => sink_kernel::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            nest.cube_count(),
+            nest.cube_dim(&client),
             output_arg!(output),
-            space.clone(),
+            nest.space.clone(),
             dtype,
         ),
         false => buffer_kernel::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            nest.cube_count(),
+            nest.cube_dim(&client),
             output_arg!(output),
-            space.clone(),
+            nest.space.clone(),
             dtype,
         ),
     }
@@ -185,7 +183,7 @@ fn derived_sink_kernel<E: Float>(
         spec,
         Write::Replace,
     );
-    let src = Tile::<E>::procedural::<Position>(space, Position {});
+    let src = Tile::<E>::procedural::<Position>(comptime!(space.clone()), Position {});
     dst.copy_from(&src);
 }
 
@@ -196,7 +194,7 @@ fn derived_sink_kernel<E: Float>(
 fn a_launcher_derived_spec_addresses_the_sink() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space().launcher_over(&client, &[]);
+    let launcher = Launcher::new(&client, &space(), KernelForm::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -255,16 +253,30 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut c = c.tile(comptime!(space.clone()));
+    let mut acc = c.block_accumulator::<EA, E>(
+        &a,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -282,6 +294,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
@@ -298,10 +311,23 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         comptime!(c.spec.clone()),
         Write::Replace,
     );
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, E>(
+        &a,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -320,6 +346,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
@@ -334,11 +361,24 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         comptime!(a.spec.clone()),
     );
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut c = c.tile(comptime!(space.clone()));
+    let mut acc = c.block_accumulator::<EA, E>(
+        &a,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -358,38 +398,31 @@ enum Backed {
 
 /// `K` walked in four steps above a one-block leaf: every step returns to the same promoted
 /// accumulator, so the destination is touched exactly once, on the drain.
-fn matmul_space() -> Space {
+fn matmul_space() -> Nest {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    let partitioner = Partitioner::over(
-        ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
-        ByAxis::new(&[
-            (M, Distribution::Sequential),
-            (N, Distribution::Sequential),
-            (K, Distribution::Sequential),
-        ]),
-    )
-    .level();
-    Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner)
+    Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
+        l.walk(&[(M, edge), (N, edge), (K, edge)]);
+    })
 }
 
 fn run_matmul(backed: Backed) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let space = matmul_space();
+    let nest = matmul_space();
 
-    let a = TileInput::builder(&client, space.project(&[M, K]))
+    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, space.project(&[K, N]))
+    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
     // that folded the destination in instead of writing it would show up as the poison.
-    let c = TileInput::builder(&client, space.project(&[M, N]))
+    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
-    let (count, dim) = (space.cube_count(), space.cube_dim(&client));
+    let (count, dim) = (nest.cube_count(), nest.cube_dim(&client));
     match backed {
         Backed::Sink => sink_matmul::launch(
             &client,
@@ -398,7 +431,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            space.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -409,7 +443,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            space.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -420,7 +455,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            space.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -494,12 +530,10 @@ const MASKED_ROWS: usize = 5;
 /// lines and re-express every coarser stride as `stride / 2`, arithmetic a stated geometry runs
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
-fn masked_space() -> Space {
-    Tiling::over(&[(ROW, MASKED_ROWS), (COL, COLS)])
-        .level(|level| {
-            level.walk(&[(ROW, 2), (COL, 2)]);
-        })
-        .build()
+fn masked_space() -> Nest {
+    Nest::new(Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]), vec![]).level(|level| {
+        level.walk(&[(ROW, 2), (COL, 2)]);
+    })
 }
 
 /// [`buffer_kernel`] at a served width of two.
@@ -519,7 +553,7 @@ fn wide_buffer_kernel<E: Float>(
     dst.copy_from(&src);
 }
 
-/// [`sink_kernel`] at a served width of two, over the same masked space.
+/// [`sink_kernel`] at a served width of two, over the same masked nest.
 #[cube(launch)]
 fn wide_sink_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
@@ -577,7 +611,7 @@ enum Erased {
 fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = masked_space().launcher(&client);
+    let launcher = Launcher::new(&client, &masked_space(), KernelForm::Dynamic);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()

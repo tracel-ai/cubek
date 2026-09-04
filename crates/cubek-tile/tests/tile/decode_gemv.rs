@@ -47,6 +47,9 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
+    #[comptime] cube: Level,
+    #[comptime] plane: Level,
+    #[comptime] lane: Level,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -54,19 +57,30 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut out = out.tile(space);
-    out.zero();
-    for region in Walk::over(out.op_space(&w, &x)) {
+    let out = out.tile(comptime!(space.clone()));
+    // This instance's windows of `out`, each initialized once: the level projected
+    // onto `out`'s own axes walks nothing it does not span.
+    for region in out.runtime_space().level(comptime!(cube.clone())) {
+        let mut out_w = out.at(&region);
+        out_w.zero();
+    }
+    for region in out.op_space(&w, &x).level(comptime!(cube.clone())) {
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
+        for region in out_cube
+            .op_space(&w_cube, &x_cube)
+            .level(comptime!(plane.clone()))
+        {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
+            for region in out_plane
+                .op_space(&w_plane, &x_plane)
+                .level(comptime!(lane.clone()))
+            {
                 let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&region),
@@ -95,6 +109,9 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
+    #[comptime] cube: Level,
+    #[comptime] plane: Level,
+    #[comptime] lane: Level,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -102,21 +119,35 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut out = out.tile(space);
-    let mut acc =
-        out.block_accumulator::<E, E>(&w, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
+    let mut out = out.tile(comptime!(space.clone()));
+    let mut acc = out.block_accumulator::<E, E>(
+        &w,
+        comptime!(Fragments::new(
+            &out.space,
+            &w.space,
+            &[cube.clone(), plane.clone(), lane.clone()]
+        )),
+        comptime!(RegisterBlock::new(budget)),
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(acc.op_space(&w, &x)) {
+    for region in acc.op_space(&w, &x).level(comptime!(cube.clone())) {
         let acc_cube = acc.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in Walk::over(acc_cube.op_space(&w_cube, &x_cube)) {
+        for region in acc_cube
+            .op_space(&w_cube, &x_cube)
+            .level(comptime!(plane.clone()))
+        {
             let acc_plane = acc_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in Walk::over(acc_plane.op_space(&w_plane, &x_plane)) {
+            for region in acc_plane
+                .op_space(&w_plane, &x_plane)
+                .level(comptime!(lane.clone()))
+            {
                 let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
                     &w_plane.at(&region),
@@ -197,28 +228,27 @@ fn serving_geometry(promoted: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let space = Tiling::over(&[(M, d_out), (N, n), (KB, blocks), (KI, block)])
-        // A strip of output rows per cube, walking all of `K`.
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
-                .walk(&[(N, n), (KB, blocks), (KI, block)]);
-        })
-        // One plane per group of rows.
-        .level(|l| {
-            l.distribute(planes(), &[(M, rows_per_plane)]).walk(&[
-                (N, n),
-                (KB, blocks),
-                (KI, block),
-            ]);
-        })
-        // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
-        // stored word each along `KI`, so a step reads one contiguous span of the block.
-        .level(|l| {
-            l.distribute(lanes(groups), &[(M, rows_per_lane)])
-                .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
-                .walk(&[(N, n), (KB, 1)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    // A strip of output rows per cube, walking all of `K`.
+    .level(|l| {
+        l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
+            .walk(&[(N, n), (KB, blocks), (KI, block)]);
+    })
+    // One plane per group of rows.
+    .level(|l| {
+        l.distribute(planes(), &[(M, rows_per_plane)])
+            .walk(&[(N, n), (KB, blocks), (KI, block)]);
+    })
+    // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
+    // stored word each along `KI`, so a step reads one contiguous span of the block.
+    .level(|l| {
+        l.distribute(lanes(groups), &[(M, rows_per_lane)])
+            .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
+            .walk(&[(N, n), (KB, 1)]);
+    });
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
     let budget = rows_per_lane * factor;
 
@@ -245,7 +275,7 @@ fn serving_geometry(promoted: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = space.clone().launcher_over(&client, &[]);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Static);
     let w_op = launcher
         .arg(w_tensor.binding())
         .gathered(Projection::new(
@@ -288,7 +318,6 @@ fn serving_geometry(promoted: bool) {
         .build();
 
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
-    let kernel_space = launcher.space().clone();
     if promoted {
         decode_gemv_promoted::launch(
             &client,
@@ -300,7 +329,10 @@ fn serving_geometry(promoted: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            kernel_space,
+            launcher.space().clone(),
+            launcher.concrete().at(0),
+            launcher.concrete().at(1),
+            launcher.concrete().at(2),
             budget,
             [dtype, dtype],
         );
@@ -315,7 +347,10 @@ fn serving_geometry(promoted: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            kernel_space,
+            launcher.space().clone(),
+            launcher.concrete().at(0),
+            launcher.concrete().at(1),
+            launcher.concrete().at(2),
             budget,
             [dtype, dtype],
         );

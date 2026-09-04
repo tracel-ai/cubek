@@ -53,7 +53,7 @@ fn packed_copy<O: Numeric, V: Size>(
     #[define(O)] _dtype: ElemType,
 ) {
     let input = input.tile_packed::<O>(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }
 
@@ -66,15 +66,16 @@ fn packed_matmul<E: Numeric>(
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in c.op_space(&w, &x).level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -95,6 +96,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     global: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
@@ -102,9 +104,9 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in c.op_space(&w, &x).level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -176,16 +178,18 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     nvfp4_shaped_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -224,7 +228,8 @@ fn nvfp4_shaped_decode() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -256,15 +261,16 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&x, &w)) {
+    for region in c.op_space(&x, &w).level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &x.at(&region),
@@ -287,15 +293,16 @@ fn native_matmul<E: Numeric>(
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in c.op_space(&w, &x).level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -317,17 +324,27 @@ fn packed_gemv<E: Numeric, V: Size>(
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     // The accumulator lives in registers across the whole walk and drains once.
-    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &x,
+        comptime!(Fragments::new(
+            &c.space,
+            &x.space,
+            std::slice::from_ref(&level)
+        )),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(acc.op_space(&x, &w)) {
+    for region in acc.op_space(&x, &w).level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &x.at(&region),
@@ -398,7 +415,7 @@ fn eight_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.clone(),
         dtype,
     );
 
@@ -471,7 +488,7 @@ fn four_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.clone(),
         dtype,
     );
 
@@ -546,7 +563,7 @@ fn fp4_codes_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.clone(),
         dtype,
     );
 
@@ -619,7 +636,7 @@ fn two_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.clone(),
         dtype,
     );
 
@@ -692,16 +709,18 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     packed_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -735,7 +754,8 @@ fn a_packed_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -807,16 +827,18 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     packed_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -849,7 +871,8 @@ fn eight_bit_fields_contract_against_their_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -927,22 +950,24 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    });
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -985,7 +1010,8 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1063,22 +1089,24 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    });
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1121,7 +1149,8 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1204,22 +1233,24 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    });
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1262,7 +1293,8 @@ fn several_lines_may_share_one_scale() {
                 ],
             )),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1323,16 +1355,18 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![],
+    )
+    .level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
+    });
 
     native_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1364,7 +1398,8 @@ fn an_i8_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1444,13 +1479,16 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
@@ -1458,13 +1496,12 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
             (KB, 1),
             (KI, block_k),
         ]);
-    })
-    .build();
+    });
 
     packed_gemv::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1507,7 +1544,8 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1581,13 +1619,16 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
+    let nest = Nest::new(
+        Space::new(&[
+            (M, 1),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![],
+    )
     .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
@@ -1595,13 +1636,12 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
             (KB, 1),
             (KI, block_k),
         ]);
-    })
-    .build();
+    });
 
     packed_gemv::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1644,7 +1684,8 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 
@@ -1669,14 +1710,24 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     c: &TileArg<'_, E, V>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    let mut c = c.tile(comptime!(space.clone()));
+    let mut acc = c.block_accumulator::<E, E>(
+        &x,
+        comptime!(Fragments::new(
+            &c.space,
+            &x.space,
+            std::slice::from_ref(&level)
+        )),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(acc.op_space(&x, &w)) {
+    for region in acc.op_space(&x, &w).level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
     }
@@ -1739,17 +1790,19 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(N, bn)])
-                .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
+        vec![],
+    )
+    .level(|l| {
+        l.distribute(cubes(CubeAxis::X), &[(N, bn)])
+            .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
+    });
 
     packed_gemv_unscaled::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1776,7 +1829,8 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.space.clone(),
+        nest.at(0),
         dtype,
     );
 

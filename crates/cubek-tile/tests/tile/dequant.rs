@@ -33,7 +33,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
 ) {
     let weights = weights.tile_packed::<E>(comptime!(space.clone()));
     let scales = scales.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
+    let mut out = out.tile(comptime!(space.clone()));
     out.mul(&weights, &scales);
 }
 
@@ -67,11 +67,13 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let space = Tiling::over(&[(ROW, rows), (CB, blocks), (CI, inside)])
-        .level(|level| {
-            level.walk(&[(ROW, rows), (CB, blocks), (CI, inside)]);
-        })
-        .build();
+    let nest = Nest::new(
+        Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
+        vec![],
+    )
+    .level(|level| {
+        level.walk(&[(ROW, rows), (CB, blocks), (CI, inside)]);
+    });
 
     // Shape and strides count values; the packing says how many share a stored word.
     let w_tensor = TensorHandle::new_contiguous(
@@ -99,7 +101,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = space.clone().launcher(&client);
+    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
     let w_op = launcher
         .arg(w_tensor.clone().binding())
         .gathered(split())
@@ -128,7 +130,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),
-        space,
+        nest.space.clone(),
         [dtype, dtype],
     );
 

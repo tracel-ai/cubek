@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, Distribution, LevelRole, MAX_AXES, Partitioner};
+use crate::{Axis, ByAxis, Level, MAX_AXES};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -89,33 +89,29 @@ impl Extents {
 #[derive(CubeType, Clone, Debug)]
 pub struct Space {
     pub(crate) extents: Extents,
-    #[cube(comptime)]
-    partitioner: Partitioner,
 }
 
-// Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
+// Identity is the comptime extents only; the `Extents` sizes are runtime, never a key.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
-        self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
+        self.extents.kinds == other.extents.kinds
     }
 }
 impl Eq for Space {}
 impl std::hash::Hash for Space {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.extents.kinds.hash(state);
-        self.partitioner.hash(state);
     }
 }
 
-/// Comptime tiling spec read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
-/// `Space`, so only [`Walk::over`](crate::Walk), which takes the runtime operation space
+/// Comptime extents read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
+/// `Space`, so only [`Space::level`], which takes the runtime operation space
 /// [`witnessed_space`](crate::witnessed_space) builds from an op's operands, needs these;
 /// everything else calls the host methods directly.
 impl SpaceExpand {
     fn comptime(&self) -> Space {
         Space {
             extents: Extents::fixed(self.extents.kinds.clone()),
-            partitioner: self.partitioner.clone(),
         }
     }
 
@@ -131,24 +127,19 @@ impl SpaceExpand {
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.kinds.axis_at(i)
     }
-
-    pub fn partitioner(&self) -> Partitioner {
-        self.partitioner.clone()
-    }
 }
 
 #[cube]
 impl Space {
-    /// The runtime operation space for a tiling level: the comptime tiling spec plus the runtime
-    /// `sizes` of its `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
-    /// [`Walk::over`](crate::Walk) reads them through [`Extents::count`].
+    /// The runtime operation space: the comptime space plus the runtime `sizes` of its
+    /// `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
+    /// [`Space::level`] reads them through [`Extents::count`].
     pub(crate) fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
         Space {
             extents: Extents {
                 kinds: comptime!(space.extents.kinds.clone()),
                 sizes,
             },
-            partitioner: comptime!(space.partitioner.clone()),
         }
     }
 }
@@ -162,15 +153,22 @@ impl Space {
         Space::from_extents(&extents)
     }
 
+    /// Every axis dynamic: the kernel form, its extents resolved in-kernel
+    /// from the tensors, so one compiled kernel serves every shape. The launch stamps the real
+    /// extents on with [`with_extents`](Space::with_extents).
+    pub fn dynamic(axes: &[Axis]) -> Self {
+        let extents: Vec<_> = axes.iter().map(|&a| (a, Extent::Dynamic)).collect();
+        Space::from_extents(&extents)
+    }
+
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
     pub(crate) fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
-            partitioner: Partitioner::Final,
         }
     }
 
-    /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), keeping the partitioner. The
+    /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), The
     /// launch side computes geometry from the concrete (real-extent) space, then derives the
     /// kernel's space with this so distinct input shapes hit one compiled kernel.
     pub fn with_dynamic(mut self, axes: &[Axis]) -> Self {
@@ -189,15 +187,15 @@ impl Space {
         self
     }
 
-    /// Every axis [`Dynamic`]: the kernel form for an operation whose problem dims are all
+    /// Every axis dynamic: the kernel form for an operation whose problem dims are all
     /// runtime (the common case; see [`with_dynamic`](Space::with_dynamic)).
     pub fn all_dynamic(self) -> Self {
         let axes: Vec<_> = self.axes().collect();
         self.with_dynamic(&axes)
     }
 
-    /// Stamp the real `extents` onto this space's axes, keeping the partitioner: the launch's
-    /// concrete twin of a kernel-form space built with [`Tiling::axes`](crate::Tiling::axes),
+    /// Stamp the real `extents` onto this space's axes, the launch's
+    /// concrete twin of a kernel-form space built with [`dynamic`](Space::dynamic),
     /// which is what geometry, overhang and the launch grid are read off. Every listed axis must
     /// be one of this space's.
     pub fn with_extents(mut self, extents: &[(Axis, usize)]) -> Self {
@@ -221,21 +219,6 @@ impl Space {
         self
     }
 
-    /// Chain coarse-to-fine for multi-level tiling; each call appends to the end of
-    /// the chain (see [`Partitioner::append`]).
-    pub fn with_partitioner(mut self, partitioner: Partitioner) -> Self {
-        self.partitioner = self.partitioner.append(partitioner);
-        self
-    }
-
-    pub fn partitioner(&self) -> &Partitioner {
-        &self.partitioner
-    }
-
-    pub fn is_final(&self) -> bool {
-        self.partitioner.is_final()
-    }
-
     /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
     /// smem consumers all run on fully-divided (`Static`) spaces, so this is what they call.
     pub fn extent(&self, axis: Axis) -> usize {
@@ -257,54 +240,12 @@ impl Space {
         self.axes().all(|axis| !self.is_dynamic(axis))
     }
 
-    /// Whether this level's walk is host data: every extent `Static` and every axis
-    /// `Sequential` (no hardware digit to decode), so an unrolled walk's regions fold
-    /// to comptime coordinates.
-    pub(crate) fn static_walkable(&self) -> bool {
-        self.is_static()
-            && self.axes().all(|axis| {
-                matches!(
-                    self.partitioner().distribution(axis),
-                    Distribution::Sequential
-                )
-            })
-    }
-
     pub fn extent_at(&self, i: usize) -> usize {
         self.extent(self.axis_at(i))
     }
 
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.axis_at(i)
-    }
-
-    /// Whether axis position `p` is `Spatial` `TilesEach(1)`: its walk count is
-    /// comptime `1`, so a step decode can skip it.
-    pub(crate) fn single_tile_at(&self, p: usize) -> bool {
-        self.partitioner()
-            .distribution(self.axis_at(p))
-            .single_tile()
-    }
-
-    /// Whether this level cuts `axis` into a single, statically-known tile, so its walk
-    /// coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis (only the top
-    /// level) has no comptime count and is never statically single; the `&&` short-circuits
-    /// before [`count`](Space::count), which panics on `Dynamic`.
-    pub(crate) fn single_static_tile(&self, axis: Axis) -> bool {
-        !self.is_dynamic(axis) && self.count(axis) == 1
-    }
-
-    /// Whether this level cuts its tiles into an m×n grid larger than 1×1, so each region must be
-    /// selected by a comptime coordinate. A final tile, an instance level, and a degenerate 1×1
-    /// partition (a k-step walk) all cut nothing.
-    pub(crate) fn cuts_tiles(&self) -> bool {
-        match self.partitioner() {
-            Partitioner::Final => false,
-            Partitioner::Level(level) => match level.role() {
-                LevelRole::Instance => false,
-                LevelRole::Partition => crate::partition_grid(self) != (1, 1),
-            },
-        }
     }
 
     pub fn position(&self, axis: Axis) -> usize {
@@ -319,10 +260,39 @@ impl Space {
         self.extents.contains(axis)
     }
 
+    /// The static extents, in axis order.
+    pub fn extents(&self) -> Vec<(Axis, usize)> {
+        self.axes().map(|axis| (axis, self.extent(axis))).collect()
+    }
+
+    /// The leaf `levels` reach below this space: each level's child of the last.
+    pub fn leaf(&self, levels: &[Level]) -> Space {
+        levels
+            .iter()
+            .fold(self.clone(), |space, level| level.child(&space))
+    }
+
+    /// Whether `axis` overhangs its tiling under `levels`: some level's edge fails to divide the
+    /// extent handed to it (this space's at the first level, the parent edge below), leaving a
+    /// partial tile that needs masking. A dynamic axis panics: the answer
+    /// is the concrete space's, never the kernel-form one's.
+    pub fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
+        assert!(
+            !self.is_dynamic(axis),
+            "Space::overhangs: axis {axis:?} is Dynamic; ask the concrete space"
+        );
+        let mut space = self.clone();
+        for level in levels {
+            if level.overhangs(&space, axis) {
+                return true;
+            }
+            space = level.child(&space);
+        }
+        false
+    }
+
     /// Whether `other` holds the same cells in the same order: the same axes at the same
-    /// positions with the same extents. Two spaces can address one buffer identically and
-    /// still differ (a different partitioner, a different level), so this is what a
-    /// flat-indexing op checks, not equality.
+    /// positions with the same extents. What a flat-indexing op checks.
     pub(crate) fn laid_out_like(&self, other: &Space) -> bool {
         self.rank() == other.rank()
             && (0..self.rank()).all(|p| {
@@ -346,18 +316,8 @@ impl Space {
                 }
             }
         }
-        // Operands of one operation share its partitioner, so the merge carries
-        // the first part that has one.
-        let partitioner = parts
-            .iter()
-            .map(|p| &p.partitioner)
-            .find(|p| !p.is_final())
-            .cloned()
-            .unwrap_or(Partitioner::Final);
-
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
-            partitioner,
         }
     }
 
@@ -368,69 +328,12 @@ impl Space {
             .collect::<Vec<_>>();
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
-            partitioner: self.partitioner.clone(),
         }
-    }
-
-    /// Tiles along `axis`: `ceil(extent / sub-tile edge)`, so an indivisible axis gets a
-    /// trailing partial tile (its overhang is masked at read/write).
-    pub fn count(&self, axis: Axis) -> usize {
-        self.extent(axis).div_ceil(self.partitioner().edge(axis))
-    }
-
-    /// Whether `axis` overhangs its tiling: some level's sub-tile edge fails to divide the
-    /// extent handed to it (the top extent at the first level, the parent edge below), leaving
-    /// a partial tile that needs masking. Host-side, on the concrete (real-extent) space;
-    /// a [`Dynamic`](Extent::Dynamic) axis panics.
-    pub fn overhangs(&self, axis: Axis) -> bool {
-        assert!(
-            !self.is_dynamic(axis),
-            "Space::overhangs: axis {axis:?} is Dynamic; call on the concrete space, not the kernel-form one"
-        );
-        let mut extent = self.extent(axis);
-        let mut partitioner = &self.partitioner;
-        while !partitioner.is_final() {
-            let edge = partitioner.edge(axis);
-            if !extent.is_multiple_of(edge) {
-                return true;
-            }
-            extent = edge;
-            partitioner = partitioner.next();
-        }
-        false
-    }
-
-    /// Whether a walk over this level leaves `operand`'s window unchanged: every axis the
-    /// walk actually steps (more than one tile) is absent from the operand: the same
-    /// structural fact as broadcast omission. A staged walk fills such an operand once, above
-    /// the loop. Host-side, static extents.
-    pub(crate) fn walk_invariant(&self, operand: &Space) -> bool {
-        self.axes()
-            .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
-    }
-
-    /// Whether the final tile spans every axis contracted against `output` whole, so no level
-    /// above the leaf walks a contracted region and no output cell is visited twice.
-    ///
-    /// What lets an accumulation start from its monoid's identity instead of reading the
-    /// accumulator back: the one leaf visit that owns a cell is also the only one, so nothing it
-    /// would have read back is ever a partial. Asked of the operands' [`merge`](Space::merge)
-    /// where there are two.
-    pub(crate) fn spans_contracted_at_leaf(&self, output: &Space) -> bool {
-        let leaf = self.final_space();
-        self.contracting(output).iter().all(|&axis| {
-            // A Dynamic extent is only known at runtime, so whether the leaf spans it whole
-            // cannot be settled here. Reading the accumulator back is right either way.
-            matches!(
-                (self.extent_raw(axis), leaf.extent_raw(axis)),
-                (Extent::Static(whole), Extent::Static(at_leaf)) if whole == at_leaf
-            )
-        })
     }
 
     /// How many contracted values one step consumes off a `width`-wide line of this operand.
@@ -461,8 +364,7 @@ impl Space {
     /// depth, not a list of axes.
     ///
     /// Reads the extents off this space as it stands, like every other consumer of a tile's edges
-    /// ([`MatrixAxes::whole`](crate::MatrixAxes::whole)); call it on the [`final_space`](Space::final_space)
-    /// when the caller holds a level above the leaf.
+    /// ([`MatrixAxes::whole`](crate::MatrixAxes::whole)).
     pub(crate) fn contracted_extent(&self, output: &Space) -> usize {
         self.contracting(output)
             .iter()
@@ -493,59 +395,6 @@ impl Space {
 
     pub fn axes(&self) -> Axes<'_> {
         Axes { space: self, i: 0 }
-    }
-
-    /// The child space one level down: every axis shrunk to its partitioner's sub-tile
-    /// edge, that level consumed. Position-free shape; the positions are the [`Walk`].
-    pub fn divide(&self) -> Space {
-        // A sub-tile edge is always comptime, so a child is fully `Static` whatever the
-        // parent was: dynamism lives only at the top level.
-        let entries = self
-            .axes()
-            .map(|axis| (axis, Extent::Static(self.partitioner.edge(axis))))
-            .collect::<Vec<_>>();
-        Space {
-            extents: Extents::fixed(ByAxis::new(&entries)),
-            partitioner: self.partitioner.next().clone(),
-        }
-    }
-
-    /// The space of one *sub-tile* this level hands out, rather than of the whole region it
-    /// covers: every extent becomes the partitioner's comptime sub-tile edge, and the level
-    /// itself is kept. Sits between [`divide`](Space::divide), which takes those same edges
-    /// but also consumes the level to answer "the child one level down", and the untouched
-    /// space, which describes the region.
-    ///
-    /// This is the shape a register-resident form actually has. A
-    /// [`mirror`](crate::PlanePartition::mirror)ed accumulator sizes its fragments from the
-    /// partitioner alone and never reads the extents, so it must not inherit their dynamism:
-    /// the kernel-form space is [`all_dynamic`](Space::all_dynamic), and a plane tile has no
-    /// buffer bound to resolve a `Dynamic` axis back from.
-    ///
-    /// A [`Final`](Partitioner::Final) space has no level left to read edges from, and is
-    /// already the tile, so it is returned unchanged.
-    pub(crate) fn sub_tile_space(&self) -> Space {
-        if self.is_final() {
-            return self.clone();
-        }
-        let entries = self
-            .axes()
-            .map(|axis| (axis, Extent::Static(self.partitioner.edge(axis))))
-            .collect::<Vec<_>>();
-        Space {
-            extents: Extents::fixed(ByAxis::new(&entries)),
-            partitioner: self.partitioner.clone(),
-        }
-    }
-
-    /// Divide until no partitioner level is left. Its extents are the finest tile
-    /// shape, used to size the staging buffers and to read the final tile's `mr`/`nr`/`kc`.
-    pub fn final_space(&self) -> Space {
-        let mut space = self.clone();
-        while !space.is_final() {
-            space = space.divide();
-        }
-        space
     }
 
     pub fn tile_size(&self) -> usize {
@@ -613,18 +462,6 @@ impl<'a> IntoIterator for &'a Space {
     }
 }
 
-/// A single-level space whose every axis is one sequential cut of its extent: what the shape
-/// helpers are exercised against, since they read extents and axis order rather than the walk.
-#[cfg(test)]
-pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
-    use crate::Tiling;
-    Tiling::over(extents)
-        .level(|l| {
-            l.walk(extents);
-        })
-        .build()
-}
-
 #[cfg(test)]
 mod contraction_tests {
     use crate::*;
@@ -637,8 +474,8 @@ mod contraction_tests {
     /// A matmul contracts one axis, so the `k` edge is that axis's extent, as it always was.
     #[test]
     fn a_matmul_contracts_its_one_axis() {
-        let lhs = flat_space(&[(M, 8), (K, 4)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
+        let lhs = Space::new(&[(M, 8), (K, 4)]);
+        let out = Space::new(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 4);
     }
 
@@ -646,16 +483,16 @@ mod contraction_tests {
     /// which is their product.
     #[test]
     fn a_convolution_contracts_taps_times_channels() {
-        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
+        let lhs = Space::new(&[(M, 8), (R, 3), (K, 4)]);
+        let out = Space::new(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 12);
     }
 
     /// An operand spanning only output axes contracts nothing, and an empty product is `1`.
     #[test]
     fn contracting_nothing_is_a_unit_depth() {
-        let lhs = flat_space(&[(M, 8), (N, 8)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
+        let lhs = Space::new(&[(M, 8), (N, 8)]);
+        let out = Space::new(&[(M, 8), (N, 8)]);
         assert_eq!(lhs.contracted_extent(&out), 1);
     }
 
@@ -663,9 +500,9 @@ mod contraction_tests {
     /// operand's own spec states them.
     #[test]
     fn operands_listing_one_contraction_order_agree() {
-        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
-        let rhs = flat_space(&[(R, 3), (K, 4), (N, 8)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
+        let lhs = Space::new(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = Space::new(&[(R, 3), (K, 4), (N, 8)]);
+        let out = Space::new(&[(M, 8), (N, 8)]);
         assert!(Space::contraction_agrees(&lhs, &rhs, &out));
     }
 
@@ -673,78 +510,46 @@ mod contraction_tests {
     /// shapes distinguishes this from the case above, so the order has to be compared.
     #[test]
     fn a_permuted_contraction_order_disagrees() {
-        let lhs = flat_space(&[(M, 8), (R, 3), (K, 4)]);
-        let rhs = flat_space(&[(K, 4), (R, 3), (N, 8)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
+        let lhs = Space::new(&[(M, 8), (R, 3), (K, 4)]);
+        let rhs = Space::new(&[(K, 4), (R, 3), (N, 8)]);
+        let out = Space::new(&[(M, 8), (N, 8)]);
         assert!(!Space::contraction_agrees(&lhs, &rhs, &out));
     }
 
-    /// One level cutting each axis at its full extent leaves the whole contraction at the leaf,
-    /// so the accumulation may seed from the identity.
-    #[test]
-    fn a_single_level_contraction_lands_whole_at_the_leaf() {
-        let lhs = flat_space(&[(M, 8), (K, 4)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
-        assert!(lhs.spans_contracted_at_leaf(&out));
-    }
-
-    /// A contracted axis split across levels puts several contracted regions above the leaf, so
-    /// each visit must fold onto what the last one left.
-    #[test]
-    fn a_split_contracted_axis_does_not_land_at_the_leaf() {
-        let lhs = split_space(&[(M, 8), (K, 8)], &[(M, 8), (K, 2)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
-        assert!(!lhs.spans_contracted_at_leaf(&out));
-    }
-
-    /// Only the contracted axes are asked: an output axis walked in several regions still visits
-    /// each cell once, so it never vetoes the replacement.
-    #[test]
-    fn a_split_output_axis_still_lands_at_the_leaf() {
-        let lhs = split_space(&[(M, 8), (K, 4)], &[(M, 2), (K, 4)]);
-        let out = flat_space(&[(M, 8), (N, 8)]);
-        assert!(lhs.spans_contracted_at_leaf(&out));
-    }
-
-    /// A `Dynamic` contracted extent cannot be compared against the leaf's at comptime, and
-    /// reading the accumulator back is right either way.
-    #[test]
-    fn a_dynamic_contracted_axis_does_not_land_at_the_leaf() {
-        let lhs = flat_space(&[(M, 8), (K, 4)]).all_dynamic();
-        let out = flat_space(&[(M, 8), (N, 8)]);
-        assert!(lhs.is_dynamic(K));
-        assert!(!lhs.spans_contracted_at_leaf(&out));
-    }
-
     /// A contraction dealt out across cubes leaves each of them a slice of every output cell.
-    /// Read off the *output's* space, which does not span `K` and whose partitioner still names
-    /// it, exactly as an operand's own space is read at launch.
+    /// Read off the *output's* projection, which does not span `K`, against the level's whole
+    /// space, which still names it.
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
-        use crate::{CubeAxis, Tiling};
-        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::Y), &[(K, 4)])
-                    .walk(&[(M, 4), (N, 4)]);
-            })
-            .build();
-        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::Y), &[(K, 4)])
+                .walk(&[(M, 4), (N, 4)]);
+        });
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, N])),
+            SplitShare::Partial
+        );
         // The operands span `K`, so their own cells are whole: nothing about a split is
         // visible from a space that covers the axis being split.
-        assert_eq!(space.split_share_of(&[M, K]), SplitShare::Whole);
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, K])),
+            SplitShare::Whole
+        );
     }
 
     /// The same at plane scope: planes of one cube share no registers either, so a contraction
     /// dealt out across them leaves each holding a slice, exactly as cubes do.
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
-        use crate::Tiling;
-        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
-            .level(|l| {
-                l.distribute(planes(), &[(K, 4)]).walk(&[(M, 4), (N, 4)]);
-            })
-            .build();
-        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Level::new(&[M, N, K], |l| {
+            l.distribute(planes(), &[(K, 4)]).walk(&[(M, 4), (N, 4)]);
+        });
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, N])),
+            SplitShare::Partial
+        );
     }
 
     /// Work distributed as one is not an axis, and the index runs over the contraction: a share
@@ -752,78 +557,68 @@ mod contraction_tests {
     /// no axis of the level rides the cubes.
     #[test]
     fn distributed_work_is_partial_to_the_output() {
-        use crate::{CubeAxis, Tiling};
-        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
-            })
-            .level(|l| {
-                l.walk(&[(M, 4), (N, 4), (K, 4)]);
-            })
-            .build();
-        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Partial);
+        let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+        let level = Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
+        });
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, N])),
+            SplitShare::Partial
+        );
         // An operand spanning every axis of the work holds whole cells of its own, the same way
         // it does under a cut.
-        assert_eq!(space.split_share_of(&[M, N, K]), SplitShare::Whole);
+        assert_eq!(level.split_share_of(&space, &space), SplitShare::Whole);
     }
 
     /// The shares ride the cubes even though no axis does, so the launch grid is their count.
     #[test]
     fn distributed_work_launches_its_instances() {
-        use crate::{CubeAxis, Tiling};
         use cubecl::CubeCount;
-        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
-            .level(|l| {
+        let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
+        let levels = [
+            Level::new(&[M, N, K], |l| {
                 l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
-            })
-            .level(|l| {
+            }),
+            Level::new(&[M, N, K], |l| {
                 l.walk(&[(M, 4), (N, 4), (K, 4)]);
-            })
-            .build();
-        assert!(matches!(space.cube_count(), CubeCount::Static(3, 1, 1)));
+            }),
+        ];
+        assert!(matches!(
+            Nest::new(space, levels.to_vec()).cube_count(),
+            CubeCount::Static(3, 1, 1)
+        ));
     }
 
     /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
-    /// The case a projected space cannot answer, and the reason the question is asked of the
-    /// whole one: a mapping parameterised by its split count writes the same cut with `splits`
-    /// of one, and refusing that would refuse the control it is compared against.
+    /// The reason the question is asked of the level's whole space: a mapping parameterised by
+    /// its split count writes the same cut with `splits` of one, and refusing that would refuse
+    /// the control it is compared against.
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
-        use crate::{CubeAxis, Tiling};
-        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(N, 1)])
-                    .distribute(cubes(CubeAxis::Z), &[(K, 8)])
-                    .walk(&[(M, 4)]);
-            })
-            .build();
-        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
+        let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
+        let level = Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X), &[(N, 1)])
+                .distribute(cubes(CubeAxis::Z), &[(K, 8)])
+                .walk(&[(M, 4)]);
+        });
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, N])),
+            SplitShare::Whole
+        );
     }
 
     /// The same cut on an axis the output *does* span is a plain output split: each cube owns
     /// its columns outright and there is nothing to combine.
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
-        use crate::{CubeAxis, Tiling};
-        let space = Tiling::over(&[(M, 4), (N, 8), (K, 4)])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(N, 4)])
-                    .walk(&[(M, 4), (K, 4)]);
-            })
-            .build();
-        assert_eq!(space.split_share_of(&[M, N]), SplitShare::Whole);
-    }
-
-    /// Two levels: `outer` the extents, `inner` the tile each axis is cut to below it.
-    fn split_space(outer: &[(Axis, usize)], inner: &[(Axis, usize)]) -> Space {
-        use crate::Tiling;
-        Tiling::over(outer)
-            .level(|l| {
-                l.walk(outer);
-            })
-            .level(|l| {
-                l.walk(inner);
-            })
-            .build()
+        let space = Space::new(&[(M, 4), (N, 8), (K, 4)]);
+        let level = Level::new(&[M, N, K], |l| {
+            l.distribute(cubes(CubeAxis::X), &[(N, 4)])
+                .walk(&[(M, 4), (K, 4)]);
+        });
+        assert_eq!(
+            level.split_share_of(&space, &space.project(&[M, N])),
+            SplitShare::Whole
+        );
     }
 }

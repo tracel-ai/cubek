@@ -1075,7 +1075,7 @@ impl<T: Numeric> MemData<T> {
                 let axis = space.axis_at(p);
                 // The innermost (vectorized) axis's edge is a line count, so `/ width`.
                 let edge = comptime!(if p == last {
-                    let e = space.partitioner().edge(axis);
+                    let e = region.level.edge(axis);
                     // A padded stage's innermost extent need not fill whole lines, but then its
                     // partial tail line has no sibling to start after it: the axis has to be cut
                     // whole, or the next region would begin mid-line. `extent_raw` because a
@@ -1090,7 +1090,7 @@ impl<T: Numeric> MemData<T> {
                     );
                     e.div_ceil(w)
                 } else {
-                    space.partitioner().edge(axis)
+                    region.level.edge(axis)
                 });
                 let index = region.coord(axis);
 
@@ -1116,14 +1116,8 @@ impl<T: Numeric> MemData<T> {
             let mut residues = Coords::<u32>::new();
             #[unroll]
             for pa in 0..rank {
-                let (step, residue, span) = gathered_descent(
-                    comptime!(proj.clone()),
-                    comptime!(space.clone()),
-                    region,
-                    &self.map,
-                    w,
-                    pa,
-                );
+                let (step, residue, span) =
+                    gathered_descent(comptime!(proj.clone()), region, &self.map, w, pa);
 
                 // `step` only moves forward, so add directly to the signed origin.
                 origin.push(self.window.origin.at(pa).fadd(step.fcast::<i32>()));
@@ -1167,7 +1161,7 @@ impl<T: Numeric> MemData<T> {
                     comptime!(self.store.vector_size),
                     comptime!(
                         (0..rank)
-                            .map(|p| space.partitioner().edge(space.axis_at(p)))
+                            .map(|p| region.level.edge(space.axis_at(p)))
                             .collect::<Vec<_>>()
                     ),
                 ))
@@ -1209,12 +1203,15 @@ impl<T: Numeric> MemData<T> {
                 units: self.access.units,
             }),
             lanes: comptime!(Lanes {
-                share: join_lane_share(self.lanes.share, space.lane_share()),
-                work: self.lanes.work,
+                share: join_lane_share(self.lanes.share, region.level.lane_share(&space)),
+                work: join_lane_work(self.lanes.work, region.level.rides_lanes()),
             }),
-            // Settled at construction, so a descent carries it: which instances hold a cell is a
-            // fact about the whole space, and windowing down does not change it.
-            split_share: comptime!(self.split_share),
+            // Joined level by level: the level's whole space still has the axis this operand's
+            // projection dropped, which is what tells a split from a cut of the whole axis.
+            split_share: comptime!(join_split_share(
+                self.split_share,
+                region.level.split_share_of(&region.space, &space)
+            )),
             init_from: comptime!(self.init_from),
         }
     }
@@ -1236,7 +1233,6 @@ impl<T: Numeric> MemData<T> {
 #[cube]
 fn gathered_descent(
     #[comptime] projection: Projection,
-    #[comptime] space: Space,
     region: &Region,
     map: &RuntimeMap,
     #[comptime] vector_size: usize,
@@ -1255,7 +1251,7 @@ fn gathered_descent(
     #[unroll]
     for t in 0..n {
         let term = comptime!(axis_map.terms()[t]);
-        let edge = comptime!(space.partitioner().edge(term.axis));
+        let edge = comptime!(region.level.edge(term.axis));
         match comptime!(term.scale) {
             Scale::Static(s) => {
                 let step = comptime!(if lined {
@@ -1291,7 +1287,7 @@ fn gathered_descent(
         // for the mapping that is.
         let span = if comptime!(!axis_map.has_dynamic_scale()) {
             comptime!({
-                let s = projection.span(pa, |a| space.partitioner().edge(a));
+                let s = projection.span(pa, |a| region.level.edge(a));
                 (if lined { s / vector_size } else { s }) as u32
             })
             .runtime()

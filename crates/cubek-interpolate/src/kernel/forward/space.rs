@@ -1,9 +1,11 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubek_tile::{
-    Axis, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock, Space,
-    Tiling, cubes, lanes, planes,
+    Axis, Compaction, CubeAxis, Level, LevelCuts, Nest, PhysicalAxisMap, Projection, RegisterBlock,
+    Space, cubes, lanes, planes,
 };
+
+const AXES: [Axis; 6] = [BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL];
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -35,40 +37,53 @@ pub struct InterpolateSpace {
 }
 
 impl InterpolateSpace {
-    /// Three levels. CHANNEL is the cube walk's only moving axis, and it moves only past
-    /// `lanes * 4` channels; below that the walk is one region.
+    /// The space's axes and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Axis, usize)> {
+        vec![
+            (BATCH, self.batch),
+            (OUTPUT_H, self.height),
+            (OUTPUT_W, self.width),
+            (TAP_H, self.taps),
+            (TAP_W, self.taps),
+            (CHANNEL, self.channels),
+        ]
+    }
+
+    /// Three levels, outermost first. CHANNEL is the cube walk's only moving axis, and it moves
+    /// only past `lanes * 4` channels; below that the walk is one region.
+    pub fn levels(&self) -> Vec<Level> {
+        vec![self.cube_level(), self.plane_level(), self.lane_level()]
+    }
+
+    /// The extents and the levels together: what the launch sizes its grid from.
+    pub fn nest(&self) -> Nest {
+        Nest::new(Space::new(&self.extents()), self.levels())
+    }
+
     pub fn space(&self) -> Space {
-        let Self {
-            batch,
-            height,
-            width,
-            channels,
-            plane_size,
-            taps,
-            geometry,
-        } = *self;
-        assert!(
-            geometry.lane_cols * geometry.lane_channels == plane_size,
-            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
-            geometry.lane_cols * geometry.lane_channels
-        );
-        let channels_per_cube = geometry.channels_per_cube();
-        Tiling::over(&[
-            (BATCH, batch),
-            (OUTPUT_H, height),
-            (OUTPUT_W, width),
-            (TAP_H, taps),
-            (TAP_W, taps),
-            (CHANNEL, channels),
-        ])
-        .level(|level| {
+        Space::new(&self.extents())
+    }
+
+    /// This cube's box of the output, walked over the taps and its channel blocks.
+    pub fn cube_level(&self) -> Level {
+        let (taps, geometry) = (self.taps, self.geometry);
+        Level::new(&AXES, |level| {
             level
                 .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
                 .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
                 .distribute(cubes(CubeAxis::X), &[(OUTPUT_W, geometry.cols_per_cube())])
-                .walk(&[(TAP_H, taps), (TAP_W, taps), (CHANNEL, channels_per_cube)]);
+                .walk(&[
+                    (TAP_H, taps),
+                    (TAP_W, taps),
+                    (CHANNEL, geometry.channels_per_cube()),
+                ]);
         })
-        .level(|level| {
+    }
+
+    /// This plane's rows.
+    pub fn plane_level(&self) -> Level {
+        let (taps, geometry) = (self.taps, self.geometry);
+        Level::new(&AXES, |level| {
             level
                 .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
                 .walk(&[
@@ -76,10 +91,20 @@ impl InterpolateSpace {
                     (OUTPUT_W, geometry.cols_per_cube()),
                     (TAP_H, taps),
                     (TAP_W, taps),
-                    (CHANNEL, channels_per_cube),
+                    (CHANNEL, geometry.channels_per_cube()),
                 ]);
         })
-        .level(|level| {
+    }
+
+    /// This lane's columns and channel lines.
+    pub fn lane_level(&self) -> Level {
+        let (taps, geometry, plane_size) = (self.taps, self.geometry, self.plane_size);
+        assert!(
+            geometry.lane_cols * geometry.lane_channels == plane_size,
+            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
+            geometry.lane_cols * geometry.lane_channels
+        );
+        Level::new(&AXES, |level| {
             lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
             lanes_over(
                 level,
@@ -94,7 +119,6 @@ impl InterpolateSpace {
                 (TAP_W, taps),
             ]);
         })
-        .build()
     }
 }
 

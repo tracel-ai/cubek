@@ -13,7 +13,7 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Projection, Space, TileArg, TileArgLaunch, TileSpec};
+use cubek_tile::{Axis, Nest, Projection, Space, TileArg, TileArgLaunch, TileSpec};
 
 use super::Dims;
 use crate::harness::assert_result;
@@ -36,7 +36,7 @@ fn copy_logical<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(comptime!(space.clone()));
-    let mut dst = dst.tile(space);
+    let mut dst = dst.tile(comptime!(space.clone()));
     let r = src.view::<Const<1>>();
     let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
@@ -54,11 +54,11 @@ fn copy_logical<E: Numeric>(
 }
 
 /// An operand: a physical buffer in some [`InnerLayout`], viewed in its logical
-/// `(batch, rows, cols)` space.
+/// `(batch, rows, cols)` nest.
 struct Operand {
     handle: TensorHandle,
     layout: InnerLayout,
-    space: Space,
+    nest: Nest,
     batch: usize,
     rows: usize,
     cols: usize,
@@ -114,7 +114,10 @@ impl Operand {
         Operand {
             handle,
             layout,
-            space: Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
+            nest: Nest::new(
+                Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
+                vec![],
+            ),
             batch,
             rows,
             cols,
@@ -132,7 +135,7 @@ fn copy(client: &Client, src: &Operand, dst: &Operand) {
         CubeDim::new_single(),
         tile_arg(src),
         tile_arg(dst),
-        src.space.clone(),
+        src.nest.space.clone(),
         f32::elem_type_native(),
     );
 }
@@ -148,7 +151,7 @@ fn physical_binding(op: &Operand) -> TensorBinding {
 /// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
 fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
     let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
-    let axes: Vec<_> = (0..op.space.rank()).map(|i| op.space.axis_at(i)).collect();
+    let axes: Vec<_> = op.nest.space.axes().collect();
     TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
 }
 

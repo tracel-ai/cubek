@@ -5,7 +5,7 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Phase, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg, Walk, affine_along,
+    Axis, Phase, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg, affine_along,
     pipelined, separable_product, sum_of,
 };
 
@@ -76,7 +76,9 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     // This cube's box of the output, walked over the taps and its channel blocks. Whether the
     // input is staged into shared memory for each block is the launch's call on the window's
     // size, stated as `stage`; the walk is the same either way.
-    let cubes = Walk::over(output.op_space(&weights, &input));
+    let cubes = output
+        .op_space(&weights, &input)
+        .level(comptime!(plan.cube_level()));
     match comptime!(stage) {
         InputStage::Smem => {
             let mut ring =
@@ -85,7 +87,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
                 let output_block = output.at(block);
                 let weights_block = weights.at(block);
                 slot.consume(|input_block| {
-                    interpolate_block(&output_block, &weights_block, input_block, config);
+                    interpolate_block(&output_block, &weights_block, input_block, plan, config);
                 });
             });
         }
@@ -95,6 +97,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
                     &output.at(&block),
                     &weights.at(&block),
                     &input.at(&block),
+                    plan,
                     config,
                 );
             }
@@ -109,13 +112,20 @@ fn interpolate_block<E: Float>(
     output: &Tile<E>,
     weights: &Tile<E>,
     input: &Tile<E>,
+    #[comptime] plan: InterpolateSpace,
     #[comptime] config: RegisterBlock,
 ) {
-    for region in Walk::over(output.op_space(weights, input)) {
+    for region in output
+        .op_space(weights, input)
+        .level(comptime!(plan.plane_level()))
+    {
         let output_plane = output.at(&region);
         let weights_plane = weights.at(&region);
         let input_plane = input.at(&region);
-        for cell in Walk::over(output_plane.op_space(&weights_plane, &input_plane)) {
+        for cell in output_plane
+            .op_space(&weights_plane, &input_plane)
+            .level(comptime!(plan.lane_level()))
+        {
             let mut output_cell = output_plane.at(&cell);
             output_cell.mm_with(
                 &weights_plane.at(&cell),

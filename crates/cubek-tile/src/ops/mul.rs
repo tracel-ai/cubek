@@ -18,30 +18,16 @@ use crate::*;
 impl<T: Numeric> Tile<T> {
     /// `dst = a ⊗ b`, elementwise over the destination's box.
     ///
-    /// The walk mirrors [`copy`](Tile::copy): a level that separates cubes is walked, anything
-    /// else transports, because the transport already fills a whole tile with every unit.
+    /// The transport alone, like [`copy`](Tile::copy): every unit of the cube fills the whole
+    /// tile, and the levels a product is split across are the kernel's own loops.
     pub fn mul<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
-        match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final => self.mul_from(a, b),
-            Partitioner::Level(level) => match comptime!(level.scope()) {
-                LevelScope::Cubes => {
-                    let space = self.mul_space(a, b);
-                    for region in Walk::over(space) {
-                        let mut dst = self.at(&region);
-                        dst.mul(&a.at(&region), &b.at(&region));
-                    }
-                }
-                LevelScope::Sequential | LevelScope::Planes | LevelScope::Lanes => {
-                    self.mul_from(a, b)
-                }
-            },
-        }
+        self.mul_from(a, b)
     }
 
-    /// The walk's space: this tile's, with every [`Dynamic`](crate::Extent) axis sized by
-    /// whichever operand [`witnesses`](Tile::witnesses) it. The destination is asked first, as
+    /// The space a product walks: this tile's, with every [`Dynamic`](crate::Extent) axis sized
+    /// by whichever operand [`witnesses`](Tile::witnesses) it. The destination is asked first, as
     /// [`copy`](Tile::copy) asks its own: an axis it spans is one it writes.
-    fn mul_space<A: Numeric, B: Numeric>(&self, a: &Tile<A>, b: &Tile<B>) -> Space {
+    pub fn mul_space<A: Numeric, B: Numeric>(&self, a: &Tile<A>, b: &Tile<B>) -> Space {
         witnessed_space(comptime!(self.space.clone()), self, a, b)
     }
 

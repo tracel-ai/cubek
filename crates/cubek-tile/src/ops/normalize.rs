@@ -158,15 +158,12 @@ mod tests {
             MatrixAxes::trailing_pair(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
             8,
             1,
-            Lanes {
-                share: LaneShare::Whole,
-                work: LaneWork::Repeated,
-            },
             Monoid::Sum,
         );
         let tile = TileExpand::<f32> {
             tile_kind: TileKindExpand::PlaneTile(plane_tile),
             space: Space::new(&[(Axis(0), 4)]),
+            descent: Descent::default(),
         };
         tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
     }

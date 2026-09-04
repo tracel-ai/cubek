@@ -47,7 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, Tiling, Walk, cubes,
+    Axis, CubeAxis, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, cubes,
     lanes,
 };
 
@@ -68,12 +68,13 @@ fn split_k_matmul_one_level<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(space);
-    for region in Walk::over(c.op_space(&a, &b)) {
+    let c = c.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         c_cube.mma_with(
             &a.at(&region),
@@ -92,16 +93,21 @@ fn split_k_matmul_two_levels<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(space);
-    for region in Walk::over(c.op_space(&a, &b)) {
+    let c = c.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(outer.clone())) {
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        for region in Walk::over(c_cube.op_space(&a_cube, &b_cube)) {
+        for region in c_cube
+            .op_space(&a_cube, &b_cube)
+            .level(comptime!(inner.clone()))
+        {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
                 &a_cube.at(&region),
@@ -113,7 +119,7 @@ fn split_k_matmul_two_levels<E: Numeric>(
     }
 }
 
-/// How many levels a mapping's space is walked in, which picks the kernel.
+/// How many levels a mapping's nest is walked in, which picks the kernel.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Levels {
     One,
@@ -135,8 +141,8 @@ pub enum Mapping {
     SplitKT { cols: usize },
 }
 
-/// Which rhs axis is contiguous in the buffer. The *space* is `[K, N]` either way: layout
-/// lives in the tensor's strides, never in the space.
+/// Which rhs axis is contiguous in the buffer. The *nest* is `[K, N]` either way: layout
+/// lives in the tensor's strides, never in the nest.
 #[derive(Clone, Copy)]
 enum RhsLayout {
     /// Row-major `[K, N]`: adjacent columns adjacent in memory: `n_spread`'s home.
@@ -158,21 +164,19 @@ pub struct SplitKStrategy {
 }
 
 impl Mapping {
-    /// The space for this mapping. N always rides the cubes, so every mapping loads the grid the
+    /// The nest for this mapping. N always rides the cubes, so every mapping loads the grid the
     /// same way and only the intra-plane split differs; each spread takes the columns per cube its
     /// `cols` implies (`plane_size · cols` for `n_spread`, `cols` for `split_k`), `seq_k` takes one.
-    fn space(self, problem: SplitKProblem, plane_size: usize) -> Space {
+    fn nest(self, problem: SplitKProblem, plane_size: usize) -> Nest {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Tiling::over(&[(M, m), (N, n), (K, k)])
-                .level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, 1)])
-                        .walk(&[(M, m), (K, k)]);
-                })
-                .build(),
+            Mapping::SeqK => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
+                l.distribute(cubes(CubeAxis::X), &[(N, 1)])
+                    .walk(&[(M, m), (K, k)]);
+            }),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Tiling::over(&[(M, m), (N, n), (K, k)])
+            Mapping::NSpread { cols } => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
                 .level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, plane_size * cols)])
                         .walk(&[(M, m), (K, k)]);
@@ -180,23 +184,20 @@ impl Mapping {
                 .level(|l| {
                     l.distribute(lanes(plane_size), &[(N, cols)])
                         .walk(&[(M, m), (K, k)]);
-                })
-                .build(),
+                }),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
-            // The transposed variant is the same *space*: only the rhs strides differ.
+            // The transposed variant is the same *nest*: only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
-                Tiling::over(&[(M, m), (N, n), (K, k)])
-                    .level(|l| {
-                        l.distribute(cubes(CubeAxis::X), &[(N, cols)])
-                            .distribute(lanes(plane_size), &[(K, k / plane_size)])
-                            .walk(&[(M, m)]);
-                    })
-                    .build()
+                Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
+                    l.distribute(cubes(CubeAxis::X), &[(N, cols)])
+                        .distribute(lanes(plane_size), &[(K, k / plane_size)])
+                        .walk(&[(M, m)]);
+                })
             }
         }
     }
 
-    /// Whether this mapping's space is walked in one level, or with the plane split as a second.
+    /// Whether this mapping's nest is walked in one level, or with the plane split as a second.
     fn levels(self) -> Levels {
         match self {
             Mapping::SeqK | Mapping::SplitK { .. } | Mapping::SplitKT { .. } => Levels::One,
@@ -214,12 +215,12 @@ impl Mapping {
     }
 
     /// `seq_k` is the one-lane baseline, so it launches a single unit; the spread mappings take
-    /// the space's own geometry (`plane_size` lanes on X).
-    fn cube_dim(self, space: &Space, client: &Client) -> CubeDim {
+    /// the nest's own geometry (`plane_size` lanes on X).
+    fn cube_dim(self, nest: &Nest, client: &Client) -> CubeDim {
         match self {
             Mapping::SeqK => CubeDim::new_single(),
             Mapping::NSpread { .. } | Mapping::SplitK { .. } | Mapping::SplitKT { .. } => {
-                space.cube_dim(client)
+                nest.cube_dim(client)
             }
         }
     }
@@ -250,14 +251,14 @@ impl Mapping {
 fn rhs_input(
     client: &Client,
     mapping: Mapping,
-    space: &Space,
+    nest: &Nest,
     fill: impl FnOnce(TileInputBuilder) -> TileInput,
 ) -> TileInput {
     let axes: &[Axis] = match mapping.rhs_layout() {
         RhsLayout::NContiguous => &[K, N],
         RhsLayout::KContiguous => &[N, K],
     };
-    fill(TileInput::builder(client, space.project(axes)).untiled())
+    fill(TileInput::builder(client, nest.space.project(axes)).untiled())
 }
 
 /// The launch arg for [`rhs_input`]'s tensor: as-is, or the `[N, K]` buffer presented as shape
@@ -279,35 +280,38 @@ fn rhs_arg(b: &TileInput, mapping: Mapping) -> TensorArg {
 
 /// One launch of `mapping` over `problem`, into a freshly zeroed accumulator.
 fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) -> TileInput {
-    let space = mapping.space(problem, lanes);
+    let nest = mapping.nest(problem, lanes);
     let dtype = f32::elem_type_native();
-    let a = TileInput::builder(client, space.project(&[M, K]))
+    let a = TileInput::builder(client, nest.space.project(&[M, K]))
         .untiled()
         .arange();
-    let b = rhs_input(client, mapping, &space, TileInputBuilder::arange);
-    let c = TileInput::builder(client, space.project(&[M, N]))
+    let b = rhs_input(client, mapping, &nest, TileInputBuilder::arange);
+    let c = TileInput::builder(client, nest.space.project(&[M, N]))
         .untiled()
         .zeros();
 
     match mapping.levels() {
         Levels::One => split_k_matmul_one_level::launch(
             client,
-            space.cube_count(),
-            mapping.cube_dim(&space, client),
+            nest.cube_count(),
+            mapping.cube_dim(&nest, client),
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            space,
+            nest.space.clone(),
+            nest.at(0),
             dtype,
         ),
         Levels::Two => split_k_matmul_two_levels::launch(
             client,
-            space.cube_count(),
-            mapping.cube_dim(&space, client),
+            nest.cube_count(),
+            mapping.cube_dim(&nest, client),
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            space,
+            nest.space.clone(),
+            nest.at(0),
+            nest.at(1),
             dtype,
         ),
     }
@@ -325,7 +329,7 @@ struct SplitKBench {
     b: TileInput,
     /// The one kernel space; each operand's spec carries only its spanned axes (the rhs
     /// is `[K, N]` even when its buffer is the transposed layout re-strided).
-    space: Space,
+    nest: Nest,
     c: TileInput,
 }
 
@@ -348,7 +352,8 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.space.clone(),
+                self.nest.space.clone(),
+                self.nest.at(0),
                 dtype,
             ),
             Levels::Two => split_k_matmul_two_levels::launch(
@@ -358,7 +363,9 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.space.clone(),
+                self.nest.space.clone(),
+                self.nest.at(0),
+                self.nest.at(1),
                 dtype,
             ),
         }
@@ -476,16 +483,16 @@ pub fn bench(
     }
     verify(&client, mapping, lanes)?;
 
-    let space = mapping.space(*problem, lanes);
-    let cube_count = space.cube_count();
-    let cube_dim = mapping.cube_dim(&space, &client);
+    let nest = mapping.nest(*problem, lanes);
+    let cube_count = nest.cube_count();
+    let cube_dim = mapping.cube_dim(&nest, &client);
     // The tile inputs are built as f32 and the accumulator contracts in f32.
 
-    let a = TileInput::builder(&client, space.project(&[M, K]))
+    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
         .untiled()
         .uniform(0, 0.0, 1.0);
-    let b = rhs_input(&client, mapping, &space, |bld| bld.uniform(1, 0.0, 1.0));
-    let c = TileInput::builder(&client, space.project(&[M, N]))
+    let b = rhs_input(&client, mapping, &nest, |bld| bld.uniform(1, 0.0, 1.0));
+    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
         .untiled()
         .zeros();
 
@@ -498,7 +505,7 @@ pub fn bench(
         cube_dim,
         a,
         b,
-        space,
+        nest: nest.clone(),
         c,
     };
 

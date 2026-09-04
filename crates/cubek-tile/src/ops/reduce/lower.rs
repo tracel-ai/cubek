@@ -27,15 +27,11 @@ impl<Acc: Numeric> Tile<Acc> {
         input: &Tile<In>,
         #[comptime] monoid: Monoid,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::reduce_axis: the leaf reduces into a final tile; walk the levels above it first"
-        ));
         reduce_leaf(self, input, monoid)
     }
 
     /// The level's operation space for a reduction: the input's space, sized by whichever
-    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Walk::over`]),
+    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Space::level`]),
     /// [`op_space`](Tile::op_space)'s twin for one operand.
     pub fn reduce_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
         let merged = comptime!({
