@@ -472,11 +472,7 @@ impl Benchmark for Bound {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "split-cubes-bench")
-            .map_err(|err| format!("{err:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "split-cubes-bench", || self.execute(args))
     }
 }
 
@@ -558,7 +554,7 @@ pub fn bench(
 
     let bound = Bound::new(&client, mapping, *problem).samples(num_samples);
     let durations = bound
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
     Ok(RunSamples::new(durations))
@@ -635,7 +631,7 @@ impl cubek_test_utils::Category for Category {
 
     /// Latency-bound shapes, so the launch is timed on the device rather than around a submit.
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
 
     fn problems(&self) -> Vec<CatalogEntry<Problem>> {

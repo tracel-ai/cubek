@@ -41,7 +41,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::System)
+        .run(cubek_test_utils::timing_method(TimingMethod::System))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -146,10 +146,6 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "conv-bench")
-            .map_err(|it| format!("{it:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "conv-bench", || self.execute(args))
     }
 }

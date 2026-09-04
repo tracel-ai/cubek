@@ -50,7 +50,7 @@ impl cubek_test_utils::Category for Category {
     }
 
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
     fn correctness(
         &self,
@@ -105,7 +105,7 @@ impl cubek_test_utils::Category for CpuCategory {
     }
 
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
 
     fn correctness(

@@ -1,9 +1,8 @@
-use std::marker::PhantomData;
-
 use cubecl::{
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
     client::Client,
     future,
+    ir::ElemType,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::Shape,
@@ -12,6 +11,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
+use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 
 pub fn bench(
@@ -19,19 +19,21 @@ pub fn bench(
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
+    ReduceCorrectness::verify(strategy, problem)?;
+
     let device = cubecl::test_device();
     let client = device.client();
 
-    let bench = ReduceBench::<f32> {
+    let bench = ReduceBench {
         shape: problem.shape.clone(),
         axis: problem.axis,
         config: problem.config,
         kind: problem.kind,
+        value_dtype: problem.precision.dtype(),
         strategy: strategy.clone(),
         device,
         client,
         samples: num_samples,
-        _e: PhantomData,
     };
 
     // Device timing (hardware timestamps) rather than system timing: the reduce
@@ -39,7 +41,7 @@ pub fn bench(
     // host-side noise that identical kernels varied by over 10x between runs,
     // which made fused-vs-two-launch comparisons meaningless.
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -66,19 +68,19 @@ fn two_launch_configs(
     }
 }
 
-struct ReduceBench<E> {
+struct ReduceBench {
     shape: Vec<usize>,
     axis: usize,
     config: ReduceOperationConfig,
     kind: ReduceBenchKind,
+    value_dtype: ElemType,
     strategy: ReduceStrategy,
     device: cubecl::Device,
     client: Client,
     samples: usize,
-    _e: PhantomData<E>,
 }
 
-impl<E: Float> Benchmark for ReduceBench<E> {
+impl Benchmark for ReduceBench {
     /// `(input, values, indices)`. The index tensor is allocated for every kind so
     /// that allocation never lands inside the timed section, but only the
     /// two-launch and fused kinds write to it.
@@ -87,7 +89,8 @@ impl<E: Float> Benchmark for ReduceBench<E> {
 
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
-        let elem = E::elem_type_native();
+        let elem = self.value_dtype;
+        let output_elem = crate::eval::cpu_reference::output_dtype_for(&self.config, elem);
 
         let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
             .dtype(elem)
@@ -100,14 +103,14 @@ impl<E: Float> Benchmark for ReduceBench<E> {
             _ => 1,
         };
         shape_out[self.axis] = reduce_len;
-        let out = TensorHandle::empty(&client, shape_out.clone(), elem);
+        let out = TensorHandle::empty(&client, shape_out.clone(), output_elem);
         let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
         (input, out, indices)
     }
 
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
-        let value_dtype = E::elem_type_native();
+        let value_dtype = self.value_dtype;
         let index_dtype = u32::elem_type_native();
         let acc_dtype = f32::elem_type_native();
 
@@ -193,11 +196,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     /// Measure with device timestamps around the launch, so the reported duration
     /// is the kernel's, not the host's view of launch+sync.
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "reduce-bench")
-            .map_err(|err| format!("{err:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "reduce-bench", || self.execute(args))
     }
 
     fn num_samples(&self) -> usize {
@@ -207,12 +206,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     fn name(&self) -> String {
         format!(
             "reduce-axis({})-{}-{:?}-{:?}-{:?}-{:?}",
-            self.axis,
-            E::elem_type_native(),
-            self.shape,
-            self.strategy,
-            self.config,
-            self.kind,
+            self.axis, self.value_dtype, self.shape, self.strategy, self.config, self.kind,
         )
         .to_lowercase()
     }

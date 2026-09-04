@@ -386,11 +386,7 @@ impl Benchmark for SplitKBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "split-k-bench")
-            .map_err(|err| format!("{err:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "split-k-bench", || self.execute(args))
     }
 }
 
@@ -503,7 +499,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -573,7 +569,7 @@ impl cubek_test_utils::Category for Category {
     /// These shapes are latency-bound, so the launch must be timed on the device rather than
     /// around an async submit; matches the `TimingMethod` [`bench`] actually runs with.
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
 
     fn problems(&self) -> Vec<CatalogEntry<SplitKProblem>> {

@@ -24,7 +24,7 @@ impl cubek_test_utils::Category for Category {
     }
 
     fn timing_method(&self) -> cubecl::benchmark::TimingMethod {
-        cubecl::benchmark::TimingMethod::Device
+        cubek_test_utils::timing_method(cubecl::benchmark::TimingMethod::Device)
     }
 
     fn problems(&self) -> Vec<CatalogEntry<MemcpyAsyncProblem>> {

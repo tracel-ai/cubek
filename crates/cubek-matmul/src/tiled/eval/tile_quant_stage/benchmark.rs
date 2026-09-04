@@ -99,7 +99,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
     // The mma contracts in f32; the packed u32 is how the RHS is stored, not what the
@@ -218,10 +218,8 @@ impl Benchmark for TileQuantStageBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "tile-quant-stage-bench")
-            .map_err(|it| format!("{it:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "tile-quant-stage-bench", || {
+            self.execute(args)
+        })
     }
 }
