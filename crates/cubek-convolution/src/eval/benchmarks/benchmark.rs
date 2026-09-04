@@ -146,9 +146,10 @@ impl<MP: MatmulPrecision> Benchmark for Conv2dBench<MP> {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        self.client
+        let (launched, duration) = self
+            .client
             .profile(|| self.execute(args), "conv-bench")
-            .map(|it| it.1)
-            .map_err(|it| format!("{it:?}"))
+            .map_err(|it| format!("{it:?}"))?;
+        launched.map(|_| duration)
     }
 }
