@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use cubecl::ir::VectorSize;
 use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
-use cubecl_common::e2m1x2;
+use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
 
 use crate::{FieldDecode, field_decode};
 use cubecl::unexpanded;
@@ -71,11 +71,15 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
     out
 }
 
-/// The `e2m1` fields, reinterpreted a pair at a time.
+/// The `e2m1` fields, decoded a pair at a time.
 ///
-/// The pair is the unit rather than the value: two `e2m1` codes share a byte, and `e2m1x2` is what
-/// the hardware decodes and what the shared software decoder names, so a byte answers two values
-/// in one cast either way. That is [`QuantValue::native_packing`], read here as the loop's step.
+/// The pair is the unit rather than the value: two `e2m1` codes share a byte, which is
+/// [`QuantValue::native_packing`], read here as the loop's step.
+///
+/// Decoded in software, as `cubek-quant`'s field read and cubecl's own quantized view both are.
+/// The `e2m1x2` cast lowers on CUDA alone, so a read reaching for it compiles on one vendor and
+/// dies in codegen everywhere else — on a worker thread, which surfaces as a zeroed output
+/// rather than as an error.
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());
@@ -90,7 +94,7 @@ fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Ve
         #[unroll]
         for j in 0..bytes {
             let byte = (word >> comptime!((j * 8) as u32)) & 0xff;
-            let values = Vector::<F, Const<2>>::cast_from(e2m1x2::from_bits(byte as u8));
+            let values = e2m1_packed_bits_to_float::<F, Const<2>>(byte);
             out.insert(base + j * pair, values.extract(0usize));
             out.insert(base + j * pair + 1, values.extract(1usize));
         }

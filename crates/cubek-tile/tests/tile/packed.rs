@@ -125,6 +125,11 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 /// axis, and a block of sixteen against words of eight.
 ///
 /// Nothing in the kernel names the format, the block, or the number of levels.
+///
+/// Every operand here is bound one element wide, so unlike the read tests below this asks nothing
+/// of the device's vector cap and runs everywhere. That matters: the decode it covers is the one
+/// that lowers differently per backend, so a device that skipped this would be the device most
+/// worth running it on.
 #[test]
 fn nvfp4_shaped_decode() {
     let (field, rows, cols, block, blocks) = (QuantValue::E2M1, 4, 4, 16, 2);
@@ -132,14 +137,6 @@ fn nvfp4_shaped_decode() {
     let factor = 32 / field.size_bits();
 
     let client = cubecl::test_device().client();
-    let max = client.properties().hardware.max_vector_size;
-    if factor > max {
-        TestOutcome::Validated(ValidationResult::Skipped(format!(
-            "device vectors cap at {max}, below the {factor}-value word"
-        )))
-        .enforce();
-        return;
-    }
 
     // Every code, cycled, so the whole value ladder and both signs are read back.
     let codes: Vec<u32> = (0..rows * depth).map(|i| (i % 16) as u32).collect();
