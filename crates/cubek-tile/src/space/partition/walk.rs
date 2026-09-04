@@ -1,6 +1,17 @@
-//! The [`Walk`]: the (sub-)Spaces partitioning a [`Space`] yields, as a runtime
-//! odometer over the per-axis tile counts. Each step is a [`Region`] (a `Space` at
-//! an origin); a [`Tile`] locates itself at it.
+//! The [`Walk`]: the regions one level of a [`Space`] hands the instance running the code.
+//!
+//! A walk is a sequence with random access and nothing else: [`over`](Walk::over) computes
+//! once how many regions this cube or plane owns at the level ([`total`](Walk::total)) and how
+//! an index maps to one ([`region`](Walk::region)): decode the index as an odometer over the
+//! level's walked axes, last declared axis fastest, and add this instance's share on the
+//! distributed axes. It never iterates the instances themselves, the hardware does that, and it
+//! holds no current region: `for region in walk` is `for i in 0..total { region(i) }`. The
+//! only things a walk can be told are its order ([`reversed`](Walk::reversed)) and whether it
+//! unrolls ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering)
+//! is a schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
+//!
+//! Each region is a [`Region`] (a `Space` at an origin); a [`Tile`] windows itself to it with
+//! `at`, coming back at the level below.
 
 use cubecl::prelude::*;
 
@@ -28,8 +39,8 @@ pub struct Walk {
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
     steps: usize,
-    /// The space the regions are cut from, which is also what a schedule sizes its slots to
-    /// ([`pipelined_walk`](crate::pipelined_walk)).
+    /// The space the regions are cut from, which is also what a ring sizes its slots to
+    /// ([`Ring::smem`](crate::Ring::smem)).
     #[cube(comptime)]
     pub(crate) space: Space,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
