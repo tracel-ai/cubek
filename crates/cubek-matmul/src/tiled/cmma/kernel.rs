@@ -35,8 +35,8 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
 }
 
 /// The routine's space in kernel form, its top extents resolved from the tensors.
-pub fn cmma_space(bp: &CmmaBlueprint, batch: &[Axis]) -> Space {
-    Space::dynamic(&cmma_axes(batch)).with_levels(&cmma_levels(bp, batch))
+pub fn cmma_space(batch: &[Axis]) -> Space {
+    Space::dynamic(&cmma_axes(batch))
 }
 
 impl CmmaBlueprint {
@@ -118,7 +118,7 @@ pub fn cmma_kernel<
     #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
-    let space = comptime!(cmma_space(&bp, &batch));
+    let space = comptime!(cmma_space(&batch));
     let depth = comptime!(bp.buffering);
     let (i, c_grid) = comptime!((bp.instruction, bp.partition));
     // This plane's fragments: the partition's grid of the instruction's tile.

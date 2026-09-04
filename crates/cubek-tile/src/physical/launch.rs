@@ -1,99 +1,109 @@
-//! What a [`Space`] becomes at launch: the cube grid its partitioner tree implies, and the
-//! [`Launcher`] that binds it to a client for one kernel launch. The launcher keeps the
-//! concrete (real-extent) space alongside the derived kernel-form (dynamic) one, so geometry
-//! and divisibility are always read off real extents and no call site can consume the space
-//! too early.
+//! What a kernel's levels become at launch: the cube grid they imply over the real extents, and
+//! the [`Launcher`] that binds them to a client for one kernel launch. The launcher keeps the
+//! concrete (real-extent) space alongside the kernel-form (dynamic) one, so geometry and
+//! divisibility are always read off real extents and no call site can consume the space too
+//! early.
 
 use cubecl::prelude::*;
 
 use crate::{
     Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, StridedOperand, StridedTileSource,
-    Unset,
+    Unset, leaf,
 };
 
-impl Space {
-    /// Cube dimension `d` gets the instance count of whichever axis is
-    /// `Spatial { Cube(d), .. }`, at any level of the tree, else 1.
-    pub fn cube_count(&self) -> CubeCount {
-        CubeCount::Static(
-            instances_count(self, ComputeScope::Cube(CubeAxis::X)),
-            instances_count(self, ComputeScope::Cube(CubeAxis::Y)),
-            instances_count(self, ComputeScope::Cube(CubeAxis::Z)),
-        )
-    }
-
-    /// `plane_size × plane_count`, plane length being the hardware's. `Unit` axes ride those
-    /// lanes, so their instance product must be exactly `plane_size` or `1`; anything else idles
-    /// or races lanes.
-    pub fn cube_dim(&self, client: &Client) -> CubeDim {
-        let plane_size = client.properties().hardware.plane_size_max;
-        let lanes = instances_count(self, ComputeScope::Unit);
-        assert!(
-            lanes == 1 || lanes == plane_size,
-            "cube_dim: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
-        );
-        CubeDim::new_2d(plane_size, instances_count(self, ComputeScope::Plane))
-    }
+/// Cube dimension `d` gets the instance count of whichever axis is `Spatial { Cube(d), .. }`, at
+/// any level, else 1.
+pub fn cube_count(space: &Space, levels: &[Level]) -> CubeCount {
+    CubeCount::Static(
+        instances_count(space, levels, ComputeScope::Cube(CubeAxis::X)),
+        instances_count(space, levels, ComputeScope::Cube(CubeAxis::Y)),
+        instances_count(space, levels, ComputeScope::Cube(CubeAxis::Z)),
+    )
 }
 
-/// Product of instance counts over every axis riding `scope`, across the whole partitioner tree,
-/// times the instance count of any work a level distributes as one on it ([`Work`]).
-fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
+/// `plane_size × plane_count`, plane length being the hardware's. `Unit` axes ride those lanes,
+/// so their instance product must be exactly `plane_size` or `1`; anything else idles or races
+/// lanes.
+pub fn cube_dim(space: &Space, levels: &[Level], client: &Client) -> CubeDim {
+    let plane_size = client.properties().hardware.plane_size_max;
+    let lanes = instances_count(space, levels, ComputeScope::Unit);
+    assert!(
+        lanes == 1 || lanes == plane_size,
+        "cube_dim: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
+    );
+    CubeDim::new_2d(plane_size, instances_count(space, levels, ComputeScope::Plane))
+}
+
+/// Product of instance counts over every axis riding `scope`, across every level, times the
+/// instance count of any work a level distributes as one on it ([`Work`](crate::Work)).
+fn instances_count(space: &Space, levels: &[Level], scope: ComputeScope) -> u32 {
     let mut total = 1u32;
-    let mut level = space.clone();
-    while !level.is_final() {
+    let mut space = space.clone();
+    for level in levels {
         // Work distributed as one rides its scope whole rather than through any one of its
         // axes, so its instance count is the dim's and no axis of it contributes.
-        if let Some(work) = level.partitioner().work()
+        if let Some(work) = level.work()
             && work.scope() == scope
         {
             total *= work.instances() as u32;
         }
-        for axis in level.axes() {
-            let dist = level.partitioner().distribution(axis);
+        for axis in space.axes() {
+            let dist = level.distribution(axis);
             if dist.scope() == Some(scope) {
                 // `count` is `ceil`, so an indivisible axis adds the instance for its
                 // partial tile.
-                total *= dist.coverage().instances(level.count(axis)) as u32;
+                total *= dist.coverage().instances(level.count(&space, axis)) as u32;
             }
         }
-        level = level.divide();
+        space = level.child(&space);
     }
     total
 }
 
+/// Whether `axis` overhangs its tiling: some level's edge fails to divide the extent handed to
+/// it (the top extent at the first level, the parent edge below), leaving a partial tile that
+/// needs masking. Host-side, on the concrete (real-extent) space; a
+/// [`Dynamic`](crate::Extent) axis panics.
+pub fn overhangs(space: &Space, levels: &[Level], axis: Axis) -> bool {
+    assert!(
+        !space.is_dynamic(axis),
+        "overhangs: axis {axis:?} is Dynamic; ask the concrete space, not the kernel-form one"
+    );
+    let mut space = space.clone();
+    for level in levels {
+        if level.overhangs(&space, axis) {
+            return true;
+        }
+        space = level.child(&space);
+    }
+    false
+}
+
+/// The concrete (real-extent) space of a launch and the levels a kernel walks it with: what a
+/// launch-side derivation (overhang, the leaf edge, the block a scheme is checked against) reads.
+#[derive(Clone, Copy)]
+pub struct Concrete<'a> {
+    pub space: &'a Space,
+    pub levels: &'a [Level],
+}
+
+impl Concrete<'_> {
+    pub fn overhangs(&self, axis: Axis) -> bool {
+        overhangs(self.space, self.levels, axis)
+    }
+
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.space.contains(axis)
+    }
+}
+
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
-/// divisibility math) and the kernel-form space tile arguments project from.
+/// divisibility math), the levels, and the kernel-form space tile arguments project from.
 pub struct Launcher<'c> {
     concrete: Space,
     kernel: Space,
+    levels: Vec<Level>,
     client: &'c Client,
-}
-
-impl Space {
-    /// Creates a [`Launcher`] with all kernel space axes marked dynamic, so one compiled kernel
-    /// serves arbitrary shapes. Use [`launcher_over`](Self::launcher_over) to keep specific axes
-    /// static.
-    pub fn launcher(self, client: &Client) -> Launcher<'_> {
-        let kernel = self.clone().all_dynamic();
-        Launcher::over(client, self, kernel)
-    }
-
-    /// Creates a [`Launcher`] where only the `dynamic` axes have dynamic extents, every other
-    /// axis staying comptime. Specializes kernel loops along an axis, and serves one no operand
-    /// can state the size of ([`Tile::witnesses`](crate::Tile::witnesses)); `&[]` is fully static.
-    pub fn launcher_over<'c>(self, client: &'c Client, dynamic: &[Axis]) -> Launcher<'c> {
-        // An axis the space does not have would be dropped by `with_dynamic`, leaving a kernel
-        // specialized along the axis the caller meant to free.
-        for &axis in dynamic {
-            assert!(
-                self.contains(axis),
-                "Space::launcher_over: {axis:?} is not an axis of this space"
-            );
-        }
-        let kernel = self.clone().with_dynamic(dynamic);
-        Launcher::over(client, self, kernel)
-    }
 }
 
 impl<'c> Launcher<'c> {
@@ -103,42 +113,71 @@ impl<'c> Launcher<'c> {
     /// [`Dynamic`](crate::Extent), so one compiled kernel serves every shape.
     pub fn new(client: &'c Client, extents: &[(Axis, usize)], levels: &[Level]) -> Self {
         let axes: Vec<Axis> = extents.iter().map(|&(a, _)| a).collect();
-        let kernel = Space::dynamic(&axes).with_levels(levels);
-        let concrete = kernel.clone().with_extents(extents);
-        Launcher::over(client, concrete, kernel)
+        Launcher {
+            concrete: Space::new(extents),
+            kernel: Space::dynamic(&axes),
+            levels: levels.to_vec(),
+            client,
+        }
     }
 
     /// [`new`](Launcher::new) for a kernel whose extents are all static: the kernel form is the
     /// concrete space itself.
     pub fn over_static(client: &'c Client, extents: &[(Axis, usize)], levels: &[Level]) -> Self {
-        let concrete = Space::new(extents).with_levels(levels);
-        Launcher::over(client, concrete.clone(), concrete)
+        Launcher::over(client, extents, &[], levels)
     }
 
-    fn over(client: &'c Client, concrete: Space, kernel: Space) -> Self {
+    /// The launcher whose kernel form frees only the `dynamic` axes, every other extent staying
+    /// comptime: specializes kernel loops along an axis, and serves one no operand can state the
+    /// size of ([`Tile::witnesses`](crate::Tile::witnesses)); `&[]` is fully static.
+    pub fn over(
+        client: &'c Client,
+        extents: &[(Axis, usize)],
+        dynamic: &[Axis],
+        levels: &[Level],
+    ) -> Self {
+        let concrete = Space::new(extents);
+        // An axis the space does not have would be dropped by `with_dynamic`, leaving a kernel
+        // specialized along the axis the caller meant to free.
+        for &axis in dynamic {
+            assert!(
+                concrete.contains(axis),
+                "Launcher::over: {axis:?} is not an axis of this space"
+            );
+        }
         Launcher {
+            kernel: concrete.clone().with_dynamic(dynamic),
             concrete,
-            kernel,
+            levels: levels.to_vec(),
             client,
         }
     }
 
     pub fn cube_count(&self) -> CubeCount {
-        self.concrete.cube_count()
+        cube_count(&self.concrete, &self.levels)
     }
 
     pub fn cube_dim(&self) -> CubeDim {
-        self.concrete.cube_dim(self.client)
+        cube_dim(&self.concrete, &self.levels, self.client)
     }
 
-    /// The kernel-form (fully dynamic) space tile arguments project from.
+    /// The kernel-form space tile arguments project from.
     pub fn space(&self) -> &Space {
         &self.kernel
     }
 
-    /// The concrete space, for overhang and divisibility decisions.
-    pub fn concrete(&self) -> &Space {
-        &self.concrete
+    /// The kernel-form space with the levels: what a kernel taking its nest as a comptime
+    /// argument is handed.
+    pub fn nest(&self) -> Nest {
+        Nest::new(self.kernel.clone(), self.levels.clone())
+    }
+
+    /// The concrete space and the levels, for overhang and divisibility decisions.
+    pub fn concrete(&self) -> Concrete<'_> {
+        Concrete {
+            space: &self.concrete,
+            levels: &self.levels,
+        }
     }
 
     /// Starts configuring a tile operand builder ([`StridedTileSource`]) bound to this launcher's
@@ -146,7 +185,7 @@ impl<'c> Launcher<'c> {
     pub fn arg(&self, binding: TensorBinding) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedOperand::source(binding)
             .space(&self.kernel)
-            .concrete(&self.concrete)
+            .concrete(self.concrete())
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
@@ -164,7 +203,7 @@ impl<'c> Launcher<'c> {
     pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedTileSource::<Unset, Unset, Unset>::of_geometry(geometry)
             .space(&self.kernel)
-            .concrete(&self.concrete)
+            .concrete(self.concrete())
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
@@ -189,16 +228,18 @@ impl<'c> Launcher<'c> {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        // The one gate that is about the space rather than the geometry: a masked access reports
+        // The one gate that is about the levels rather than the geometry: a masked access reports
         // its length in lines and would wrongly clip, so an overhanging subspace is served scalar
         // whatever its extents and strides would allow. `serves_lines` below answers the rest.
-        let masked = operands
-            .iter()
-            .any(|(_, subspace)| subspace.iter().any(|&a| self.concrete.overhangs(a)));
+        let masked = operands.iter().any(|(_, subspace)| {
+            subspace
+                .iter()
+                .any(|&a| overhangs(&self.concrete, &self.levels, a))
+        });
         if masked {
             return 1;
         }
-        let leaf = self.concrete.final_space().extent(axis);
+        let leaf = leaf(&self.concrete, &self.levels).extent(axis);
         self.client
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
@@ -210,5 +251,78 @@ impl<'c> Launcher<'c> {
             })
             .max()
             .unwrap_or(1)
+    }
+}
+
+/// A space and the levels a kernel walks it with, stated together on the host: what a launch
+/// with no blueprint of its own lists (a test, a benchmark mapping). The kernel takes the list
+/// as a comptime argument and states each loop with one of its levels; the launch reads the
+/// grid off the same list.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Nest {
+    pub space: Space,
+    pub levels: Vec<Level>,
+}
+
+impl Nest {
+    /// `space` walked with `levels`, outermost first.
+    pub fn new(space: Space, levels: Vec<Level>) -> Self {
+        Nest { space, levels }
+    }
+
+    /// Static extents, no level yet.
+    pub fn over(extents: &[(Axis, usize)]) -> Self {
+        Nest {
+            space: Space::new(extents),
+            levels: Vec::new(),
+        }
+    }
+
+    /// Every extent [`Dynamic`](crate::Extent), no level yet.
+    pub fn dynamic(axes: &[Axis]) -> Self {
+        Nest {
+            space: Space::dynamic(axes),
+            levels: Vec::new(),
+        }
+    }
+
+    /// Add a level below the ones stated so far ([`Level::cuts`] over the space's axes).
+    pub fn level(mut self, f: impl FnOnce(&mut crate::LevelCuts)) -> Self {
+        let axes: Vec<Axis> = self.space.axes().collect();
+        self.levels.push(Level::cuts(&axes, f));
+        self
+    }
+
+    /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
+    pub fn at(&self, i: usize) -> Level {
+        self.levels[i].clone()
+    }
+
+    /// The levels below the `i`-th: what an accumulator opened `i` levels down is shaped by.
+    pub fn below(&self, i: usize) -> &[Level] {
+        &self.levels[i..]
+    }
+
+    pub fn cube_count(&self) -> CubeCount {
+        cube_count(&self.space, &self.levels)
+    }
+
+    pub fn cube_dim(&self, client: &Client) -> CubeDim {
+        cube_dim(&self.space, &self.levels, client)
+    }
+
+    /// The launcher over this nest's static extents.
+    pub fn launcher<'c>(&self, client: &'c Client) -> Launcher<'c> {
+        self.launcher_over(client, &[])
+    }
+
+    /// The launcher whose kernel form frees only the `dynamic` axes ([`Launcher::over`]).
+    pub fn launcher_over<'c>(&self, client: &'c Client, dynamic: &[Axis]) -> Launcher<'c> {
+        let extents: Vec<(Axis, usize)> = self
+            .space
+            .axes()
+            .map(|a| (a, self.space.extent(a)))
+            .collect();
+        Launcher::over(client, &extents, dynamic, &self.levels)
     }
 }

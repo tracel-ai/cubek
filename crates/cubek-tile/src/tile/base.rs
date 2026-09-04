@@ -30,44 +30,6 @@ pub enum TileKind<T: Numeric> {
     Procedural(ProceduralData<T>),
 }
 
-#[cube]
-impl<T: Numeric> TileKind<T> {
-    /// Whether a level must be walked with comptime coordinates. Fragments can't be picked out by
-    /// a runtime region, so a plane partition sitting at a real partition level forces the unrolled
-    /// walk. Comptime.
-    pub(crate) fn static_level(&self, #[comptime] space: Space) -> comptime_type!(bool) {
-        match self {
-            TileKind::PlanePartition(_) => comptime!(matches!(
-                space.partitioner(),
-                Partitioner::Level(l) if matches!(l.role(), LevelRole::Partition)
-            )),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                comptime!(false)
-            }
-        }
-    }
-
-    /// Whether a staged walk here must unroll for correctness. When the level cuts a fragment
-    /// partition, each region picks its own block of fragments, which needs comptime coordinates.
-    /// A 1×1 level (a k-step walk) cuts nothing and passes the partition through, so it stays a
-    /// plain runtime loop. Comptime.
-    pub(crate) fn cuts_partition(&self, #[comptime] space: Space) -> comptime_type!(bool) {
-        match self {
-            TileKind::PlanePartition(_) => comptime!(space.cuts_tiles()),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                comptime!(false)
-            }
-        }
-    }
-}
 /// One operand's data: a runtime [`TileKind`] backing store and the comptime [`Space`] it
 /// projects. `T` is the element the tile serves and computes in; its physical vector width is a
 /// storage detail inside the [`TileKind`], read back with [`vector_size`](Tile::vector_size).
@@ -440,9 +402,9 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The same cells under another `space`: same axes, same extents, different levels. What lets
-    /// a leaf window an operand whose partitioning is not the operand's own statement — the rhs of
-    /// a contraction is cut by the grid the contraction implies, and arrives whole.
+    /// The same cells under another `space`: same axes, same extents, a fresh descent. What lets a
+    /// leaf window an operand whose cut is not the operand's own statement: the rhs of a
+    /// contraction is cut by the grid the contraction implies, and arrives whole.
     ///
     /// `Clone` on the store names the same storage, so a write through the result is a write
     /// through this tile.
@@ -543,7 +505,7 @@ impl<T: Numeric> Tile<T> {
         };
         Tile::<T> {
             tile_kind,
-            space: comptime!(self.space.divide()),
+            space: comptime!(region.level.child(&self.space)),
             descent: comptime!(self.descent.under(&region.level)),
         }
     }
@@ -592,25 +554,16 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
-    /// `out = A·B` zeroes first. Same shape as [`mma`](Tile::mma): a final tile clears its store,
-    /// a level walks and recurses (each region clears exactly the windows it owns; a fragment
-    /// output takes the unrolled walk, memory the compact loop).
+    /// `out = A·B` zeroes first. The whole window this tile holds, by every unit of the cube for
+    /// memory and every fragment for a partition; the levels a zero is split across are the
+    /// kernel's own loops, so a kernel zeroes the tile it holds where it holds it.
     pub fn zero(&mut self) {
-        match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final => match &mut self.tile_kind {
-                TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
-                TileKind::PlaneTile(t) => t.zero(),
-                TileKind::PlanePartition(p) => p.zero(),
-                TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
-                TileKind::Procedural(_) => panic!("Tile::zero: a procedural tile is not writable"),
-            },
-            Partitioner::Level(_) => {
-                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
-                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
-                    let mut sub = self.at(&region);
-                    sub.zero();
-                }
-            }
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.zero(),
+            TileKind::PlaneTile(t) => t.zero(),
+            TileKind::PlanePartition(p) => p.zero(),
+            TileKind::TmaGmem(_) => panic!("Tile::zero: a tma source is not writable"),
+            TileKind::Procedural(_) => panic!("Tile::zero: a procedural tile is not writable"),
         }
     }
 
@@ -626,21 +579,12 @@ impl<T: Numeric> Tile<T> {
 
     /// Initialize this tile with `val`. Same shape as [`zero`](Tile::zero).
     pub fn init(&mut self, val: T) {
-        match comptime!(self.space.partitioner().clone()) {
-            Partitioner::Final => match &mut self.tile_kind {
-                TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
-                TileKind::PlaneTile(t) => t.init(val),
-                TileKind::PlanePartition(p) => p.init(val),
-                TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
-                TileKind::Procedural(_) => panic!("Tile::init: a procedural tile is not writable"),
-            },
-            Partitioner::Level(_) => {
-                let unroll = self.tile_kind.static_level(comptime!(self.space.clone()));
-                for region in Walk::over(self.runtime_space()).with_unroll(unroll) {
-                    let mut sub = self.at(&region);
-                    sub.init(val);
-                }
-            }
+        match &mut self.tile_kind {
+            TileKind::Gmem(d) | TileKind::Smem(d) => d.init(val),
+            TileKind::PlaneTile(t) => t.init(val),
+            TileKind::PlanePartition(p) => p.init(val),
+            TileKind::TmaGmem(_) => panic!("Tile::init: a tma source is not writable"),
+            TileKind::Procedural(_) => panic!("Tile::init: a procedural tile is not writable"),
         }
     }
 

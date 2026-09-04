@@ -90,7 +90,7 @@ impl DepthwiseSpace {
     }
 
     pub fn space(&self) -> Space {
-        Space::new(&self.extents()).with_levels(&self.levels())
+        Space::new(&self.extents())
     }
 
     /// This cube's box of the output with the taps whole. The channel axis takes X so that the

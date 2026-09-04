@@ -9,6 +9,11 @@
 
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
+/// The leaf `levels` reach below `space`: each level's child of the last.
+pub fn leaf(space: &Space, levels: &[Level]) -> Space {
+    levels.iter().fold(space.clone(), |s, l| l.child(&s))
+}
+
 use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
@@ -162,6 +167,12 @@ impl Level {
         Level::from_parts(ByAxis::new(&edges), ByAxis::new(&dists), cuts.work)
     }
 
+    /// The level cutting each axis to `edges` and dealing it per `dists`, spelled out: what a
+    /// test states when the distribution itself is the subject.
+    pub fn over(edges: ByAxis<usize>, dists: ByAxis<Distribution>) -> Level {
+        Level::from_parts(edges, dists, None)
+    }
+
     pub(crate) fn from_parts(
         edges: ByAxis<usize>,
         dists: ByAxis<Distribution>,
@@ -212,6 +223,23 @@ impl Level {
         self.work.as_ref()
     }
 
+
+    /// The space one region of this level covers: every axis of `space` cut to its edge, static
+    /// whatever the parent was (an edge is comptime). Position-free; the positions are the walk.
+    pub fn child(&self, space: &Space) -> Space {
+        Space::new(
+            &space
+                .axes()
+                .map(|axis| (axis, self.edge(axis)))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// Whether this level's edge on `axis` fails to divide the extent `space` hands it, leaving a
+    /// partial tile that needs masking. Host-side, static extents.
+    pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
+        !space.extent(axis).is_multiple_of(self.edge(axis))
+    }
 
     /// Tiles along `axis` of `space`: `ceil(extent / edge)`, so an indivisible axis gets a
     /// trailing partial tile (its overhang is masked at read/write). Host-side, static extents.

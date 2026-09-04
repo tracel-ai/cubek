@@ -286,7 +286,12 @@ impl<E: Numeric> TmaTileArg<E> {
 /// A tile reads a scale as its window's start plus the block index *within* the window, which is
 /// the true block only if no window straddles a block edge. So per axis each level's edge must
 /// tile whole blocks or fit inside one, and a line, being one read, may not straddle either.
-pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
+pub(crate) fn validate_scheme(
+    space: &Space,
+    levels: &[Level],
+    vector_size: usize,
+    scheme: QuantScheme,
+) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
     // vectorized) axis, the one whose lanes the view lays down contiguously. Sub-byte
@@ -335,12 +340,11 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
          straddles two scales"
     );
 
-    // Every window is some level's cut, so the final space (which carries no cut) has nothing
-    // left to check: its extents are the last level's edges.
-    let mut level = space.clone();
-    while !level.is_final() {
-        for (p, axis) in level.axes().enumerate() {
-            let (edge, block) = (level.partitioner().edge(axis), block[p]);
+    // Every window is some level's cut, so the leaf (which carries no cut) has nothing left to
+    // check: its extents are the last level's edges.
+    for level in levels {
+        for (p, axis) in space.axes().enumerate() {
+            let (edge, block) = (level.edge(axis), block[p]);
             assert!(
                 edge.is_multiple_of(block) || block.is_multiple_of(edge),
                 "StridedTileSource::quantized: {axis:?} is cut into {edge}-element tiles, \
@@ -348,7 +352,6 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
                  or sit inside one"
             );
         }
-        level = level.divide();
     }
 }
 

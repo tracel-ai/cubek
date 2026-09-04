@@ -32,11 +32,11 @@ const K: Axis = Axis(3);
 fn copy_logical<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = src.tile(comptime!(space.clone()));
-    let mut dst = dst.tile(space);
+    let src = src.tile(comptime!(nest.space.clone()));
+    let mut dst = dst.tile(comptime!(nest.space.clone()));
     let r = src.view::<Const<1>>();
     let mut w = dst.view_mut::<Const<1>>();
     let shape = r.shape();
@@ -54,11 +54,11 @@ fn copy_logical<E: Numeric>(
 }
 
 /// An operand: a physical buffer in some [`InnerLayout`], viewed in its logical
-/// `(batch, rows, cols)` space.
+/// `(batch, rows, cols)` nest.
 struct Operand {
     handle: TensorHandle,
     layout: InnerLayout,
-    space: Space,
+    nest: Nest,
     batch: usize,
     rows: usize,
     cols: usize,
@@ -114,7 +114,7 @@ impl Operand {
         Operand {
             handle,
             layout,
-            space: Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
+            nest: Nest::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
             batch,
             rows,
             cols,

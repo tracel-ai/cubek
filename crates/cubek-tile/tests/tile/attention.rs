@@ -8,8 +8,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RegisterBlock, RowState, Space, StageStorage, StreamFold, TileArg,
-    TileArgLaunch, TileSpec, Tiling, Walk,
+    Axis, FragmentOwnership, FragmentShape, MaskProbe, MemData, Nest, RegisterBlock, RowState,
+    Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -32,17 +32,17 @@ fn attention_fold_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] budget: usize,
     #[comptime] in_place: bool,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone()));
-    let v = v.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let q = q.tile(comptime!(nest.space.clone()));
+    let k = k.tile(comptime!(nest.space.clone()));
+    let v = v.tile(comptime!(nest.space.clone()));
+    let mask_tile = mask.tile(comptime!(nest.space.clone()));
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -77,7 +77,7 @@ fn attention_fold_kernel<W: Size>(
     sync_cube();
 
     // The fold: one S block per region.
-    for region in Walk::over(k.runtime_space()) {
+    for region in k.runtime_space().level(comptime!(nest.at(0))) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -180,7 +180,7 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (G, g),
         (QP, qp),
         (S, s_total),
@@ -199,8 +199,7 @@ fn run(
             (R, 1),
             (C, 1),
         ]);
-    })
-    .build();
+    });
 
     attention_fold_kernel::launch(
         &client,
@@ -226,7 +225,7 @@ fn run(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        space,
+        nest.clone(),
         units,
         causal,
         block,
@@ -319,7 +318,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     out: &mut Tensor<f32>,             // [QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
@@ -330,10 +329,10 @@ fn attention_fold_cmma_kernel<E: Float>(
     #[comptime] lanes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone()));
-    let v = v.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let q = q.tile(comptime!(nest.space.clone()));
+    let k = k.tile(comptime!(nest.space.clone()));
+    let v = v.tile(comptime!(nest.space.clone()));
+    let mask_tile = mask.tile(comptime!(nest.space.clone()));
 
     let rows = comptime!(q.space.extent(QP));
     let d = comptime!(q.space.extent(D));
@@ -341,11 +340,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     // The queries stage with the grid their lhs role reads: `frag` rows against `frag` of the
     // contracted head dim. Both matmuls contract through the tensor-core leaves.
     let q_space = comptime!(
-        Tiling::over(&[(QP, rows), (D, d)])
-            .level(|l| {
-                l.walk(&[(QP, frag), (D, frag)]);
-            })
-            .build()
+        Space::new(&[(QP, rows), (D, d)])
     );
     let mut q_s = MemData::<E>::smem(q_space, 1usize, StageStorage::Strided, 0usize);
     q_s.copy_from(&q);
@@ -380,13 +375,24 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for region in Walk::over(k.runtime_space()) {
+    for region in k.runtime_space().level(comptime!(nest.at(0))) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
 
         let cols_bound = max(bound_s, s0) - s0;
-        score.score_fragments(&q_s, &kb, cols_bound);
+        score.score_fragments(
+            &q_s,
+            &kb,
+            cols_bound,
+            comptime!(FragmentShape::square(frag)),
+            comptime!(match planes {
+                1 => FragmentOwnership::Cyclic,
+                planes => FragmentOwnership::Slices {
+                    cols: block / planes,
+                },
+            }),
+        );
         sync_cube();
 
         let probe = MaskProbe {
@@ -408,9 +414,31 @@ fn attention_fold_cmma_kernel<E: Float>(
         sync_cube();
 
         if comptime!(in_place) {
-            acc.mix_fragments(&score, &vb, cols_bound);
+            acc.mix_fragments(
+                &score,
+                &vb,
+                cols_bound,
+                comptime!(FragmentShape::square(frag)),
+                comptime!(match planes {
+                    1 => FragmentOwnership::Cyclic,
+                    planes => FragmentOwnership::Slices {
+                        cols: val_dim / planes,
+                    },
+                }),
+            );
         } else {
-            acc.mix_fragments(&p, &vb, cols_bound);
+            acc.mix_fragments(
+                &p,
+                &vb,
+                cols_bound,
+                comptime!(FragmentShape::square(frag)),
+                comptime!(match planes {
+                    1 => FragmentOwnership::Cyclic,
+                    planes => FragmentOwnership::Slices {
+                        cols: val_dim / planes,
+                    },
+                }),
+            );
         }
         sync_cube();
     }
@@ -437,20 +465,10 @@ fn attention_fold_cmma_kernel<E: Float>(
 
 /// `{rows, cols}` cut into `frag × frag` fragments, under one slice of `cols / planes` per plane
 /// when more than one is stated.
-fn sliced(extents: &[(Axis, usize); 2], planes: usize, frag: usize) -> Space {
-    let (rows, cols) = (extents[0], extents[1]);
-    let tiling = Tiling::over(extents);
-    let tiling = match planes {
-        1 => tiling,
-        planes => tiling.level(|l| {
-            l.walk(&[rows, (cols.0, cols.1 / planes)]);
-        }),
-    };
-    tiling
-        .level(|l| {
-            l.walk(&[(rows.0, frag), (cols.0, frag)]);
-        })
-        .build()
+fn sliced(extents: &[(Axis, usize); 2], _planes: usize, _frag: usize) -> Space {
+    // How the planes share the grid and how big a fragment is are stated to the leaf itself
+    // ([`FragmentOwnership`], [`FragmentShape`]); the stage is just its extents.
+    Space::new(extents)
 }
 
 /// Launch the tensor-core fold and check against direct host math.
@@ -555,7 +573,7 @@ fn run_cmma<E: Float + CubeElement>(
 
     // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
     // in blocks and nothing else.
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (G, 1),
         (QP, rows),
         (S, s_total),
@@ -574,8 +592,7 @@ fn run_cmma<E: Float + CubeElement>(
             (R, 1),
             (C, 1),
         ]);
-    })
-    .build();
+    });
     // The axis is on the operand only where its binding has a dim for it: a spec naming one it
     // does not is a different operand, not the same one spanned.
     let (k_axes, v_axes): (&[Axis], &[Axis]) = if spanned {
@@ -607,7 +624,7 @@ fn run_cmma<E: Float + CubeElement>(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        space,
+        nest.clone(),
         units,
         causal,
         block,
@@ -919,7 +936,7 @@ fn attention_fold_split_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] team: usize,
     #[comptime] splits: usize,
     #[comptime] causal: bool,
@@ -927,10 +944,10 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] budget: usize,
     #[comptime] split_inner: bool,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone()));
-    let v = v.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let q = q.tile(comptime!(nest.space.clone()));
+    let k = k.tile(comptime!(nest.space.clone()));
+    let v = v.tile(comptime!(nest.space.clone()));
+    let mask_tile = mask.tile(comptime!(nest.space.clone()));
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -953,11 +970,7 @@ fn attention_fold_split_kernel<W: Size>(
     let split_rows = comptime!(splits * rows);
     let config = comptime!(RegisterBlock::new(budget));
     let score_space = comptime!(
-        Tiling::over(&[(R, split_rows), (C, block)])
-            .level(|l| {
-                l.walk(&[(R, rows), (C, block)]);
-            })
-            .build()
+        Space::new(&[(R, split_rows), (C, block)])
     );
     // The split outermost gives a team one contiguous run of rows; innermost
     // gives it a strided column. Only the declared order differs: the cuts
@@ -968,18 +981,10 @@ fn attention_fold_split_kernel<W: Size>(
         [(T, splits), (R, rows)]
     });
     let row_space = comptime!(
-        Tiling::over(&row_extents)
-            .level(|l| {
-                l.walk(&[(T, 1), (R, rows)]);
-            })
-            .build()
+        Space::new(&row_extents)
     );
     let acc_space = comptime!(
-        Tiling::over(&[(R, split_rows), (V, val_dim)])
-            .level(|l| {
-                l.walk(&[(R, rows), (V, val_dim)]);
-            })
-            .build()
+        Space::new(&[(R, split_rows), (V, val_dim)])
     );
     let score_all =
         MemData::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
@@ -993,13 +998,13 @@ fn attention_fold_split_kernel<W: Size>(
 
     // This team's windows.
     let t = UNIT_POS_Y as usize;
-    let tw = Walk::over(score_all.runtime_space());
+    let tw = score_all.runtime_space().level(comptime!(nest.at(0)));
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
-    let rw = Walk::over(factors_all.runtime_space());
+    let rw = factors_all.runtime_space().level(comptime!(nest.at(1)));
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let aw = Walk::over(acc_all.runtime_space());
+    let aw = acc_all.runtime_space().level(comptime!(nest.at(2)));
     let mut acc = acc_all.at(&aw.region(t));
 
     let kept = comptime!(Space::new(&[(R, rows)]));
@@ -1011,7 +1016,7 @@ fn attention_fold_split_kernel<W: Size>(
     // Interleaved split walk: team t folds blocks t, t + splits, …; every
     // team runs every round (the barriers must stay uniform), an out-of-range
     // block just skips its compute.
-    let k_walk = Walk::over(k.runtime_space());
+    let k_walk = k.runtime_space().level(comptime!(nest.at(3)));
     let blocks = bound_s.div_ceil(block);
     let rounds = blocks.div_ceil(splits);
     for round in 0..rounds {
@@ -1151,8 +1156,8 @@ fn run_split_at(
         .zeros()
         .generate_without_host_data();
 
-    // The one attention space, as in [`run`].
-    let space = Tiling::over(&[
+    // The one attention nest, as in [`run`].
+    let nest = Nest::over(&[
         (G, g),
         (QP, qp),
         (S, s_total),
@@ -1171,8 +1176,7 @@ fn run_split_at(
             (R, 1),
             (C, 1),
         ]);
-    })
-    .build();
+    });
 
     attention_fold_split_kernel::launch(
         &client,
@@ -1198,7 +1202,7 @@ fn run_split_at(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        space,
+        nest.clone(),
         team,
         splits,
         causal,
@@ -1288,15 +1292,15 @@ fn attention_stream_test_kernel<W: Size>(
     out: &TileArg<'_, f32, W>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] lanes: usize,
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
-    let q = q.tile(comptime!(space.clone()));
-    let k = k.tile(comptime!(space.clone()));
-    let v = v.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
+    let q = q.tile(comptime!(nest.space.clone()));
+    let k = k.tile(comptime!(nest.space.clone()));
+    let v = v.tile(comptime!(nest.space.clone()));
+    let mut out = out.tile(comptime!(nest.space.clone()));
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
@@ -1309,7 +1313,7 @@ fn attention_stream_test_kernel<W: Size>(
     // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
-    let k_walk = Walk::over(k.runtime_space());
+    let k_walk = k.runtime_space().level(comptime!(nest.at(0)));
     let blocks = bound_s.div_ceil(block);
     let per_team = blocks.div_ceil(splits);
     let start_b = t * per_team;
@@ -1363,11 +1367,9 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let space = Tiling::over(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)])
-        .level(|l| {
-            l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)]);
-        })
-        .build();
+    let nest = Nest::over(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]).level(|l| {
+        l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)]);
+    });
 
     attention_stream_test_kernel::launch(
         &client,
@@ -1392,7 +1394,7 @@ fn run_stream(
         ),
         scale,
         bound_s as u32,
-        space,
+        nest.clone(),
         lanes,
         splits,
         block,

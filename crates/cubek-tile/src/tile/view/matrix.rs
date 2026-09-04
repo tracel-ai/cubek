@@ -561,7 +561,7 @@ mod tests {
     /// A plain matmul operand: one axis per edge, the split right down the middle.
     #[test]
     fn a_rank_two_operand_splits_between_its_axes() {
-        let s = flat_space(&[(OH, 8), (CI, 4)]);
+        let s = Space::new(&[(OH, 8), (CI, 4)]);
         assert_eq!(MatrixAxes::whole(&s, 8, 4, 1).col_split, 1);
     }
 
@@ -569,14 +569,14 @@ mod tests {
     /// product and the split leaves only the output axis in the row group.
     #[test]
     fn a_contraction_over_two_axes_splits_before_both() {
-        let s = flat_space(&[(OH, 8), (RH, 2), (CI, 4)]);
+        let s = Space::new(&[(OH, 8), (RH, 2), (CI, 4)]);
         assert_eq!(MatrixAxes::whole(&s, 8, 8, 1).col_split, 1);
     }
 
     /// Both edges spanning several axes, which is what a 2-D convolution's input needs.
     #[test]
     fn both_edges_may_span_several_axes() {
-        let s = flat_space(&[(OH, 3), (RH, 4), (CI, 2)]);
+        let s = Space::new(&[(OH, 3), (RH, 4), (CI, 2)]);
         assert_eq!(MatrixAxes::whole(&s, 12, 2, 2).col_split, 2);
     }
 
@@ -585,7 +585,7 @@ mod tests {
     /// cells; taking the smaller keeps the answer deterministic.
     #[test]
     fn a_degenerate_leading_axis_stays_in_the_row_group() {
-        let s = flat_space(&[(OH, 1), (RH, 2), (CI, 4)]);
+        let s = Space::new(&[(OH, 1), (RH, 2), (CI, 4)]);
         assert_eq!(MatrixAxes::whole(&s, 1, 8, 1).col_split, 1);
     }
 
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "no grouping of this tile's axes")]
     fn a_mismatched_fragment_is_refused() {
-        let s = flat_space(&[(OH, 8), (RH, 2), (CI, 2)]);
+        let s = Space::new(&[(OH, 8), (RH, 2), (CI, 2)]);
         MatrixAxes::whole(&s, 8, 8, 1);
     }
 
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "innermost (vectorized) axis")]
     fn the_vectorized_axis_must_land_in_the_column_group() {
-        let s = flat_space(&[(OH, 8), (CI, 4)]);
+        let s = Space::new(&[(OH, 8), (CI, 4)]);
         MatrixAxes::whole(&s, 32, 1, 1);
     }
 
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "whole number of 4-wide lines")]
     fn a_partial_innermost_line_is_refused() {
-        let s = flat_space(&[(OH, 8), (CI, 6)]);
+        let s = Space::new(&[(OH, 8), (CI, 6)]);
         MatrixAxes::whole(&s, 8, 6, 4);
     }
 }

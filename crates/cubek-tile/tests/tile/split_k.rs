@@ -44,13 +44,13 @@ fn split_partials<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     partials: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let partials = partials.tile(space);
-    for region in Walk::over(partials.op_space(&a, &b)) {
+    let a = a.tile(comptime!(nest.space.clone()));
+    let b = b.tile(comptime!(nest.space.clone()));
+    let partials = partials.tile(comptime!(nest.space.clone()));
+    for region in partials.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut partials_cube = partials.at(&region);
         partials_cube.mm_with(
             &a.at(&region),
@@ -66,12 +66,12 @@ fn split_partials<E: Numeric>(
 fn reduce_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.reduce_space(&partials)) {
+    let partials = partials.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.reduce_space(&partials).level(comptime!(nest.at(0))) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -106,12 +106,11 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::over(&[(M, m), (N, n), (KB, splits), (KI, inside)])
+    let split_space = Nest::over(&[(M, m), (N, n), (KB, splits), (KI, inside)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
                 .walk(&[(M, m), (N, n), (KI, inside)]);
-        })
-        .build();
+        });
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
@@ -147,12 +146,11 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Tiling::over(&[(M, m), (N, n), (KB, splits)])
+    let fold_space = Nest::over(&[(M, m), (N, n), (KB, splits)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 1)])
                 .walk(&[(N, n), (KB, splits)]);
-        })
-        .build();
+        });
 
     reduce_splits::launch(
         &client,
@@ -308,17 +306,17 @@ fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = out.tile(space);
+    let a = a.tile(comptime!(nest.space.clone()));
+    let b = b.tile(comptime!(nest.space.clone()));
+    let mut c = out.tile(comptime!(nest.space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space, nest.below(0))), REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -347,17 +345,16 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+        });
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -370,7 +367,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         dtype,
     );
 
@@ -484,18 +481,17 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(lanes(plane_size), &[(N, per_lane)])
                 .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m)]);
-        })
-        .build();
+        });
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -508,7 +504,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         dtype,
     );
 
@@ -564,17 +560,16 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(planes(), &[(K, k / num_planes)])
                 .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+        });
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -587,7 +582,7 @@ fn an_atomic_drain_folds_across_planes() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         dtype,
     );
 
@@ -618,13 +613,13 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(space);
-    for region in Walk::over(c.op_space(&a, &b)) {
+    let a = a.tile(comptime!(nest.space.clone()));
+    let b = b.tile(comptime!(nest.space.clone()));
+    let c = out.tile(comptime!(nest.space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut c_region = c.at(&region);
         c_region.mm_with(
             &a.at(&region),
@@ -667,17 +662,16 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+        });
 
     atomic_split_matmul_in_place::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -690,7 +684,7 @@ fn a_folding_output_contracts_in_place() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         dtype,
     );
 

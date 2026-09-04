@@ -11,7 +11,8 @@ use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
     Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Concrete, Level, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -31,9 +32,10 @@ struct TileSourceData<'a> {
     /// unbound one states them, and both reach [`labeled`] the same way.
     geometry: Geometry,
     space: Option<&'a Space>,
-    /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
-    /// lets [`build`](StridedTileSource::build) derive the bounds-check from overhang.
-    concrete: Option<&'a Space>,
+    /// The concrete (real-extent) space and its levels, when minted by a
+    /// [`Launcher`](crate::Launcher): lets [`build`](StridedTileSource::build) derive the
+    /// bounds-check from overhang.
+    concrete: Option<Concrete<'a>>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
     /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
@@ -185,8 +187,8 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
 
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
-    pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
-        self.data.concrete = Some(space);
+    pub(crate) fn concrete(mut self, concrete: Concrete<'a>) -> Self {
+        self.data.concrete = Some(concrete);
         self
     }
 
@@ -302,9 +304,9 @@ impl Quantization {
     /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
     /// operand's cuts and served width. Where the [`DequantAt`] can be honoured is the fragment
     /// load's to say, at the kernel's own call.
-    pub(crate) fn validate(&self, space: &Space, vector_size: usize) {
+    pub(crate) fn validate(&self, space: &Space, levels: Option<&[Level]>, vector_size: usize) {
         cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
-        validate_scheme(space, vector_size, self.scheme);
+        validate_scheme(space, levels.unwrap_or(&[]), vector_size, self.scheme);
         cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
     }
 }
@@ -466,7 +468,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             // derivation above already skips it when *arming* the mode, so nothing here may use
             // that same silence to drop one.
             Some(axis) => {
-                concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
+                concrete.is_some_and(|concrete| {
+                    concrete.contains(axis) && !concrete.overhangs(axis)
+                })
             }
             None => false,
         };
@@ -501,7 +505,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
                 "StridedTileSource::quantized: a gathered operand cannot be quantized; its scale \
                  grid is shaped over its logical axes, which its buffer's dims no longer match"
             );
-            quant.validate(&space.project(spec.axes()), v);
+            quant.validate(&space.project(spec.axes()), concrete.map(|c| c.levels), v);
         }
         Realized {
             tensor: binding.map(|mut binding| {

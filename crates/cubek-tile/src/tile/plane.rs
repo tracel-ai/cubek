@@ -238,42 +238,42 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
-            // The fragments above were sized from the statement alone, so the tile carries the
-            // space it actually has, not the caller's. The kernel-form space is `all_dynamic`,
-            // and a register-resident tile has no buffer bound to resolve a `Dynamic` axis from,
-            // and inheriting it verbatim would make `runtime_space` unanswerable.
-            space: comptime!(space.sub_tile_space()),
+            // The space of the tile it mirrors: what the levels below it cut, as they cut it.
+            // The fragments were sized from the statement alone, so a `Dynamic` extent here is
+            // never read; the first partition level below reads its own edges off its child.
+            space,
             descent: comptime!(Descent::root()),
         }
     }
 
     /// The store for one region of an operand under `out`'s contraction: a partition mirroring
-    /// the region's grid, tiles uninitialized in `form`; [`copy_from`](Tile::copy_from) fills it.
+    /// the accumulator's `grid` of fragments along the operand's own axes, tiles uninitialized
+    /// in `form`; [`copy_from`](Tile::copy_from) fills it. `m`/`n` are the accumulator fragment's.
     pub(crate) fn store(
         #[comptime] window: Space,
         #[comptime] form: PlaneForm,
         #[comptime] out: Space,
+        #[comptime] grid: (usize, usize),
+        #[comptime] m: usize,
+        #[comptime] n: usize,
     ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
-        let t0 = comptime!(window.count(a0));
-        let t1 = comptime!(window.count(a1));
 
-        // `A` is `m×k`, `B` is `k×n`: the operand's role is where its contracted axis sits.
+        // `A` is `m×k`, `B` is `k×n`: the operand's role is where its contracted axis sits, and
+        // its fragments run along the accumulator's rows or columns accordingly, one deep along
+        // the contraction.
         let contracted = comptime!(window.contraction(&out));
-        let ident = comptime!(if contracted == a1 {
-            MatrixIdent::A
+        let (ident, t0, t1) = comptime!(if contracted == a1 {
+            (MatrixIdent::A, grid.0, 1)
         } else {
             assert!(
                 contracted == a0,
                 "PlanePartition::store: the contracted axis must be one of the trailing two"
             );
-            MatrixIdent::B
+            (MatrixIdent::B, 1, grid.1)
         });
-        let out_fin = comptime!(out.final_space());
-        let m = comptime!(out_fin.extent_at(out_fin.rank() - 2));
-        let n = comptime!(out_fin.extent_at(out_fin.rank() - 1));
-        let k = comptime!(window.final_space().extent(contracted));
+        let k = comptime!(window.extent(contracted));
 
         let mut frags = Sequence::<PlaneTile<T>>::new();
         #[unroll]
@@ -322,26 +322,30 @@ impl<T: Numeric> PlanePartition<T> {
             "PlanePartition::fragments: a gathered operand cannot load into fragments; stage it \
              into shared memory first"
         ));
+        let (grid, m, n) = acc.fragment_grid();
         let mut frags = PlanePartition::<T>::store(
             comptime!(src.space.clone()),
             comptime!(form),
             comptime!(acc.space.clone()),
+            comptime!(grid),
+            comptime!(m),
+            comptime!(n),
         );
         frags.copy_from(src);
         frags
     }
 
-    /// Fill each tile from its final window of `src`, in the partition's row-major order.
+    /// Fill each tile from its window of `src`, in the partition's row-major order. The cut
+    /// that turns the source's window into fragments is this partition's grid, one level the
+    /// kernel never walks.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
-        // The cut that turns the source's window into fragments is the source's own tiling
-        // below it, which the kernel never walks.
-        let levels = comptime!(src.space.levels_below());
+        let level = comptime!(fragment_level(&src.space, self.m_tiles, self.n_tiles));
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
-                let window = src.fragment_window(mi, ni, comptime!(levels.clone()));
+                let window = src.fragment_window(mi, ni, comptime!(vec![level.clone()]));
                 frag.load_window(&window);
             }
         }
@@ -444,13 +448,6 @@ impl<T: Numeric> Tile<T> {
         ));
         let level = comptime!(levels[0].clone());
         let rest = comptime!(levels[1..].to_vec());
-        // The record is the tiling's own levels, until the tiling is gone.
-        comptime!(assert!(
-            !space.is_final() && space.partitioner().level() == &level,
-            "Tile::fragment_window: the accumulator was descended with {level:?} where its \
-             output is tiled by {:?}",
-            space.partitioner()
-        ));
         match comptime!(level.role()) {
             // An instance level hands this instance one region; descend into it.
             LevelRole::Instance => {
@@ -465,8 +462,8 @@ impl<T: Numeric> Tile<T> {
             // A partition level takes its own digit of the grid and passes the rest down
             // (the grid may be split across stacked levels).
             LevelRole::Partition => {
-                let (bm, bn) = comptime!(partition_shape(&space.divide()));
-                let region = Region::trailing_in(
+                let (bm, bn) = comptime!(partition_shape(&level.child(&space), &rest));
+                let region = Region::trailing(
                     comptime!(space.clone()),
                     comptime!(level.clone()),
                     comptime!(mi / bm),
@@ -483,22 +480,70 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-/// The whole remaining walk's tile grid for one instance: `(1, 1)` when every level is an instance
-/// level, else the componentwise product of the partition levels' tile counts (the grid may be
-/// split across stacked levels, e.g. an N-walk staging level over an M-only static walk).
-pub(crate) fn partition_shape(space: &Space) -> (usize, usize) {
+/// The tile grid `levels` cut one instance's `space` into: `(1, 1)` when every level is an
+/// instance level, else the componentwise product of the partition levels' tile counts (the grid
+/// may be split across stacked levels, e.g. an N-walk staging level over an M-only static walk).
+pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize) {
     let mut shape = (1usize, 1usize);
-    let mut level = space.clone();
-    while !level.is_final() {
+    let mut space = space.clone();
+    for level in levels {
         // Only a partition level contributes a grid; an instance level spreads across hardware.
-        match level.partitioner().role() {
+        match level.role() {
             LevelRole::Partition => {
-                let (m, n) = level.partitioner().level().partition_grid(&level);
+                let (m, n) = level.partition_grid(&space);
                 shape = (shape.0 * m, shape.1 * n);
             }
             LevelRole::Instance => {}
         }
-        level = level.divide();
+        space = level.child(&space);
     }
     shape
+}
+
+/// The one level that cuts an operand's window into a `m_tiles × n_tiles` grid of fragments on
+/// its trailing two axes, every other axis whole: what a partition fills from, and the kernel
+/// never walks.
+fn fragment_level(window: &Space, m_tiles: usize, n_tiles: usize) -> Level {
+    let rank = window.rank();
+    let axes: Vec<Axis> = window.axes().collect();
+    let cuts: Vec<(Axis, usize)> = axes
+        .iter()
+        .enumerate()
+        .map(|(p, &axis)| {
+            let extent = window.extent(axis);
+            let tiles = match p {
+                p if p == rank - 2 => m_tiles,
+                p if p == rank - 1 => n_tiles,
+                _ => 1,
+            };
+            assert!(
+                extent.is_multiple_of(tiles),
+                "PlanePartition::fill_from: {tiles} fragments do not divide the {extent} of {axis:?}"
+            );
+            (axis, extent / tiles)
+        })
+        .collect();
+    Level::cuts(&axes, |l| {
+        l.walk(&cuts);
+    })
+}
+
+#[cube]
+impl<T: Numeric> Tile<T> {
+    /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
+    /// grid, a single plane tile's `1 × 1` of its whole window.
+    pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
+        let rank = comptime!(self.space.rank());
+        let rows = comptime!(self.space.extent_at(rank - 2));
+        let cols = comptime!(self.space.extent_at(rank - 1));
+        match &self.tile_kind {
+            TileKind::PlanePartition(p) => {
+                comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
+            }
+            TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
+            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+                panic!("Tile::fragment_grid: only a plane-resident accumulator holds fragments")
+            }
+        }
+    }
 }

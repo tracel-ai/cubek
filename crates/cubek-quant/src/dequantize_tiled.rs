@@ -5,7 +5,7 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space, StridedOperand,
+    Axis, DequantAt, Launcher, QuantTileArg, Space, StridedOperand,
     TileArg,
 };
 
@@ -50,9 +50,13 @@ pub fn launch_ref(
         input.shape,
         output.shape
     );
-    let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    let cube_count = space.cube_count();
-    let cube_dim = space.cube_dim(client);
+    // One tile covering every axis, walked by a single cube: no level cuts it, so there is
+    // nothing to list and the grid is one cube.
+    let extents = [(M, input.shape[0]), (N, input.shape[1])];
+    let space = Space::new(&extents);
+    let launch = Launcher::over_static(client, &extents, &[]);
+    let cube_count = launch.cube_count();
+    let cube_dim = launch.cube_dim();
     let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing
@@ -81,17 +85,6 @@ pub fn launch_ref(
     );
 
     Ok(())
-}
-
-/// A row-major space whose every axis is `Sequential`: a single cube walks all the tiles.
-/// Each axis is one tile covering its full extent (one tile total).
-fn sequential_space(extents: &[(Axis, usize)]) -> Space {
-    let dists: Vec<(Axis, Distribution)> = extents
-        .iter()
-        .map(|&(a, _)| (a, Distribution::Sequential))
-        .collect();
-    let partitioner = Partitioner::over(ByAxis::new(extents), ByAxis::new(&dists)).level();
-    Space::new(extents).with_partitioner(partitioner)
 }
 
 fn check_i8_supported(client: &Client, scheme: &QuantScheme) {

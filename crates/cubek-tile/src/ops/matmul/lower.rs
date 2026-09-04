@@ -32,10 +32,6 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma: the leaf contracts a final tile; walk the levels above it first"
-        ));
         mma_leaf(self, lhs, rhs, semiring)
     }
 
@@ -74,10 +70,6 @@ impl<Acc: Numeric> Tile<Acc> {
         scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_scaled: the leaf contracts a final tile; walk the levels above it first"
-        ));
         mma_leaf_scaled(self, lhs, rhs, scales, semiring)
     }
 
@@ -133,11 +125,6 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_with: the software instruction runs on a final tile; walk the levels above \
-             it first"
-        ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
@@ -163,11 +150,6 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_scaled_with: the software instruction runs on a final tile; walk the \
-             levels above it first"
-        ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(

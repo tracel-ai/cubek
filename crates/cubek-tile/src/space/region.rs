@@ -29,13 +29,7 @@ impl Region {
     /// coordinates carry their own constness ([`fcast`](crate::Fold::fcast) keeps a constant
     /// constant): comptime ones fold to constants and can select fragments, ones the kernel
     /// computed (the visit a worker picked out of a grid by hardware position) window memory.
-    pub fn trailing(#[comptime] space: Space, c0: usize, c1: usize) -> Region {
-        let level = comptime!(space.partitioner().level().clone());
-        Region::trailing_in(space, level, c0, c1)
-    }
-
-    /// [`trailing`](Region::trailing) under a stated `level` rather than the space's own.
-    pub fn trailing_in(
+    pub fn trailing(
         #[comptime] space: Space,
         #[comptime] level: Level,
         c0: usize,

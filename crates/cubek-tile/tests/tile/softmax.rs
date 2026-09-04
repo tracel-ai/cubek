@@ -37,7 +37,7 @@ fn softmax_walk_kernel(
     #[comptime] num_blocks: usize,
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let mask_tile = mask.tile(comptime!(space.clone()));
     let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
@@ -351,7 +351,7 @@ fn softmax_smem_acc_kernel(
     #[comptime] val_dim: usize,
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let mask_tile = mask.tile(comptime!(space.clone()));
     let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 

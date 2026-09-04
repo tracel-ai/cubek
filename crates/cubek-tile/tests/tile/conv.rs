@@ -50,13 +50,13 @@ fn conv_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -78,13 +78,13 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    let walk = Walk::over(out.op_space(&input, &weight));
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -104,13 +104,13 @@ fn conv_kernel_smem_padded<E: Numeric>(
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
     #[comptime] width: usize,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    let walk = Walk::over(out.op_space(&input, &weight));
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem_single_at(
         &walk,
         &input,
@@ -135,17 +135,17 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for outer in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for outer in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let out_outer = out.at(&outer);
         let input_outer = input.at(&outer);
         let weight_outer = weight.at(&outer);
-        for inner in Walk::over(out_outer.op_space(&input_outer, &weight_outer)) {
+        for inner in out_outer.op_space(&input_outer, &weight_outer).level(comptime!(nest.at(1))) {
             let mut out_inner = out_outer.at(&inner);
             out_inner.mm_with(
                 &input_outer.at(&inner),
@@ -166,18 +166,18 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    let walk = Walk::over(out.op_space(&input, &weight));
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
-            for inner in Walk::over(out_outer.op_space(input, weight)) {
+            for inner in out_outer.op_space(input, weight).level(comptime!(nest.at(1))) {
                 let mut out_inner = out_outer.at(&inner);
                 out_inner.mm_with(
                     &input.at(&inner),
@@ -204,7 +204,7 @@ fn run(
     in_spec: TileSpec,
     w_axes: &[Axis],
     out_spec: TileSpec,
-    space: Space,
+    nest: Nest,
     in_v: usize,
     config: RegisterBlock,
     stage: Stage,
@@ -235,10 +235,10 @@ fn run(
     let w_binding = w_handle.binding();
     let w_spec = TileSpec::direct(w_axes);
     let out_binding = out_handle.clone().binding();
-    let cube_count = space.cube_count();
-    let cube_dim = space.cube_dim(&client);
+    let cube_count = nest.cube_count();
+    let cube_dim = nest.cube_dim(&client);
     // The kernel that walks this space: one loop per level, the stage where `stage` says.
-    match (space.partitioner().depth(), stage) {
+    match (nest.levels.len(), stage) {
         (1, Stage::InPlace) => conv_kernel::launch(
             &client,
             cube_count,
@@ -248,7 +248,7 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            space,
+            nest.clone(),
             f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
@@ -261,7 +261,7 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            space,
+            nest.clone(),
             f32_ty,
         ),
         (
@@ -285,7 +285,7 @@ fn run(
                 config,
                 depth,
                 width,
-                space,
+                nest.clone(),
                 f32_ty,
             )
         }
@@ -298,7 +298,7 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            space,
+            nest.clone(),
             f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
@@ -311,7 +311,7 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            space,
+            nest.clone(),
             f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
@@ -391,11 +391,10 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let space = Tiling::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-            })
-            .build();
+            });
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
@@ -415,7 +414,7 @@ impl Conv1d {
             in_spec,
             &[RH, CI, CO],
             TileSpec::direct(&[OH, CO]).checked(checked),
-            space,
+            nest.clone(),
             in_v,
             config,
             stage,
@@ -533,11 +532,10 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -558,7 +556,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        space,
+        nest.clone(),
         1,
         RegisterBlock::new(16),
         Stage::InPlace,
@@ -609,11 +607,10 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -634,7 +631,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        space,
+        nest.clone(),
         1,
         RegisterBlock::new(16),
         Stage::InPlace,
@@ -681,11 +678,10 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -706,7 +702,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        space,
+        nest.clone(),
         1,
         RegisterBlock::new(16),
         Stage::Smem {
@@ -836,7 +832,7 @@ fn conv1d_masked_overhang_strided() {
 impl Conv1d {
     /// [`check_at`](Conv1d::check_at) driven end to end by [`Launcher`]: the input reaches the
     /// launch through [`StridedTileSource::gathered`] instead of a hand-built [`TileSpec`], so the
-    /// kernel projects from the kernel-form space and one compiled kernel serves every shape.
+    /// kernel projects from the kernel-form nest and one compiled kernel serves every shape.
     /// `padding` shifts the window's origin, which the builder's derived check has to arm on by
     /// itself. `dynamic` is the axis set the kernel takes at runtime, `None` for all of them.
     fn check_launched_over(
@@ -850,11 +846,10 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-            })
-            .build();
+            });
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
         // output position's last tap still lands on the final row.
@@ -881,8 +876,8 @@ impl Conv1d {
         // by the output, which maps it identically, and `RH` by the weight. Only an axis no
         // operand witnesses has to stay static, which is what `dynamic` narrows to.
         let launch = match dynamic {
-            Some(axes) => space.launcher_over(&client, axes),
-            None => space.launcher(&client),
+            Some(axes) => nest.launcher_over(&client, axes),
+            None => nest.launcher(&client),
         };
         let in_arg = launch
             .arg(in_handle.binding())
@@ -916,7 +911,7 @@ impl Conv1d {
                 w_arg.arg(),
                 out_arg.arg(),
                 RegisterBlock::new(16),
-                launch.space().clone(),
+                launch.nest(),
                 f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
@@ -929,7 +924,7 @@ impl Conv1d {
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 depth,
-                launch.space().clone(),
+                launch.nest(),
                 f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
@@ -1069,7 +1064,7 @@ fn conv_kernel_dynamic<E: Numeric>(
     out: &TileArg<'_, E, Const<1>>,
     stride: u32,
     dilation: u32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     // In `Projection::dynamic_scale_index` order: physical axis 0's terms, `OH` then `RH`.
@@ -1077,10 +1072,10 @@ fn conv_kernel_dynamic<E: Numeric>(
     coefficients.push(stride);
     coefficients.push(dilation);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, Coords::new());
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1099,11 +1094,10 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-            })
-            .build();
+            });
 
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
@@ -1136,8 +1130,8 @@ impl Conv1d {
 
         conv_kernel_dynamic::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            nest.cube_count(),
+            nest.cube_dim(&client),
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
@@ -1149,7 +1143,7 @@ impl Conv1d {
             ),
             self.stride as u32,
             self.dilation as u32,
-            space,
+            nest.clone(),
             f32_ty,
         );
 
@@ -1207,16 +1201,16 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile_gathered(comptime!(nest.space.clone()), Coords::new(), offsets);
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1235,16 +1229,16 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    let walk = Walk::over(out.op_space(&input, &weight));
+    let input = input.tile_gathered(comptime!(nest.space.clone()), Coords::new(), offsets);
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -1264,7 +1258,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     stride: u32,
     dilation: u32,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -1273,10 +1267,10 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1297,7 +1291,7 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     stride: u32,
     dilation: u32,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -1306,10 +1300,10 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    let walk = Walk::over(out.op_space(&input, &weight));
+    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -1365,11 +1359,10 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let space = Tiling::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
+        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
             .level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-            })
-            .build();
+            });
 
         let gathered = if dynamic_scales {
             PhysicalAxisMap::scaled_with_offset(
@@ -1415,8 +1408,8 @@ impl Conv1d {
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
         let out_spec = TileSpec::direct(&[OH, CO]).checked(true);
-        let cube_count = space.cube_count();
-        let cube_dim = space.cube_dim(&client);
+        let cube_count = nest.cube_count();
+        let cube_dim = nest.cube_dim(&client);
         match (dynamic_scales, staged) {
             (true, false) => conv_kernel_all_dynamic::launch(
                 &client,
@@ -1428,7 +1421,7 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                space,
+                nest.clone(),
                 f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
@@ -1441,7 +1434,7 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                space,
+                nest.clone(),
                 f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
@@ -1452,7 +1445,7 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                space,
+                nest.clone(),
                 f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
@@ -1463,7 +1456,7 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                space,
+                nest.clone(),
                 f32_ty,
             ),
         }
@@ -1598,7 +1591,7 @@ impl Conv2d {
     /// `check` under `stage`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
-        let space = Tiling::over(&[
+        let nest = Nest::over(&[
             (OH, self.oh),
             (OW, self.ow),
             (CO, self.co),
@@ -1615,8 +1608,7 @@ impl Conv2d {
                 (RW, self.rw),
                 (CI, self.ci),
             ]);
-        })
-        .build();
+        });
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
         let in_spec = TileSpec::new(Projection::new(
@@ -1635,7 +1627,7 @@ impl Conv2d {
             in_spec,
             &[RH, RW, CI, CO],
             TileSpec::direct(&[OH, OW, CO]),
-            space,
+            nest.clone(),
             1,
             RegisterBlock::new(16),
             stage,
@@ -2074,13 +2066,13 @@ fn conv2d_staged_mixed_steps() {
 fn projected_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     out: &mut Tensor<f32>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] matrices: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(space);
+    let input = input.tile(comptime!(nest.space.clone()));
     let size!(W) = input.vector_size();
 
     #[unroll]
@@ -2100,12 +2092,12 @@ fn projected_matrix_kernel<E: Numeric>(
 /// The one 2-D convolution both view tests read, strided and dilated on both spatial axes so no
 /// two logical coordinates land on the same input cell by accident.
 struct Conv2dViewSetup {
-    /// `(oh, ow, rh, rw, ci)`, the logical axes in the space's own order.
+    /// `(oh, ow, rh, rw, ci)`, the logical axes in the nest's own order.
     logical: (usize, usize, usize, usize, usize),
     /// `(sh, sw, dh, dw)`, the strides then the dilations.
     steps: (usize, usize, usize, usize),
     in_w: usize,
-    space: Space,
+    nest: Nest,
     in_spec: TileSpec,
     in_data: Vec<f32>,
     in_handle: cubecl::std::tensor::TensorHandle,
@@ -2117,11 +2109,10 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let space = Tiling::over(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, OW, RH, RW, CI],
@@ -2144,7 +2135,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         logical: (oh, ow, rh, rw, ci),
         steps: (sh, sw, dh, dw),
         in_w,
-        space,
+        nest,
         in_spec,
         in_data,
         in_handle,
@@ -2154,14 +2145,14 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 /// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
 /// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
 /// Three pinned axes is what makes this worth running: the unravel's weights are a product of
-/// several extents, and reading those off the window instead of the space would silently pick up
+/// several extents, and reading those off the window instead of the nest would silently pick up
 /// the receptive field's span (`IH`, `IW`) rather than the logical edges.
 #[test]
 fn conv2d_projected_matrix_view() {
     let s = setup_conv2d_view();
     let (oh, ow, rh, rw, ci) = s.logical;
     let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, space) = (s.in_w, s.in_data, s.space);
+    let (in_w, in_data, nest) = (s.in_w, s.in_data, s.nest);
 
     let matrices = oh * ow * rh;
     let (rows, cols) = (rw, ci);
@@ -2175,11 +2166,11 @@ fn conv2d_projected_matrix_view() {
 
     projected_matrix_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        space,
+        nest.clone(),
         matrices,
         rows,
         cols,
@@ -2212,12 +2203,12 @@ fn conv2d_projected_matrix_view() {
 fn fragment_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     out: &mut Tensor<f32>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(space);
+    let input = input.tile(comptime!(nest.space.clone()));
     let size!(W) = input.vector_size();
     let view = input.fragment_matrix::<E, W, W>(rows, cols);
 
@@ -2239,7 +2230,7 @@ fn conv2d_fragment_matrix_view() {
     let s = setup_conv2d_view();
     let (oh, ow, rh, rw, ci) = s.logical;
     let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, space) = (s.in_w, s.in_data, s.space);
+    let (in_w, in_data, nest) = (s.in_w, s.in_data, s.nest);
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
@@ -2252,11 +2243,11 @@ fn conv2d_fragment_matrix_view() {
 
     fragment_matrix_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        space,
+        nest.clone(),
         rows,
         cols,
         f32_ty,
@@ -2291,16 +2282,16 @@ fn conv_mma_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] io: MmaIOConfig,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    let mut acc = out.mma_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space)), io, Monoid::Sum);
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let mut out = out.tile(comptime!(nest.space.clone()));
+    let mut acc = out.mma_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space, nest.below(0))), io, Monoid::Sum);
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
-    let walk = Walk::over(out.op_space(&input, &weight)).unrolled();
+    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0))).unrolled();
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_region = acc.at(region);
@@ -2350,11 +2341,10 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2383,8 +2373,8 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     conv_mma_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
@@ -2395,7 +2385,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             TileSpec::direct(&[OH, CO]),
         ),
         io,
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -2464,15 +2454,15 @@ impl Resize1d {
     /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
     /// entries nest a second descent, which is where a rational window's leftover phase has to
     /// accumulate rather than restart.
-    fn space(&self, oh_edges: &[usize]) -> Space {
+    fn space(&self, oh_edges: &[usize]) -> Nest {
         let mut tiling =
-            Tiling::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
         for &edge in oh_edges {
             tiling = tiling.level(|l| {
                 l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
             });
         }
-        tiling.build()
+        tiling
     }
 
     fn check(&self, oh_edges: &[usize]) {
@@ -2704,7 +2694,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     out: &TileArg<'_, E, Const<1>>,
     divisor: u32,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     // The one carried coefficient is the divisor: both scales are Static, so it is the whole
@@ -2714,10 +2704,10 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -2744,7 +2734,7 @@ fn resize1d_rational_dynamic() {
         offset: -2,
         divisor: 6,
     };
-    let space = resize.space(&[2]);
+    let nest = resize.space(&[2]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2779,8 +2769,8 @@ fn resize1d_rational_dynamic() {
 
     conv_kernel_rational_dynamic::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
@@ -2792,7 +2782,7 @@ fn resize1d_rational_dynamic() {
         ),
         resize.divisor as u32,
         resize.offset as i32,
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -2816,7 +2806,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     divisor: u32,
     offset: i32,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -2824,8 +2814,8 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let stage = MemData::stage(&input, StageStorage::Strided, comptime!(None));
+    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
+    let stage = MemData::stage(&input, comptime!(nest.at(0)), StageStorage::Strided, comptime!(None));
     let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
@@ -2845,7 +2835,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         offset: -2,
         divisor: 6,
     };
-    let space = resize.space(&[2]);
+    let nest = resize.space(&[2]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2869,12 +2859,12 @@ fn resize1d_dynamic_stage_read_before_fill() {
 
     conv_kernel_rational_dynamic_stage_read::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         resize.divisor as u32,
         resize.offset as i32,
-        space,
+        nest.clone(),
         f32_ty,
     );
 }
@@ -2893,11 +2883,10 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2918,7 +2907,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        space,
+        nest.clone(),
         1,
         RegisterBlock::new(16),
         Stage::Smem {
@@ -2967,11 +2956,10 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let space = Tiling::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
         .level(|l| {
             l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2992,7 +2980,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        space,
+        nest.clone(),
         1,
         RegisterBlock::new(16).lane_fanout(),
         Stage::Smem {

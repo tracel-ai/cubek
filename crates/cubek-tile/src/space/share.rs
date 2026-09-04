@@ -8,7 +8,7 @@
 //! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
 //! read off a space, and the descent is only ever read as one of them.
 
-use crate::{Axis, Space};
+
 
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
 /// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
@@ -114,93 +114,6 @@ impl SplitShare {
                  output an axis of its own for the split."
             ),
         }
-    }
-}
-
-impl Space {
-    /// The share a tile ends up with at the leaf: every level's own share joined, the way
-    /// [`MemData::at`](crate::MemData) joins them one at a time on the way down. A block built
-    /// before the walk descends cannot read the stamped value, but every level is known here, so
-    /// it can compute the value stamping would arrive at.
-    pub(crate) fn leaf_lane_share(&self) -> LaneShare {
-        let mut share = LaneShare::Whole;
-        let mut level = self.clone();
-        while !level.is_final() {
-            share = join_lane_share(share, level.lane_share());
-            level = level.divide();
-        }
-        share
-    }
-
-    /// What the plane's lanes are to this space's cells, both halves at once. What a drain is
-    /// built from: [`leaf_lane_share`](Self::leaf_lane_share) alone cannot say who writes.
-    pub(crate) fn lanes(&self) -> Lanes {
-        Lanes {
-            share: self.leaf_lane_share(),
-            work: self.lane_work(),
-        }
-    }
-
-    /// Whether anything rides this space's lanes, across every level. Read off the axes rather
-    /// than off [`cube_dim`](Space::cube_dim), which asks the client for the hardware `plane_size`
-    /// and is a launch-side question; this one is comptime, which is what a drain needs before it
-    /// elects a writer.
-    pub(crate) fn lane_work(&self) -> LaneWork {
-        let mut level = self.clone();
-        while !level.is_final() {
-            if level.partitioner().level().rides_lanes() {
-                return LaneWork::Own;
-            }
-            level = level.divide();
-        }
-        LaneWork::Repeated
-    }
-
-    /// What one instance of `axes`' operand holds of its cells: [`Partial`](SplitShare::Partial)
-    /// where a `Plane` or `Cube` axis the operand does not span is dealt across several instances,
-    /// so each contracts a slice. Asked of the *whole* space, not the operand's projection: a
-    /// projection has dropped the contracted axis and so cannot tell a split from a cut whose edge
-    /// is the whole axis. Answered conservatively where the instance count is not comptime, since
-    /// calling it whole loses every partial but one.
-    pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
-        let spanned = self.project(axes);
-        let mut share = SplitShare::Whole;
-        let mut level = self.clone();
-        while !level.is_final() {
-            share = join_split_share(
-                share,
-                level.partitioner().level().split_share_of(&level, &spanned),
-            );
-            level = level.divide();
-        }
-        share
-    }
-
-    /// How many instances `axis` is dealt out to at this level, where that is comptime: the pinned
-    /// count, or the tile grid divided by each instance's share. `None` where the extent is
-    /// [`Dynamic`](Extent::Dynamic) and so the grid is only known at runtime.
-    fn instances_along(&self, axis: Axis) -> Option<usize> {
-        self.partitioner().level().instances_along(self, axis)
-    }
-
-    /// The instance-index weight this space's own axis list cannot see: the instance counts of the
-    /// same-scope axes *inside* `axis` that the partitioner distributes and this space does not
-    /// span. A projected space is why: the index's odometer belongs to the partitioner, so an
-    /// operand not spanning a contracted axis must still divide it out to find its own digit, and
-    /// reading omitted axes as weight `1` aliases the outer digits onto one value. Panics where
-    /// such an axis has no comptime count: assuming `1` is exactly that aliasing.
-    pub(crate) fn inner_weight_unspanned(&self, axis: Axis) -> usize {
-        if self.partitioner().is_final() {
-            return 1;
-        }
-        self.partitioner().level().inner_weight_unspanned(self, axis)
-    }
-
-    pub(crate) fn lane_share(&self) -> LaneShare {
-        if self.partitioner().is_final() {
-            return LaneShare::Whole;
-        }
-        self.partitioner().level().lane_share(self)
     }
 }
 

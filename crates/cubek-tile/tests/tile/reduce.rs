@@ -32,14 +32,14 @@ fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(space.clone()));
-    let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let a = a.tile(comptime!(nest.space.clone()));
+    let b = b.tile(comptime!(nest.space.clone()));
+    let mut c = c.tile(comptime!(nest.space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -65,11 +65,12 @@ enum Read {
 fn reduce_body<E: Numeric>(
     input: &Tile<E>,
     output: &mut Tile<E>,
+    #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
 ) {
     output.init(Monoid::identity::<E>(monoid));
-    let walk = Walk::over(output.reduce_space(input));
+    let walk = output.reduce_space(input).level(level);
     match comptime!(read) {
         Read::InPlace => {
             for region in walk {
@@ -93,28 +94,28 @@ fn reduce_body<E: Numeric>(
 fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    reduce_body(&input, &mut output, read, monoid);
+    let input = input.tile(comptime!(nest.space.clone()));
+    let mut output = output.tile(comptime!(nest.space.clone()));
+    reduce_body(&input, &mut output, comptime!(nest.at(0)), read, monoid);
 }
 
 #[cube(launch)]
 fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
-    reduce_body(&input, &mut output, read, monoid);
+    let input = input.tile(comptime!(nest.space.clone()));
+    let mut output = output.tile(comptime!(nest.space.clone()));
+    reduce_body(&input, &mut output, comptime!(nest.at(0)), read, monoid);
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
@@ -124,20 +125,20 @@ fn reduce_kernel_v4<E: Numeric>(
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(space.clone()),
+        comptime!(nest.space.clone()),
         AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
             coefficient: E::new(1.0_f32),
             axis: K,
         },
     );
-    let mut output = output.tile(space);
-    reduce_body(&input, &mut output, read, comptime!(Monoid::Max));
+    let mut output = output.tile(comptime!(nest.space.clone()));
+    reduce_body(&input, &mut output, comptime!(nest.at(0)), read, comptime!(Monoid::Max));
 }
 
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
@@ -156,7 +157,7 @@ fn run(
     a_axes: &[Axis],
     b_axes: &[Axis],
     c_axes: &[Axis],
-    space: Space,
+    nest: Nest,
 ) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
@@ -178,8 +179,8 @@ fn run(
 
     reduce_matmul_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
             TileSpec::direct(a_axes),
@@ -192,7 +193,7 @@ fn run(
             c_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(c_axes),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -201,11 +202,10 @@ fn run(
 
 /// The one-axis reference: an ordinary `{M, N, K}` matmul through the 2-D register leaf.
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K, k)]);
-        })
-        .build();
+        });
     run(
         shape![m, k],
         shape![k, n],
@@ -213,17 +213,16 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
         &[M, K],
         &[K, N],
         &[M, N],
-        space,
+        nest.clone(),
     )
 }
 
 /// [`plain`] with a leading batch axis both operands span.
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::over(&[(B, b), (M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(B, b), (M, m), (N, n), (K, k)])
         .level(|l| {
             l.walk(&[(B, 1), (M, tm), (N, tn), (K, k)]);
-        })
-        .build();
+        });
     run(
         shape![b, m, k],
         shape![b, k, n],
@@ -231,7 +230,7 @@ fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -
         &[B, M, K],
         &[B, K, N],
         &[B, M, N],
-        space,
+        nest.clone(),
     )
 }
 
@@ -258,11 +257,10 @@ fn split_k_whole_reduce_at_leaf() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
+    let nest = Nest::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
         .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)]);
-        })
-        .build();
+        });
 
     let got = run(
         shape![m, k1, k2],
@@ -271,7 +269,7 @@ fn split_k_whole_reduce_at_leaf() {
         &[M, K1, K2],
         &[K1, K2, N],
         &[M, N],
-        space,
+        nest.clone(),
     );
     assert_same(&got, &plain(m, n, k, tm, tn), &[m, n]);
 }
@@ -283,11 +281,10 @@ fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
+    let nest = Nest::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
         .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)]);
-        })
-        .build();
+        });
 
     let got = run(
         shape![m, k1, k2],
@@ -296,7 +293,7 @@ fn split_k_major_half_walked() {
         &[M, K1, K2],
         &[K1, K2, N],
         &[M, N],
-        space,
+        nest.clone(),
     );
     assert_same(&got, &plain(m, n, k, tm, tn), &[m, n]);
 }
@@ -308,11 +305,10 @@ fn split_k_with_a_batch_axis() {
     let (b, m, n, k1, k2) = (3, 4, 8, 2, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
+    let nest = Nest::over(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
         .level(|l| {
             l.walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)]);
-        })
-        .build();
+        });
 
     let got = run(
         shape![b, m, k1, k2],
@@ -321,7 +317,7 @@ fn split_k_with_a_batch_axis() {
         &[B, M, K1, K2],
         &[B, K1, K2, N],
         &[B, M, N],
-        space,
+        nest.clone(),
     );
     assert_same(&got, &plain_batched(b, m, n, k, tm, tn), &[b, m, n]);
 }
@@ -331,7 +327,7 @@ fn run_reduce(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    space: Space,
+    nest: Nest,
     monoid: Monoid,
 ) -> HostData {
     run_reduce_with_vw(
@@ -339,7 +335,7 @@ fn run_reduce(
         out_shape,
         in_axes,
         out_axes,
-        space,
+        nest.clone(),
         monoid,
         1,
         Read::InPlace,
@@ -353,7 +349,7 @@ fn run_reduce_staged(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    space: Space,
+    nest: Nest,
     monoid: Monoid,
     depth: usize,
 ) -> HostData {
@@ -362,7 +358,7 @@ fn run_reduce_staged(
         out_shape,
         in_axes,
         out_axes,
-        space,
+        nest.clone(),
         monoid,
         1,
         Read::Smem { depth },
@@ -372,13 +368,12 @@ fn run_reduce_staged(
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
 fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
     // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
-    let got = run_reduce_staged(shape![m, k], shape![m], &[M, K], &[M], space, monoid, depth);
+    let got = run_reduce_staged(shape![m, k], shape![m], &[M, K], &[M], nest, monoid, depth);
 
     for i in 0..m {
         let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
@@ -402,7 +397,7 @@ fn run_reduce_with_vw(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    space: Space,
+    nest: Nest,
     monoid: Monoid,
     in_vw: usize,
     read: Read,
@@ -427,11 +422,11 @@ fn run_reduce_with_vw(
         1 => {
             reduce_kernel::launch(
                 &client,
-                space.cube_count(),
-                space.cube_dim(&client),
+                nest.cube_count(),
+                nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
+                nest.clone(),
                 read,
                 monoid,
                 f32_ty,
@@ -440,11 +435,11 @@ fn run_reduce_with_vw(
         4 => {
             reduce_kernel_v4::launch(
                 &client,
-                space.cube_count(),
-                space.cube_dim(&client),
+                nest.cube_count(),
+                nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                space,
+                nest.clone(),
                 read,
                 monoid,
                 f32_ty,
@@ -459,13 +454,12 @@ fn run_reduce_with_vw(
 #[test]
 fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -476,13 +470,12 @@ fn test_reduce_axis_sum_2d_to_1d() {
 #[test]
 fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -493,13 +486,12 @@ fn test_reduce_axis_sum_walked_levels() {
 #[test]
 fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -512,13 +504,12 @@ fn test_reduce_axis_max_2d_to_1d() {
 #[test]
 fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -531,18 +522,17 @@ fn test_reduce_axis_min_2d_to_1d() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
-    let space = Tiling::over(&[(B, b), (M, m), (K, k)])
+    let nest = Nest::over(&[(B, b), (M, m), (K, k)])
         .level(|l| {
             l.walk(&[(B, 1), (M, 2), (K, 4)]);
-        })
-        .build();
+        });
 
     let got = run_reduce(
         shape![b, m, k],
         shape![b],
         &[B, M, K],
         &[B],
-        space,
+        nest.clone(),
         Monoid::Sum,
     );
 
@@ -592,18 +582,17 @@ fn test_reduce_axis_min_double_buffered() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![k],
         &[M, K],
         &[K],
-        space,
+        nest.clone(),
         Monoid::Sum,
         1,
         Read::InPlace,
@@ -616,22 +605,21 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 }
 
 /// Reduction over an outer axis while retaining the innermost axis with vector_size = 4.
-/// Exercises line indexing and lane extraction when the innermost axis is in accumulator space.
+/// Exercises line indexing and lane extraction when the innermost axis is in accumulator nest.
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![k],
         &[M, K],
         &[K],
-        space,
+        nest.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -652,18 +640,17 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![m],
         &[M, K],
         &[M],
-        space,
+        nest.clone(),
         Monoid::Max,
         4,
         Read::InPlace,
@@ -691,7 +678,7 @@ fn run_reduce_checked(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    space: Space,
+    nest: Nest,
     monoid: Monoid,
     read: Read,
 ) -> HostData {
@@ -712,14 +699,14 @@ fn run_reduce_checked(
 
     reduce_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
             TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-        space,
+        nest.clone(),
         read,
         monoid,
         f32_ty,
@@ -728,12 +715,11 @@ fn run_reduce_checked(
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
 
-fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Space {
-    Tiling::over(&[(M, m), (K, k)])
+fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Nest {
+    Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, m), (K, tk)]);
         })
-        .build()
 }
 
 #[test]
@@ -835,7 +821,7 @@ fn test_reduce_axis_max_nondivisible_k() {
 /// `k` is 5, so a mask that leaked the padded overhang would report the tile edge instead.
 fn check_procedural_reduce(read: Read) {
     let (m, k, tk) = (4, 6, 4);
-    let space = nondivisible_k_space(m, k, tk);
+    let nest = nondivisible_k_space(m, k, tk);
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let output = TestInput::builder(client.clone(), shape![m])
@@ -845,13 +831,13 @@ fn check_procedural_reduce(read: Read) {
 
     procedural_reduce_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M]),
         ),
-        space,
+        nest.clone(),
         read,
         dtype,
     );
@@ -930,18 +916,17 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![k],
         &[M, K],
         &[K],
-        space,
+        nest.clone(),
         Monoid::Max,
         4,
         Read::InPlace,
@@ -962,18 +947,17 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![k],
         &[M, K],
         &[K],
-        space,
+        nest.clone(),
         Monoid::Min,
         4,
         Read::InPlace,
@@ -996,18 +980,17 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![m, k],
         shape![m],
         &[M, K],
         &[M],
-        space,
+        nest.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -1027,18 +1010,17 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
-    let space = Tiling::over(&[(B, b), (M, m), (K, k)])
+    let nest = Nest::over(&[(B, b), (M, m), (K, k)])
         .level(|l| {
             l.walk(&[(B, 1), (M, 2), (K, 8)]);
-        })
-        .build();
+        });
 
     let got = run_reduce_with_vw(
         shape![b, m, k],
         shape![b, k],
         &[B, M, K],
         &[B, K],
-        space,
+        nest.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -1069,13 +1051,12 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -1094,13 +1075,12 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Max);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1121,13 +1101,12 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&[(M, m), (K, k)])
+    let nest = Nest::over(&[(M, m), (K, k)])
         .level(|l| {
             l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
-        })
-        .build();
+        });
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
+    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Min);
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1155,15 +1134,15 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut out = output.tile(space);
-    let mut acc = out.block_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space)), REGISTER_BLOCK, monoid);
+    let input = input.tile(comptime!(nest.space.clone()));
+    let mut out = output.tile(comptime!(nest.space.clone()));
+    let mut acc = out.block_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space, nest.below(0))), REGISTER_BLOCK, monoid);
     acc.init(Monoid::identity::<E>(monoid));
-    for region in Walk::over(acc.reduce_space(&input)) {
+    for region in acc.reduce_space(&input).level(comptime!(nest.at(0))) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
@@ -1177,12 +1156,11 @@ fn resident_max_over_lane_split_k() {
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = plane_size * kr;
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(lanes(plane_size), &[(K, kr)])
                 .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+        });
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
     let f32_ty = f32::elem_type_native();
@@ -1200,8 +1178,8 @@ fn resident_max_over_lane_split_k() {
 
     resident_fold_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N, K]),
@@ -1210,7 +1188,7 @@ fn resident_max_over_lane_split_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         Monoid::Max,
         f32_ty,
     );
@@ -1231,7 +1209,7 @@ fn resident_max_over_lane_split_k() {
 /// one. `LaneShare::Group` where that test is `LaneShare::Plane`.
 ///
 /// The drain is shared with the promoted matmul's, where reading the odometer off a projected
-/// space (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave
+/// nest (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave
 /// every group the same output row and left the rest untouched. `reduce_axis` reaches the same
 /// code, so it gets the same coverage: all the data is negative, so an identity leaking in from an
 /// unwritten cell wins the maximum and the assert catches it.
@@ -1246,13 +1224,12 @@ fn resident_max_over_lane_group_k() {
     let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
     let m = groups;
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(lanes(groups), &[(M, 1)])
                 .distribute(lanes(group_lanes).interleaved(), &[(K, kr)])
                 .walk(&[(N, n)]);
-        })
-        .build();
+        });
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
     let f32_ty = f32::elem_type_native();
@@ -1267,8 +1244,8 @@ fn resident_max_over_lane_group_k() {
 
     resident_fold_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N, K]),
@@ -1277,7 +1254,7 @@ fn resident_max_over_lane_group_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        nest.clone(),
         Monoid::Max,
         f32_ty,
     );

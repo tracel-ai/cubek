@@ -21,10 +21,10 @@ impl StageStorage {
         }
     }
 
-    /// [`tiled`](StageStorage::tiled) at the leaf `space` is tiled to: what a kernel that does
-    /// not state levels itself reads off the space it was handed.
-    pub fn tiled_at_leaf(space: &crate::Space) -> Self {
-        let leaf = space.final_space();
+    /// [`tiled`](StageStorage::tiled) at the leaf `levels` reach below `space`: what a kernel
+    /// handed its levels reads off them.
+    pub fn tiled_at_leaf(space: &crate::Space, levels: &[crate::Level]) -> Self {
+        let leaf = crate::leaf(space, levels);
         StageStorage::tiled(
             &leaf
                 .axes()

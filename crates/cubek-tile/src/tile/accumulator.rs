@@ -38,12 +38,13 @@ impl Fragments {
         }
     }
 
-    /// The shape an accumulator over `out` contracting `lhs` has under their stated tiling: what
-    /// a kernel that does not state levels itself reads off the space it was handed.
-    pub fn of(out: &Space, lhs: &Space) -> Self {
-        let (m_tiles, n_tiles) = partition_shape(out);
-        let fin = out.final_space();
-        let axes = MatrixAxes::accumulator(&fin, &lhs.final_space());
+    /// The shape an accumulator over `out` contracting `lhs` has under `levels`, the ones below
+    /// the site it opens at: what a kernel handed its levels reads off them.
+    pub fn of(out: &Space, lhs: &Space, levels: &[Level]) -> Self {
+        let (m_tiles, n_tiles) = partition_shape(out, levels);
+        let fin = leaf(out, levels);
+        let lhs_fin = leaf(lhs, levels);
+        let axes = MatrixAxes::accumulator(&fin, &lhs_fin);
         // The edges the accumulator's own axes give, not its last two: a split column group is
         // one edge, and sizing the block off the innermost axis alone would cut it in half.
         Fragments::new(
@@ -51,7 +52,7 @@ impl Fragments {
             n_tiles,
             axes.rows(&fin),
             axes.cols(&fin),
-            lhs.final_space().contracted_extent(out),
+            lhs_fin.contracted_extent(out),
         )
     }
 }
@@ -109,19 +110,10 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] form: PlaneForm,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
-        // The statement against the tiling, until the tiling is gone.
-        comptime!(assert!(
-            fragments == Fragments::of(&self.space, &lhs.space),
-            "Tile::accumulator: {fragments:?} stated where the tiling gives {:?}",
-            Fragments::of(&self.space, &lhs.space)
-        ));
         let vector_size = self.vector_size();
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
-            comptime!(MatrixAxes::accumulator(
-                &self.space.final_space(),
-                &lhs.space.final_space()
-            )),
+            comptime!(MatrixAxes::accumulator(&self.space, &lhs.space)),
             comptime!(form),
             comptime!(fragments),
             vector_size,

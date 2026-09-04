@@ -6,7 +6,7 @@ use cubecl::{
 };
 use cubek_tile::{
     Axis, Boundary, CubeAxis, DequantAt, Divisor, Geometry, Offset, PhysicalAxisMap, Projection,
-    Scale, StorageTiling, StridedOperand, TileSpec, Tiling, cubes, planes,
+    Scale, StorageTiling, StridedOperand, TileSpec, Nest, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -35,9 +35,9 @@ fn launcher_kernel_space_is_dynamic_concrete_is_not() {
 
     for axis in [M, N, K] {
         assert!(launch.space().is_dynamic(axis));
-        assert!(!launch.concrete().is_dynamic(axis));
+        assert!(!launch.concrete().space.is_dynamic(axis));
     }
-    assert_eq!(launch.concrete().extent(M), 64);
+    assert_eq!(launch.concrete().space.extent(M), 64);
 }
 
 #[test]
@@ -64,7 +64,8 @@ fn launcher_over_unknown_axis_panics() {
 #[test]
 #[should_panic(expected = "Dynamic")]
 fn geometry_after_dynamic_panics() {
-    let _ = batched_space(1, 1, 64, 64, 16).all_dynamic().cube_count();
+    let nest = batched_space(1, 1, 64, 64, 16);
+    let _ = Nest::new(nest.space.all_dynamic(), nest.levels).cube_count();
 }
 
 // ---- Launcher::arg ---------------------------------------------------------
@@ -87,9 +88,9 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 
 /// A cpu_gemm-shaped scheme: two batch axes riding one-per-cube on Z, 16×32 cube tiles on
 /// X/Y, 8×8 plane leaves with `leaf_k = 4`.
-fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_tile::Space {
+fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> Nest {
     let batches = [(B0, 1), (B1, 1)];
-    Tiling::over(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
+    Nest::over(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &batches)
                 .distribute(cubes(CubeAxis::X), &[(M, 16)])
@@ -102,7 +103,6 @@ fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_ti
                 .walk(&batches)
                 .walk(&[(K, 4)]);
         })
-        .build()
 }
 
 #[test]
@@ -513,13 +513,12 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
 #[test]
 fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+    let staged = Nest::over(&[(M, 64), (N, 64), (K, 16)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
         })
-        .build()
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
@@ -540,13 +539,12 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
 #[test]
 fn arg_gathered_rational_stages() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+    let staged = Nest::over(&[(M, 64), (N, 64), (K, 16)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
         })
-        .build()
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
@@ -565,13 +563,12 @@ fn arg_gathered_rational_stages() {
 #[test]
 fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+    let staged = Nest::over(&[(M, 64), (N, 64), (K, 16)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
         })
-        .build()
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
@@ -590,13 +587,12 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
 #[test]
 fn arg_gathered_cancelling_divisor_stages() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+    let staged = Nest::over(&[(M, 64), (N, 64), (K, 16)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
         })
-        .build()
         .launcher_over(&client, &[N]);
     let projection = Projection::new(
         &[M, K, N],
@@ -780,7 +776,7 @@ fn arg_more_batch_dims_than_axes_panics() {
 /// in-kernel assert fires on a device thread, which surfaces as zeroed output.
 fn quantize(v: usize, scheme: QuantScheme) {
     let client = cubecl::test_device().client();
-    let space = batched_space(1, 1, 64, 64, 16).project(&[M, K]);
+    let space = batched_space(1, 1, 64, 64, 16).space.project(&[M, K]);
     let _ = StridedOperand::source(binding(&client, &[64, 16]))
         .space(&space)
         .subspace(&[M, K])

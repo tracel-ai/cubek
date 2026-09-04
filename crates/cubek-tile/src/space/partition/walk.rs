@@ -67,14 +67,6 @@ impl Space {
 
 #[cube]
 impl Walk {
-    /// The walk over `space`'s tiles under the head level of its own tiling. The form the
-    /// engine's own descents use where a tile still carries its tiling; a kernel states the level
-    /// itself ([`Space::level`]).
-    pub fn over(space: Space) -> Walk {
-        let level = comptime!(space.partitioner().level().clone());
-        Walk::of(space, level)
-    }
-
     fn of(space: Space, #[comptime] level: Level) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]

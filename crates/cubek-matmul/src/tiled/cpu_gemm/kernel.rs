@@ -28,8 +28,8 @@ pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis], k: usize) -> Vec<L
 }
 
 /// The routine's space in kernel form.
-pub fn cpu_gemm_space(bp: &CpuGemmBlueprint, batch: &[Axis], k: usize) -> Space {
-    Space::dynamic(&cpu_gemm_axes(batch)).with_levels(&cpu_gemm_levels(bp, batch, k))
+pub fn cpu_gemm_space(batch: &[Axis]) -> Space {
+    Space::dynamic(&cpu_gemm_axes(batch))
 }
 
 impl CpuGemmBlueprint {
@@ -96,7 +96,7 @@ pub fn cpu_gemm_kernel<
     #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
-    let space = comptime!(cpu_gemm_space(&bp, &batch, k));
+    let space = comptime!(cpu_gemm_space(&batch));
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);

@@ -27,10 +27,6 @@ impl<Acc: Numeric> Tile<Acc> {
         input: &Tile<In>,
         #[comptime] monoid: Monoid,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::reduce_axis: the leaf reduces into a final tile; walk the levels above it first"
-        ));
         reduce_leaf(self, input, monoid)
     }
 

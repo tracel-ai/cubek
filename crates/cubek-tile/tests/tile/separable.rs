@@ -69,22 +69,22 @@ fn separable_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] separable: bool,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = if comptime!(separable) {
         Tile::<E>::procedural_separable::<Weights<E>>(
-            comptime!(space.project(&weight_axes)),
+            comptime!(nest.space.project(&weight_axes)),
             weights::<E>(),
         )
     } else {
-        Tile::<E>::procedural::<Weights<E>>(comptime!(space.project(&weight_axes)), weights::<E>())
+        Tile::<E>::procedural::<Weights<E>>(comptime!(nest.space.project(&weight_axes)), weights::<E>())
     };
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -102,18 +102,18 @@ fn separable_kernel_staged<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] width: Option<usize>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&weight_axes)),
+        comptime!(nest.space.project(&weight_axes)),
         weights::<E>(),
     );
 
-    let output = output.tile(space);
-    let walk = Walk::over(output.op_space(&weights, &input));
+    let output = output.tile(comptime!(nest.space.clone()));
+    let walk = output.op_space(&weights, &input).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -166,7 +166,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (ROW, ROWS),
         (COL, COLS),
         (TAP[0], TAPS[0]),
@@ -181,13 +181,12 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ]);
-    })
-    .build();
+    });
 
     separable_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]),
@@ -197,7 +196,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             TileSpec::direct(&[ROW, COL]),
         ),
         separable,
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -252,7 +251,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (ROW, ROWS),
         (COL, COLS),
         (TAP[0], TAPS[0]),
@@ -267,22 +266,21 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ]);
-    })
-    .build();
+    });
 
     let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]);
 
     separable_kernel_staged::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         Some(4),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -314,19 +312,19 @@ const QSCALE: f32 = 0.05;
 fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(I)] _input_dtype: ElemType,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile::<E>(comptime!(space.clone()));
+    let input = input.tile::<E>(comptime!(nest.space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&weight_axes)),
+        comptime!(nest.space.project(&weight_axes)),
         weights::<E>(),
     );
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -376,7 +374,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (ROW, ROWS),
         (COL, QCOLS),
         (TAP[0], TAPS[0]),
@@ -391,10 +389,9 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ]);
-    })
-    .build();
+    });
 
-    let launcher = space.launcher_over(&client, &[]);
+    let launcher = nest.launcher_over(&client, &[]);
     let input_op = launcher
         .arg(in_handle.binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
@@ -419,7 +416,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space().clone(),
+        launcher.nest(),
         in_dtype,
         f32_ty,
     );
@@ -468,7 +465,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let space = Tiling::over(&[
+    let nest = Nest::over(&[
         (ROW, ROWS),
         (COL, pack),
         (TAP[0], TAPS[0]),
@@ -483,10 +480,9 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ]);
-    })
-    .build();
+    });
 
-    let input = TileInput::builder(&client, space.project(&[TAP[0], TAP[1], TAP[2], COL]))
+    let input = TileInput::builder(&client, nest.space.project(&[TAP[0], TAP[1], TAP[2], COL]))
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .arange();
@@ -497,7 +493,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = space.launcher_over(&client, &[]);
+    let launcher = nest.launcher_over(&client, &[]);
     let input_op = launcher
         .arg(input.tile.handle().binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
@@ -516,7 +512,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space().clone(),
+        launcher.nest(),
         u32::elem_type_native(),
         f32_ty,
     );
@@ -579,12 +575,12 @@ fn resample_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] normalized: bool,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(nest.space.project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     );
     let weights = if comptime!(normalized) {
@@ -593,8 +589,8 @@ fn resample_kernel<E: Float>(
         weights
     };
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -631,11 +627,10 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -647,15 +642,15 @@ fn check_resampling(normalized: bool) {
 
     resample_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         normalized,
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -688,19 +683,19 @@ fn check_resampling(normalized: bool) {
 #[cube(launch)]
 fn procedural_mask_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
     let rhs = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(space.project(&[TAP[0], COL])),
+        comptime!(nest.space.project(&[TAP[0], COL])),
         affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
     );
-    let mut output = output.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(nest.space.clone()));
     output.zero();
 
-    for region in Walk::over(rhs.runtime_space()) {
+    for region in rhs.runtime_space().level(comptime!(nest.at(0))) {
         let rhs = rhs.at(&region);
-        let child = comptime!(space.divide());
+        let child = comptime!(nest.at(0).child(&nest.space));
         let mut factors = Sequence::new();
         factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(0.0_f32)));
         let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
@@ -722,21 +717,20 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let space = Tiling::over(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
+    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
         .level(|l| {
             l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)]);
-        })
-        .build();
+        });
 
     procedural_mask_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         dtype,
     );
 
@@ -753,18 +747,18 @@ fn masked_normalization_excludes_a_procedural_overhang() {
 fn resample_kernel_masked<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(nest.space.project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -781,18 +775,18 @@ fn resample_kernel_masked<E: Float>(
 fn resample_kernel_masked_staged<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(nest.space.project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
-    let output = output.tile(space);
-    let walk = Walk::over(output.op_space(&weights, &input));
+    let output = output.tile(comptime!(nest.space.clone()));
+    let walk = output.op_space(&weights, &input).level(comptime!(nest.at(0)));
     let mut ring = Ring::smem_single(&walk, &input, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -821,11 +815,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -838,14 +831,14 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
 
     resample_kernel_masked::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -897,11 +890,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -914,14 +906,14 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 
     resample_kernel_masked_staged::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -963,18 +955,18 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 fn column_spanning_resample_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        comptime!(nest.space.project(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -990,7 +982,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
-    // `Weights` only reads `TAP[0]` and `ROW`, so adding `COL` to the LHS space isolates the
+    // `Weights` only reads `TAP[0]` and `ROW`, so adding `COL` to the LHS nest isolates the
     // column-spanning coordinate schedule without changing the mathematical values.
     let in_rows = resample_origin(RROWS - 1) + RTAPS;
     let in_shape = shape![in_rows, RCOLS];
@@ -1004,11 +996,10 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -1020,14 +1011,14 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 
     column_spanning_resample_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -1053,18 +1044,18 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 fn column_spanning_resample_kernel_masked<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        comptime!(nest.space.project(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1093,11 +1084,10 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
         .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        })
-        .build();
+        });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -1110,14 +1100,14 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 
     column_spanning_resample_kernel_masked::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 
@@ -1150,17 +1140,17 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 fn zero_sum_fallback_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
+    let input = input.tile(comptime!(nest.space.clone()));
     let mut factors = Sequence::new();
     // Factor 0: taps at k=0 (1.0) and k=1 (-1.0), sum = 0.0
     factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(-2.0_f32)));
     // Factor 1: taps at k=0 (2.0) and k=1 (2.0), sum = 4.0
     factors.push(affine_along(TAP[1], E::new(2.0_f32), E::new(0.0_f32)));
     let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
-        comptime!(space.project(&[ROW, TAP[0], TAP[1]])),
+        comptime!(nest.space.project(&[ROW, TAP[0], TAP[1]])),
         separable_product(factors),
     )
     .normalized(
@@ -1171,8 +1161,8 @@ fn zero_sum_fallback_kernel<E: Float>(
         }),
     );
 
-    let output = output.tile(space);
-    for region in Walk::over(output.op_space(&weights, &input)) {
+    let output = output.tile(comptime!(nest.space.clone()));
+    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1199,16 +1189,15 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
         .level(|l| {
             l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]);
-        })
-        .build();
+        });
 
     zero_sum_fallback_kernel::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        nest.cube_count(),
+        nest.cube_dim(&client),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[TAP[0], TAP[1], COL]),
@@ -1217,7 +1206,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        space,
+        nest.clone(),
         f32_ty,
     );
 

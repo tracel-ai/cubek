@@ -46,17 +46,17 @@ fn depthwise_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
+    let input = input.tile(comptime!(nest.space.clone()));
+    let weight = weight.tile(comptime!(nest.space.clone()));
+    let out = out.tile(comptime!(nest.space.clone()));
+    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
         let out_cube = out.at(&region);
         let input_cube = input.at(&region);
         let weight_cube = weight.at(&region);
-        for region in Walk::over(out_cube.op_space(&input_cube, &weight_cube)) {
+        for region in out_cube.op_space(&input_cube, &weight_cube).level(comptime!(nest.at(1))) {
             let mut out_plane = out_cube.at(&region);
             out_plane.mm_with(
                 &input_cube.at(&region),
@@ -129,7 +129,7 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let space = Tiling::over(&[
+        let nest = Nest::over(&[
             (B, self.b),
             (OH, self.oh),
             (OW, self.ow),
@@ -158,8 +158,7 @@ impl Depthwise {
                 (RH, self.rh),
                 (RW, self.rw),
             ]);
-        })
-        .build();
+        });
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case: it is only the weight and accumulator that change.
@@ -183,7 +182,7 @@ impl Depthwise {
         ))
         .checked(true);
 
-        let (got, want) = self.run(space, in_spec);
+        let (got, want) = self.run(nest, in_spec);
         for b in 0..self.b {
             for oh in 0..self.oh {
                 for ow in 0..self.ow {
@@ -199,7 +198,7 @@ impl Depthwise {
         }
     }
 
-    fn run(&self, space: Space, in_spec: TileSpec) -> (HostData, Vec<f32>) {
+    fn run(&self, nest: Nest, in_spec: TileSpec) -> (HostData, Vec<f32>) {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
@@ -228,12 +227,12 @@ impl Depthwise {
 
         depthwise_kernel::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            nest.cube_count(),
+            nest.cube_dim(&client),
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            space,
+            nest.clone(),
             f32_ty,
         );
 

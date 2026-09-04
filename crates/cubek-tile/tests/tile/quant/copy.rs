@@ -9,7 +9,7 @@ use cubek_test_utils::{
 };
 use cubek_tile::{
     Axis, CubeAxis, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg, TileArgLaunch,
-    TileSpec, Tiling, cubes, planes,
+    TileSpec, Nest, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -34,7 +34,7 @@ fn copy_non_quantized_matches_reference() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         dtype,
     );
 
@@ -52,7 +52,7 @@ fn copy_non_quantized_matches_reference() {
 fn copy_spread_across_cubes_and_planes_matches_reference() {
     let (m, n) = (4, 512);
     let client = cubecl::test_device().client();
-    let launch = Tiling::over(&[(M, m), (N, n)])
+    let launch = Nest::over(&[(M, m), (N, n)])
         .level(|l| {
             l.distribute(cubes(CubeAxis::Y), &[(M, 1)])
                 .distribute(cubes(CubeAxis::X), &[(N, 128)]);
@@ -60,7 +60,6 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         .level(|l| {
             l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)]);
         })
-        .build()
         .launcher_over(&client, &[]);
     let space = launch.space().clone();
 
@@ -75,7 +74,7 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         launch.cube_dim(),
         input.arg(),
         output.arg(),
-        space,
+        launch.nest(),
         f32::elem_type_native(),
     );
 
@@ -136,7 +135,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             DequantAt::Read,
         ),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         input_dtype,
         out_dtype,
     );
@@ -199,7 +198,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
     let space = Space::new(&[(M, m), (N, n)]);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = space.launcher_over(&client, &[]);
+    let launcher = Nest::new(space.clone(), vec![]).launcher_over(&client, &[]);
     let input_op = launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -216,7 +215,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         v,
         input_op.arg(),
         output.arg(),
-        launcher.space().clone(),
+        launcher.nest(),
         input_dtype,
         out_dtype,
     );
@@ -266,7 +265,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = space.launcher_over(&client, &[]);
+    let launcher = Nest::new(space.clone(), vec![]).launcher_over(&client, &[]);
     let input_op = launcher
         .arg(input.tile.handle().binding())
         .subspace(&[M, N])
@@ -284,7 +283,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         pack,
         input_op.arg(),
         output.arg(),
-        launcher.space().clone(),
+        launcher.nest(),
         input_dtype,
         out_dtype,
     );
@@ -385,7 +384,7 @@ fn copy_quantized_lookup_matches_reference() {
         pack,
         input.arg(),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -450,7 +449,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
         w,
         input.arg(),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -508,7 +507,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
         w,
         input.arg(),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -577,7 +576,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         pack,
         input.arg(),
         output.arg(),
-        space,
+        Nest::new(space.clone(), vec![]),
         input_dtype,
         out_dtype,
     );
@@ -607,11 +606,11 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 pub fn plain_copy<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let input = input.tile(comptime!(nest.space.clone()));
+    let mut output = output.tile(comptime!(nest.space.clone()));
     output.copy_from(&input);
 }
 
@@ -622,12 +621,12 @@ pub fn plain_copy<E: Numeric>(
 pub fn dequant_copy<I: Numeric, O: Numeric, VI: Size, VO: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, O, VO>,
-    #[comptime] space: Space,
+    #[comptime] nest: Nest,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {
-    let input = input.tile::<O>(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let input = input.tile::<O>(comptime!(nest.space.clone()));
+    let mut output = output.tile(comptime!(nest.space.clone()));
     output.copy_from(&input);
 }
 
@@ -672,7 +671,7 @@ fn two_level_without_global_scale_refused_by_the_builder() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let launcher = space.launcher(&client);
+    let launcher = Nest::new(space.clone(), vec![]).launcher(&client);
     launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -719,15 +718,14 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .uniform(0x1, lo, hi)
         .generate_with_f32_host_data();
 
-    // A space that tiles into `bm×bn` blocks, one cube walking them.
-    let space = Tiling::over(&[(M, m), (N, n)])
+    // A nest that tiles into `bm×bn` blocks, one cube walking them.
+    let nest = Nest::over(&[(M, m), (N, n)])
         .level(|l| {
             l.walk(&[(M, bm), (N, bn)]);
-        })
-        .build();
+        });
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
-    let output = TileInput::builder(&client, space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, nest.space.clone()).untiled().zeros();
 
     // One distinct scale per block, row-major over the block grid; a partial block still has one.
     let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));
@@ -758,7 +756,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
             DequantAt::Read,
         ),
         TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
-        space,
+        nest.clone(),
         input_dtype,
         out_dtype,
     );

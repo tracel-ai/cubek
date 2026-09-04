@@ -25,8 +25,8 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// one stored word of `KI`, and where a group reaches past one block it takes whole blocks of
 /// `KB` (a distribution deals one axis or the other and cannot straddle two). The partials the
 /// lanes hold drain inside the plane.
-pub fn quant_gemv_space(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Space {
-    Space::new(&quant_gemv_extents(problem)).with_levels(&quant_gemv_levels(bp, problem))
+pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
+    Space::new(&quant_gemv_extents(problem))
 }
 
 /// The routine's axes and their extents, every one static.
@@ -124,7 +124,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     #[define(ES)] _scale_dtype: ElemType,
     #[define(EO)] _out_dtype: ElemType,
 ) {
-    let space = comptime!(quant_gemv_space(&bp, &problem));
+    let space = comptime!(quant_gemv_space(&problem));
     let config = comptime!(register_block(&bp, &problem));
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));

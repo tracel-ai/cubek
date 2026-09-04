@@ -18,5 +18,6 @@ mod columns;
 mod fragments;
 mod stream;
 
+pub use fragments::{FragmentOwnership, FragmentShape};
 pub use stream::*;
 // columns and fragments add `Tile` impls only; nothing to re-export.

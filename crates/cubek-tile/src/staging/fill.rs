@@ -121,12 +121,22 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.0.clone()
             } else {
-                stage_smem(lhs, comptime!(storage.clone()), comptime!(None))
+                stage_smem(
+                    lhs,
+                    comptime!(walk.level.clone()),
+                    comptime!(storage.clone()),
+                    comptime!(None),
+                )
             };
             let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
                 slots.index(FIRST_SLOT).data.1.clone()
             } else {
-                stage_smem(rhs, comptime!(storage.clone()), comptime!(None))
+                stage_smem(
+                    rhs,
+                    comptime!(walk.level.clone()),
+                    comptime!(storage.clone()),
+                    comptime!(None),
+                )
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
@@ -285,7 +295,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
-                stage_smem(input, comptime!(storage.clone()), width)
+                stage_smem(input, comptime!(walk.level.clone()), comptime!(storage.clone()), width)
             };
             let staging = Staging::wrap(
                 staged_input,
@@ -391,10 +401,11 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
 #[cube]
 fn stage_smem<T: Numeric>(
     input: &Tile<T>,
+    #[comptime] level: Level,
     #[comptime] storage: StageStorage,
     #[comptime] width: Option<usize>,
 ) -> Tile<T> {
-    MemData::stage(input, storage, width)
+    MemData::stage(input, level, storage, width)
 }
 
 #[cfg(test)]
@@ -405,14 +416,10 @@ mod tests {
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
 
-    /// A one-level space over `M`/`N`/`K`, plus a projection per operand so a slot can be planned
-    /// against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
+    /// A space over `M`/`N`/`K` cut once by `level`, plus a projection per operand so a slot can
+    /// be planned against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
     fn spaces() -> (Space, Space, Space) {
-        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
-            .level(|l| {
-                l.walk(&[(M, 8), (N, 8), (K, 4)]);
-            })
-            .build();
+        let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
         let lhs = space.project(&[M, K]);
         let rhs = space.project(&[K, N]);
         (space, lhs, rhs)
@@ -425,10 +432,13 @@ mod tests {
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
         let (space, lhs, rhs) = spaces();
+        let level = Level::cuts(&[M, N, K], |l| {
+            l.walk(&[(M, 8), (N, 8), (K, 4)]);
+        });
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
-            space.partitioner().level(),
+            &level,
         );
         for slot in 0..2 {
             assert_eq!(plan.operand_plan(FIRST, slot).mode, WindowMode::Streamed);
@@ -439,17 +449,14 @@ mod tests {
     /// An operand whose window the walk never moves is filled once and shares its buffer.
     #[test]
     fn a_fixed_operand_reuses_the_first_slots_buffer() {
-        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
-            .level(|l| {
-                l.walk(&[(M, 8), (N, 4), (K, 8)]);
-            })
-            .build();
-        let lhs = space.project(&[M, K]);
-        let rhs = space.project(&[K, N]);
+        let (space, lhs, rhs) = spaces();
+        let level = Level::cuts(&[M, N, K], |l| {
+            l.walk(&[(M, 8), (N, 4), (K, 8)]);
+        });
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
-            space.partitioner().level(),
+            &level,
         );
         assert_eq!(plan.operand_plan(FIRST, 0).mode, WindowMode::Fixed);
         assert_eq!(plan.operand_plan(FIRST, 1).mode, WindowMode::Reused);
@@ -460,17 +467,14 @@ mod tests {
     /// A barrier pipeline arrives once per fill, so a TMA operand streams even when fixed.
     #[test]
     fn a_tma_operand_is_never_fixed() {
-        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
-            .level(|l| {
-                l.walk(&[(M, 8), (N, 4), (K, 8)]);
-            })
-            .build();
-        let lhs = space.project(&[M, K]);
-        let rhs = space.project(&[K, N]);
+        let (space, lhs, rhs) = spaces();
+        let level = Level::cuts(&[M, N, K], |l| {
+            l.walk(&[(M, 8), (N, 4), (K, 8)]);
+        });
         let plan = SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
-            space.partitioner().level(),
+            &level,
         );
         assert_eq!(plan.operand_plan(FIRST, 0).mode, WindowMode::Streamed);
     }
