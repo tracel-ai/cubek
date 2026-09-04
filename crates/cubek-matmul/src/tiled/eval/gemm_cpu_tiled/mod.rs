@@ -14,9 +14,8 @@
 //! the evidence for that + a regression guard on the vectorized tiled path.
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -86,14 +85,14 @@ pub struct TiledStrategy {
 /// A fresh uniform-random operand of the given physical `packing`; a contiguous buffer whose
 /// row-major strides already realize the layout (tiled dims are just higher rank).
 fn make(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     packing: Packing,
     batch: usize,
     rows: usize,
     cols: usize,
     dtype: ElemType,
     seed: u64,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(
         client.clone(),
         Shape::from(packing.physical_dims(batch, rows, cols)),
@@ -106,13 +105,13 @@ fn make(
 struct TiledBench {
     problem: TiledProblem,
     strategy: TiledStrategy,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 impl Benchmark for TiledBench {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -133,7 +132,7 @@ impl Benchmark for TiledBench {
             self.dtypes.acc_global,
         );
 
-        launch_ref::<TestRuntime>(
+        launch_ref(
             &self.client,
             WithLayout {
                 binding: InputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
@@ -169,7 +168,7 @@ impl Benchmark for TiledBench {
         let planes = self.strategy.planes;
         format!(
             "{}-cpu-gemm-tiled-{}-p{}x{}",
-            <TestRuntime as Runtime>::name(&self.client),
+            self.client.name(),
             packing,
             planes.m,
             planes.n,
@@ -194,8 +193,8 @@ pub fn bench(
     problem: &TiledProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let elems = MatmulElems::from_single_dtype(f32::elem_type_native());
 
     let bench = TiledBench {

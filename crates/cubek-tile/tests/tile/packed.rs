@@ -13,7 +13,7 @@
 //! binding whose shape counts *values* while the packing says how many sit in one stored word.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
+    bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
     std::tensor::TensorHandle, zspace::shape,
 };
 use cubecl_common::e2m1;
@@ -131,7 +131,7 @@ fn nvfp4_shaped_decode() {
     let depth = block * blocks;
     let factor = 32 / field.size_bits();
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -157,7 +157,7 @@ fn nvfp4_shaped_decode() {
     let g = vec![0.25f32];
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -185,7 +185,7 @@ fn nvfp4_shaped_decode() {
         })
         .build();
 
-    nvfp4_shaped_matmul::launch::<TestRuntime>(
+    nvfp4_shaped_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -350,7 +350,7 @@ fn eight_bit_fields_unpack_on_read() {
     // A packed line serves a whole word, so this is the width the tile is read at.
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -375,7 +375,7 @@ fn eight_bit_fields_unpack_on_read() {
         })
         .collect();
     // Shape and strides count values; the packing says how many share a stored word.
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -388,7 +388,7 @@ fn eight_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -425,7 +425,7 @@ fn four_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -448,7 +448,7 @@ fn four_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -461,7 +461,7 @@ fn four_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -503,7 +503,7 @@ fn fp4_codes_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -523,7 +523,7 @@ fn fp4_codes_unpack_on_read() {
                 .fold(0u32, |acc, (j, &c)| acc | (c << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -536,7 +536,7 @@ fn fp4_codes_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -573,7 +573,7 @@ fn two_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -596,7 +596,7 @@ fn two_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -609,7 +609,7 @@ fn two_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -648,7 +648,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -676,7 +676,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -701,7 +701,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         })
         .build();
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -765,7 +765,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -792,7 +792,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -816,7 +816,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         })
         .build();
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -880,7 +880,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -916,7 +916,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -942,7 +942,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
     })
     .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1017,7 +1017,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1052,7 +1052,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1078,7 +1078,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     })
     .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1157,7 +1157,7 @@ fn several_lines_may_share_one_scale() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1193,7 +1193,7 @@ fn several_lines_may_share_one_scale() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1219,7 +1219,7 @@ fn several_lines_may_share_one_scale() {
     })
     .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1294,7 +1294,7 @@ fn an_i8_operand_contracts_against_its_scales() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -1332,7 +1332,7 @@ fn an_i8_operand_contracts_against_its_scales() {
         })
         .build();
 
-    native_matmul::launch::<TestRuntime>(
+    native_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1397,7 +1397,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1433,7 +1433,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1464,7 +1464,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
     })
     .build();
 
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1535,7 +1535,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1570,7 +1570,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1601,7 +1601,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
     })
     .build();
 
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1700,7 +1700,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1732,7 +1732,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1749,7 +1749,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         })
         .build();
 
-    packed_gemv_unscaled::launch::<TestRuntime>(
+    packed_gemv_unscaled::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

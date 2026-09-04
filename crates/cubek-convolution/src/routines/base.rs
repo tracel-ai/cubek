@@ -28,23 +28,23 @@ pub trait Routine {
     /// eventually, but this is nice and simple.
     const IS_SPECIALIZED: bool = false;
 
-    fn correct_layout<R: Runtime>(
-        client: &ComputeClient<R>,
-        handle: TensorBinding<R>,
+    fn correct_layout(
+        client: &Client,
+        handle: TensorBinding,
         dtype: ElemType,
         operation: ConvolutionOperation,
-    ) -> Result<TensorBinding<R>, LaunchError>;
+    ) -> Result<TensorBinding, LaunchError>;
 
     fn filter_vector_sizes(vector_sizes: AvailableVectorSizes) -> AvailableVectorSizes {
         vector_sizes
     }
 }
 
-pub(crate) fn contiguous_pitched_layout<R: Runtime>(
-    client: &ComputeClient<R>,
-    binding: TensorBinding<R>,
+pub(crate) fn contiguous_pitched_layout(
+    client: &Client,
+    binding: TensorBinding,
     dtype: ElemType,
-) -> Result<TensorBinding<R>, LaunchError> {
+) -> Result<TensorBinding, LaunchError> {
     let binding = if has_valid_layout(&binding) {
         binding
     } else {
@@ -53,7 +53,7 @@ pub(crate) fn contiguous_pitched_layout<R: Runtime>(
     Ok(binding)
 }
 
-fn has_valid_layout<R: Runtime>(binding: &TensorBinding<R>) -> bool {
+fn has_valid_layout(binding: &TensorBinding) -> bool {
     let rank = binding.shape.len();
     let dim_c = rank - 1;
     binding.strides[dim_c] == 1
@@ -61,12 +61,12 @@ fn has_valid_layout<R: Runtime>(binding: &TensorBinding<R>) -> bool {
 
 const TMA_STRIDE_ALIGN: usize = 16;
 
-pub(crate) fn into_tensor_handle_tma<R: Runtime>(
-    client: &ComputeClient<R>,
-    handle: TensorBinding<R>,
+pub(crate) fn into_tensor_handle_tma(
+    client: &Client,
+    handle: TensorBinding,
     dtype: ElemType,
     operation: ConvolutionOperation,
-) -> Result<TensorBinding<R>, LaunchError> {
+) -> Result<TensorBinding, LaunchError> {
     let binding = if has_valid_layout_tma(&handle, dtype, operation) {
         handle
     } else {
@@ -75,8 +75,8 @@ pub(crate) fn into_tensor_handle_tma<R: Runtime>(
     Ok(binding)
 }
 
-pub(crate) fn has_valid_layout_tma<R: Runtime>(
-    binding: &TensorBinding<R>,
+pub(crate) fn has_valid_layout_tma(
+    binding: &TensorBinding,
     dtype: ElemType,
     operation: ConvolutionOperation,
 ) -> bool {

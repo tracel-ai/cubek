@@ -196,8 +196,8 @@ where
         Ok(CubeDimResource::Specialized(plane_flow_config))
     }
 
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

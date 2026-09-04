@@ -1,19 +1,15 @@
 use crate::attention::forward::assert_result;
-use cubecl::{TestRuntime, prelude::Scalar, zspace::Shape};
+use cubecl::{prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     eval::forward::cpu_reference::assert_result_with_epsilon,
     forward::definition::{AttentionElems, AttentionIdent, AttentionOptions, AttentionProblem},
     forward::launch::{Strategy, launch_ref},
 };
 
-use cubecl::client::ComputeClient;
+use cubecl::client::Client;
 use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
 
-pub fn test_launch(
-    client: ComputeClient<TestRuntime>,
-    problem: AttentionProblem,
-    strategy: Strategy,
-) {
+pub fn test_launch(client: Client, problem: AttentionProblem, strategy: Strategy) {
     test_launch_scaled(client, problem, strategy, 1.0, None)
 }
 
@@ -21,7 +17,7 @@ pub fn test_launch(
 /// optional absolute-epsilon override (the default epsilon assumes unit-range
 /// inputs, so larger magnitudes must scale it along with the data).
 pub fn test_launch_scaled(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: AttentionProblem,
     strategy: Strategy,
     range: f32,
@@ -34,11 +30,7 @@ pub fn test_launch_scaled(
 /// input: attention consumers routinely pass permuted views (a projection
 /// reshaped to `(b, seq, heads, hd)` then swapped to `(b, heads, seq, hd)`),
 /// so the kernels must not assume packed row-major inputs.
-pub fn test_launch_permuted(
-    client: ComputeClient<TestRuntime>,
-    problem: AttentionProblem,
-    strategy: Strategy,
-) {
+pub fn test_launch_permuted(client: Client, problem: AttentionProblem, strategy: Strategy) {
     let heads = problem.dims.num_heads;
     let head_dim_strides = |seq: usize, dim: usize| {
         cubek_test_utils::StridedLayout::Explicit(vec![seq * heads * dim, dim, heads * dim, 1])
@@ -58,7 +50,7 @@ pub struct InputLayouts {
 }
 
 fn test_launch_with_layouts(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: AttentionProblem,
     strategy: Strategy,
     range: f32,

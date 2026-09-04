@@ -7,7 +7,7 @@ use super::{
     build_output_tensor, indices_elem_type, output_host_f32, output_host_i32, validate_indices,
     validate_test,
 };
-use cubecl::{TestRuntime, client::ComputeClient, zspace::Shape};
+use cubecl::{client::Client, zspace::Shape};
 use cubek_pool::{
     definition::{PoolForwardProblem, PoolMode},
     eval::cpu_reference::{
@@ -30,7 +30,7 @@ pub fn make_problem(
 }
 
 pub fn run_pool_test(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     seed: u64,
     input_min: f32,
     input_max: f32,

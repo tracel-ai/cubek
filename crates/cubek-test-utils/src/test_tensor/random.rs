@@ -1,8 +1,8 @@
 use cubecl::{
-    client::ComputeClient,
+    client::Client,
+    prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
-    {TestRuntime, prelude::*},
 };
 use rand::{SeedableRng, rngs::StdRng};
 
@@ -13,13 +13,13 @@ use crate::{
 };
 
 fn random_tensor_handle(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     dtype: ElemType,
     seed: u64,
     strides: &[usize],
     tensor_shape: &[usize],
     distribution: Distribution,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     assert_eq!(tensor_shape.len(), strides.len());
 
     // Size the physical buffer to cover every logical index under these
@@ -45,7 +45,7 @@ pub(crate) fn build_random(
     base_spec: BaseInputSpec,
     seed: u64,
     distribution: Distribution,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let shape = &base_spec.shape;
     let strides = &base_spec.strides();
 

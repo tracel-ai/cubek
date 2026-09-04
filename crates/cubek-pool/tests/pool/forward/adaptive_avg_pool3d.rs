@@ -1,6 +1,5 @@
 use crate::pool::{build_output_tensor, output_host_f32, validate_test};
 use cubecl::{
-    Runtime, TestRuntime,
     ir::{ElemType, FloatKind},
     prelude::*,
     zspace::Shape,
@@ -49,7 +48,7 @@ fn test_adaptive_avg_pool3d_large_dimension_index_math() {
 
 #[test]
 fn test_adaptive_avg_pool3d_validates_rank_batch_channel_and_output_size() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let options = AdaptiveAvgPoolOptions::new([3, 4, 3]);
 
@@ -106,7 +105,7 @@ fn test_adaptive_avg_pool3d_validates_rank_batch_channel_and_output_size() {
 
 #[test]
 fn test_adaptive_avg_pool3d_rejects_zero_spatial_dimensions() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let input = build_output_tensor(&client, vec![1, 0, 2, 2, 1], dtype);
@@ -138,7 +137,7 @@ fn test_adaptive_avg_pool3d_rejects_zero_spatial_dimensions() {
 
 #[test]
 fn test_adaptive_avg_pool3d_accepts_empty_batch_and_channels() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     for (input_shape, output_shape) in [
@@ -160,7 +159,7 @@ fn test_adaptive_avg_pool3d_accepts_empty_batch_and_channels() {
 
 #[test]
 fn test_adaptive_avg_pool3d_rejects_other_pool_modes() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input = build_output_tensor(&client, vec![1, 4, 4, 4, 1], dtype);
     let output = build_output_tensor(&client, vec![1, 2, 2, 2, 1], dtype);
@@ -196,7 +195,7 @@ fn test_adaptive_avg_pool3d_rejects_other_pool_modes() {
 
 #[test]
 fn test_adaptive_avg_pool3d_f16_large_global_accumulates_in_f32() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = ElemType::Float(FloatKind::F16);
     let input_shape = vec![1, 41, 41, 41, 1];
     let input = TestInput::builder(client.clone(), input_shape.clone())
@@ -219,7 +218,7 @@ fn test_adaptive_avg_pool3d_f16_large_global_accumulates_in_f32() {
 }
 
 fn run_case(input_shape: [usize; 5], output_size: [usize; 3], seed: u64) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = PoolForwardProblem {
         input_shape: Shape::from(input_shape),
         with_indices: false,

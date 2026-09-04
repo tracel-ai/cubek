@@ -1,5 +1,5 @@
 use super::geometry::TileGeometry;
-use cubecl::{Runtime, client::ComputeClient};
+use cubecl::client::Client;
 use cubek_tile::{
     Axis, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock, Space,
     Tiling, cubes, lanes, planes,
@@ -13,7 +13,7 @@ pub const TAP_W: Axis = Axis(4);
 pub const CHANNEL: Axis = Axis(5);
 
 /// The register block the leaf runs under, which the device decides.
-pub fn register_block<R: Runtime>(client: &ComputeClient<R>) -> RegisterBlock {
+pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
         Some(_) => RegisterBlock::new(256).split_edge(),
         None => RegisterBlock::new(64).lane_fanout(),

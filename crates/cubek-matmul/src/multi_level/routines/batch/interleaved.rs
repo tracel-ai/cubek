@@ -1,9 +1,4 @@
-use cubecl::{
-    CubeCount, CubeDim,
-    features::MmaConfig,
-    ir::AddressType,
-    {Runtime, client::ComputeClient},
-};
+use cubecl::{CubeCount, CubeDim, client::Client, features::MmaConfig, ir::AddressType};
 use cubek_std::cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation};
 use std::{fmt::Display, marker::PhantomData};
 
@@ -83,22 +78,22 @@ where
     AL: FullLoadingStrategy<RC, SyncStrategy = LL::SyncStrategy>,
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <InterleavedBatch<RC, LL, RL, AL>>::launch_unchecked::<MA, R>(
+                <InterleavedBatch<RC, LL, RL, AL>>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -117,14 +112,14 @@ where
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<InterleavedBatch<RC, LL, RL, AL>, RC, R>(
+        batch_validate_blueprint::<InterleavedBatch<RC, LL, RL, AL>, RC>(
             client,
             blueprint,
             problem,
@@ -137,9 +132,9 @@ where
         InterleavedBatch::<RC, LL, RL, AL>::num_stages()
     }
 
-    fn expand_blueprint<R: Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -154,7 +149,7 @@ where
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => {
                 if strategy.multi_rows {
-                    infer_blueprint_multi_rows::<R>(
+                    infer_blueprint_multi_rows(
                         tile_matmul,
                         client,
                         problem,
@@ -163,7 +158,7 @@ where
                         &device_settings.vector_sizes,
                     )
                 } else {
-                    infer_blueprint_plane::<R>(
+                    infer_blueprint_plane(
                         tile_matmul,
                         client,
                         problem,
@@ -183,9 +178,9 @@ where
         Ok(ExpandInfo { blueprint, dtypes })
     }
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<BatchMatmulBlueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;
@@ -215,9 +210,9 @@ where
     }
 }
 
-fn infer_blueprint_multi_rows<R: Runtime>(
+fn infer_blueprint_multi_rows(
     tile_matmul: TileMatmulKind,
-    client: &ComputeClient<R>,
+    client: &Client,
     problem: &MatmulProblem,
     plane_dim: u32,
     mut dtypes: MatmulElems,
@@ -299,7 +294,7 @@ fn infer_blueprint_multi_rows<R: Runtime>(
             dtypes,
         ))
     } else {
-        infer_blueprint_plane::<R>(
+        infer_blueprint_plane(
             tile_matmul,
             client,
             problem,

@@ -11,8 +11,7 @@
 //! nothing dividing anything.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -46,7 +45,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     // Every value a signed 4-bit field represents, cycling.
@@ -75,7 +74,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .build();
 
     // Shape and strides count values; the packing says how many share a stored word.
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -120,7 +119,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         .vectorize(factor)
         .build();
 
-    dequantize::launch::<TestRuntime>(
+    dequantize::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),

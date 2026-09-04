@@ -16,11 +16,11 @@ const N: Axis = Axis(1);
 /// Convert the tensor back to a higher precision data type.
 /// Uses the tile-based implementation for dequantization.
 /// Very WIP and naive implementation for now.
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    scales: TensorBinding<R>,
+pub fn launch_ref(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
+    scales: TensorBinding,
     scheme: &QuantScheme,
     output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -94,7 +94,7 @@ fn sequential_space(extents: &[(Axis, usize)]) -> Space {
     Space::new(extents).with_partitioner(partitioner)
 }
 
-fn check_i8_supported<R: Runtime>(client: &ComputeClient<R>, scheme: &QuantScheme) {
+fn check_i8_supported(client: &Client, scheme: &QuantScheme) {
     match scheme {
         QuantScheme {
             value: QuantValue::Q8F | QuantValue::Q8S | QuantValue::E4M3 | QuantValue::E5M2,

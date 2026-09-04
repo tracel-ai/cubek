@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &RandomProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = RandomBench {
         shape: problem.shape.clone(),
@@ -43,12 +42,12 @@ struct RandomBench {
     shape: Vec<usize>,
     distribution: Distribution,
     strategy: PrngStrategy,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     samples: usize,
 }
 
 impl Benchmark for RandomBench {
-    type Input = TensorHandle<TestRuntime>;
+    type Input = TensorHandle;
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -82,7 +81,7 @@ impl Benchmark for RandomBench {
     fn name(&self) -> String {
         format!(
             "random-{}-{}-{:?}",
-            <TestRuntime as Runtime>::name(&self.client),
+            self.client.name(),
             self.distribution.name(),
             self.shape,
         )

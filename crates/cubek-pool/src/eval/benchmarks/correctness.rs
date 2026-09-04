@@ -1,4 +1,3 @@
-use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::definition::PoolProblem;
@@ -17,8 +16,8 @@ impl cubek_test_utils::Correctness for PoolCorrectness {
         problem: &PoolProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         strategy_result(client, problem.clone(), seeds[0])
     }
 
@@ -28,8 +27,8 @@ impl cubek_test_utils::Correctness for PoolCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         cpu_reference_result(client, problem.clone(), seeds[0], progress)
     }
 }

@@ -17,7 +17,7 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime,
+    CubeCount, CubeDim,
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
     prelude::*,
@@ -80,7 +80,7 @@ fn reduce_splits<E: Numeric>(
 /// The whole pipeline over `(m, n, k)` cut into `splits`: the partials, then the fold. Returns
 /// both, since a wrong total and a wrong partial are different bugs.
 fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostData) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     assert!(k.is_multiple_of(splits), "the test shapes divide evenly");
     let inside = k / splits;
@@ -115,7 +115,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
-    split_partials::launch::<TestRuntime>(
+    split_partials::launch(
         &client,
         split_space.cube_count(),
         split_space.cube_dim(&client),
@@ -154,7 +154,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         })
         .build();
 
-    reduce_splits::launch::<TestRuntime>(
+    reduce_splits::launch(
         &client,
         fold_space.cube_count(),
         fold_space.cube_dim(&client),
@@ -260,7 +260,7 @@ fn atomic_add_probe(out: &mut Tensor<Atomic<f32>>) {
 
 #[test]
 fn the_device_folds_floats_atomically_across_cubes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -279,7 +279,7 @@ fn the_device_folds_floats_atomically_across_cubes() {
         .zeros()
         .generate_without_host_data();
 
-    atomic_add_probe::launch::<TestRuntime>(
+    atomic_add_probe::launch(
         &client,
         CubeCount::new_1d(cubes),
         CubeDim::new_single(),
@@ -327,7 +327,7 @@ fn atomic_split_matmul<E: Numeric>(
 
 /// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
 fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -354,7 +354,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         })
         .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -381,7 +381,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
 /// `K` into the output and the sum is the whole.
 #[test]
 fn an_atomic_drain_folds_the_slices_back_together() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -414,7 +414,7 @@ fn an_atomic_drain_folds_the_slices_back_together() {
 /// the caller, which is what makes them interchangeable at launch.
 #[test]
 fn the_atomic_drain_agrees_with_the_workspace() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -451,7 +451,7 @@ fn the_atomic_drain_agrees_with_the_workspace() {
 /// this is the half that a blanket "lane zero writes" would silently drop.
 #[test]
 fn an_atomic_drain_with_lanes_of_their_own() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -492,7 +492,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         })
         .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -534,7 +534,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
 /// about instances that cannot meet in registers, not about cubes in particular.
 #[test]
 fn an_atomic_drain_folds_across_planes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -571,7 +571,7 @@ fn an_atomic_drain_folds_across_planes() {
         })
         .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -637,7 +637,7 @@ fn atomic_split_matmul_in_place<E: Numeric>(
 
 #[test]
 fn a_folding_output_contracts_in_place() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -674,7 +674,7 @@ fn a_folding_output_contracts_in_place() {
         })
         .build();
 
-    atomic_split_matmul_in_place::launch::<TestRuntime>(
+    atomic_split_matmul_in_place::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

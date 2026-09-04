@@ -272,25 +272,25 @@ impl IntoIterator for Walk {
 impl Iterable for WalkExpand {
     type Item = RegionExpand;
 
-    fn expand(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         let start = 0usize.into_expand(scope);
         let total = self.__expand_total_method(scope);
         let range = RangeExpand::new(start, total);
         if self.unroll {
-            range.expand_unroll(scope, |scope, i| {
+            range.expand_unroll(scope, &mut |scope, i| {
                 body(scope, self.__expand_region_method(scope, i));
             });
         } else {
-            range.expand(scope, |scope, i| {
+            range.expand(scope, &mut |scope, i| {
                 body(scope, self.__expand_region_method(scope, i));
             });
         }
     }
 
-    fn expand_unroll(self, scope: &Scope, mut body: impl FnMut(&Scope, RegionExpand)) {
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         let start = 0usize.into_expand(scope);
         let total = self.__expand_total_method(scope);
-        RangeExpand::new(start, total).expand_unroll(scope, |scope, i| {
+        RangeExpand::new(start, total).expand_unroll(scope, &mut |scope, i| {
             body(scope, self.__expand_region_method(scope, i));
         });
     }

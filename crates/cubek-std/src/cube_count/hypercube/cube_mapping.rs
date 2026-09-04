@@ -136,7 +136,7 @@ impl CubeMappingStrategy {
 }
 
 /// Build a [CubeMappingLaunch] from a resolved [CubeCountPlan].
-pub fn cube_mapping_launch<R: Runtime>(cube_count_plan: &CubeCountPlan) -> CubeMappingLaunch<R> {
+pub fn cube_mapping_launch(cube_count_plan: &CubeCountPlan) -> CubeMappingLaunch {
     CubeMappingLaunch::new(
         mapping_strategy(&cube_count_plan.kind),
         cube_count_plan.kind.can_yield_extra_cubes(),
@@ -144,9 +144,7 @@ pub fn cube_mapping_launch<R: Runtime>(cube_count_plan: &CubeCountPlan) -> CubeM
     )
 }
 
-fn mapping_strategy<R: Runtime>(
-    cube_count_plan_kind: &CubeCountPlanKind,
-) -> CubeMappingStrategyArgs<R> {
+fn mapping_strategy(cube_count_plan_kind: &CubeCountPlanKind) -> CubeMappingStrategyArgs {
     match cube_count_plan_kind {
         CubeCountPlanKind::FromProblem { .. } => CubeMappingStrategyArgs::FromProblem,
 

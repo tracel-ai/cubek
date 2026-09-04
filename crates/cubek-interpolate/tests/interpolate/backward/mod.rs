@@ -1,6 +1,6 @@
 mod nearest_backward;
 
-use cubecl::{TestRuntime, client::ComputeClient};
+use cubecl::client::Client;
 use cubek_interpolate::{
     definition::{InterpolateBackwardProblem, InterpolateOptions},
     eval::cpu_reference::cpu_reference_interpolate_backward_from_host,
@@ -23,7 +23,7 @@ pub fn make_interpolate_backward_problem(
 }
 
 pub fn run_interpolate_backward_test(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     seed: u64,
     input_min: f32,
     input_max: f32,

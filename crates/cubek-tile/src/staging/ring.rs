@@ -121,7 +121,7 @@ pub mod pipelined {
         let laps = total
             .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
             .__expand_fdiv_method(scope, depth.into_expand(scope));
-        let body = |scope: &Scope, lap: NativeExpand<usize>| {
+        let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
                     .__expand_fmul_method(scope, depth.into_expand(scope))
@@ -159,9 +159,9 @@ pub mod pipelined {
         };
         let range = RangeExpand::new(0usize.into_expand(scope), laps);
         if unroll {
-            range.expand_unroll(scope, body);
+            range.expand_unroll(scope, &mut body);
         } else {
-            range.expand(scope, body);
+            range.expand(scope, &mut body);
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::harness::{run_with_strides, test_matmul_strategy};
-use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
+use cubecl::{frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     multi_level::{Strategy as MultiLevel, routines::gemm::GemmStrategy},
@@ -48,7 +48,7 @@ impl GemmTestCase {
     }
 
     pub(crate) fn test(self) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let problem = self.to_problem();
         test_matmul_strategy(client, problem, self.strategy);
     }
@@ -58,7 +58,7 @@ impl GemmTestCase {
     /// that must execute on GPU, where the default `correct` policy would
     /// otherwise silently accept a `CompileError` and hide a regression.
     pub(crate) fn test_executes(self) {
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let problem = self.to_problem();
         let outcome = run_with_strides(client, problem, self.strategy);
         assert!(

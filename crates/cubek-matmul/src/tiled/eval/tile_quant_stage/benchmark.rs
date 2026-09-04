@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
@@ -70,8 +69,8 @@ pub fn bench(
     problem: &TileQuantStageProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let scheme = quant_scheme(problem.bn);
     let pack = scheme.num_quants();
@@ -116,7 +115,7 @@ struct TileQuantStageBench {
     tk: usize,
     scheme: QuantScheme,
     pack: usize,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     samples: usize,
 }
 
@@ -181,7 +180,7 @@ impl Benchmark for TileQuantStageBench {
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
-        staged_matmul_quant_rhs::launch::<TestRuntime>(
+        staged_matmul_quant_rhs::launch(
             &self.client,
             launcher.cube_count(),
             launcher.cube_dim(),
@@ -205,7 +204,7 @@ impl Benchmark for TileQuantStageBench {
     fn name(&self) -> String {
         format!(
             "tile-quant-stage-{}-m{}-n{}-k{}-tk{}",
-            <TestRuntime as Runtime>::name(&self.client),
+            self.client.name(),
             self.m,
             self.n,
             self.k,

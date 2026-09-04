@@ -12,7 +12,6 @@
 //! grid exactly once, and that a share starting late reads the regions it was given.
 
 use cubecl::{
-    Runtime, TestRuntime,
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
     prelude::*,
@@ -79,7 +78,7 @@ fn copy_one_run<E: Numeric>(
 }
 
 struct Harness {
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     dtype: ElemType,
     space: Space,
 }
@@ -87,7 +86,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            client: <TestRuntime as Runtime>::client(&Default::default()),
+            client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
             space: Tiling::over(&[(ROW, ROWS), (COL, COLS)])
                 .level(|level| {
@@ -97,21 +96,21 @@ impl Harness {
         }
     }
 
-    fn source(&self) -> (TensorHandle<TestRuntime>, HostData) {
+    fn source(&self) -> (TensorHandle, HostData) {
         TestInput::builder(self.client.clone(), shape![ROWS, COLS])
             .dtype(self.dtype)
             .arange()
             .generate_with_f32_host_data()
     }
 
-    fn destination(&self) -> TensorHandle<TestRuntime> {
+    fn destination(&self) -> TensorHandle {
         TestInput::builder(self.client.clone(), shape![ROWS, COLS])
             .dtype(self.dtype)
             .zeros()
             .generate_without_host_data()
     }
 
-    fn read(&self, output: TensorHandle<TestRuntime>) -> HostData {
+    fn read(&self, output: TensorHandle) -> HostData {
         HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
     }
 }
@@ -142,7 +141,7 @@ fn runs_cover_the_grid(cubes: usize) {
     let dst = h.destination();
     let (src_arg, dst_arg) = tile_args!(h, src, dst);
 
-    copy_run::launch::<TestRuntime>(
+    copy_run::launch(
         &h.client,
         CubeCount::Static(cubes as u32, 1, 1),
         h.space.cube_dim(&h.client),
@@ -190,7 +189,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
     // Regions 3 and 4 of the row-major walk: the second half of row band 1, and the first half of
     // row band 2. A rectangle cannot name that pair either.
     let (start, steps) = (3usize, 2usize);
-    copy_one_run::launch::<TestRuntime>(
+    copy_one_run::launch(
         &h.client,
         CubeCount::Static(1, 1, 1),
         h.space.cube_dim(&h.client),
@@ -369,7 +368,7 @@ enum RhsStage {
 
 /// `a · b` with the work shared between `runs` cubes, folded atomically into a zeroed output.
 fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -406,7 +405,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
     // One region of the distribution costs a share every `K` block of its contraction.
     let stride = k / BLOCK_K;
     match rhs {
-        RhsStage::InPlace => stream_matmul::launch::<TestRuntime>(
+        RhsStage::InPlace => stream_matmul::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -427,7 +426,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             stride,
             dtype,
         ),
-        RhsStage::Smem => stream_matmul_staged_rhs::launch::<TestRuntime>(
+        RhsStage::Smem => stream_matmul_staged_rhs::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -524,7 +523,7 @@ fn runs_that_straddle_a_tile_boundary_still_sum_to_the_whole() {
 
 /// The drain folds, so a device without a float atomic add cannot run any of this.
 fn folds_atomically() -> bool {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let folds = client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -571,7 +570,7 @@ fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
 /// cover one step of it.
 #[test]
 fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !folds_atomically() {
         return;
     }
@@ -614,7 +613,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
         // The lanes cover `K` between them, one step each together: a region costs the share
         // `k / plane_size` steps, not `k`.
         let stride = k / plane_size;
-        stream_matmul::launch::<TestRuntime>(
+        stream_matmul::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),

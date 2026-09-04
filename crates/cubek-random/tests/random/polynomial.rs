@@ -1,6 +1,5 @@
 use cubecl::{
-    CubeDim, TestRuntime,
-    prelude::{BufferArg, *},
+    CubeDim,    prelude::{BufferArg, *},
 };
 use cubek_random::polynomial;
 
@@ -77,7 +76,7 @@ fn kernel_ln(inputs: &[f32], logarithms: &mut [f32]) {
 }
 
 fn run_cos_sin_turns(turns: &[f32]) -> (Vec<f32>, Vec<f32>) {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let input = client.create_from_slice(f32::as_bytes(turns));
     let cosines = client.empty(size_of_val(turns));
     let sines = client.empty(size_of_val(turns));
@@ -85,7 +84,7 @@ fn run_cos_sin_turns(turns: &[f32]) -> (Vec<f32>, Vec<f32>) {
     let cube_dim = CubeDim::new(&client, turns.len());
     let cubes = turns.len().div_ceil(cube_dim.num_elems() as usize) as u32;
 
-    kernel_cos_sin_turns::launch::<TestRuntime>(
+    kernel_cos_sin_turns::launch(
         &client,
         CubeCount::Static(cubes, 1, 1),
         cube_dim,
@@ -101,14 +100,14 @@ fn run_cos_sin_turns(turns: &[f32]) -> (Vec<f32>, Vec<f32>) {
 }
 
 fn run_ln(inputs: &[f32]) -> Vec<f32> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let input = client.create_from_slice(f32::as_bytes(inputs));
     let logarithms = client.empty(size_of_val(inputs));
 
     let cube_dim = CubeDim::new(&client, inputs.len());
     let cubes = inputs.len().div_ceil(cube_dim.num_elems() as usize) as u32;
 
-    kernel_ln::launch::<TestRuntime>(
+    kernel_ln::launch(
         &client,
         CubeCount::Static(cubes, 1, 1),
         cube_dim,

@@ -12,11 +12,7 @@
 //! conversion happen there — but the *scaling* ahead of it is shared, and a quantizer that rounded
 //! to whole numbers first would land on the integer grid however faithful the conversion after it.
 
-use cubecl::{
-    features::TypeUsage,
-    prelude::*,
-    {TestRuntime, zspace::shape},
-};
+use cubecl::{features::TypeUsage, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
 use super::harness::{dequantize, f32_tensor, quantize};
@@ -39,7 +35,7 @@ fn round_trip(value: QuantValue, data: &[f32]) -> Vec<f32> {
 }
 
 fn round_trip_stored(value: QuantValue, store: QuantStore, data: &[f32]) -> Vec<f32> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let scheme = scheme(value, store);
     let shape = shape![1, BLOCK];
 
@@ -125,7 +121,7 @@ fn magnitudes_past_the_maximum_saturate() {
 /// backend with no 8-bit scalar type has nowhere to put one. WGSL is such a backend — it packs fp8
 /// four lanes to a `u32` — so these tests sit out there, as the `ue8m0` ones in `fp4.rs` do.
 fn native_store_is_addressable() -> bool {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         return true;
     }

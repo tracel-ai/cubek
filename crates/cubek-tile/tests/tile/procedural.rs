@@ -2,7 +2,7 @@
 
 use core::f32::consts::PI;
 
-use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::shape};
+use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -343,7 +343,7 @@ fn divided_direct_copy_kernel<E: Float>(
 }
 
 struct Harness {
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     dtype: ElemType,
     space: Space,
 }
@@ -351,7 +351,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         Self {
-            client: <TestRuntime as Runtime>::client(&Default::default()),
+            client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
             space: Tiling::over(&[(ROW, ROWS), (COL, COLS)])
                 .level(|level| {
@@ -361,14 +361,14 @@ impl Harness {
         }
     }
 
-    fn output(&self) -> TensorHandle<TestRuntime> {
+    fn output(&self) -> TensorHandle {
         TestInput::builder(self.client.clone(), shape![ROWS, COLS])
             .dtype(self.dtype)
             .zeros()
             .generate_without_host_data()
     }
 
-    fn read(&self, output: TensorHandle<TestRuntime>) -> HostData {
+    fn read(&self, output: TensorHandle) -> HostData {
         HostData::from_tensor_handle(&self.client, output, HostDataType::F32)
     }
 }
@@ -416,7 +416,7 @@ fn sinc(t: f32) -> f32 {
 fn user_recipe_evaluates_in_place() {
     let h = Harness::new();
     let output = h.output();
-    product_kernel_in_place::launch::<TestRuntime>(
+    product_kernel_in_place::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -431,7 +431,7 @@ fn user_recipe_evaluates_in_place() {
 fn user_recipe_materializes_through_a_staged_walk() {
     let h = Harness::new();
     let output = h.output();
-    product_kernel_staged::launch::<TestRuntime>(
+    product_kernel_staged::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -446,7 +446,7 @@ fn user_recipe_materializes_through_a_staged_walk() {
 fn selecting_a_region_rebases_the_recipe_origin() {
     let h = Harness::new();
     let output = h.output();
-    rebase_kernel::launch::<TestRuntime>(
+    rebase_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -462,7 +462,7 @@ fn selecting_a_region_rebases_the_recipe_origin() {
 fn check_phase(launch_ratio: bool) {
     let h = Harness::new();
     let output = h.output();
-    phase_kernel::launch::<TestRuntime>(
+    phase_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -491,7 +491,7 @@ fn a_phase_takes_a_ratio_fixed_only_at_launch() {
 fn constant_evaluates_its_value_everywhere() {
     let h = Harness::new();
     let output = h.output();
-    constant_kernel::launch::<TestRuntime>(
+    constant_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -506,7 +506,7 @@ fn constant_evaluates_its_value_everywhere() {
 fn affine_coordinates_evaluate_absolute_positions() {
     let h = Harness::new();
     let output = h.output();
-    affine_kernel::launch::<TestRuntime>(
+    affine_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -524,7 +524,7 @@ fn affine_coordinates_evaluate_absolute_positions() {
 fn linear_is_a_triangle_with_unit_support() {
     let h = Harness::new();
     let output = h.output();
-    linear_kernel::launch::<TestRuntime>(
+    linear_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -542,14 +542,14 @@ fn linear_is_a_triangle_with_unit_support() {
 
 #[test]
 fn a_procedural_tile_works_over_an_integer_element_type() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = i32::elem_type_native();
     let space = Harness::new().space;
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    integer_kernel::launch::<TestRuntime>(
+    integer_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -569,7 +569,7 @@ fn a_procedural_tile_works_over_an_integer_element_type() {
 fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
     let h = Harness::new();
     let output = h.output();
-    linear_over_axis_value_kernel::launch::<TestRuntime>(
+    linear_over_axis_value_kernel::launch(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
@@ -591,7 +591,7 @@ fn cubic_matches_the_keys_convolution() {
         let a = ratio.as_f32();
         let h = Harness::new();
         let output = h.output();
-        cubic_kernel::launch::<TestRuntime>(
+        cubic_kernel::launch(
             &h.client,
             h.space.cube_count(),
             h.space.cube_dim(&h.client),
@@ -622,7 +622,7 @@ fn lanczos_matches_the_windowed_sinc() {
     for (start, lobes) in [(-2.5f32, 2u8), (-2.0f32, 3u8)] {
         let h = Harness::new();
         let output = h.output();
-        lanczos_kernel::launch::<TestRuntime>(
+        lanczos_kernel::launch(
             &h.client,
             h.space.cube_count(),
             h.space.cube_dim(&h.client),
@@ -646,7 +646,7 @@ fn lanczos_matches_the_windowed_sinc() {
 
 #[test]
 fn direct_copy_masks_the_trailing_partial_tile() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = Tiling::over(&[(ROW, ROWS), (COL, COLS)])
         .level(|level| {
@@ -658,7 +658,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
         .zeros()
         .generate_without_host_data();
 
-    direct_copy_kernel::launch::<TestRuntime>(
+    direct_copy_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -675,7 +675,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 
 #[test]
 fn divided_direct_copy_preserves_the_parent_bound() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let concrete = Tiling::over(&[(ROW, ROWS), (COL, COLS)])
         .level(|level| {
@@ -688,7 +688,7 @@ fn divided_direct_copy_preserves_the_parent_bound() {
         .zeros()
         .generate_without_host_data();
 
-    divided_direct_copy_kernel::launch::<TestRuntime>(
+    divided_direct_copy_kernel::launch(
         &client,
         concrete.cube_count(),
         concrete.cube_dim(&client),

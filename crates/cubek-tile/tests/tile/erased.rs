@@ -15,7 +15,6 @@
 //! near miss.
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     std::tensor::{ErasedTensor, WriteOnly},
     zspace::shape,
@@ -100,7 +99,7 @@ fn space() -> Space {
 }
 
 fn run(sink: bool) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = space();
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -108,7 +107,7 @@ fn run(sink: bool) -> HostData {
         .zeros()
         .generate_without_host_data();
     match sink {
-        true => sink_kernel::launch::<TestRuntime>(
+        true => sink_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -116,7 +115,7 @@ fn run(sink: bool) -> HostData {
             space.clone(),
             dtype,
         ),
-        false => buffer_kernel::launch::<TestRuntime>(
+        false => buffer_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),
@@ -195,7 +194,7 @@ fn derived_sink_kernel<E: Float>(
 /// does, which is the only thing that makes a fused store a drop-in for the kernel it replaces.
 #[test]
 fn a_launcher_derived_spec_addresses_the_sink() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let launcher = space().launcher_over(&client, &[]);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -212,7 +211,7 @@ fn a_launcher_derived_spec_addresses_the_sink() {
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
     assert_eq!(derived.geometry.strides(), [COLS, 1]);
 
-    derived_sink_kernel::launch::<TestRuntime>(
+    derived_sink_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -374,7 +373,7 @@ fn matmul_space() -> Space {
 }
 
 fn run_matmul(backed: Backed) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let space = matmul_space();
 
@@ -392,7 +391,7 @@ fn run_matmul(backed: Backed) -> HostData {
 
     let (count, dim) = (space.cube_count(), space.cube_dim(&client));
     match backed {
-        Backed::Sink => sink_matmul::launch::<TestRuntime>(
+        Backed::Sink => sink_matmul::launch(
             &client,
             count,
             dim,
@@ -403,7 +402,7 @@ fn run_matmul(backed: Backed) -> HostData {
             dtype,
             dtype,
         ),
-        Backed::Source => source_matmul::launch::<TestRuntime>(
+        Backed::Source => source_matmul::launch(
             &client,
             count,
             dim,
@@ -414,7 +413,7 @@ fn run_matmul(backed: Backed) -> HostData {
             dtype,
             dtype,
         ),
-        Backed::Buffer => buffer_matmul::launch::<TestRuntime>(
+        Backed::Buffer => buffer_matmul::launch(
             &client,
             count,
             dim,
@@ -576,7 +575,7 @@ enum Erased {
 }
 
 fn run_masked(erased: Erased) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let launcher = masked_space().launcher(&client);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
@@ -601,7 +600,7 @@ fn run_masked(erased: Erased) -> HostData {
         .build();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     match erased {
-        Erased::Sink => wide_sink_kernel::launch::<TestRuntime>(
+        Erased::Sink => wide_sink_kernel::launch(
             &client,
             count,
             dim,
@@ -610,7 +609,7 @@ fn run_masked(erased: Erased) -> HostData {
             launcher.space().clone(),
             dtype,
         ),
-        Erased::Source => wide_source_kernel::launch::<TestRuntime>(
+        Erased::Source => wide_source_kernel::launch(
             &client,
             count,
             dim,
@@ -619,7 +618,7 @@ fn run_masked(erased: Erased) -> HostData {
             launcher.space().clone(),
             dtype,
         ),
-        Erased::Neither => wide_buffer_kernel::launch::<TestRuntime>(
+        Erased::Neither => wide_buffer_kernel::launch(
             &client,
             count,
             dim,

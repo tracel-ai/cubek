@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -16,8 +15,8 @@ pub fn bench(
     problem: &ContiguousProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let dtype = f32::elem_type_native();
 
     let bench = IntoContiguousBench {
@@ -40,15 +39,15 @@ pub fn bench(
 struct IntoContiguousBench {
     shape: Vec<usize>,
     dims: Vec<(usize, usize)>,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     dtype: ElemType,
     samples: usize,
 }
 
 impl Benchmark for IntoContiguousBench {
-    type Input = TensorHandle<TestRuntime>;
-    type Output = TensorHandle<TestRuntime>;
+    type Input = TensorHandle;
+    type Output = TensorHandle;
 
     fn prepare(&self) -> Self::Input {
         let mut handle = TensorHandle::empty(&self.client, self.shape.clone(), self.dtype);
@@ -58,7 +57,7 @@ impl Benchmark for IntoContiguousBench {
         handle
     }
 
-    fn execute(&self, input: Self::Input) -> Result<TensorHandle<TestRuntime>, String> {
+    fn execute(&self, input: Self::Input) -> Result<TensorHandle, String> {
         Ok(cubecl::std::tensor::into_contiguous(
             &self.client,
             input.binding(),

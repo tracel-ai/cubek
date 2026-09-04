@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &FftProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = FftBench::<f32> {
         shape: problem.shape.clone(),
@@ -43,25 +42,20 @@ pub fn bench(
 struct FftBench<E> {
     shape: Vec<usize>,
     mode: FftMode,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }
 
 #[derive(Clone)]
 struct FftInput {
-    signal: TensorHandle<TestRuntime>,
-    spectrum_re: TensorHandle<TestRuntime>,
-    spectrum_im: TensorHandle<TestRuntime>,
+    signal: TensorHandle,
+    spectrum_re: TensorHandle,
+    spectrum_im: TensorHandle,
 }
 
-fn make_uniform(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn make_uniform(client: &Client, shape: Vec<usize>, dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(shape))
         .layout(StridedLayout::RowMajor)
         .dtype(dtype)
@@ -69,11 +63,7 @@ fn make_uniform(
         .generate_without_host_data()
 }
 
-fn empty_handle(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    elem: impl Into<Type>,
-) -> TensorHandle<TestRuntime> {
+fn empty_handle(client: &Client, shape: Vec<usize>, elem: impl Into<Type>) -> TensorHandle {
     TensorHandle::empty(client, shape, elem)
 }
 
@@ -82,7 +72,7 @@ impl<E: Float> Benchmark for FftBench<E> {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let elem = E::elem_type_native();
 
         let mut shape_out = self.shape.clone();

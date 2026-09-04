@@ -11,7 +11,7 @@
 //! buffer. A wide read wants a lane owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
-use cubecl::{Runtime, client::ComputeClient, prelude::*};
+use cubecl::{client::Client, prelude::*};
 use cubek_tile::{Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
@@ -41,25 +41,25 @@ pub struct QuantGemvElems {
 }
 
 /// The four tensors a launch binds, each stated in values.
-pub struct QuantGemvBindings<R: Runtime> {
+pub struct QuantGemvBindings {
     /// The activations, `[rows, d_in]`.
-    pub x: TensorBinding<R>,
+    pub x: TensorBinding,
     /// The packed weight, `[d_out, d_in]` in values over a buffer of `u32` words.
-    pub weights: TensorBinding<R>,
+    pub weights: TensorBinding,
     /// The scale levels, innermost first, each at whatever element it is stored in. What a level
     /// covers is read off its own shape: `[d_out, d_in / block]` distinguishes every block, a
     /// single element covers the tensor. Nothing states how many there are.
-    pub scales: Vec<TensorBinding<R>>,
+    pub scales: Vec<TensorBinding>,
     /// The result, `[d_out, rows]` — the weight's rows are the output's, this orientation
     /// putting them on the buffer's outer dim.
-    pub out: TensorBinding<R>,
+    pub out: TensorBinding,
 }
 
 /// `y = (W ⊗ s) · x`, one launch.
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    bindings: QuantGemvBindings<R>,
+pub fn launch_ref(
+    client: &Client,
+    bindings: QuantGemvBindings,
     problem: &QuantGemvProblem,
     strategy: &BlueprintStrategy<(), QuantGemvRoutine>,
     dtypes: QuantGemvElems,
@@ -139,7 +139,7 @@ pub fn launch_ref<R: Runtime>(
     // requires it.
     let out_op = launch.arg(out).subspace(&[M, N]).build();
 
-    quant_gemv_kernel::launch::<R>(
+    quant_gemv_kernel::launch(
         client,
         launch.cube_count(),
         launch.cube_dim(),

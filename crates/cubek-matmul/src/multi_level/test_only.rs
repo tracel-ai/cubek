@@ -6,7 +6,7 @@
 
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::{
@@ -88,12 +88,12 @@ where
 
 #[allow(clippy::result_large_err)]
 impl TestStrategy {
-    pub fn launch_ref<R: Runtime>(
+    pub fn launch_ref(
         &self,
-        client: &ComputeClient<R>,
-        lhs: InputBinding<R>,
-        rhs: InputBinding<R>,
-        out: TensorBinding<R>,
+        client: &Client,
+        lhs: InputBinding,
+        rhs: InputBinding,
+        out: TensorBinding,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         use TileMatmulKind::{Cmma, Mma};

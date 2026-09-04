@@ -15,7 +15,7 @@
 
 use std::fmt::Display;
 
-use cubecl::{Runtime, features::MmaConfig};
+use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
 
 use crate::{
@@ -174,10 +174,10 @@ impl CmmaRoutine {
     /// instruction's [`MmaConfig`] is keyed on it, since that is the accumulator the
     /// kernel emits.
     #[allow(clippy::result_large_err)]
-    pub fn blueprint<R: Runtime>(
+    pub fn blueprint(
         strategy: &BlueprintStrategy<(), CmmaRoutine>,
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         acc: ElemType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let blueprint = match strategy {
@@ -235,9 +235,9 @@ impl CmmaRoutine {
     /// classic `find_instruction_size` stages), then tile the stage with as many planes as
     /// the cube dim affords, snapped to divisors of the tile grid.
     #[allow(clippy::result_large_err)]
-    fn select<R: Runtime>(
+    fn select(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         delivery: CmmaDelivery,
         acc: ElemType,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {

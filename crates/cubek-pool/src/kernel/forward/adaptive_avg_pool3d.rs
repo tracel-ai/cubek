@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -58,10 +58,10 @@ fn adaptive_avg_pool3d_direct<EI: Float, EA: Float, N: Size>(
     output.write((b, od, oh, ow, c), Vector::cast_from(average));
 }
 
-pub(crate) fn adaptive_avg_pool3d_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn adaptive_avg_pool3d_launch(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);

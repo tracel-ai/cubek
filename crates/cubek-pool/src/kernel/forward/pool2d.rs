@@ -1,7 +1,6 @@
 use crate::kernel::decompose_linear;
 use core::hash::Hash;
 use cubecl::{
-    Runtime,
     prelude::{TensorBinding, *},
     std::{
         FastDivmod,
@@ -129,21 +128,15 @@ pub fn pool2d_direct<E: Numeric, N: Size, S: Pool2dDirectStrategyFamily>(
     S::Pool2d::<E, N>::store(&config, (b, oh, ow, c), &mut output, indices, accumulator);
 }
 
-pub(crate) fn view4d<R: Runtime>(
-    tensor: TensorBinding<R>,
-    vector_size: VectorSize,
-) -> ViewArg<Position, R> {
+pub(crate) fn view4d(tensor: TensorBinding, vector_size: VectorSize) -> ViewArg<Position> {
     let shape = (
         tensor.shape[0],
         tensor.shape[1],
         tensor.shape[2],
         tensor.shape[3],
     );
-    let layout = FixedDimLayoutLaunch::<Position, R>::from_shape_handle_unchecked(
-        &tensor,
-        shape,
-        vector_size,
-    );
+    let layout =
+        FixedDimLayoutLaunch::<Position>::from_shape_handle_unchecked(&tensor, shape, vector_size);
     let buffer = tensor.into_tensor_arg();
     ViewArg::new_tensor::<FixedDimLayout<Position>>(buffer, layout)
 }

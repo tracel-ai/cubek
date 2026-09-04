@@ -16,11 +16,12 @@ use crate::{
 };
 
 /// Real-valued Fast Fourier Transform.
-pub fn rfft<R: Runtime>(
-    signal: TensorHandle<R>,
+pub fn rfft(
+    client: &Client,
+    signal: TensorHandle,
     dim: usize,
     dtype: ElemType,
-) -> (TensorHandle<R>, TensorHandle<R>) {
+) -> (TensorHandle, TensorHandle) {
     assert!(
         dim < signal.shape().len(),
         "dim must be between 0 and {}",
@@ -30,8 +31,6 @@ pub fn rfft<R: Runtime>(
         signal.shape()[dim].is_power_of_two(),
         "RFFT requires power-of-2 length"
     );
-    let client = <R as Runtime>::client(&Default::default());
-
     let mut spectrum_shape = signal.shape().clone();
     spectrum_shape[dim] = signal.shape()[dim] / 2 + 1;
 
@@ -47,8 +46,8 @@ pub fn rfft<R: Runtime>(
         dtype,
     );
 
-    rfft_launch::<R>(
-        &client,
+    rfft_launch(
+        client,
         signal.binding(),
         spectrum_re.clone().binding(),
         spectrum_im.clone().binding(),
@@ -61,16 +60,16 @@ pub fn rfft<R: Runtime>(
 }
 
 /// Launches the RFFT kernel.
-pub fn rfft_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    signal: TensorBinding<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
+pub fn rfft_launch(
+    client: &Client,
+    signal: TensorBinding,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
     dim: usize,
     dtype: ElemType,
 ) -> Result<(), LaunchError> {
     let signal_len = signal.shape[dim];
-    rfft_launch_padded::<R>(
+    rfft_launch_padded(
         client,
         signal,
         spectrum_re,
@@ -82,11 +81,11 @@ pub fn rfft_launch<R: Runtime>(
 }
 
 /// Launches the RFFT kernel while treating samples at `signal_len..n_fft` as zero.
-pub fn rfft_launch_padded<R: Runtime>(
-    client: &ComputeClient<R>,
-    signal: TensorBinding<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
+pub fn rfft_launch_padded(
+    client: &Client,
+    signal: TensorBinding,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
     dim: usize,
     signal_len: usize,
     dtype: ElemType,
@@ -126,7 +125,7 @@ pub fn rfft_launch_padded<R: Runtime>(
     }
 
     if n_fft > max_shared_fft_n(client) {
-        return rfft_large_launch::<R>(
+        return rfft_large_launch(
             client,
             signal,
             spectrum_re,
@@ -143,7 +142,7 @@ pub fn rfft_launch_padded<R: Runtime>(
     let cube_dim = CubeDim::new_1d(threads_per_cube as u32);
     let cube_count = cubecl::calculate_cube_count_elemwise(client, count, CubeDim::new_single());
 
-    rfft_kernel::launch::<f32, R>(
+    rfft_kernel::launch::<f32>(
         client,
         cube_count,
         cube_dim,

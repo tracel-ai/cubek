@@ -4,8 +4,8 @@ use crate::{
     kernel::backward::{PoolBackwardArgs, PoolBackwardArgsLaunch},
 };
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding,
-    prelude::*, std::FastDivmod, tensor_vector_size_parallel,
+    CubeDim, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding, prelude::*,
+    std::FastDivmod, tensor_vector_size_parallel,
 };
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -93,12 +93,12 @@ fn loop_ranges(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn max_pool2d_with_indices_backward_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    indices: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn max_pool2d_with_indices_backward_launch(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    indices: TensorBinding,
+    output: TensorBinding,
     options: MaxPoolOptions<2>,
     dtype: ElemType,
     indices_dtype: ElemType,

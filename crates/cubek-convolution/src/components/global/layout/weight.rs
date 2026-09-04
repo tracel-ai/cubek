@@ -107,7 +107,7 @@ impl Layout for WeightLayout {
     }
 }
 
-impl<R: Runtime> WeightLayoutLaunch<R> {
+impl WeightLayoutLaunch {
     pub fn from_args(problem: &ConvolutionProblem, config: GlobalLayoutConfig) -> Self {
         match problem.operation {
             ConvolutionOperation::Forward

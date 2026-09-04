@@ -61,21 +61,21 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         GMM::num_stages()
     }
 
-    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = RC>>(
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
-            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, GMM, S, R>(
+            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, GMM, S>(
                 client,
                 cube_count,
                 cube_dim,
@@ -102,8 +102,8 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
         GMM::cubedim_resource(blueprint, dtypes, vector_sizes)
     }
 
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,

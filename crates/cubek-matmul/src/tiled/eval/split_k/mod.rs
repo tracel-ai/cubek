@@ -36,9 +36,9 @@
 //! Only meaningful on a GPU: `plane_size == 1` on CPU collapses every strategy to `seq_k`.
 
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime,
+    CubeCount, CubeDim,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -215,7 +215,7 @@ impl Mapping {
 
     /// `seq_k` is the one-lane baseline, so it launches a single unit; the spread mappings take
     /// the space's own geometry (`plane_size` lanes on X).
-    fn cube_dim(self, space: &Space, client: &ComputeClient<TestRuntime>) -> CubeDim {
+    fn cube_dim(self, space: &Space, client: &Client) -> CubeDim {
         match self {
             Mapping::SeqK => CubeDim::new_single(),
             Mapping::NSpread { .. } | Mapping::SplitK { .. } | Mapping::SplitKT { .. } => {
@@ -248,7 +248,7 @@ impl Mapping {
 /// The rhs operand for `mapping`: row-major `[K, N]`, or (`KContiguous`) a `[N, K]` row-major
 /// buffer to be presented as `[K, N]` by [`rhs_arg`]. `fill` is the data finalizer.
 fn rhs_input(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     mapping: Mapping,
     space: &Space,
     fill: impl FnOnce(TileInputBuilder) -> TileInput,
@@ -264,31 +264,21 @@ fn rhs_input(
 /// `[K, N]` with swapped strides `[1, k]`: a metadata-only transpose, exactly how
 /// [`TileInput::tensor_arg`] re-presents for vectorization. Sound at `vector_size == 1`, where
 /// [`MemData::from_tensor`](cubek_tile::MemData) carries strides verbatim.
-fn rhs_arg(b: &TileInput, mapping: Mapping) -> TensorArg<TestRuntime> {
+fn rhs_arg(b: &TileInput, mapping: Mapping) -> TensorArg {
     match mapping.rhs_layout() {
         RhsLayout::NContiguous => b.tensor_arg(1),
         RhsLayout::KContiguous => {
             let handle = b.handle();
             let (n, k) = (handle.shape()[0], handle.shape()[1]);
-            TensorHandle::<TestRuntime>::new(
-                handle.handle.clone(),
-                vec![k, n],
-                vec![1, k],
-                handle.dtype,
-            )
-            .binding()
-            .into_tensor_arg()
+            TensorHandle::new(handle.handle.clone(), vec![k, n], vec![1, k], handle.dtype)
+                .binding()
+                .into_tensor_arg()
         }
     }
 }
 
 /// One launch of `mapping` over `problem`, into a freshly zeroed accumulator.
-fn run(
-    client: &ComputeClient<TestRuntime>,
-    mapping: Mapping,
-    problem: SplitKProblem,
-    lanes: usize,
-) -> TileInput {
+fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) -> TileInput {
     let space = mapping.space(problem, lanes);
     let dtype = f32::elem_type_native();
     let a = TileInput::builder(client, space.project(&[M, K]))
@@ -300,7 +290,7 @@ fn run(
         .zeros();
 
     match mapping.levels() {
-        Levels::One => split_k_matmul_one_level::launch::<TestRuntime>(
+        Levels::One => split_k_matmul_one_level::launch(
             client,
             space.cube_count(),
             mapping.cube_dim(&space, client),
@@ -310,7 +300,7 @@ fn run(
             space,
             dtype,
         ),
-        Levels::Two => split_k_matmul_two_levels::launch::<TestRuntime>(
+        Levels::Two => split_k_matmul_two_levels::launch(
             client,
             space.cube_count(),
             mapping.cube_dim(&space, client),
@@ -327,7 +317,7 @@ fn run(
 struct SplitKBench {
     problem: SplitKProblem,
     mapping: Mapping,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     samples: usize,
     cube_count: CubeCount,
     cube_dim: CubeDim,
@@ -351,7 +341,7 @@ impl Benchmark for SplitKBench {
         let (a, b, c) = (&self.a, &self.b, &self.c);
         let dtype = f32::elem_type_native();
         match self.mapping.levels() {
-            Levels::One => split_k_matmul_one_level::launch::<TestRuntime>(
+            Levels::One => split_k_matmul_one_level::launch(
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
@@ -361,7 +351,7 @@ impl Benchmark for SplitKBench {
                 self.space.clone(),
                 dtype,
             ),
-            Levels::Two => split_k_matmul_two_levels::launch::<TestRuntime>(
+            Levels::Two => split_k_matmul_two_levels::launch(
                 &self.client,
                 self.cube_count.clone(),
                 self.cube_dim,
@@ -382,7 +372,7 @@ impl Benchmark for SplitKBench {
     fn name(&self) -> String {
         format!(
             "{}-split-k-{}-m{}-n{}-k{}",
-            <TestRuntime as Runtime>::name(&self.client),
+            self.client.name(),
             self.mapping.tag(),
             self.problem.m,
             self.problem.n,
@@ -406,11 +396,7 @@ impl Benchmark for SplitKBench {
 /// A mapping that computes the wrong answer would still time fast, so every strategy proves itself
 /// on a small shape before it is measured. Guards the whole family of silent-zero traps: a
 /// wrongly sized lane distribution, an unresolved lane count, a combine that never fires.
-fn verify(
-    client: &ComputeClient<TestRuntime>,
-    mapping: Mapping,
-    lanes: usize,
-) -> Result<(), String> {
+fn verify(client: &Client, mapping: Mapping, lanes: usize) -> Result<(), String> {
     // `n = lanes · 4` divides evenly for every catalogued width (n_spread cols ≤ 4 fills its
     // cube exactly; split_k cols ∈ {1, 8, 32} all divide 128), so no mapping needs masking here.
     let (m, n, k) = (1usize, lanes * 4, lanes * 4);
@@ -454,8 +440,8 @@ pub fn bench(
     problem: &SplitKProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let mapping = strategy.mapping;
 

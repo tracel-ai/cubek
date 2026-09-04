@@ -10,7 +10,7 @@ use cubecl::{
     prelude::*,
     server::CopyDescriptor,
     std::tensor::TensorHandle,
-    {TestRuntime, zspace::shape},
+    zspace::shape,
 };
 use cubek_quant::scheme::{QuantMode, QuantScheme, QuantStore, QuantValue, ScaleDtype};
 
@@ -33,7 +33,7 @@ const SCALES: [(f32, f32); 4] = [
 
 #[test]
 fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !half::f16::supported_uses(&client).contains(TypeUsage::Conversion) {
         println!("f16 unsupported on this runtime, nothing checked");
         return;
@@ -102,10 +102,10 @@ fn block_scales_are_stored_rounded_up_to_their_storage_precision() {
 }
 
 fn f32_tensor(
-    client: &cubecl::client::ComputeClient<TestRuntime>,
+    client: &cubecl::client::Client,
     data: &[f32],
     shape: cubecl::zspace::Shape,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     let alloc =
         client.create_tensor_from_slice(f32::as_bytes(data), shape.clone(), size_of::<f32>());
     TensorHandle::new(alloc.memory, shape, alloc.strides, f32::elem_type_native())

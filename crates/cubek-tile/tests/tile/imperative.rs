@@ -3,7 +3,7 @@
 //! routine's rewrite is measured against.
 #![allow(non_snake_case)]
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
 use cubek_tile::*;
 
@@ -53,7 +53,7 @@ fn ring_matmul<E: Numeric>(
 }
 
 fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
     let space = Tiling::over(&[(M, m), (N, n), (K, k)])
@@ -75,7 +75,7 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
-    ring_matmul::launch::<TestRuntime>(
+    ring_matmul::launch(
         &client,
         space.cube_count(),
         CubeDim::new_single(),

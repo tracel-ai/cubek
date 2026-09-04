@@ -11,21 +11,21 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use cubecl::benchmark::TimingMethod;
+use cubecl::client::Client;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
     self, MemoryAccess, MemoryCurve, ResourceBound, ThroughputKey, ThroughputMode, score_resources,
 };
-use cubecl::{Runtime, TestRuntime, client::ComputeClient};
 
 use crate::{HostData, Progress};
 
 /// The client every category scores against: `measure_peak_throughput` is
-/// always run on `<TestRuntime as Runtime>::Device::default()`, so the
+/// always run on `cubecl::test_device()`, so the
 /// process-wide peak memo below can key on [`ThroughputKey`] alone.
-pub fn client() -> ComputeClient<TestRuntime> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    <TestRuntime as Runtime>::client(&device)
+pub fn client() -> Client {
+    let device = cubecl::test_device();
+    device.client()
 }
 
 /// Process-wide memo of measured peaks.

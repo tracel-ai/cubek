@@ -2,7 +2,6 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubecl::Runtime;
 use cubek_matmul::{
     eval::benchmarks::gemm::{GemmCorrectness, GemmProblem},
     strategy::Strategy,
@@ -49,7 +48,7 @@ fn run_gemm(strategy_id: &str, problem_id: &str) {
 /// path). `vecmat` keeps the CPU reference cheap (`m = 1`).
 #[test]
 fn gemm_cpu_gemm_vecmat_2x1x4096x4096_rr_f32() {
-    let client = cubecl::TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }

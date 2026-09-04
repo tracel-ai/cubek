@@ -1,10 +1,10 @@
 use super::*;
-use cubecl::{Runtime, TestRuntime};
+use cubecl::{};
 use cubek_matmul::multi_level::definition::{BatchMatmulBlueprint, TilingScheme};
 
 #[test]
 pub fn test() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let tiling_scheme = stage(partition(tile_size(TilingScheme::builder())))
         .build()

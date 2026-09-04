@@ -50,11 +50,11 @@ use crate::{
 /// Forward large-`n_fft` RFFT. Shapes:
 /// * `signal`: (..., <= n_fft) real.
 /// * `spectrum_re`, `spectrum_im`: (..., n_fft/2 + 1) complex.
-pub(crate) fn rfft_large_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    signal: TensorBinding<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
+pub(crate) fn rfft_large_launch(
+    client: &Client,
+    signal: TensorBinding,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
     dim: usize,
     signal_len: usize,
     dtype: ElemType,
@@ -77,12 +77,12 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
         .map(|(i, &s)| if i == dim { m } else { s })
         .collect();
     let packed_elems: usize = packed_shape.iter().product();
-    let packed_re = TensorHandle::<R>::new_contiguous(
+    let packed_re = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
     );
-    let packed_im = TensorHandle::<R>::new_contiguous(
+    let packed_im = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
@@ -93,7 +93,7 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        rfft_pack_kernel::launch::<f32, R>(
+        rfft_pack_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,
@@ -108,7 +108,7 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
     }
 
     // Step 2: Y = FFT_M(y), in-place on the packed buffers.
-    cfft_launch_any_size::<R>(
+    cfft_launch_any_size(
         client,
         CfftBindings {
             input_re: packed_re.clone().binding(),
@@ -127,7 +127,7 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * n_freq, cube_dim);
 
-        rfft_post_kernel::launch::<f32, R>(
+        rfft_post_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,
@@ -148,11 +148,11 @@ pub(crate) fn rfft_large_launch<R: Runtime>(
 /// Inverse large-`n_fft` IRFFT. Shapes:
 /// * `spectrum_re`, `spectrum_im`: (..., n_fft/2 + 1) complex.
 /// * `signal`: (..., n_fft) real.
-pub(crate) fn irfft_large_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    spectrum_re: TensorBinding<R>,
-    spectrum_im: TensorBinding<R>,
-    signal: TensorBinding<R>,
+pub(crate) fn irfft_large_launch(
+    client: &Client,
+    spectrum_re: TensorBinding,
+    spectrum_im: TensorBinding,
+    signal: TensorBinding,
     dim: usize,
     spec_bins: usize,
     dtype: ElemType,
@@ -174,22 +174,22 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
         .map(|(i, &s)| if i == dim { m } else { s })
         .collect();
     let packed_elems: usize = packed_shape.iter().product();
-    let packed_in_re = TensorHandle::<R>::new_contiguous(
+    let packed_in_re = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
     );
-    let packed_in_im = TensorHandle::<R>::new_contiguous(
+    let packed_in_im = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
     );
-    let packed_out_re = TensorHandle::<R>::new_contiguous(
+    let packed_out_re = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
     );
-    let packed_out_im = TensorHandle::<R>::new_contiguous(
+    let packed_out_im = TensorHandle::new_contiguous(
         packed_shape.clone(),
         client.empty(packed_elems * dtype.size()),
         dtype,
@@ -200,7 +200,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        irfft_pre_kernel::launch::<f32, R>(
+        irfft_pre_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,
@@ -219,7 +219,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
     // Step 2: y = IFFT_M(Y). Need a separate destination because
     // cfft_four_step_launch ping-pongs internally and may not support
     // aliasing. (Small-path cfft aliases fine but we keep one code path.)
-    cfft_launch_any_size::<R>(
+    cfft_launch_any_size(
         client,
         CfftBindings {
             input_re: packed_in_re.binding(),
@@ -237,7 +237,7 @@ pub(crate) fn irfft_large_launch<R: Runtime>(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, count * m, cube_dim);
 
-        irfft_unpack_kernel::launch::<f32, R>(
+        irfft_unpack_kernel::launch::<f32>(
             client,
             cube_count,
             cube_dim,

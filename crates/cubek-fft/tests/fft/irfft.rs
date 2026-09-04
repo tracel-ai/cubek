@@ -1,9 +1,5 @@
 use cubecl::{CubeElement, ir::ElemType, prelude::Scalar};
-use cubecl::{
-    client::ComputeClient,
-    std::tensor::TensorHandle,
-    {Runtime, TestRuntime},
-};
+use cubecl::{client::Client, std::tensor::TensorHandle};
 use cubek_fft::{irfft_launch, irfft_launch_padded};
 use cubek_test_utils::{
     self, ExecutionOutcome, HostData, HostDataType, TestInput, TestOutcome, ValidationResult,
@@ -12,7 +8,7 @@ use cubek_test_utils::{
 
 use cubek_fft::eval::cpu_reference::irfft_ref;
 
-fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, dim: usize) {
+fn test_launch(client: Client, spectrum_shape: Vec<usize>, dim: usize) {
     let dtype = f32::elem_type_native();
     let mut signal_shape = spectrum_shape.clone();
     signal_shape[dim] = (spectrum_shape[dim] - 1) * 2;
@@ -39,7 +35,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     let signal_binding = signal_handle.clone().binding();
 
     let outcome = launch_and_capture_outcome(&client, &[&signal_handle.handle], |c| {
-        irfft_launch::<TestRuntime>(c, re_binding, im_binding, signal_binding, dim, dtype).into()
+        irfft_launch(c, re_binding, im_binding, signal_binding, dim, dtype).into()
     });
 
     match outcome {
@@ -56,12 +52,7 @@ fn test_launch(client: ComputeClient<TestRuntime>, spectrum_shape: Vec<usize>, d
     .enforce();
 }
 
-fn test_launch_padded(
-    client: ComputeClient<TestRuntime>,
-    spectrum_shape: Vec<usize>,
-    dim: usize,
-    n_fft: usize,
-) {
+fn test_launch_padded(client: Client, spectrum_shape: Vec<usize>, dim: usize, n_fft: usize) {
     let dtype = f32::elem_type_native();
     let spec_bins = spectrum_shape[dim];
     let n_freq = n_fft / 2 + 1;
@@ -110,7 +101,7 @@ fn test_launch_padded(
         &client,
         &[&virtual_signal.handle, &padded_signal.handle],
         |c| {
-            if let Err(e) = irfft_launch_padded::<TestRuntime>(
+            if let Err(e) = irfft_launch_padded(
                 c,
                 virtual_re_binding,
                 virtual_im_binding,
@@ -121,7 +112,7 @@ fn test_launch_padded(
             ) {
                 return ExecutionOutcome::CompileError(format!("virtual launch failed: {e}"));
             }
-            irfft_launch::<TestRuntime>(
+            irfft_launch(
                 c,
                 padded_re_binding,
                 padded_im_binding,
@@ -145,10 +136,10 @@ fn test_launch_padded(
 }
 
 fn assert_irfft_result(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     spectrum_re: HostData,
     spectrum_im: HostData,
-    signal: TensorHandle<TestRuntime>,
+    signal: TensorHandle,
     dim: usize,
 ) -> ValidationResult {
     let epsilon = 0.01;
@@ -199,30 +190,22 @@ fn padded_data(shape: &[usize], dim: usize, target_len: usize) -> Vec<f32> {
 }
 
 fn tensor_from_data(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: Vec<usize>,
     data: &[f32],
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
-    TensorHandle::<TestRuntime>::new_contiguous(
-        shape,
-        client.create_from_slice(f32::as_bytes(data)),
-        dtype,
-    )
+) -> TensorHandle {
+    TensorHandle::new_contiguous(shape, client.create_from_slice(f32::as_bytes(data)), dtype)
 }
 
-fn empty_tensor(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+fn empty_tensor(client: &Client, shape: Vec<usize>, dtype: ElemType) -> TensorHandle {
     let elems = shape.iter().product::<usize>();
-    TensorHandle::<TestRuntime>::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
+    TensorHandle::new_contiguous(shape, client.empty(elems * dtype.size()), dtype)
 }
 
 #[test]
 fn irfft_light_axis_last() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [1, 5].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
@@ -230,7 +213,7 @@ fn irfft_light_axis_last() {
 
 #[test]
 fn irfft_light_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [2, 5, 1].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -238,7 +221,7 @@ fn irfft_light_axis_1_strided() {
 
 #[test]
 fn irfft_light_axis_1_strided_trailing_batch() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [3, 5, 2].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -246,7 +229,7 @@ fn irfft_light_axis_1_strided_trailing_batch() {
 
 #[test]
 fn irfft_light_axis_0_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [5, 2].to_vec();
     let dim = 0;
     test_launch(client, spectrum_shape, dim);
@@ -254,7 +237,7 @@ fn irfft_light_axis_0_strided() {
 
 #[test]
 fn irfft_light_axis_last_n16() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [1, 9].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
@@ -262,20 +245,20 @@ fn irfft_light_axis_last_n16() {
 
 #[test]
 fn irfft_virtual_padding_axis_1_matches_materialized_zero_padding() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![2, 3, 3], 1, 8);
 }
 
 #[test]
 fn irfft_virtual_padding_dc_only_matches_materialized_zero_padding() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![2, 1, 3], 1, 8);
 }
 
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_3d_last_axis() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [5, 2, 1025].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
@@ -284,7 +267,7 @@ fn irfft_3d_last_axis() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_3d_axis_0() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [33, 2, 1024].to_vec();
     let dim = 0;
     test_launch(client, spectrum_shape, dim);
@@ -293,7 +276,7 @@ fn irfft_3d_axis_0() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_3d_axis_1() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [33, 5, 1024].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -302,7 +285,7 @@ fn irfft_3d_axis_1() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_4d_axis_2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [12, 8, 513, 4].to_vec();
     let dim = 2;
     test_launch(client, spectrum_shape, dim);
@@ -311,7 +294,7 @@ fn irfft_4d_axis_2() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_shared_memory_cap_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [1, 2049, 1].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -320,7 +303,7 @@ fn irfft_shared_memory_cap_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_large_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [1, 4097, 1].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -329,7 +312,7 @@ fn irfft_large_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_four_step_axis_1_strided() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [1, 8193, 1].to_vec();
     let dim = 1;
     test_launch(client, spectrum_shape, dim);
@@ -338,7 +321,7 @@ fn irfft_four_step_axis_1_strided() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_batched_large_axis_last() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [3, 4097].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
@@ -347,14 +330,14 @@ fn irfft_batched_large_axis_last() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_large_virtual_padding_matches_materialized_zero_padding() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     test_launch_padded(client, vec![1, 3000], 1, 8192);
 }
 
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_3d_batch_singleton_dim() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [22, 1, 1025].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);
@@ -363,7 +346,7 @@ fn irfft_3d_batch_singleton_dim() {
 #[test]
 #[cfg(feature = "heavy")]
 fn irfft_dispatch_more_than_wgpu_x_axis_limit() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let spectrum_shape = [65_536, 2].to_vec();
     let dim = spectrum_shape.len() - 1;
     test_launch(client, spectrum_shape, dim);

@@ -1,5 +1,4 @@
 use cubecl::{
-    Runtime,
     prelude::{TensorBinding, *},
     std::tensor::{
         launch::ViewArg,
@@ -9,10 +8,7 @@ use cubecl::{
 
 pub(crate) type Position3d = (usize, usize, usize, usize, usize);
 
-pub(crate) fn view5d<R: Runtime>(
-    tensor: TensorBinding<R>,
-    vector_size: VectorSize,
-) -> ViewArg<Position3d, R> {
+pub(crate) fn view5d(tensor: TensorBinding, vector_size: VectorSize) -> ViewArg<Position3d> {
     let shape = (
         tensor.shape[0],
         tensor.shape[1],
@@ -20,7 +16,7 @@ pub(crate) fn view5d<R: Runtime>(
         tensor.shape[3],
         tensor.shape[4],
     );
-    let layout = FixedDimLayoutLaunch::<Position3d, R>::from_shape_handle_unchecked(
+    let layout = FixedDimLayoutLaunch::<Position3d>::from_shape_handle_unchecked(
         &tensor,
         shape,
         vector_size,

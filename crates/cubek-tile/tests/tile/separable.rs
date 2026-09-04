@@ -6,7 +6,7 @@
 //! checked against the general one as well as against the host.
 #![allow(non_snake_case)]
 
-use cubecl::{Runtime, TestRuntime, features::TypeUsage, ir::ElemType, prelude::*, zspace::shape};
+use cubecl::{features::TypeUsage, ir::ElemType, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
@@ -152,7 +152,7 @@ fn reference(input: &[f32]) -> Vec<f32> {
 }
 
 fn run(separable: bool) -> (HostData, Vec<f32>) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let in_shape = shape![TAPS[0], TAPS[1], TAPS[2], COLS];
@@ -184,7 +184,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
     })
     .build();
 
-    separable_kernel::launch::<TestRuntime>(
+    separable_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -238,7 +238,7 @@ fn an_opaque_product_contracts_to_the_same_values() {
 
 #[test]
 fn a_separable_lhs_contracts_a_padded_staged_rhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let in_shape = shape![TAPS[0], TAPS[1], TAPS[2], COLS];
@@ -272,7 +272,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
 
     let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]);
 
-    separable_kernel_staged::launch::<TestRuntime>(
+    separable_kernel_staged::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -342,7 +342,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
 /// case that discriminates the width, and the one a backend without native i8 cannot run.
 #[test]
 fn a_separable_lhs_contracts_a_native_quantized_rhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -408,7 +408,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    separable_quant_kernel::launch::<TestRuntime>(
+    separable_quant_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -451,7 +451,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
 /// separable walk against a dequantizing view end to end, scales included.
 #[test]
 fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let scheme = QuantScheme::default()
         .per_tensor(ScaleDtype::F32)
@@ -505,7 +505,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
         .build();
 
-    separable_quant_kernel::launch::<TestRuntime>(
+    separable_quant_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -616,7 +616,7 @@ fn a_separable_resampling_lhs_normalizes_its_factor_run() {
 }
 
 fn check_resampling(normalized: bool) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let in_rows = resample_origin(RROWS - 1) + RTAPS;
@@ -645,7 +645,7 @@ fn check_resampling(normalized: bool) {
         ],
     ));
 
-    resample_kernel::launch::<TestRuntime>(
+    resample_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -716,7 +716,7 @@ fn procedural_mask_kernel<E: Float>(
 
 #[test]
 fn masked_normalization_excludes_a_procedural_overhang() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let output = TestInput::builder(client.clone(), shape![1, 1])
         .dtype(dtype)
@@ -728,7 +728,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         })
         .build();
 
-    procedural_mask_kernel::launch::<TestRuntime>(
+    procedural_mask_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -805,7 +805,7 @@ fn resample_kernel_masked_staged<E: Float>(
 
 #[test]
 fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     // Deliberately clip input rows so the last output row's tap window overhangs the edge.
@@ -836,7 +836,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
     ))
     .checked(true);
 
-    resample_kernel_masked::launch::<TestRuntime>(
+    resample_kernel_masked::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -881,7 +881,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
 /// is a placement decision and must not move a number.
 #[test]
 fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     // Same clipped input as the gmem twin, so the last output row's taps overhang the edge.
@@ -912,7 +912,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
     ))
     .checked(true);
 
-    resample_kernel_masked_staged::launch::<TestRuntime>(
+    resample_kernel_masked_staged::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -987,7 +987,7 @@ fn column_spanning_resample_kernel<E: Float>(
 
 #[test]
 fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     // `Weights` only reads `TAP[0]` and `ROW`, so adding `COL` to the LHS space isolates the
@@ -1018,7 +1018,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         ],
     ));
 
-    column_spanning_resample_kernel::launch::<TestRuntime>(
+    column_spanning_resample_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1077,7 +1077,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
 
 #[test]
 fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     // Deliberately clip input rows so trailing output rows overhang the Boundary::Zero edge.
@@ -1108,7 +1108,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
     ))
     .checked(true);
 
-    column_spanning_resample_kernel_masked::launch::<TestRuntime>(
+    column_spanning_resample_kernel_masked::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1185,7 +1185,7 @@ fn zero_sum_fallback_kernel<E: Float>(
 
 #[test]
 fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     // Varies along TAP[0] so factor 0's antisymmetric taps do not cancel: the result then pins
@@ -1205,7 +1205,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         })
         .build();
 
-    zero_sum_fallback_kernel::launch::<TestRuntime>(
+    zero_sum_fallback_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

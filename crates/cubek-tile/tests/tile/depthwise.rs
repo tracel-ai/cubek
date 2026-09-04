@@ -19,7 +19,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     zspace::{Shape, shape},
 };
@@ -201,7 +200,7 @@ impl Depthwise {
     }
 
     fn run(&self, space: Space, in_spec: TileSpec) -> (HostData, Vec<f32>) {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
         let in_shape: Shape = shape![self.b, self.in_h(), self.in_w(), self.c];
@@ -227,7 +226,7 @@ impl Depthwise {
         let w_spec = TileSpec::direct(&[RH, RW, C]);
         let out_spec = TileSpec::direct(&[B, OH, OW, C]);
 
-        depthwise_kernel::launch::<TestRuntime>(
+        depthwise_kernel::launch(
             &client,
             space.cube_count(),
             space.cube_dim(&client),

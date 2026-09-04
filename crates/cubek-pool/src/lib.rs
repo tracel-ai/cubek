@@ -1,6 +1,6 @@
 use core::result::Result;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding, prelude::*};
+use cubecl::{client::Client, prelude::TensorBinding, prelude::*};
 
 #[cfg(feature = "benchmarks")]
 pub mod eval;
@@ -23,10 +23,10 @@ use crate::kernel::{
 /// Pool2d public wrapper
 ///
 /// Expects input in NHWC layout.
-pub fn pool2d<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn pool2d(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -55,10 +55,10 @@ pub fn pool2d<R: Runtime>(
 /// not agree, [`PoolError::InvalidSpatialSize`] when either tensor has a zero spatial dimension,
 /// [`PoolError::OutputSizeMismatch`] when the configured spatial size differs from the output
 /// tensor, and [`PoolError::UnsupportedMode`] for any other pooling mode.
-pub fn pool3d<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn pool3d(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     mode: PoolMode<3>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -81,11 +81,11 @@ pub fn pool3d<R: Runtime>(
 /// Pool2d with indices public wrapper
 ///
 /// Expects input in NHWC layout. Output indices are expected to be in the same layout as well.
-pub fn pool2d_with_indices<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    indices: TensorBinding<R>,
+pub fn pool2d_with_indices(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
+    indices: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -107,11 +107,11 @@ pub fn pool2d_with_indices<R: Runtime>(
 /// Pool2d backward public wrapper
 ///
 /// Expects input and output gradients in NHWC layout.
-pub fn pool2d_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    in_grad: TensorBinding<R>,
+pub fn pool2d_backward(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    in_grad: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -152,11 +152,11 @@ pub fn pool2d_backward<R: Runtime>(
 /// the input, [`PoolError::InvalidSpatialSize`] when the input or output gradient has a zero spatial
 /// dimension, [`PoolError::OutputSizeMismatch`] when the configured spatial size differs from the
 /// output gradient, and [`PoolError::UnsupportedMode`] for any other pooling mode.
-pub fn pool3d_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    in_grad: TensorBinding<R>,
+pub fn pool3d_backward(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    in_grad: TensorBinding,
     mode: PoolMode<3>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {
@@ -189,12 +189,12 @@ pub fn pool3d_backward<R: Runtime>(
 ///
 /// Expects input and output gradients in NHWC layout. Output indices are expected to be in the same layout as well.
 #[allow(clippy::too_many_arguments)]
-pub fn pool2d_with_indices_backward<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    indices: TensorBinding<R>,
-    in_grad: TensorBinding<R>,
+pub fn pool2d_with_indices_backward(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    indices: TensorBinding,
+    in_grad: TensorBinding,
     mode: PoolMode<2>,
     dtype: ElemType,
     indices_dtype: ElemType,

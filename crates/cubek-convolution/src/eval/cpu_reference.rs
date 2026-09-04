@@ -4,8 +4,7 @@
 //! test suite uses.
 
 use cubecl::{
-    TestRuntime,
-    client::ComputeClient,
+    client::Client,
     ir::AddressType,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides, shape},
@@ -26,7 +25,7 @@ use crate::{
 /// Run `strategy` against the conv problem with seeded inputs and return its
 /// output as a [`HostData`].
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     spec: ConvSpec,
     strategy: Strategy,
     dtypes: MatmulElems,
@@ -43,13 +42,7 @@ pub fn strategy_result(
             bias: None,
             out: out_handle.clone().binding(),
         };
-        match launch_ref::<TestRuntime, 2>(
-            &strategy,
-            c,
-            conv_inputs,
-            spec.args.clone(),
-            dtypes.clone(),
-        ) {
+        match launch_ref::<2>(&strategy, c, conv_inputs, spec.args.clone(), dtypes.clone()) {
             Ok(()) => ExecutionOutcome::Executed,
             Err(e) => ExecutionOutcome::CompileError(format!("{e:?}")),
         }
@@ -68,7 +61,7 @@ pub fn strategy_result(
 /// CPU-only counterpart to [`strategy_result`]: generate the same seeded
 /// inputs, run the naive CPU convolution, return the result as a [`HostData`].
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     spec: ConvSpec,
     dtypes: MatmulElems,
     seed_lhs: u64,
@@ -123,15 +116,15 @@ impl ConvSpec {
 }
 
 struct SeededInputs {
-    input: TensorHandle<TestRuntime>,
+    input: TensorHandle,
     input_data: HostData,
-    weight: TensorHandle<TestRuntime>,
+    weight: TensorHandle,
     weight_data: HostData,
-    out: TensorHandle<TestRuntime>,
+    out: TensorHandle,
 }
 
 fn seed_inputs(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     spec: &ConvSpec,
     dtypes: &MatmulElems,
     seed_lhs: u64,
@@ -226,8 +219,8 @@ pub fn assert_result(
     lhs: &HostData,
     rhs: &HostData,
     problem: &ConvolutionProblem,
-    client: &ComputeClient<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    client: &Client,
+    out: TensorHandle,
     dtypes: MatmulElems,
 ) -> ValidationResult {
     let epsilon = conv_epsilon(&dtypes, 500.);

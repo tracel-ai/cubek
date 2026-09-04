@@ -5,7 +5,7 @@
 //! - [`cpu_reference_result`] runs the naive triple-loop on the same seeded
 //!   inputs and returns its output as a [`HostData`].
 
-use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
+use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataVec, Progress, StridedLayout, TestInput, ValidationResult,
@@ -24,7 +24,7 @@ use crate::{
 /// Inputs are generated via `TestInput::uniform` so the same `(problem, seeds)`
 /// pair produces the same bits on every run.
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: MatmulProblem,
     strategy: Strategy,
     seed_lhs: u64,
@@ -44,7 +44,7 @@ pub fn strategy_result(
 ///
 /// Slow on bench-scale problems by design: only useful as a ground truth.
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: MatmulProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -64,7 +64,7 @@ pub fn matmul_cpu_reference_total(problem: &MatmulProblem) -> u64 {
 }
 
 fn produce_with<F>(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: MatmulProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -72,10 +72,10 @@ fn produce_with<F>(
 ) -> Result<HostData, String>
 where
     F: FnOnce(
-        &ComputeClient<TestRuntime>,
-        InputBinding<TestRuntime>,
-        InputBinding<TestRuntime>,
-        cubecl::prelude::TensorBinding<TestRuntime>,
+        &Client,
+        InputBinding,
+        InputBinding,
+        cubecl::prelude::TensorBinding,
         &mut MatmulElems,
     ) -> Result<(), MatmulSetupError>,
 {
@@ -102,10 +102,10 @@ where
     }
 }
 
-type Tensor = TensorHandle<TestRuntime>;
+type Tensor = TensorHandle;
 
 fn seed_inputs(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     mut problem: MatmulProblem,
     seed_lhs: u64,
     seed_rhs: u64,
@@ -139,8 +139,8 @@ pub fn assert_result(
     lhs: &HostData,
     rhs: &HostData,
     problem: &MatmulProblem,
-    client: &ComputeClient<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    client: &Client,
+    out: TensorHandle,
     dtypes: MatmulElems,
 ) -> ValidationResult {
     let epsilon = matmul_epsilon(&dtypes, 500.);
@@ -152,8 +152,8 @@ pub fn assert_result_with_epsilon(
     lhs: &HostData,
     rhs: &HostData,
     problem: &MatmulProblem,
-    client: &ComputeClient<TestRuntime>,
-    out: TensorHandle<TestRuntime>,
+    client: &Client,
+    out: TensorHandle,
     _dtypes: MatmulElems,
     epsilon: f32,
 ) -> ValidationResult {

@@ -1,9 +1,8 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -30,8 +29,8 @@ pub fn bench(
     problem: &QuantizedMatmulProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     validate_spec(problem)?;
     let elems = matmul_elems::<f32>();
@@ -64,20 +63,20 @@ pub fn bench(
 struct QuantMatmulBench {
     problem: QuantizedMatmulProblem,
     strategy: Strategy,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 struct QuantOperand {
-    data: TensorHandle<TestRuntime>,
-    scale: TensorHandle<TestRuntime>,
+    data: TensorHandle,
+    scale: TensorHandle,
     shape: Shape,
     scheme: QuantScheme,
 }
 
 enum Operand {
-    Float(TensorHandle<TestRuntime>),
+    Float(TensorHandle),
     Quant(QuantOperand),
 }
 
@@ -96,7 +95,7 @@ impl Clone for Operand {
 }
 
 impl Operand {
-    fn into_binding(self) -> InputBinding<TestRuntime> {
+    fn into_binding(self) -> InputBinding {
         match self {
             Operand::Float(t) => InputBinding::Normal(t.clone().binding(), t.dtype),
             Operand::Quant(q) => InputBinding::Quantized {
@@ -117,7 +116,7 @@ struct QuantMatmulInputs {
     rhs: Operand,
     lhs_layout: Layout,
     rhs_layout: Layout,
-    out: TensorHandle<TestRuntime>,
+    out: TensorHandle,
 }
 
 pub(super) fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> {
@@ -137,11 +136,7 @@ pub(super) fn scales_shape(scheme: &QuantScheme, shape: &[usize]) -> Vec<usize> 
         .collect()
 }
 
-fn quantize_operand(
-    client: &ComputeClient<TestRuntime>,
-    input: TensorHandle<TestRuntime>,
-    scheme: &QuantScheme,
-) -> QuantOperand {
+fn quantize_operand(client: &Client, input: TensorHandle, scheme: &QuantScheme) -> QuantOperand {
     let shape: Shape = input.shape().clone();
     let scale_shape_vec = scales_shape(scheme, &shape);
 
@@ -193,12 +188,7 @@ fn quantize_operand(
     }
 }
 
-fn float_operand(
-    client: &ComputeClient<TestRuntime>,
-    shape: Vec<usize>,
-    dtype: ElemType,
-    seed: u64,
-) -> TensorHandle<TestRuntime> {
+fn float_operand(client: &Client, shape: Vec<usize>, dtype: ElemType, seed: u64) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::from(shape))
         .dtype(dtype)
         .uniform(seed, -1.0, 1.0)
@@ -217,7 +207,7 @@ fn alloc_shape(logical: &[usize], layout: Layout) -> Vec<usize> {
     s
 }
 
-fn to_binding(op: Operand, layout: Layout) -> InputBinding<TestRuntime> {
+fn to_binding(op: Operand, layout: Layout) -> InputBinding {
     let mut binding = op.into_binding();
     if layout == Layout::ColMajor {
         let rank = binding.data().shape.len();

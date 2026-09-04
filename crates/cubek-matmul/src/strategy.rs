@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_std::InputBinding;
 
 use crate::definition::{MatmulElems, MatmulSetupError};
@@ -49,12 +49,12 @@ impl Display for Strategy {
 
 #[allow(clippy::result_large_err)]
 impl Strategy {
-    pub(crate) fn launch_ref<R: Runtime>(
+    pub(crate) fn launch_ref(
         &self,
-        client: &ComputeClient<R>,
-        lhs: InputBinding<R>,
-        rhs: InputBinding<R>,
-        out: TensorBinding<R>,
+        client: &Client,
+        lhs: InputBinding,
+        rhs: InputBinding,
+        out: TensorBinding,
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         match self {
@@ -69,11 +69,11 @@ impl Strategy {
 
 /// Accelerated first, falling back to the routine that needs no accelerator.
 #[cfg(feature = "multi-level")]
-fn auto<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+fn auto(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
@@ -98,11 +98,11 @@ fn auto<R: Runtime>(
 /// The tiled-only pair. `CpuGemm` takes the fallback slot as the one tiled routine with no
 /// hardware requirement; it was tuned for CPU and has never been measured as a GPU fallback.
 #[cfg(all(feature = "tiled", not(feature = "multi-level")))]
-fn auto<R: Runtime>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+fn auto(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
     if let Err(err) = tiled::Strategy::Cmma(Default::default()).launch_ref(

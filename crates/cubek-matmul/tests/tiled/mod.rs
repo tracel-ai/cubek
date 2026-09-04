@@ -8,6 +8,5 @@ mod bench_catalog;
 #[cfg(feature = "extended")]
 mod cpu_gemm;
 #[cfg(feature = "extended")]
-mod golden_probe;
 #[cfg(feature = "extended")]
 mod stride_zero;

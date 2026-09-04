@@ -1,6 +1,5 @@
 use cubecl::{
-    client::ComputeClient,
-    prelude::Runtime,
+    client::Client,
     std::throughput::measure_peak_throughput,
     throughput::{ThroughputKey, compute_throughput_key, select_cmma_tile},
     tune::Work,
@@ -13,7 +12,7 @@ use crate::definition::{MatmulElems, MatmulGlobalElems, MatmulProblem};
 const UNCONSTRAINED: (usize, usize, usize) = (usize::MAX, usize::MAX, usize::MAX);
 
 /// The throughput key a matmul over these register types probes.
-pub fn compute_key<R: Runtime>(client: &ComputeClient<R>, elems: &MatmulElems) -> ThroughputKey {
+pub fn compute_key(client: &Client, elems: &MatmulElems) -> ThroughputKey {
     let cmma_tile = select_cmma_tile(
         client,
         elems.lhs_register,
@@ -27,10 +26,7 @@ pub fn compute_key<R: Runtime>(client: &ComputeClient<R>, elems: &MatmulElems) -
 
 /// The device's measured arithmetic peak, in ops/s, for a bench row over these register
 /// types to be judged against. `None` when the probe reports nothing usable.
-pub fn compute_peak_ops_per_s<R: Runtime>(
-    client: &ComputeClient<R>,
-    elems: &MatmulElems,
-) -> Option<f64> {
+pub fn compute_peak_ops_per_s(client: &Client, elems: &MatmulElems) -> Option<f64> {
     let peak = measure_peak_throughput(client, compute_key(client, elems))
         .ok()?
         .ops_per_s();
@@ -83,7 +79,7 @@ impl MatmulCost {
     }
 
     /// Generates a throughput key for compute probes representing peak hardware instruction throughput.
-    pub fn compute_key<R: Runtime>(&self, client: &ComputeClient<R>) -> ThroughputKey {
+    pub fn compute_key(&self, client: &Client) -> ThroughputKey {
         compute_key(client, &MatmulElems::from_globals(&self.elems))
     }
 }

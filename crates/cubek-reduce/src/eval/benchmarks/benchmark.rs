@@ -1,9 +1,8 @@
 use std::marker::PhantomData;
 
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -20,8 +19,8 @@ pub fn bench(
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
 
     let bench = ReduceBench::<f32> {
         shape: problem.shape.clone(),
@@ -73,8 +72,8 @@ struct ReduceBench<E> {
     config: ReduceOperationConfig,
     kind: ReduceBenchKind,
     strategy: ReduceStrategy,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     samples: usize,
     _e: PhantomData<E>,
 }
@@ -83,15 +82,11 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     /// `(input, values, indices)`. The index tensor is allocated for every kind so
     /// that allocation never lands inside the timed section, but only the
     /// two-launch and fused kinds write to it.
-    type Input = (
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-        TensorHandle<TestRuntime>,
-    );
+    type Input = (TensorHandle, TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let elem = E::elem_type_native();
 
         let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
@@ -124,7 +119,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     | ReduceOperationConfig::ArgTopK(_) => index_dtype,
                     _ => value_dtype,
                 };
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.binding(),
                     out.binding(),
@@ -143,7 +138,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
             // reduction twice, discarding half of each result.
             ReduceBenchKind::TwoLaunch => {
                 let (values_config, indices_config) = two_launch_configs(self.config);
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.clone().binding(),
                     out.binding(),
@@ -157,7 +152,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                     },
                 )
                 .map_err(|err| format!("{err}"))?;
-                crate::reduce::<TestRuntime>(
+                crate::reduce(
                     &self.client,
                     input.binding(),
                     indices.binding(),
@@ -173,7 +168,7 @@ impl<E: Float> Benchmark for ReduceBench<E> {
                 .map_err(|err| format!("{err}"))?;
             }
             ReduceBenchKind::Fused => {
-                crate::reduce_with_indices::<TestRuntime>(
+                crate::reduce_with_indices(
                     &self.client,
                     input.binding(),
                     out.binding(),
