@@ -16,7 +16,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
-        kernel::{cmma_kernel, cmma_space},
+        kernel::{cmma_kernel, cmma_levels},
     },
     tiled::{K, M, N, batch_axis},
 };
@@ -178,9 +178,8 @@ pub fn launch_ref(
         .copied()
         .chain([(M, m), (N, n), (K, k)])
         .collect();
-    // The kernel's own statement of the space, with this launch's extents stamped on for the
-    // grid and the geometry.
-    let launch = Launcher::new(client, cmma_space(&blueprint, &batch_axes), &extents);
+    // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
+    let launch = Launcher::new(client, &extents, &cmma_levels(&blueprint, &batch_axes));
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 

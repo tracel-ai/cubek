@@ -411,12 +411,13 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
     let mut c = c.tile(space);
     c.zero();
     let walk = Walk::over(c.op_space(&a, &b));
-    let mut ring = Ring::smem(&walk, &a, &b, storage, depth_outer);
+    let mut ring = Ring::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer);
     pipelined(walk, &mut ring, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             let inner = Walk::over(c_o.op_space(a_s, b_s));
-            let mut inner_ring = Ring::smem(&inner, a_s, b_s, storage, depth_inner);
+            let mut inner_ring =
+                Ring::smem(&inner, a_s, b_s, comptime!(storage.clone()), depth_inner);
             pipelined(inner, &mut inner_ring, |slot, cell| {
                 let mut c_r = c_o.at(cell);
                 slot.consume(|a_i, b_i| {
@@ -444,7 +445,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, config, comptime!(semiring.add()));
+    let mut acc = c.block_accumulator::<EA, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), config, comptime!(semiring.add()));
     acc.init(Monoid::identity::<EA>(comptime!(semiring.add())));
     for region in Walk::over(acc.op_space(&a, &b)) {
         let mut acc_r = acc.at(&region);
@@ -472,7 +473,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
         let mut c_o = c.at(&outer);
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
-        let mut acc = c_o.block_accumulator::<EA, E>(&a_o, config, Monoid::Sum);
+        let mut acc = c_o.block_accumulator::<EA, E>(&a_o, comptime!(Fragments::of(&c_o.space, &a_o.space)), config, Monoid::Sum);
         acc.zero();
         for region in Walk::over(acc.op_space(&a_o, &b_o)) {
             let mut acc_r = acc.at(&region);
@@ -496,7 +497,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for outer in Walk::over(acc.op_space(&a, &b)) {
         let acc_o = acc.at(&outer);
@@ -532,7 +533,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    let mut acc = c.cmma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
@@ -560,10 +561,16 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    let mut acc = c.cmma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Tiled, depth);
+    let mut ring = Ring::smem(
+        &walk,
+        &a,
+        &b,
+        comptime!(StageStorage::tiled_at_leaf(&Space::merge(&[&a.space, &b.space]))),
+        depth,
+    );
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -587,7 +594,7 @@ fn mma_matmul_k_walk<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
+    let mut acc = c.mma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), io, Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
@@ -615,7 +622,7 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
+    let mut acc = c.mma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), io, Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
@@ -643,10 +650,16 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    let mut acc = c.cmma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Tiled, depth);
+    let mut ring = Ring::smem(
+        &walk,
+        &a,
+        &b,
+        comptime!(StageStorage::tiled_at_leaf(&Space::merge(&[&a.space, &b.space]))),
+        depth,
+    );
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -674,10 +687,16 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    let mut acc = c.cmma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Tiled, depth);
+    let mut ring = Ring::smem(
+        &walk,
+        &a,
+        &b,
+        comptime!(StageStorage::tiled_at_leaf(&Space::merge(&[&a.space, &b.space]))),
+        depth,
+    );
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -711,10 +730,16 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
+    let mut acc = c.cmma_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), Monoid::Sum);
     acc.zero();
     let walk = Walk::over(acc.op_space(&a, &b));
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Tiled, depth);
+    let mut ring = Ring::smem(
+        &walk,
+        &a,
+        &b,
+        comptime!(StageStorage::tiled_at_leaf(&Space::merge(&[&a.space, &b.space]))),
+        depth,
+    );
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
@@ -855,7 +880,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, config, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), config, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&a, &b)) {
         let mut acc_r = acc.at(&region);
@@ -1944,26 +1969,26 @@ fn matmul_multilevel_staged_then_direct() {
 
 #[test]
 fn matmul_multilevel_staged_then_staged() {
-    check_matmul_multilevel(8, 8, 8, StageStorage::Strided, Inner::Staged(1), 1);
+    check_matmul_multilevel(8, 8, 8, StageLayout::Strided, Inner::Staged(1), 1);
 }
 
 /// Double buffering at the higher level.
 #[test]
 fn matmul_multilevel_double_then_direct() {
-    check_matmul_multilevel(8, 8, 8, StageStorage::Strided, Inner::Direct, 2);
+    check_matmul_multilevel(8, 8, 8, StageLayout::Strided, Inner::Direct, 2);
 }
 
 /// Double buffering at the lower level.
 #[test]
 fn matmul_multilevel_staged_then_double() {
-    check_matmul_multilevel(8, 8, 8, StageStorage::Strided, Inner::Staged(2), 1);
+    check_matmul_multilevel(8, 8, 8, StageLayout::Strided, Inner::Staged(2), 1);
 }
 
 /// A storage-tiled stage on a register leaf: the stage layout knob off its default,
 /// on any backend (each 4×4 stage cut into contiguous 2×2 blocks).
 #[test]
 fn matmul_multilevel_tiled_stage() {
-    check_matmul_multilevel(8, 8, 8, StageStorage::Tiled, Inner::Direct, 1);
+    check_matmul_multilevel(8, 8, 8, StageLayout::Tiled, Inner::Direct, 1);
 }
 
 /// What the inner of two levels does with the outer stage: read its final tiles where they lie,
@@ -1976,11 +2001,27 @@ enum Inner {
 
 /// Drives the two-level kernels over `[4×4×4, 2×2×2]`: the outer level stages both operands laid
 /// out as `storage`, `depth_outer` regions in flight; `inner` says what the second level does.
+/// How a test's stages lay their buffers out, resolved against the space the test builds.
+#[derive(Clone, Copy)]
+enum StageLayout {
+    Tiled,
+    Strided,
+}
+
+impl StageLayout {
+    fn storage(self, space: &Space) -> StageStorage {
+        match self {
+            StageLayout::Tiled => StageStorage::tiled_at_leaf(space),
+            StageLayout::Strided => StageStorage::Strided,
+        }
+    }
+}
+
 fn check_matmul_multilevel(
     m: usize,
     n: usize,
     k: usize,
-    storage: StageStorage,
+    layout: StageLayout,
     inner: Inner,
     depth_outer: usize,
 ) {
@@ -1990,6 +2031,7 @@ fn check_matmul_multilevel(
     let space = Space::new(&[(M, m), (N, n), (K, k)])
         .with_partitioner(sequential(&[(M, 4), (N, 4), (K, 4)]))
         .with_partitioner(sequential(&[(M, 2), (N, 2), (K, 2)]));
+    let storage = layout.storage(&space);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .tile(&[final_edge, final_edge])
@@ -3298,40 +3340,40 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 /// only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
-    check_cmma_matmul_k_walk(16, 1, 1, StageStorage::Tiled);
+    check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Tiled);
 }
 
 /// The double-buffered variant: four K regions rotating through two smem slots, the
 /// accumulator fragment resident across all of them.
 #[test]
 fn cmma_matmul_double_buffered_k_walk() {
-    check_cmma_matmul_k_walk(32, 2, 1, StageStorage::Tiled);
+    check_cmma_matmul_k_walk(32, 2, 1, StageLayout::Tiled);
 }
 
 /// An odd region total (three K stages): the loop leaves the last region primed in slot 0;
 /// the epilogue must publish and consume it.
 #[test]
 fn cmma_matmul_double_buffered_odd_k_walk() {
-    check_cmma_matmul_k_walk(24, 2, 1, StageStorage::Tiled);
+    check_cmma_matmul_k_walk(24, 2, 1, StageLayout::Tiled);
 }
 
 /// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
 /// the cmma window transport reads through the layout stack either way.
 #[test]
 fn cmma_matmul_staged_k_walk_strided_stage() {
-    check_cmma_matmul_k_walk(16, 1, 1, StageStorage::Strided);
+    check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Strided);
 }
 
 /// The staged cmma K walk with operands served in 2-wide lines: the cooperative fill
 /// moves lines, the cmma transport addresses the scalar buffer underneath.
 #[test]
 fn cmma_matmul_staged_k_walk_vectorized() {
-    check_cmma_matmul_k_walk(16, 1, 2, StageStorage::Tiled);
+    check_cmma_matmul_k_walk(16, 1, 2, StageLayout::Tiled);
 }
 
 /// The one level always stages, whatever its depth: a cmma leaf cannot consume the global inputs
 /// directly, so the kernel first materializes them in shared memory.
-fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, storage: StageStorage) {
+fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayout) {
     let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
@@ -3343,6 +3385,7 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, storage: StageStor
             l.walk(&[(M, edge), (N, edge), (K, edge)]);
         })
         .build();
+    let storage = layout.storage(&space);
 
     let a = TileInput::builder(&client, space.project(&[M, K]))
         .untiled()

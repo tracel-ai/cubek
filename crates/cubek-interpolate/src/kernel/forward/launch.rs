@@ -146,7 +146,7 @@ fn dispatch<F: SeparableFilterFamily>(
     };
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch = Launcher::new(client, plan.space(), &[]);
+    let launch = Launcher::over_static(client, &plan.extents(), &plan.levels());
 
     let vector_size = launch.vector_size(
         CHANNEL,

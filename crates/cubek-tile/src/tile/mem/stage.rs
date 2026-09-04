@@ -362,6 +362,7 @@ impl<T: Numeric> MemData<T> {
                 source_window: source,
             }),
             space: comptime!(meta.space),
+            descent: comptime!(Descent::root()),
         }
     }
 
@@ -538,7 +539,7 @@ impl StageForm {
     /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]` split,
     /// so the buffer lays the innermost block down contiguously.
     fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
-        let nesting = stage_nesting(space, stage);
+        let nesting = stage_nesting(space, &stage);
         StageForm {
             extents: storage_extents(space, vector_size, &nesting),
             positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
@@ -610,12 +611,39 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
 /// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
 /// outermost). Empty is a plain row-major buffer.
 ///
-/// A `Tiled` stage groups the final tile, the block a cmma transaction reads unstrided. A final
-/// space has no grid left to tile, so it stays plain whatever the layout asks for.
-fn stage_nesting(space: &Space, stage: StageStorage) -> Vec<Space> {
+/// A `Tiled` stage groups the stated block, the fragment a cmma transaction reads unstrided,
+/// projected onto the operand's own axes. A space that is the block already has no grid left to
+/// tile, so it stays plain whatever the layout asks for.
+fn stage_nesting(space: &Space, stage: &StageStorage) -> Vec<Space> {
     match stage {
-        StageStorage::Tiled if !space.is_final() => vec![space.final_space()],
-        _ => Vec::new(),
+        StageStorage::Tiled { block } => {
+            let nested = Space::new(
+                &space
+                    .axes()
+                    .map(|axis| {
+                        let edge = block
+                            .iter()
+                            .find(|&&(a, _)| a == axis)
+                            .unwrap_or_else(|| {
+                                panic!("StageStorage::tiled: the block states no edge for {axis:?}")
+                            })
+                            .1;
+                        (axis, edge)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            if nested.laid_out_like(space) {
+                return Vec::new();
+            }
+            // The statement against the tiling, until the tiling is gone.
+            assert!(
+                nested.laid_out_like(&space.final_space()),
+                "StageStorage::tiled: block {nested:?} stated where the tiling's leaf is {:?}",
+                space.final_space()
+            );
+            vec![nested]
+        }
+        StageStorage::Strided => Vec::new(),
     }
 }
 
@@ -730,7 +758,7 @@ mod tests {
         assert_eq!(form.strides(), vec![4, 1]);
         assert_eq!(form.cells(), space.tile_size() / 4);
 
-        let tiled = StageForm::dense(&space, 1, StageStorage::Tiled);
+        let tiled = StageForm::dense(&space, 1, StageStorage::tiled_at_leaf(&space));
         assert_eq!(tiled.extents, vec![4, 4, 4, 4]);
         assert_eq!(tiled.strides(), vec![64, 16, 4, 1]);
     }
@@ -769,7 +797,7 @@ mod tests {
                 PhysicalAxisMap::of(K),
             ],
         );
-        StageForm::gathered(&space, 1, StageStorage::Tiled, &projection);
+        StageForm::gathered(&space, 1, StageStorage::tiled_at_leaf(&space), &projection);
     }
 
     /// A block that does not divide the one enclosing it has no `[grid…, block…]` split.
@@ -785,11 +813,9 @@ mod tests {
     #[test]
     fn stage_nesting_follows_the_layout() {
         let space = space();
-        assert_eq!(
-            stage_nesting(&space, StageStorage::Tiled),
-            vec![space.final_space()]
-        );
-        assert!(stage_nesting(&space, StageStorage::Strided).is_empty());
-        assert!(stage_nesting(&space.final_space(), StageStorage::Tiled).is_empty());
+        let tiled = StageStorage::tiled_at_leaf(&space);
+        assert!(stage_nesting(&space, &tiled)[0].laid_out_like(&space.final_space()));
+        assert!(stage_nesting(&space, &StageStorage::Strided).is_empty());
+        assert!(stage_nesting(&space.final_space(), &tiled).is_empty());
     }
 }

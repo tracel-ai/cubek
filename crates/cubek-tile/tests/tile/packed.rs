@@ -325,7 +325,7 @@ fn packed_gemv<E: Numeric, V: Size>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
     // The accumulator lives in registers across the whole walk and drains once.
-    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&x, comptime!(Fragments::of(&c.space, &x.space)), REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&x, &w)) {
         let mut acc_r = acc.at(&region);
@@ -1674,7 +1674,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&x, comptime!(Fragments::of(&c.space, &x.space)), REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&x, &w)) {
         let mut acc_r = acc.at(&region);

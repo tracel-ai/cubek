@@ -162,6 +162,14 @@ impl Space {
         Space::from_extents(&extents)
     }
 
+    /// Every axis [`Dynamic`](Extent::Dynamic): the kernel form, its extents resolved in-kernel
+    /// from the tensors, so one compiled kernel serves every shape. The launch stamps the real
+    /// extents on with [`with_extents`](Space::with_extents).
+    pub fn dynamic(axes: &[Axis]) -> Self {
+        let extents: Vec<_> = axes.iter().map(|&a| (a, Extent::Dynamic)).collect();
+        Space::from_extents(&extents)
+    }
+
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
     pub(crate) fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
@@ -231,6 +239,13 @@ impl Space {
     /// Append one [`Level`] below this space's levels.
     pub fn with_level(self, level: Level) -> Self {
         self.with_partitioner(Partitioner::single(level))
+    }
+
+    /// Append `levels`, outermost first.
+    pub fn with_levels(self, levels: &[Level]) -> Self {
+        levels
+            .iter()
+            .fold(self, |space, level| space.with_level(level.clone()))
     }
 
     pub fn partitioner(&self) -> &Partitioner {
@@ -535,6 +550,17 @@ impl Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
         }
+    }
+
+    /// Every level below this space, outermost first.
+    pub(crate) fn levels_below(&self) -> Vec<Level> {
+        let mut levels = Vec::new();
+        let mut space = self.clone();
+        while !space.is_final() {
+            levels.push(space.partitioner().level().clone());
+            space = space.divide();
+        }
+        levels
     }
 
     /// Divide until no partitioner level is left. Its extents are the finest tile

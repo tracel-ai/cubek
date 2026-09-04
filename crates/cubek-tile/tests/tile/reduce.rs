@@ -1161,7 +1161,7 @@ fn resident_fold_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut out = output.tile(space);
-    let mut acc = out.block_accumulator::<E, E>(&input, REGISTER_BLOCK, monoid);
+    let mut acc = out.block_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space)), REGISTER_BLOCK, monoid);
     acc.init(Monoid::identity::<E>(monoid));
     for region in Walk::over(acc.reduce_space(&input)) {
         let mut acc_region = acc.at(&region);

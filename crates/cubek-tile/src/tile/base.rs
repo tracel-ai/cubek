@@ -79,6 +79,10 @@ pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
+    /// The levels this tile has been descended with, shared with every tile of the same
+    /// descent; what a drain replays to find each fragment's window.
+    #[cube(comptime)]
+    pub(crate) descent: Descent,
 }
 
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
@@ -448,9 +452,12 @@ impl<T: Numeric> Tile<T> {
             "Tile::retiled: {space:?} holds other cells than {:?}",
             self.space
         ));
+        // A re-cut tile is a new nest: what descends it is stated against `space`, not against
+        // whatever walked the tile it was cut from.
         Tile::<T> {
             tile_kind: self.tile_kind.clone(),
             space,
+            descent: comptime!(Descent::root()),
         }
     }
 
@@ -537,6 +544,7 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind,
             space: comptime!(self.space.divide()),
+            descent: comptime!(self.descent.under(&region.level)),
         }
     }
 
@@ -671,7 +679,7 @@ impl<T: Numeric> Tile<T> {
         // both sides carry (a gathered source is addressed per axis).
         let space = comptime!(self.space.clone());
         match &src.tile_kind {
-            TileKind::PlanePartition(s) => s.drain_into(self),
+            TileKind::PlanePartition(s) => s.drain_into(self, comptime!(src.descent.below())),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -707,7 +715,7 @@ impl<T: Numeric> Tile<T> {
     /// accumulator's scope is the scope's own business.
     pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
         match &self.tile_kind {
-            TileKind::PlanePartition(s) => s.drain_cast_into(dst),
+            TileKind::PlanePartition(s) => s.drain_cast_into(dst, comptime!(self.descent.below())),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)

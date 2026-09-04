@@ -7,7 +7,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Set, Space, StridedOperand, StridedTileSource, Unset,
+    Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, StridedOperand, StridedTileSource,
+    Unset,
 };
 
 impl Space {
@@ -96,12 +97,22 @@ impl Space {
 }
 
 impl<'c> Launcher<'c> {
-    /// The launcher for a kernel-form `space` (the one the kernel builds, its top extents
-    /// [`Dynamic`](crate::Extent) where one kernel serves every shape) and the real `extents` of
-    /// this launch, which the concrete twin takes for geometry, overhang and the grid.
-    pub fn new(client: &'c Client, space: Space, extents: &[(Axis, usize)]) -> Self {
-        let concrete = space.clone().with_extents(extents);
-        Launcher::over(client, concrete, space)
+    /// The launcher for the `levels` a kernel states, outermost first, over the real `extents`
+    /// of this launch (whose order is the axes' canonical order). The concrete twin takes the
+    /// extents for geometry, overhang and the grid; the kernel-form space keeps every extent
+    /// [`Dynamic`](crate::Extent), so one compiled kernel serves every shape.
+    pub fn new(client: &'c Client, extents: &[(Axis, usize)], levels: &[Level]) -> Self {
+        let axes: Vec<Axis> = extents.iter().map(|&(a, _)| a).collect();
+        let kernel = Space::dynamic(&axes).with_levels(levels);
+        let concrete = kernel.clone().with_extents(extents);
+        Launcher::over(client, concrete, kernel)
+    }
+
+    /// [`new`](Launcher::new) for a kernel whose extents are all static: the kernel form is the
+    /// concrete space itself.
+    pub fn over_static(client: &'c Client, extents: &[(Axis, usize)], levels: &[Level]) -> Self {
+        let concrete = Space::new(extents).with_levels(levels);
+        Launcher::over(client, concrete.clone(), concrete)
     }
 
     fn over(client: &'c Client, concrete: Space, kernel: Space) -> Self {

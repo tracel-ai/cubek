@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    CubeAxis, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Tiling, Walk, cubes, lanes,
-    planes,
+    Axis, CubeAxis, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Walk, cubes,
+    lanes, planes,
 };
 
 use crate::tiled::{
@@ -26,34 +26,65 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// `KB` (a distribution deals one axis or the other and cannot straddle two). The partials the
 /// lanes hold drain inside the plane.
 pub fn quant_gemv_space(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Space {
-    let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
-    Tiling::over(&[
+    Space::new(&quant_gemv_extents(problem)).with_levels(&quant_gemv_levels(bp, problem))
+}
+
+/// The routine's axes and their extents, every one static.
+pub fn quant_gemv_extents(problem: &QuantGemvProblem) -> Vec<(Axis, usize)> {
+    vec![
         (M, problem.d_out),
         (N, problem.rows),
-        (KB, blocks),
-        (KI, block),
-    ])
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(M, bp.rows_per_cube)])
-            .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
-    })
-    .level(|l| {
-        l.distribute(planes(), &[(M, bp.rows_per_plane)]).walk(&[
-            (N, problem.rows),
-            (KB, blocks),
-            (KI, block),
-        ]);
-    })
-    .level(|l| {
-        // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words. The lane
-        // counts are the blueprint's, derived on the host from the plane width: their product
-        // with the row groups is exactly it.
-        l.distribute(lanes(bp.groups()), &[(M, bp.rows_per_lane)])
-            .distribute(lanes(bp.block_lanes).interleaved(), &[(KB, 1)])
-            .distribute(lanes(bp.inside_lanes).interleaved(), &[(KI, factor)])
-            .walk(&[(N, problem.rows)]);
-    })
-    .build()
+        (KB, problem.blocks()),
+        (KI, problem.block),
+    ]
+}
+
+const AXES: [Axis; 4] = [M, N, KB, KI];
+
+/// The routine's three levels, outermost first, each a method on the blueprint.
+pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
+    vec![
+        bp.cube_level(problem),
+        bp.plane_level(problem),
+        bp.lane_level(problem),
+    ]
+}
+
+impl QuantGemvBlueprint {
+    /// A strip of output rows per cube, all of `K` walked.
+    pub fn cube_level(&self, problem: &QuantGemvProblem) -> Level {
+        let (block, blocks) = (problem.block, problem.blocks());
+        Level::cuts(&AXES, |l| {
+            l.distribute(cubes(CubeAxis::X), &[(M, self.rows_per_cube)])
+                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
+        })
+    }
+
+    /// One plane per group of rows.
+    pub fn plane_level(&self, problem: &QuantGemvProblem) -> Level {
+        let (block, blocks) = (problem.block, problem.blocks());
+        Level::cuts(&AXES, |l| {
+            l.distribute(planes(), &[(M, self.rows_per_plane)]).walk(&[
+                (N, problem.rows),
+                (KB, blocks),
+                (KI, block),
+            ]);
+        })
+    }
+
+    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
+    /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
+    /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
+    /// plane width: their product with the row groups is exactly it.
+    pub fn lane_level(&self, problem: &QuantGemvProblem) -> Level {
+        let factor = problem.factor();
+        Level::cuts(&AXES, |l| {
+            l.distribute(lanes(self.groups()), &[(M, self.rows_per_lane)])
+                .distribute(lanes(self.block_lanes).interleaved(), &[(KB, 1)])
+                .distribute(lanes(self.inside_lanes).interleaved(), &[(KI, factor)])
+                .walk(&[(N, problem.rows)]);
+        })
+    }
 }
 
 /// The register block the leaf runs under: one scalar accumulator per row a lane owns, per

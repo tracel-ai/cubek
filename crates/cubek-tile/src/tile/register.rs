@@ -41,12 +41,6 @@ pub struct RegisterData<T: Numeric> {
     /// lines at coordinates the sink reads as something else.
     #[cube(comptime)]
     pub(crate) axes: MatrixAxes,
-    /// What the plane's lanes are to these cells. Inherited from the memory this was promoted
-    /// from, and only read on drain: the contraction is per-lane either way, but a partial is not
-    /// the answer until the plane's lanes are combined, and a lane that repeats another's work
-    /// must not fold the same contribution twice.
-    #[cube(comptime)]
-    pub(crate) lanes: Lanes,
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
@@ -75,7 +69,6 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
         #[comptime] vector_size: usize,
-        #[comptime] lanes: Lanes,
         #[comptime] config: RegisterBlock,
         #[comptime] monoid: Monoid,
     ) -> RegisterData<T> {
@@ -91,7 +84,6 @@ impl<T: Numeric> RegisterData<T> {
             mr: m,
             nr,
             axes,
-            lanes,
             config,
             monoid,
         }
@@ -119,7 +111,9 @@ impl<T: Numeric> RegisterData<T> {
     /// Under a folded [`LaneShare`] each lane holds only part of every cell, so the block is not
     /// the answer until those lanes are combined: fold first, then let one of them write. This is
     /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
-    /// every lane writing its own fraction over the last.
+    /// every lane writing its own fraction over the last. The share is the window's: `mem` was
+    /// descended through every level, so it carries what the lanes are to these cells, and the
+    /// block, opened above those levels, never knew.
     ///
     /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election: lanes
     /// that repeat each other's work would each add the same contribution.
@@ -134,6 +128,7 @@ impl<T: Numeric> RegisterData<T> {
         #[comptime] space: Space,
     ) {
         let mem_write = comptime!(mem.access.write);
+        let lanes = comptime!(mem.lanes);
         // Addressed in lines at the width the block was promoted at, bounded by the window extent.
         let mut sink = mem.matrix_mut::<RA>(0usize, comptime!(self.axes), space);
 
@@ -141,7 +136,7 @@ impl<T: Numeric> RegisterData<T> {
         // lane guard emits a binding the CPU backend cannot resolve ("Value should have been
         // declared before"), and a `Whole` share (every CPU, whose planes are one lane) has
         // no reason to emit either.
-        match comptime!(Drain::of(self.lanes, mem_write)) {
+        match comptime!(Drain::of(lanes, mem_write)) {
             Drain::EachLane =>
             {
                 #[unroll]

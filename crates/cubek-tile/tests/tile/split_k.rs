@@ -316,7 +316,7 @@ fn atomic_split_matmul<E: Numeric>(
     let mut c = out.tile(space);
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(c.op_space(&a, &b)) {
         let mut acc_region = acc.at(&region);

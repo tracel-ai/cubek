@@ -415,6 +415,7 @@ impl<T: Numeric> Tile<T> {
                 init_from: comptime!(InitFrom::Cell),
             }),
             space: comptime!(space),
+            descent: comptime!(Descent::root()),
         }
     }
 }

@@ -125,20 +125,31 @@ impl TileQuantStageBench {
     /// `mr·nr` cliff), keeping the unroll state constant as depth varies. The kernel stages both
     /// inputs at L0 and reads windows of the stage at L1, which is the staging this bench
     /// measures. The output stages nothing.
-    fn space(&self) -> Space {
+    fn extents(&self) -> Vec<(Axis, usize)> {
+        vec![(M, self.m), (N, self.n), (K, self.k)]
+    }
+
+    /// Two levels: a strip of `tn` columns per cube, `K` in `tk` steps; then `un` columns per
+    /// lane.
+    fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         let tn = plane_size * un;
-        Tiling::over(&[(M, self.m), (N, self.n), (K, self.k)])
-            .level(|l| {
+        let axes = [M, N, K];
+        vec![
+            Level::cuts(&axes, |l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, tn)])
                     .walk(&[(M, self.m), (K, self.tk)]);
-            })
-            .level(|l| {
+            }),
+            Level::cuts(&axes, |l| {
                 l.distribute(lanes(plane_size), &[(N, un)])
                     .walk(&[(M, self.m), (K, self.tk)]);
-            })
-            .build()
+            }),
+        ]
+    }
+
+    fn space(&self) -> Space {
+        Space::new(&self.extents()).with_levels(&self.levels())
     }
 }
 
@@ -164,8 +175,7 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let space = self.space();
-        let launcher = Launcher::new(&self.client, space, &[]);
+        let launcher = Launcher::over_static(&self.client, &self.extents(), &self.levels());
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
         let b = launcher
             .arg(b.tile.handle().binding())

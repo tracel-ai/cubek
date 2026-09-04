@@ -702,7 +702,7 @@ fn promoted_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
         let mut acc_region = acc.at(&region);
@@ -798,7 +798,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space)), BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
         let mut scales = Sequence::new();

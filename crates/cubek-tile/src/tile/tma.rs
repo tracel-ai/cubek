@@ -47,6 +47,7 @@ impl<T: Numeric> TmaData<T> {
                 units,
             }),
             space: comptime!(space),
+            descent: comptime!(Descent::root()),
         }
     }
 }

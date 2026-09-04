@@ -2297,7 +2297,7 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let mut out = out.tile(space);
-    let mut acc = out.mma_accumulator::<E, E>(&input, io, Monoid::Sum);
+    let mut acc = out.mma_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space)), io, Monoid::Sum);
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = Walk::over(out.op_space(&input, &weight)).unrolled();

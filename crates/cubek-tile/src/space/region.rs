@@ -31,6 +31,16 @@ impl Region {
     /// computed (the visit a worker picked out of a grid by hardware position) window memory.
     pub fn trailing(#[comptime] space: Space, c0: usize, c1: usize) -> Region {
         let level = comptime!(space.partitioner().level().clone());
+        Region::trailing_in(space, level, c0, c1)
+    }
+
+    /// [`trailing`](Region::trailing) under a stated `level` rather than the space's own.
+    pub fn trailing_in(
+        #[comptime] space: Space,
+        #[comptime] level: Level,
+        c0: usize,
+        c1: usize,
+    ) -> Region {
         let rank = comptime!(space.rank());
         let mut coords = Coords::<u32>::new();
         #[unroll]

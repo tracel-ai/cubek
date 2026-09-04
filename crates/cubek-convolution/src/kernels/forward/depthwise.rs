@@ -64,48 +64,74 @@ pub struct DepthwiseSpace {
     plane_size: usize,
 }
 
+const AXES: [Axis; 6] = [B, OH, OW, C, RH, RW];
+
 impl DepthwiseSpace {
-    /// Two levels. The first separates the output across the launch grid: an all-`sequential`
-    /// level would put the whole convolution in one instance, which is a correct kernel and a
-    /// useless one. The second separates what one cube took across the cube's own threads: rows
-    /// go to planes, channels to lanes. The taps stay `sequential` throughout: they are the
-    /// contraction, and every tap of one output position accumulates into the same register.
+    /// The space's axes and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Axis, usize)> {
+        vec![
+            (B, self.b),
+            (OH, self.oh),
+            (OW, self.ow),
+            (C, self.c),
+            (RH, self.rh),
+            (RW, self.rw),
+        ]
+    }
+
+    /// Two levels, outermost first. The first separates the output across the launch grid: an
+    /// all-`sequential` level would put the whole convolution in one instance, which is a
+    /// correct kernel and a useless one. The second separates what one cube took across the
+    /// cube's own threads: rows go to planes, channels to lanes. The taps stay `sequential`
+    /// throughout: they are the contraction, and every tap of one output position accumulates
+    /// into the same register.
+    pub fn levels(&self) -> Vec<Level> {
+        vec![self.cube_level(), self.lane_level()]
+    }
+
     pub fn space(&self) -> Space {
+        Space::new(&self.extents()).with_levels(&self.levels())
+    }
+
+    /// This cube's box of the output with the taps whole. The channel axis takes X so that the
+    /// fastest-moving cube index is the one memory is contiguous along.
+    pub fn cube_level(&self) -> Level {
         let Self {
-            b,
-            oh,
-            ow,
-            c,
             rh,
             rw,
             rows,
             cols,
             tile_c,
+            ..
+        } = *self;
+        Level::cuts(&AXES, |l| {
+            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
+                .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
+                .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
+                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
+                .walk(&[(RH, rh), (RW, rw)]);
+        })
+    }
+
+    /// Rows across the cube's planes, channels across each plane's lanes. Columns stay
+    /// sequential: they are the register block, not a split. Round-robin, so a lane holding
+    /// several channel lines takes every `plane_size`-th rather than a contiguous run: a
+    /// contiguous run puts a stride between what neighbouring lanes read and breaks the
+    /// coalescing the whole NHWC layout is for.
+    pub fn lane_level(&self) -> Level {
+        let Self {
+            rh,
+            rw,
+            cols,
             width,
             plane_size,
+            ..
         } = *self;
-        Tiling::over(&[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)])
-            // The channel axis takes X so that the fastest-moving cube index is the one memory is
-            // contiguous along.
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                    .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
-                    .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
-                    .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                    .walk(&[(RH, rh), (RW, rw)]);
-            })
-            // Rows across the cube's planes, channels across each plane's lanes. Columns stay
-            // sequential: they are the register block, not a split.
-            .level(|l| {
-                // Round-robin, so a lane holding several channel lines takes every
-                // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
-                // between what neighbouring lanes read and breaks the coalescing the whole NHWC
-                // layout is for.
-                l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
-                    .distribute(planes(), &[(OH, 1)])
-                    .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
-            })
-            .build()
+        Level::cuts(&AXES, |l| {
+            l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
+                .distribute(planes(), &[(OH, 1)])
+                .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
+        })
     }
 }
 
@@ -359,7 +385,7 @@ pub fn launch_depthwise(
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
     let plan = tiling.plan(&geometry, lanes, tile_c, width);
-    let launch = Launcher::new(client, plan.space(), &[]);
+    let launch = Launcher::over_static(client, &plan.extents(), &plan.levels());
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and

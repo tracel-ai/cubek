@@ -37,7 +37,6 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] axes: MatrixAxes,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
-        #[comptime] lanes: Lanes,
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
@@ -54,7 +53,6 @@ impl<T: Numeric> PlaneTile<T> {
                 n,
                 axes,
                 vector_size,
-                lanes,
                 config,
                 monoid,
             )),
@@ -211,17 +209,12 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] space: Space,
         #[comptime] axes: MatrixAxes,
         #[comptime] form: PlaneForm,
-        #[comptime] k: usize,
+        #[comptime] fragments: Fragments,
         #[comptime] vector_size: usize,
-        #[comptime] lanes: Lanes,
         #[comptime] monoid: Monoid,
     ) -> Tile<T> {
-        let (m_tiles, n_tiles) = comptime!(partition_shape(&space));
-        let fin = comptime!(space.final_space());
-        // The edges the accumulator's own axes give, not its last two: a split column group is
-        // one edge, and sizing the block off the innermost axis alone would cut it in half.
-        let m = comptime!(axes.rows(&fin));
-        let n = comptime!(axes.cols(&fin));
+        let (m_tiles, n_tiles) = comptime!((fragments.m_tiles, fragments.n_tiles));
+        let (m, n, k) = comptime!((fragments.m, fragments.n, fragments.k));
 
         let mut frags = Sequence::<PlaneTile<T>>::new();
         #[unroll]
@@ -235,7 +228,6 @@ impl<T: Numeric> PlanePartition<T> {
                     axes,
                     k,
                     vector_size,
-                    lanes,
                     monoid,
                 ));
             }
@@ -246,12 +238,12 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
             }),
-            // The fragments above were sized from the partitioner alone (`partition_shape`
-            // and `final_space` read edges, never extents), so the tile carries the space it
-            // actually has, not the caller's. The kernel-form space is `all_dynamic`, and a
-            // register-resident tile has no buffer bound to resolve a `Dynamic` axis from, and
-            // inheriting it verbatim would make `runtime_space` unanswerable.
+            // The fragments above were sized from the statement alone, so the tile carries the
+            // space it actually has, not the caller's. The kernel-form space is `all_dynamic`,
+            // and a register-resident tile has no buffer bound to resolve a `Dynamic` axis from,
+            // and inheriting it verbatim would make `runtime_space` unanswerable.
             space: comptime!(space.sub_tile_space()),
+            descent: comptime!(Descent::root()),
         }
     }
 
@@ -298,6 +290,7 @@ impl<T: Numeric> PlanePartition<T> {
                 n_tiles: t1,
             }),
             space: comptime!(window),
+            descent: comptime!(Descent::root()),
         }
     }
 
@@ -340,12 +333,15 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// Fill each tile from its final window of `src`, in the partition's row-major order.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
+        // The cut that turns the source's window into fragments is the source's own tiling
+        // below it, which the kernel never walks.
+        let levels = comptime!(src.space.levels_below());
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
-                let window = src.fragment_window(mi, ni);
+                let window = src.fragment_window(mi, ni, comptime!(levels.clone()));
                 frag.load_window(&window);
             }
         }
@@ -376,13 +372,15 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// Drain each tile into its final window of `dst`; [`fill_from`](Self::fill_from)'s inverse.
-    pub(crate) fn drain_into(&self, dst: &mut Tile<T>) {
+    /// `levels` is what this partition was descended with ([`Descent`]): the drain finds each
+    /// window by replaying the nest the kernel walked the accumulator through.
+    pub(crate) fn drain_into(&self, dst: &mut Tile<T>, #[comptime] levels: Vec<Level>) {
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
-                let mut window = dst.fragment_window(mi, ni);
+                let mut window = dst.fragment_window(mi, ni, comptime!(levels.clone()));
                 let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_window(g, space),
@@ -398,14 +396,19 @@ impl<T: Numeric> PlanePartition<T> {
     }
 
     /// Drain each tile into its final window of `dst`, casting `T` to `dst`'s element type first:
-    /// a plane accumulator (e.g. `f32`) written to a narrower output (e.g. `f16`).
-    pub(crate) fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
+    /// a plane accumulator (e.g. `f32`) written to a narrower output (e.g. `f16`). `levels` is
+    /// what this partition was descended with ([`Descent`]).
+    pub(crate) fn drain_cast_into<Out: Numeric>(
+        &self,
+        dst: &mut Tile<Out>,
+        #[comptime] levels: Vec<Level>,
+    ) {
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
             for ni in 0..comptime!(self.n_tiles) {
                 let frag = self.at(mi, ni);
-                let mut window = dst.fragment_window(mi, ni);
+                let mut window = dst.fragment_window(mi, ni, comptime!(levels.clone()));
                 let space = comptime!(window.space.clone());
                 match &mut window.tile_kind {
                     TileKind::Gmem(g) | TileKind::Smem(g) => frag.store_cast_window(g, space),
@@ -423,45 +426,59 @@ impl<T: Numeric> PlanePartition<T> {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// Descend to the `(mi, ni)` tile's final window: an instance level hands this instance a
-    /// single region; a partition level takes its own digit of the grid coordinates: the grid may
-    /// be split across stacked levels, so each consumes the high digits (the levels below it are
-    /// the place value) and passes the rest down.
-    pub(crate) fn fragment_window(&self, #[comptime] mi: usize, #[comptime] ni: usize) -> Tile<T> {
+    /// Descend to the `(mi, ni)` tile's final window through `levels`, the nest the accumulator
+    /// was walked with: an instance level hands this instance a single region; a partition level
+    /// takes its own digit of the grid coordinates: the grid may be split across stacked levels,
+    /// so each consumes the high digits (the levels below it are the place value) and passes the
+    /// rest down.
+    pub(crate) fn fragment_window(
+        &self,
+        #[comptime] mi: usize,
+        #[comptime] ni: usize,
+        #[comptime] levels: Vec<Level>,
+    ) -> Tile<T> {
         let space = comptime!(self.space.clone());
-        match comptime!(space.partitioner().clone()) {
-            // The recursion always terminates at a final store below, never by descending into one.
-            Partitioner::Final => {
-                panic!("Tile::fragment_window: a final tile has no partition level to descend")
+        comptime!(assert!(
+            !levels.is_empty(),
+            "Tile::fragment_window: a final tile has no partition level to descend"
+        ));
+        let level = comptime!(levels[0].clone());
+        let rest = comptime!(levels[1..].to_vec());
+        // The record is the tiling's own levels, until the tiling is gone.
+        comptime!(assert!(
+            !space.is_final() && space.partitioner().level() == &level,
+            "Tile::fragment_window: the accumulator was descended with {level:?} where its \
+             output is tiled by {:?}",
+            space.partitioner()
+        ));
+        match comptime!(level.role()) {
+            // An instance level hands this instance one region; descend into it.
+            LevelRole::Instance => {
+                let walk = self.runtime_space().level(comptime!(level.clone()));
+                let sub = self.at(&walk.region(0));
+                if comptime!(rest.is_empty()) {
+                    sub
+                } else {
+                    sub.fragment_window(mi, ni, rest)
+                }
             }
-            Partitioner::Level(level) => match comptime!(level.role()) {
-                // An instance level hands this instance one region; descend into it.
-                LevelRole::Instance => {
-                    let walk = Walk::over(self.runtime_space());
-                    let sub = self.at(&walk.region(0));
-                    match comptime!(sub.space.partitioner()) {
-                        Partitioner::Final => sub,
-                        Partitioner::Level(_) => sub.fragment_window(mi, ni),
-                    }
+            // A partition level takes its own digit of the grid and passes the rest down
+            // (the grid may be split across stacked levels).
+            LevelRole::Partition => {
+                let (bm, bn) = comptime!(partition_shape(&space.divide()));
+                let region = Region::trailing_in(
+                    comptime!(space.clone()),
+                    comptime!(level.clone()),
+                    comptime!(mi / bm),
+                    comptime!(ni / bn),
+                );
+                let sub = self.at(&region);
+                if comptime!(rest.is_empty()) {
+                    sub
+                } else {
+                    sub.fragment_window(comptime!(mi % bm), comptime!(ni % bn), rest)
                 }
-                // A partition level takes its own digit of the grid and passes the rest down
-                // (the grid may be split across stacked levels).
-                LevelRole::Partition => {
-                    let (bm, bn) = comptime!(partition_shape(&space.divide()));
-                    let region = Region::trailing(
-                        comptime!(space.clone()),
-                        comptime!(mi / bm),
-                        comptime!(ni / bn),
-                    );
-                    let sub = self.at(&region);
-                    match comptime!(sub.space.partitioner()) {
-                        Partitioner::Final => sub,
-                        Partitioner::Level(_) => {
-                            sub.fragment_window(comptime!(mi % bm), comptime!(ni % bn))
-                        }
-                    }
-                }
-            },
+            }
         }
     }
 }

@@ -121,12 +121,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.0.clone()
             } else {
-                stage_smem(lhs, storage, comptime!(None))
+                stage_smem(lhs, comptime!(storage.clone()), comptime!(None))
             };
             let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
                 slots.index(FIRST_SLOT).data.1.clone()
             } else {
-                stage_smem(rhs, storage, comptime!(None))
+                stage_smem(rhs, comptime!(storage.clone()), comptime!(None))
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
@@ -285,7 +285,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
-                stage_smem(input, storage, width)
+                stage_smem(input, comptime!(storage.clone()), width)
             };
             let staging = Staging::wrap(
                 staged_input,

@@ -7,6 +7,7 @@ mod accumulator;
 mod atomic;
 mod base;
 mod cmma;
+mod descent;
 mod mem;
 mod mma;
 mod packing;
@@ -17,8 +18,10 @@ mod register;
 mod tma;
 mod view;
 
+pub use accumulator::*;
 pub use base::*;
 pub use cmma::*;
+pub use descent::*;
 pub use mem::*;
 pub use mma::*;
 pub use packing::*;
