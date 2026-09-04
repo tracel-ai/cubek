@@ -34,20 +34,23 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
+        #[unroll]
         for ri in 0..rpp {
             let r = plane_row(ri, rpp, lanes);
             if r < rows {
                 let q = probe.row_q(r);
-                let mut c = lane(lanes);
-                while c < cols {
-                    let masked = probe.masked(q, probe.origin_s + c, mask);
-                    let val = select(
-                        masked,
-                        EA::min_value(),
-                        view.read(r * cols + c).extract(0usize) * scale,
-                    );
-                    view.write(r * cols + c, Vector::cast_from(val));
-                    c += lanes;
+                #[unroll]
+                for li in 0..comptime!(cols.div_ceil(lanes)) {
+                    let c = lane(lanes) + li * lanes;
+                    if comptime!(cols.is_multiple_of(lanes)) || c < cols {
+                        let masked = probe.masked(q, probe.origin_s + c, mask);
+                        let val = select(
+                            masked,
+                            EA::min_value(),
+                            view.read(r * cols + c).extract(0usize) * scale,
+                        );
+                        view.write(r * cols + c, Vector::cast_from(val));
+                    }
                 }
             }
         }
@@ -69,14 +72,17 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let view = self.flat::<W>();
 
+        #[unroll]
         for ri in 0..rpp {
             let mut partial = base[ri];
             let r = plane_row(ri, rpp, lanes);
             if r < rows {
-                let mut c = lane(lanes);
-                while c < cols {
-                    partial = max(partial, view.read(r * cols + c).extract(0usize));
-                    c += lanes;
+                #[unroll]
+                for li in 0..comptime!(cols.div_ceil(lanes)) {
+                    let c = lane(lanes) + li * lanes;
+                    if comptime!(cols.is_multiple_of(lanes)) || c < cols {
+                        partial = max(partial, view.read(r * cols + c).extract(0usize));
+                    }
                 }
             }
             acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Max));
@@ -98,16 +104,19 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
+        #[unroll]
         for ri in 0..rpp {
             let r = plane_row(ri, rpp, lanes);
             if r < rows {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
-                let mut c = lane(lanes);
-                while c < cols {
-                    let e = live * (view.read(r * cols + c).extract(0usize) - safe_m).exp();
-                    view.write(r * cols + c, Vector::cast_from(e));
-                    c += lanes;
+                #[unroll]
+                for li in 0..comptime!(cols.div_ceil(lanes)) {
+                    let c = lane(lanes) + li * lanes;
+                    if comptime!(cols.is_multiple_of(lanes)) || c < cols {
+                        let e = live * (view.read(r * cols + c).extract(0usize) - safe_m).exp();
+                        view.write(r * cols + c, Vector::cast_from(e));
+                    }
                 }
             }
         }
@@ -127,14 +136,17 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let view = self.flat::<W>();
 
+        #[unroll]
         for ri in 0..rpp {
             let mut partial = EA::from_int(0);
             let r = plane_row(ri, rpp, lanes);
             if r < rows {
-                let mut c = lane(lanes);
-                while c < cols {
-                    partial += view.read(r * cols + c).extract(0usize);
-                    c += lanes;
+                #[unroll]
+                for li in 0..comptime!(cols.div_ceil(lanes)) {
+                    let c = lane(lanes) + li * lanes;
+                    if comptime!(cols.is_multiple_of(lanes)) || c < cols {
+                        partial += view.read(r * cols + c).extract(0usize);
+                    }
                 }
             }
             acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Sum));
@@ -155,16 +167,19 @@ impl<EA: Float> Tile<EA> {
         let src = self.flat::<W>();
         let mut dst = dest.flat_mut::<WP>();
 
+        #[unroll]
         for ri in 0..rpp {
             let r = plane_row(ri, rpp, lanes);
             if r < rows {
-                let mut c = lane(lanes);
-                while c < cols {
-                    dst.write(
-                        r * cols + c,
-                        Vector::cast_from(src.read(r * cols + c).extract(0usize)),
-                    );
-                    c += lanes;
+                #[unroll]
+                for li in 0..comptime!(cols.div_ceil(lanes)) {
+                    let c = lane(lanes) + li * lanes;
+                    if comptime!(cols.is_multiple_of(lanes)) || c < cols {
+                        dst.write(
+                            r * cols + c,
+                            Vector::cast_from(src.read(r * cols + c).extract(0usize)),
+                        );
+                    }
                 }
             }
         }

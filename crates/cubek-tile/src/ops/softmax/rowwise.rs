@@ -23,6 +23,7 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
+        #[unroll]
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
@@ -47,6 +48,7 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let view = self.flat::<W>();
 
+        #[unroll]
         for ri in 0..rpu {
             acc[ri] = base[ri];
             let r = UNIT_POS_X as usize * rpu + ri;
@@ -67,6 +69,7 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
 
+        #[unroll]
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
@@ -87,6 +90,7 @@ impl<EA: Float> Tile<EA> {
         let size!(W) = self.vector_size();
         let view = self.flat::<W>();
 
+        #[unroll]
         for ri in 0..rpu {
             acc[ri] = EA::from_int(0);
             let r = UNIT_POS_X as usize * rpu + ri;
@@ -202,6 +206,7 @@ impl<EA: Float> Tile<EA> {
         // lane — every other lane holds the same value and writing it again
         // would be a race for nothing.
         let writer = (UNIT_POS_X as usize).is_multiple_of(lanes);
+        #[unroll]
         for ri in 0..rpu {
             let r = (UNIT_POS_X as usize / lanes) * rpu + ri;
             if r < rows && writer {
@@ -285,6 +290,7 @@ impl<EA: Float> Tile<EA> {
         let src = self.flat::<W>();
         let mut dst = dest.flat_mut::<WP>();
 
+        #[unroll]
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
