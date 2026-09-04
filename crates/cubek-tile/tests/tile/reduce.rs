@@ -1175,7 +1175,8 @@ fn resident_max_over_lane_split_k() {
 
     let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
         .instruction(Instruction::registers(16), |l, _| {
-            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m), (N, n)]);
+            l.distribute(lanes(plane_size), &[(K, kr)])
+                .walk(&[(M, m), (N, n)]);
         })
         .build();
 

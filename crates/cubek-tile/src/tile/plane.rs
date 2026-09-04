@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::*;
 
-/// One plane-level tile, by encoding. The [`Instruction`] picks which.
+/// One plane-level tile, by encoding ([`PlaneForm`]).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum PlaneTile<T: Numeric> {
@@ -31,7 +31,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// instruction contracts through.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
-        #[comptime] form: Instruction,
+        #[comptime] form: PlaneForm,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
@@ -41,15 +41,15 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            Instruction::Cmma => {
+            PlaneForm::Cmma => {
                 PlaneTile::new_Cmma(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k))
             }
-            Instruction::Mma { io } => {
+            PlaneForm::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
             // `vector_size` is the promoting tile's, so the block's lines match the memory it
             // will drain into; the hardware encodings above have no say in their layout.
-            Instruction::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
+            PlaneForm::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
                 axes,
@@ -64,15 +64,15 @@ impl<T: Numeric> PlaneTile<T> {
     /// An operand tile in role `ident`, uninitialized. `k` is the operand's own contraction
     /// depth, not the instruction's.
     pub(crate) fn operand(
-        #[comptime] form: Instruction,
+        #[comptime] form: PlaneForm,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
-            Instruction::Mma { io } => match comptime!(ident) {
+            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
+            PlaneForm::Mma { io } => match comptime!(ident) {
                 MatrixIdent::A => {
                     PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, MatrixLayout::RowMajor, io))
                 }
@@ -83,7 +83,7 @@ impl<T: Numeric> PlaneTile<T> {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            Instruction::Registers { .. } => {
+            PlaneForm::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
             }
         }
@@ -210,7 +210,7 @@ impl<T: Numeric> PlanePartition<T> {
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] axes: MatrixAxes,
-        #[comptime] form: Instruction,
+        #[comptime] form: PlaneForm,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
         #[comptime] lanes: Lanes,
@@ -255,12 +255,11 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// The staging store for one region of an operand under `out`'s contraction: a partition
-    /// mirroring the region's grid, tiles uninitialized in the `form` the operand's stages
-    /// stated; [`copy_from`](Tile::copy_from) fills it.
+    /// The store for one region of an operand under `out`'s contraction: a partition mirroring
+    /// the region's grid, tiles uninitialized in `form`; [`copy_from`](Tile::copy_from) fills it.
     pub(crate) fn store(
         #[comptime] window: Space,
-        #[comptime] form: Instruction,
+        #[comptime] form: PlaneForm,
         #[comptime] out: Space,
     ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
@@ -302,12 +301,11 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// This region of an operand loaded into cmma fragments, one per final tile of its grid:
-    /// what a level's [`Residence::Register`] statement builds under the tensor-core
-    /// instruction, built where the kernel reads it instead. `acc` is the accumulator the
-    /// fragments contract into, which fixes the fragment shape and the operand's role.
+    /// This region of an operand loaded into cmma fragments, one per final tile of its grid,
+    /// built where the kernel reads it. `acc` is the accumulator the fragments contract into,
+    /// which fixes the fragment shape and the operand's role.
     pub fn cmma_fragments<Acc: Numeric>(src: &Tile<T>, acc: &Tile<Acc>) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Cmma))
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(PlaneForm::Cmma))
     }
 
     /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding, loaded by
@@ -317,13 +315,13 @@ impl<T: Numeric> PlanePartition<T> {
         acc: &Tile<Acc>,
         #[comptime] io: MmaIOConfig,
     ) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Mma { io }))
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(PlaneForm::Mma { io }))
     }
 
     fn fragments_in<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
-        #[comptime] form: Instruction,
+        #[comptime] form: PlaneForm,
     ) -> Tile<T> {
         let gathered = src.gathered();
         comptime!(assert!(

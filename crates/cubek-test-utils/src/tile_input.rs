@@ -23,8 +23,8 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Operand, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
-    TileArgLaunch, TileSpec as CubekTileSpec,
+    DequantAt, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
+    TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
@@ -36,7 +36,6 @@ pub struct TileInput {
     handle: TensorHandle<TestRuntime>,
     space: Space,
     levels: usize,
-    residence: Vec<Residence>,
 }
 
 impl TileInput {
@@ -51,7 +50,6 @@ impl TileInput {
             client: client.clone(),
             space,
             levels: None,
-            residence: Vec::new(),
         }
     }
 
@@ -150,7 +148,7 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling)).residence(&self.residence)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling))
     }
 
     /// The semantic space the tile lives in.
@@ -181,18 +179,9 @@ pub struct TileInputBuilder {
     client: ComputeClient<TestRuntime>,
     space: Space,
     levels: Option<Vec<TileLevel>>,
-    residence: Vec<Residence>,
 }
 
 impl TileInputBuilder {
-    /// Take the per-level residences from `operand`'s stages, stated where the levels were
-    /// declared ([`Operand::stage`](cubek_tile::Operand::stage)). Default: every level
-    /// [`Residence::InPlace`], staging nothing.
-    pub fn operand(mut self, operand: &Operand) -> Self {
-        self.residence = operand.residences();
-        self
-    }
-
     /// Divide the current tile into `counts[axis]` sub-tiles per axis: a finer
     /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
     pub fn split(mut self, counts: &[usize]) -> Self {
@@ -254,7 +243,6 @@ impl TileInputBuilder {
             client: self.client,
             space: self.space,
             scheme: *scheme,
-            residence: self.residence,
             dequant_at,
         }
     }
@@ -313,7 +301,6 @@ impl TileInputBuilder {
             handle: fill(builder).generate_without_host_data(),
             space: self.space,
             levels: levels.len(),
-            residence: self.residence,
         }
     }
 }
@@ -323,7 +310,6 @@ impl TileInputBuilder {
 /// finalizer fills it and mints the values tile and its scales together: a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
-    residence: Vec<Residence>,
     dequant_at: DequantAt,
     client: ComputeClient<TestRuntime>,
     space: Space,
@@ -378,7 +364,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                residence: self.residence,
             },
             scales,
             scheme: self.scheme,
@@ -437,7 +422,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                residence: self.residence,
             },
             scales,
             scheme: self.scheme,

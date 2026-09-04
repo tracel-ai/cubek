@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, Distribution, Instruction, LevelRole, MAX_AXES, Partitioner};
+use crate::{Axis, ByAxis, Distribution, LevelRole, MAX_AXES, Partitioner};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -91,22 +91,12 @@ pub struct Space {
     pub(crate) extents: Extents,
     #[cube(comptime)]
     partitioner: Partitioner,
-    /// What runs at the last level, once the levels are exhausted. Stated by the space's terminal
-    /// level and read by [`mma_leaf`](crate::mma_leaf); `None` for a space nothing contracts
-    /// in (a plain copy), and for one whose accumulator is promoted to a hardware form that
-    /// answers for itself.
-    #[cube(comptime)]
-    instruction: Option<Instruction>,
 }
 
 // Identity is the comptime tiling spec only; the `Extents` sizes are runtime, never a key.
-// The instruction is part of it: it picks the leaf's codegen, so two spaces that differ only
-// there must not share a compiled kernel.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
-        self.extents.kinds == other.extents.kinds
-            && self.partitioner == other.partitioner
-            && self.instruction == other.instruction
+        self.extents.kinds == other.extents.kinds && self.partitioner == other.partitioner
     }
 }
 impl Eq for Space {}
@@ -114,7 +104,6 @@ impl std::hash::Hash for Space {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.extents.kinds.hash(state);
         self.partitioner.hash(state);
-        self.instruction.hash(state);
     }
 }
 
@@ -127,7 +116,6 @@ impl SpaceExpand {
         Space {
             extents: Extents::fixed(self.extents.kinds.clone()),
             partitioner: self.partitioner.clone(),
-            instruction: self.instruction,
         }
     }
 
@@ -161,7 +149,6 @@ impl Space {
                 sizes,
             },
             partitioner: comptime!(space.partitioner.clone()),
-            instruction: comptime!(space.instruction),
         }
     }
 }
@@ -180,21 +167,7 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(extents)),
             partitioner: Partitioner::Final,
-            instruction: None,
         }
-    }
-
-    /// State what runs at the last level. Said once, by the routine that owns the contraction;
-    /// every space derived from this one ([`divide`](Space::divide),
-    /// [`project`](Space::project)) carries it down to the leaf.
-    pub fn with_instruction(mut self, instruction: Instruction) -> Self {
-        self.instruction = Some(instruction);
-        self
-    }
-
-    /// What runs at the last level, if this space states it.
-    pub fn instruction(&self) -> Option<Instruction> {
-        self.instruction
     }
 
     /// Flip the listed axes to [`Dynamic`](Extent::Dynamic), keeping the partitioner. The
@@ -382,13 +355,9 @@ impl Space {
             .cloned()
             .unwrap_or(Partitioner::Final);
 
-        // Same reasoning for the floor: the operands of one operation share it.
-        let instruction = parts.iter().find_map(|p| p.instruction);
-
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner,
-            instruction,
         }
     }
 
@@ -400,7 +369,6 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
-            instruction: self.instruction,
         }
     }
 
@@ -539,7 +507,6 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.next().clone(),
-            instruction: self.instruction,
         }
     }
 
@@ -568,7 +535,6 @@ impl Space {
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
             partitioner: self.partitioner.clone(),
-            instruction: self.instruction,
         }
     }
 
@@ -651,9 +617,9 @@ impl<'a> IntoIterator for &'a Space {
 /// helpers are exercised against, since they read extents and axis order rather than the walk.
 #[cfg(test)]
 pub(crate) fn flat_space(extents: &[(Axis, usize)]) -> Space {
-    use crate::{Buffering, Tiling, WalkOrder};
-    Tiling::over(&mut (), extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    use crate::Tiling;
+    Tiling::over(extents)
+        .level(|l| {
             l.walk(extents);
         })
         .build()
@@ -755,9 +721,9 @@ mod contraction_tests {
     /// it, exactly as an operand's own space is read at launch.
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
-        use crate::{Buffering, CubeAxis, Tiling, WalkOrder};
-        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::{CubeAxis, Tiling};
+        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::Y), &[(K, 4)])
                     .walk(&[(M, 4), (N, 4)]);
             })
@@ -772,9 +738,9 @@ mod contraction_tests {
     /// dealt out across them leaves each holding a slice, exactly as cubes do.
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
-        use crate::{Buffering, Tiling, WalkOrder};
-        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::Tiling;
+        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
+            .level(|l| {
                 l.distribute(planes(), &[(K, 4)]).walk(&[(M, 4), (N, 4)]);
             })
             .build();
@@ -786,12 +752,12 @@ mod contraction_tests {
     /// no axis of the level rides the cubes.
     #[test]
     fn distributed_work_is_partial_to_the_output() {
-        use crate::{Buffering, CubeAxis, Tiling, WalkOrder, cubes};
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::{CubeAxis, Tiling};
+        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            .level(|l| {
                 l.walk(&[(M, 4), (N, 4), (K, 4)]);
             })
             .build();
@@ -804,13 +770,13 @@ mod contraction_tests {
     /// The shares ride the cubes even though no axis does, so the launch grid is their count.
     #[test]
     fn distributed_work_launches_its_instances() {
-        use crate::{Buffering, CubeAxis, Tiling, WalkOrder, cubes};
+        use crate::{CubeAxis, Tiling};
         use cubecl::CubeCount;
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        let space = Tiling::over(&[(M, 8), (N, 8), (K, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            .level(|l| {
                 l.walk(&[(M, 4), (N, 4), (K, 4)]);
             })
             .build();
@@ -823,9 +789,9 @@ mod contraction_tests {
     /// of one, and refusing that would refuse the control it is compared against.
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
-        use crate::{Buffering, CubeAxis, Tiling, WalkOrder};
-        let space = Tiling::over(&mut (), &[(M, 4), (N, 4), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::{CubeAxis, Tiling};
+        let space = Tiling::over(&[(M, 4), (N, 4), (K, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, 1)])
                     .distribute(cubes(CubeAxis::Z), &[(K, 8)])
                     .walk(&[(M, 4)]);
@@ -838,9 +804,9 @@ mod contraction_tests {
     /// its columns outright and there is nothing to combine.
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
-        use crate::{Buffering, CubeAxis, Tiling, WalkOrder};
-        let space = Tiling::over(&mut (), &[(M, 4), (N, 8), (K, 4)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::{CubeAxis, Tiling};
+        let space = Tiling::over(&[(M, 4), (N, 8), (K, 4)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, 4)])
                     .walk(&[(M, 4), (K, 4)]);
             })
@@ -850,12 +816,12 @@ mod contraction_tests {
 
     /// Two levels: `outer` the extents, `inner` the tile each axis is cut to below it.
     fn split_space(outer: &[(Axis, usize)], inner: &[(Axis, usize)]) -> Space {
-        use crate::{Buffering, Tiling, WalkOrder};
-        Tiling::over(&mut (), outer)
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        use crate::Tiling;
+        Tiling::over(outer)
+            .level(|l| {
                 l.walk(outer);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            .level(|l| {
                 l.walk(inner);
             })
             .build()

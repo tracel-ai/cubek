@@ -1,5 +1,5 @@
-use cubek_test_utils::CatalogEntry;
 use crate::InputStage;
+use cubek_test_utils::CatalogEntry;
 
 use crate::{InterpolateBlueprint, InterpolateStrategy};
 

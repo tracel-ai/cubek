@@ -330,10 +330,22 @@ fn launch_tma<R: Runtime>(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map_over(map, axes, (1, rows, cols), transposed)
+        TmaTileArgLaunch::tensor_map(map, axes, (1, rows, cols), transposed)
     }
-    let a = operand(&[M, K], elems.lhs, lhs, (stage_m, stage_k), (m as u32, k as u32));
-    let b = operand(&[K, N], elems.rhs, rhs, (stage_k, stage_n), (k as u32, n as u32));
+    let a = operand(
+        &[M, K],
+        elems.lhs,
+        lhs,
+        (stage_m, stage_k),
+        (m as u32, k as u32),
+    );
+    let b = operand(
+        &[K, N],
+        elems.rhs,
+        rhs,
+        (stage_k, stage_n),
+        (k as u32, n as u32),
+    );
     let v_out = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)

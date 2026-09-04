@@ -167,8 +167,7 @@ impl<T: Numeric> Store<T> {
 }
 
 /// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
-/// handles overhang, and how a cooperative fill spreads. Plain data held comptime, like the
-/// [`StagePlan`] it carries.
+/// handles overhang, and how a cooperative fill spreads. Plain data held comptime.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
     /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
@@ -177,10 +176,9 @@ pub struct Access {
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.
     pub write: Write,
-    /// Where this operand lives at each level below, plus the [`StageStorage`] layout and launch
-    /// cube size its materialized levels take. Carried from the operand's [`TileSpec`] so a fill
-    /// re-derives none of them.
-    pub stage: StagePlan,
+    /// The launch's cube size (units per cube), `0` when unknown: a stage filled from this tile
+    /// emits its fill straight-line when it knows how many units share it.
+    pub units: usize,
 }
 
 /// What a write to a store does to the cell it lands on.
@@ -212,8 +210,8 @@ impl Write {
             Write::Replace => {}
             Write::Accumulate => panic!(
                 "{fragment}: a hardware fragment stores through its own intrinsic and elects no \
-                 writer, so it cannot drain into a destination that folds. Contract through \
-                 Instruction::Registers, whose block drains cell by cell."
+                 writer, so it cannot drain into a destination that folds. Contract through a \
+                 register block, which drains cell by cell."
             ),
         }
     }

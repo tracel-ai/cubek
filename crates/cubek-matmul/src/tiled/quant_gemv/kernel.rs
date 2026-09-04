@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Buffering, CubeAxis, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Tiling, Walk,
-    WalkOrder, cubes, lanes, planes,
+    CubeAxis, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Tiling, Walk, cubes, lanes,
+    planes,
 };
 
 use crate::tiled::{
@@ -27,24 +27,24 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// lanes hold drain inside the plane.
 pub fn quant_gemv_space(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Space {
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
-    Tiling::over(
-        &mut (),
-        &[
-            (M, problem.d_out),
-            (N, problem.rows),
-            (KB, blocks),
-            (KI, block),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&[
+        (M, problem.d_out),
+        (N, problem.rows),
+        (KB, blocks),
+        (KI, block),
+    ])
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(M, bp.rows_per_cube)])
             .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
     })
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-        l.distribute(planes(), &[(M, bp.rows_per_plane)])
-            .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
+    .level(|l| {
+        l.distribute(planes(), &[(M, bp.rows_per_plane)]).walk(&[
+            (N, problem.rows),
+            (KB, blocks),
+            (KI, block),
+        ]);
     })
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    .level(|l| {
         // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words. The lane
         // counts are the blueprint's, derived on the host from the plane width: their product
         // with the row groups is exactly it.

@@ -1,8 +1,8 @@
 use super::geometry::TileGeometry;
 use cubecl::{Runtime, client::ComputeClient};
 use cubek_tile::{
-    Axis, Buffering, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock,
-    Space, Tiling, WalkOrder, cubes, lanes, planes,
+    Axis, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Tiling, cubes, lanes, planes,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -53,25 +53,22 @@ impl InterpolateSpace {
             geometry.lane_cols * geometry.lane_channels
         );
         let channels_per_cube = geometry.channels_per_cube();
-        Tiling::over(
-            &mut (),
-            &[
-                (BATCH, batch),
-                (OUTPUT_H, height),
-                (OUTPUT_W, width),
-                (TAP_H, taps),
-                (TAP_W, taps),
-                (CHANNEL, channels),
-            ],
-        )
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+        Tiling::over(&[
+            (BATCH, batch),
+            (OUTPUT_H, height),
+            (OUTPUT_W, width),
+            (TAP_H, taps),
+            (TAP_W, taps),
+            (CHANNEL, channels),
+        ])
+        .level(|level| {
             level
                 .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
                 .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
                 .distribute(cubes(CubeAxis::X), &[(OUTPUT_W, geometry.cols_per_cube())])
                 .walk(&[(TAP_H, taps), (TAP_W, taps), (CHANNEL, channels_per_cube)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+        .level(|level| {
             level
                 .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
                 .walk(&[
@@ -82,7 +79,7 @@ impl InterpolateSpace {
                     (CHANNEL, channels_per_cube),
                 ]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+        .level(|level| {
             lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
             lanes_over(
                 level,

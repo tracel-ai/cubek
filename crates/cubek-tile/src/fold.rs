@@ -69,7 +69,7 @@ pub(crate) trait FoldSeq<C: Int>: Sized {
 impl<C: Int + Fold> FoldSeq<C> for Sequence<C> {}
 
 /// The constant a non-negative integer expand element holds, if any.
-fn constant<C: Int>(e: &NativeExpand<C>) -> Option<u64> {
+pub(crate) fn constant<C: Int>(e: &NativeExpand<C>) -> Option<u64> {
     match e.expand.as_const() {
         Some(ConstantValue::UInt(v)) => Some(v),
         Some(ConstantValue::Int(v)) if v >= 0 => Some(v as u64),

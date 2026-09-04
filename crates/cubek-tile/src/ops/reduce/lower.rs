@@ -1,8 +1,6 @@
-//! Lowering `c.reduce_axis(input, monoid)` and its accumulating twin: at a final tile, the
-//! register nest
-//! ([`instruction::registers::reduce`](crate::instruction::registers::reduce)); while levels remain,
-//! walk this level under its [`Buffering`]. One walk serves every level: what the input costs is
-//! its own [`Residence`], and an input that stays put rides a ring of slots that allocate nothing.
+//! `c.reduce_axis(input, monoid)` and its accumulating twin at a final tile: the register nest
+//! ([`instruction::registers::reduce`](crate::instruction::registers::reduce)). The levels above
+//! are the kernel's own walk.
 
 use cubecl::prelude::*;
 
@@ -10,25 +8,12 @@ use crate::{instruction::registers::reduce, *};
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = fold(input)`: reduce `input` into `self` across the contracted axes. `self` is a
-    /// result, so nothing it held before takes part.
-    ///
-    /// [`mm`](Tile::mm)'s twin, and the same bargain: where the leaf owns each output cell
-    /// outright it starts from the monoid's identity and never reads `self` back, and where it
-    /// does not, the seeding the caller would have written
-    /// ([`init_identity`](Tile::init_identity)) happens here instead.
+    /// `c = fold(input)`: reduce `input` into `self` across the contracted axes, at a final
+    /// tile. `self` is a result, so nothing it held before takes part: it starts from the
+    /// monoid's identity ([`init_identity`](Tile::init_identity)).
     pub fn reduce_axis<In: Numeric>(&mut self, input: &Tile<In>, #[comptime] monoid: Monoid) {
-        let spans = comptime!(match input.space.spans_contracted_at_leaf(&self.space) {
-            true => InitFrom::Identity,
-            false => InitFrom::Cell,
-        });
-        let init_from = self.request_init_from(comptime!(spans));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(monoid),
-        }
+        self.init_identity(monoid);
         self.reduce_axis_accumulate(input, monoid);
-        self.request_init_from(comptime!(InitFrom::Cell));
     }
 
     /// `c = fold(c, input)`: [`reduce_axis`](Tile::reduce_axis) with the accumulate
@@ -37,31 +22,22 @@ impl<Acc: Numeric> Tile<Acc> {
     /// point, and the caller owns it: it must have seeded `self` with the monoid's identity
     /// ([`init_identity`](Tile::init_identity)) first, or an uninitialized accumulator folds
     /// against garbage.
-    ///
-    /// Also the recursion the walk re-enters per region, for the reason [`mma`](Tile::mma) gives.
-    pub(crate) fn reduce_axis_accumulate<In: Numeric>(
+    pub fn reduce_axis_accumulate<In: Numeric>(
         &mut self,
         input: &Tile<In>,
         #[comptime] monoid: Monoid,
     ) {
-        let partitioner = comptime!(self.space.partitioner().clone());
-        match comptime!(partitioner) {
-            Partitioner::Final => reduce_leaf(self, input, monoid),
-            Partitioner::Level(level) => {
-                let op_space = self.reduce_op_space(input);
-                self.reduce_buffered(
-                    input,
-                    monoid,
-                    Walk::over(op_space),
-                    comptime!(level.buffering().depth()),
-                );
-            }
-        }
+        comptime!(assert!(
+            self.space.is_final(),
+            "Tile::reduce_axis: the leaf reduces into a final tile; walk the levels above it first"
+        ));
+        reduce_leaf(self, input, monoid)
     }
 
-    /// The level's operation space: the input operand's space, sized by whichever operand
-    /// witnesses each dynamic axis.
-    fn reduce_op_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
+    /// The level's operation space for a reduction: the input's space, sized by whichever
+    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Walk::over`]),
+    /// [`op_space`](Tile::op_space)'s twin for one operand.
+    pub fn reduce_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
         let merged = comptime!({
             let merged = input.space.clone();
             assert!(
@@ -75,7 +51,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// Dispatches to the register nest by the accumulator's storage at `Partitioner::Final`.
+/// Dispatches to the register nest by the accumulator's form.
 #[cube]
 pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
     acc: &mut Tile<Acc>,

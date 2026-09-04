@@ -15,7 +15,8 @@ use crate::*;
 pub(crate) struct StageMeta {
     pub space: Space,
     pub vector_size: usize,
-    pub stage: StagePlan,
+    /// The launch's cube size, `0` when unknown ([`Access::units`](super::Access)).
+    pub units: usize,
 }
 
 #[cube]
@@ -53,49 +54,17 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`, in
-    /// the element that operand needs staged: the one it *serves* when the load is what decodes it
-    /// ([`DequantAt::Load`], and always for a plain operand, whose served and stored elements are the
-    /// same), else the one it is *stored* in ([`smem_stored`](MemData::smem_stored)). The operand
-    /// carries which, so a caller stages it without asking whether it is quantized at all.
-    pub fn smem_like(operand: &Tile<T>) -> Tile<T> {
-        let dequant_at = operand.dequant_at();
-        match comptime!(dequant_at) {
-            DequantAt::Load => {
-                let space = comptime!(operand.space.divide());
-                let projection = operand.projection();
-                // The stage is one level down, so it takes the operand's plan from the next level
-                // on: its own residence was consumed by the decision to build it.
-                let source_plan = operand.stage_plan();
-                let stage = comptime!(source_plan.descend());
-                // A padded stage is served wider than the operand it is filled from: the buffer
-                // owns its own layout, so an axis global memory could not vectorize still reaches
-                // the leaf in lines. `fill_straight` widens across the two.
-                let source_width = operand.vector_size();
-                let vector_size = comptime!(source_plan.effective_width(source_width));
-
-                if comptime!(projection.is_direct()) {
-                    MemData::smem(space, vector_size, stage)
-                } else {
-                    MemData::smem_gathered(
-                        space,
-                        vector_size,
-                        stage,
-                        projection,
-                        &operand.runtime_map(),
-                        operand.window_signed(),
-                        operand.window_boundaries(),
-                    )
-                }
-            }
-            DequantAt::Read => MemData::smem_stored(operand),
-        }
-    }
-
-    /// [`smem_like`](MemData::smem_like) laid out as `storage` and, where `width` is stated,
-    /// served in lines that wide: both stated by the ring that allocates the stage rather than
-    /// derived from the operand's stages.
-    pub fn smem_like_stored(
+    /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`,
+    /// laid out as `storage` and, where `width` is stated, served in lines that wide (the buffer
+    /// owns its layout, so an axis global memory could not vectorize still reaches the leaf in
+    /// lines). Both are the ring's to state, where it allocates the stage.
+    ///
+    /// The stage takes the element the operand needs staged: the one it *serves* when the load is
+    /// what decodes it ([`DequantAt::Load`], and always for a plain operand, whose served and
+    /// stored elements are the same), else the one it is *stored* in
+    /// ([`smem_stored`](MemData::smem_stored)). The operand carries which, so a caller stages it
+    /// without asking whether it is quantized at all.
+    pub fn stage(
         operand: &Tile<T>,
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
@@ -105,37 +74,33 @@ impl<T: Numeric> MemData<T> {
             DequantAt::Load => {
                 let space = comptime!(operand.space.divide());
                 let projection = operand.projection();
-                let source_plan = operand.stage_plan();
-                let stage = comptime!({
-                    let mut stage = source_plan.descend();
-                    stage.storage = storage;
-                    stage
-                });
+                let units = operand.units();
                 let source_width = operand.vector_size();
                 let vector_size = comptime!(match width {
                     Some(width) => {
                         assert!(
                             source_width == 1,
-                            "MemData::smem_like_stored: a padded stage assembles its lines from \
-                             scalar source cells, so the operand it pads must be unvectorized \
-                             (it is served {source_width} wide)"
+                            "MemData::stage: a padded stage assembles its lines from scalar \
+                             source cells, so the operand it pads must be unvectorized (it is \
+                             served {source_width} wide)"
                         );
                         assert!(
                             width > 1,
-                            "MemData::smem_like_stored: a padded stage width must widen the \
-                             operand's own 1-wide lines (got {width})"
+                            "MemData::stage: a padded stage width must widen the operand's own \
+                             1-wide lines (got {width})"
                         );
                         width
                     }
-                    None => source_plan.effective_width(source_width),
+                    None => source_width,
                 });
                 if comptime!(projection.is_direct()) {
-                    MemData::smem(space, vector_size, stage)
+                    MemData::smem(space, vector_size, storage, units)
                 } else {
                     MemData::smem_gathered(
                         space,
                         vector_size,
-                        stage,
+                        storage,
+                        units,
                         projection,
                         &operand.runtime_map(),
                         operand.window_signed(),
@@ -143,33 +108,33 @@ impl<T: Numeric> MemData<T> {
                     )
                 }
             }
-            DequantAt::Read => MemData::smem_stored(operand),
+            DequantAt::Read => MemData::smem_stored(operand, storage),
         }
     }
 
-    /// [`smem_like`](MemData::smem_like) in the element the operand is *stored* in rather than the
-    /// one it serves: a quantized operand keeps its stored form (native `i8`, or `u32` words when
-    /// the scheme packs several values each) and its scales, so the leaf dequantizes at the read
-    /// (see [`smem_quant`](MemData::smem_quant)) instead of the fill inflating the stage to `T`.
-    /// Reached only through [`smem_like`](MemData::smem_like), on an operand whose quantized form
-    /// runs [`DequantAt::Read`].
-    fn smem_stored(operand: &Tile<T>) -> Tile<T> {
+    /// [`stage`](MemData::stage) in the element the operand is *stored* in rather than the one it
+    /// serves: a quantized operand keeps its stored form (native `i8`, or `u32` words when the
+    /// scheme packs several values each) and its scales, so the leaf dequantizes at the read (see
+    /// [`smem_quant`](MemData::smem_quant)) instead of the fill inflating the stage to `T`.
+    /// Reached only through [`stage`](MemData::stage), on an operand whose quantized form runs
+    /// [`DequantAt::Read`].
+    fn smem_stored(operand: &Tile<T>, #[comptime] storage: StageStorage) -> Tile<T> {
         let space = comptime!(operand.space.divide());
         let vector_size = operand.vector_size();
-        let source_plan = operand.stage_plan();
-        let stage = comptime!(source_plan.descend());
+        let units = operand.units();
         match &operand.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
                 match &g.store.quant {
-                    // Served == stored, so this is `smem_like`.
-                    ComptimeOption::None => MemData::smem(space, vector_size, stage),
+                    // Served == stored, so this is a plain stage.
+                    ComptimeOption::None => MemData::smem(space, vector_size, storage, units),
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
                             QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
                                 space,
                                 vector_size,
-                                stage,
+                                storage,
+                                units,
                                 info.table.clone(),
                                 comptime!(info.scheme),
                             ),
@@ -181,7 +146,8 @@ impl<T: Numeric> MemData<T> {
                         QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
                             space,
                             vector_size,
-                            stage,
+                            storage,
+                            units,
                             info.table.clone(),
                             comptime!(info.scheme),
                         ),
@@ -195,7 +161,7 @@ impl<T: Numeric> MemData<T> {
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
             // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm; see `Staging::new`, which refuses that combination.
-            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, stage),
+            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, storage, units),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_stored: a fragment is not a stage source")
             }
@@ -213,14 +179,15 @@ impl<T: Numeric> MemData<T> {
     pub fn smem(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.storage));
+        let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
             vector_size,
-            stage,
+            units,
         });
         MemData::smem_with_form(meta, form, map, ComptimeOption::new_None())
     }
@@ -237,7 +204,8 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn smem_gathered(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
         #[comptime] projection: Projection,
         map: &RuntimeMap,
         #[comptime] signed: bool,
@@ -246,7 +214,7 @@ impl<T: Numeric> MemData<T> {
         let form = comptime!(StageForm::gathered(
             &space,
             vector_size,
-            stage.storage,
+            storage,
             &projection
         ));
         let stage_map = RuntimeMap {
@@ -262,7 +230,7 @@ impl<T: Numeric> MemData<T> {
         let meta = comptime!(StageMeta {
             space,
             vector_size,
-            stage,
+            units,
         });
         let source = MemData::<T>::pending_source_window(
             comptime!(form.steps.clone()),
@@ -301,13 +269,14 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn smem_quant<I: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
-        #[comptime] stage: StagePlan,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
         table: ComptimeOption<Box<[f32]>>,
         #[comptime] scheme: QuantScheme,
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
-        let form = comptime!(StageForm::dense(&space, vector_size, stage.storage));
+        let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
@@ -315,7 +284,7 @@ impl<T: Numeric> MemData<T> {
         let meta = comptime!(StageMeta {
             space,
             vector_size,
-            stage,
+            units,
         });
         MemData::smem_over(
             meta,
@@ -381,7 +350,7 @@ impl<T: Numeric> MemData<T> {
                     whole: true,
                     overhang: Overhang::Never,
                     write: Write::Replace,
-                    stage: meta.stage,
+                    units: meta.units,
                 }),
                 lanes: comptime!(Lanes {
                     share: LaneShare::Whole,

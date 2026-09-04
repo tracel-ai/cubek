@@ -9,8 +9,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, DeliveryFamily, Monoid, PlanePartition, Ring, Semiring, Space,
-    StageStorage, TileArg, Tiling, Walk, WalkOrder, cubes, pipelined, planes,
+    Axis, CubeAxis, DeliveryFamily, Monoid, PlanePartition, Ring, Semiring, Space, StageStorage,
+    TileArg, Tiling, Walk, cubes, pipelined, planes,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -28,28 +28,24 @@ pub fn cmma_space(bp: &CmmaBlueprint, batch: &[Axis]) -> Space {
     let batch_tiles: Vec<_> = batch.iter().map(|&a| (a, 1)).collect();
     let axes: Vec<_> = batch.iter().copied().chain([M, N, K]).collect();
 
-    Tiling::axes(&mut (), &axes)
-        .level(
-            WalkOrder::RowMajor,
-            Buffering::new(bp.buffering),
-            |l, _| {
-                l.distribute(cubes(CubeAxis::Z), &batch_tiles)
-                    .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
-                    .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
-                    .walk(&[(K, stage_k)]);
-            },
-        )
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::axes(&axes)
+        .level(|l| {
+            l.distribute(cubes(CubeAxis::Z), &batch_tiles)
+                .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
+                .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
+                .walk(&[(K, stage_k)]);
+        })
+        .level(|l| {
             l.distribute(planes(), &[(M, c.m * i.m)])
                 .distribute(planes(), &[(N, c.n * i.n)])
                 .walk(&batch_tiles)
                 .walk(&[(K, stage_k)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.walk(&batch_tiles)
                 .walk(&[(M, c.m * i.m), (N, c.n * i.n), (K, i.k)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.walk(&batch_tiles).walk(&[(M, i.m), (N, i.n), (K, i.k)]);
         })
         .build()

@@ -1,106 +1,42 @@
-//! Lowering `c.mm(a, b)` and `c.mma(a, b)`: at a final tile, the leaf dispatch ([`mma_leaf`]);
-//! while levels remain, walk this level under its [`Buffering`]. One walk serves every level: what each operand costs
-//! is its own [`Residence`], and a level whose operands all stay put buffers a ring of slots that
-//! allocate nothing. An accumulator's register residency is read the same way, by
-//! [`accumulate`](Tile::accumulate) opening the scope it states, not by a lowering decision.
+//! `c.mm(a, b)` and `c.mma(a, b)` at a final tile: the leaf dispatch ([`mma_leaf`]) on the
+//! accumulator's form. The levels above the leaf are the kernel's own walk; nothing here
+//! recurses.
 //!
-//! The [`Semiring`] rides down the same way: the accumulation states its algebra once and every
-//! level hands the same one to the leaf that runs the steps.
+//! The [`Semiring`] states the accumulation's algebra once, at the call that runs the steps.
 
 use cubecl::prelude::*;
 
 use crate::instruction::registers::contract;
 use crate::*;
 
-/// A level that distributes work as one, walked as if every axis were dealt on its own, would
-/// give each instance the whole grid: the wrong answer computed once per instance. The share is
-/// the accumulator scope's ([`Tile::accumulate`]), because the scope is what changes.
-fn refuse_distributed_work(space: &Space) {
-    assert!(
-        space.partitioner().work().is_none(),
-        "Tile::mma: this level distributes its axes' work as one, so a contraction here is an \
-         instance's share of it rather than the whole grid's. Open the output's accumulator \
-         scope (`c.accumulate(..)`) and contract through it."
-    );
-}
-
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
-    /// `c = a · b`: contract at a final tile, else walk this level. `c` is a result, so nothing it
-    /// held before takes part. Where the leaf owns each output cell outright the register block
-    /// starts from the identity instead of reading `c` back, which for a short `kc` is a
-    /// measurable share of the leaf; where it does not, the seed happens here anyway.
+    /// `c = a · b` at a final register-resident tile (a plane fragment or a register block):
+    /// the identity, then [`mma`](Tile::mma). A memory accumulator states the block it runs
+    /// under instead ([`mm_with`](Tile::mm_with)).
     pub fn mm<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        let spans = self.contracts_whole_at_leaf(lhs, rhs);
-        let init_from = self.request_init_from(comptime!(spans));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
-        }
+        self.init_identity(comptime!(semiring.add()));
         self.mma(lhs, rhs, semiring);
-        self.request_init_from(comptime!(InitFrom::Cell));
     }
 
-    /// `c += a · b`: [`mm`](Tile::mm) with the accumulate its name carries. Folds onto whatever
-    /// `c` holds; nothing here initializes it. Also the recursion the walk re-enters per region,
-    /// deliberately: what the accumulation starts from is decided once at the top, since a
-    /// region's operands always span their own leaf and re-deciding would overwrite every step.
+    /// `c += a · b` at a final register-resident tile. Folds onto whatever `c` holds; nothing
+    /// here initializes it.
     pub fn mma<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        let partitioner = comptime!(self.space.partitioner().clone());
-        match comptime!(partitioner) {
-            Partitioner::Final => mma_leaf(self, lhs, rhs, semiring),
-            Partitioner::Level(level) => {
-                comptime!(refuse_distributed_work(&self.space));
-                let op_space = self.op_space(lhs, rhs);
-                self.mma_buffered(
-                    lhs,
-                    rhs,
-                    Walk::over(op_space),
-                    comptime!(level.buffering().depth()),
-                    semiring,
-                );
-            }
-        }
-    }
-
-    /// [`mma`](Tile::mma) over `steps` of this level's regions starting at `base`, not all of
-    /// them. What a streamed instance runs on one output tile: its share of that tile's
-    /// contraction is a range of the line, and the walk is where a range is said
-    /// ([`Walk::window`]). Everything under it is the contraction a whole region gets.
-    pub(crate) fn mma_window<Lhs: Numeric, Rhs: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        base: usize,
-        steps: usize,
-        #[comptime] semiring: Semiring,
-    ) {
-        let partitioner = comptime!(self.space.partitioner().clone());
-        match comptime!(partitioner) {
-            Partitioner::Final => {
-                panic!("Tile::mma_window: a final tile has no walk to take a range of")
-            }
-            Partitioner::Level(level) => {
-                let op_space = self.op_space(lhs, rhs);
-                self.mma_buffered(
-                    lhs,
-                    rhs,
-                    Walk::over(op_space).window(base, steps),
-                    comptime!(level.buffering().depth()),
-                    semiring,
-                );
-            }
-        }
+        comptime!(assert!(
+            self.space.is_final(),
+            "Tile::mma: the leaf contracts a final tile; walk the levels above it first"
+        ));
+        mma_leaf(self, lhs, rhs, semiring)
     }
 
     /// `c = (a ⊗ s) · b`, or `c = a · (b ⊗ s)`: [`mm`](Tile::mm) with one operand scaled by a
@@ -126,18 +62,11 @@ impl<Acc: Numeric> Tile<Acc> {
         scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
-        let spans = self.contracts_whole_at_leaf(lhs, rhs);
-        let init_from = self.request_init_from(comptime!(spans));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
-        }
+        self.init_identity(comptime!(semiring.add()));
         self.mma_scaled(lhs, rhs, scales, semiring);
-        self.request_init_from(comptime!(InitFrom::Cell));
     }
 
-    /// `c += (a ⊗ s) · b` (or its rhs twin): [`mma`](Tile::mma)'s scaled form, and the recursion
-    /// the walk re-enters per region.
+    /// `c += (a ⊗ s) · b` (or its rhs twin): [`mma`](Tile::mma)'s scaled form.
     pub fn mma_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -145,52 +74,22 @@ impl<Acc: Numeric> Tile<Acc> {
         scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
-        let partitioner = comptime!(self.space.partitioner().clone());
-        match comptime!(partitioner) {
-            Partitioner::Final => mma_leaf_scaled(self, lhs, rhs, scales, semiring),
-            Partitioner::Level(level) => {
-                let op_space = self.op_space(lhs, rhs);
-                self.mma_scaled_buffered(
-                    lhs,
-                    rhs,
-                    scales,
-                    Walk::over(op_space),
-                    comptime!(level.buffering().depth()),
-                    semiring,
-                );
-            }
-        }
-    }
-
-    /// Whether the final tile spans every contracted axis whole, so the walk above the leaf never
-    /// returns to a cell it has already written and the one visit that owns a cell may write it
-    /// outright.
-    fn contracts_whole_at_leaf<Lhs: Numeric, Rhs: Numeric>(
-        &self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-    ) -> comptime_type!(InitFrom) {
-        comptime!(match Space::merge(&[&lhs.space, &rhs.space])
-            .spans_contracted_at_leaf(&self.space)
-        {
-            true => InitFrom::Identity,
-            false => InitFrom::Cell,
-        })
+        comptime!(assert!(
+            self.space.is_final(),
+            "Tile::mma_scaled: the leaf contracts a final tile; walk the levels above it first"
+        ));
+        mma_leaf_scaled(self, lhs, rhs, scales, semiring)
     }
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
     /// [`witnesses`](Tile::witnesses) each [`Dynamic`](crate::Extent) axis. The output contributes
-    /// no axis beyond `lhs ∪ rhs`, which is why the schedules merge the same two.
+    /// no axis beyond `lhs ∪ rhs`. What a kernel walks at a level ([`Walk::over`]).
     ///
     /// The accumulator is asked for sizes all the same, and first: spanning an axis and being able
     /// to state its size are different things (a gathered operand's bound is the receptive field
     /// its axes reach over, so it answers for neither), and an axis the output spans is one it
     /// writes, so its bound is the extent the walk must cover.
-    pub fn op_space<Lhs: Numeric, Rhs: Numeric>(
-        &self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-    ) -> Space {
+    pub fn op_space<Lhs: Numeric, Rhs: Numeric>(&self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Space {
         let merged = comptime!({
             let merged = Space::merge(&[&lhs.space, &rhs.space]);
             assert!(
@@ -255,8 +154,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `c += (a ⊗ s) · b`, or its rhs twin, at a final memory tile through the software
-    /// instruction run under `config` ([`mma_scaled`](Tile::mma_scaled) for a kernel that walks
-    /// its own levels).
+    /// instruction run under `config`.
     pub fn mma_scaled_with<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -272,9 +170,9 @@ impl<Acc: Numeric> Tile<Acc> {
         ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                contract::memory_scaled::<Acc, Lhs, Rhs, S>(g, lhs, rhs, scales, space, config, semiring)
-            }
+            TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(
+                g, lhs, rhs, scales, space, config, semiring,
+            ),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -286,8 +184,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 }
 
-/// The leaf contraction `acc += lhs · rhs`. Dispatch is dynamic on the accumulator's comptime
-/// storage config
+/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form.
 #[cube]
 pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Tile<E>,
@@ -309,35 +206,21 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma(lhs, rhs, space, semiring)
         }
-        // A memory accumulator runs the software instruction, under the config the kernel bound
-        // on it. A plane-form accumulator that was never promoted lands in the arms above and
-        // meets their kind-pairing panics; there is no second declaration left to check this one
-        // against.
-        TileKind::Gmem(g) | TileKind::Smem(g) => {
-            let config = comptime!(match space.instruction() {
-                Some(Instruction::Registers { config }) => config,
-                Some(other) => panic!(
-                    "mma_leaf: a Gmem/Smem accumulator contracts in place through the software \
-                     instruction, but the space's instruction is {other:?}; state \
-                     Residence::Register on the output so its accumulator is register-resident"
-                ),
-                None => panic!(
-                    "mma_leaf: a Gmem/Smem accumulator contracts through the software \
-                     instruction; state it on the space with \
-                     `.instruction(Instruction::Registers {{ config }})`"
-                ),
-            });
-            contract::memory::<E, EL, ER>(g, lhs, rhs, space, config, semiring)
-        }
+        // A memory accumulator runs the software instruction under a register block the kernel
+        // states; this dispatch has none to hand it.
+        TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
+            "mma_leaf: a Gmem/Smem accumulator contracts through the software instruction, which \
+             runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
+        ),
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => panic!("mma: a procedural tile is not an accumulator sink"),
     }
 }
 
-/// [`mma_leaf`] with one operand scaled: the two accumulators that run the software instruction,
-/// in memory or promoted to registers, which are the forms whose step has a scale to apply. A
-/// fragment accumulator contracts through a hardware instruction that takes two operands and no
-/// scales, so a scaled contraction there is a different instruction, not this one under a flag.
+/// [`mma_leaf`] with one operand scaled, on a register-block accumulator, the form whose step
+/// has a scale to apply. A fragment accumulator contracts through a hardware instruction that
+/// takes two operands and no scales, so a scaled contraction there is a different instruction,
+/// not this one under a flag.
 #[cube]
 pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,
@@ -360,17 +243,11 @@ pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
             let mut t = p.at(0usize, 0usize);
             t.mma_scaled(lhs, rhs, scales, space, semiring)
         }
-        TileKind::Gmem(g) | TileKind::Smem(g) => {
-            let config = comptime!(match space.instruction() {
-                Some(Instruction::Registers { config }) => config,
-                other => panic!(
-                    "mma_leaf_scaled: a scaled contraction runs the software instruction; the \
-                     space's instruction is {other:?}. State \
-                     `.instruction(Instruction::Registers {{ config }})`"
-                ),
-            });
-            contract::memory_scaled::<E, EL, ER, S>(g, lhs, rhs, scales, space, config, semiring)
-        }
+        TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
+            "mma_leaf_scaled: a Gmem/Smem accumulator contracts through the software \
+             instruction, which runs under a register block; state it with \
+             Tile::mma_scaled_with(lhs, rhs, scales, config, semiring)"
+        ),
         TileKind::TmaGmem(_) => panic!("mma_scaled: a tma source is not an accumulator sink"),
         TileKind::Procedural(_) => {
             panic!("mma_scaled: a procedural tile is not an accumulator sink")
@@ -475,48 +352,4 @@ fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compt
         lhs.space.contracting(&out),
         rhs.space.contracting(&out)
     ));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::refuse_distributed_work;
-    use crate::{Axis, Buffering, CubeAxis, Space, Tiling, WalkOrder, cubes};
-
-    const M: Axis = Axis(0);
-    const N: Axis = Axis(1);
-    const K: Axis = Axis(2);
-
-    // Host-side, because a comptime panic raised in a kernel lands on a worker thread where
-    // `#[should_panic]` never sees it and the launch returns zeros.
-
-    fn space(distributed: bool) -> Space {
-        Tiling::over(&mut (), &[(M, 8), (N, 8), (K, 8)])
-            .level(
-                WalkOrder::RowMajor,
-                Buffering::SINGLE,
-                |l, _| match distributed {
-                    true => {
-                        l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
-                    }
-                    false => {
-                        l.walk(&[(M, 4), (N, 4), (K, 8)]);
-                    }
-                },
-            )
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                l.walk(&[(M, 4), (N, 4), (K, 4)]);
-            })
-            .build()
-    }
-
-    #[test]
-    #[should_panic = "distributes its axes' work as one"]
-    fn contracting_distributed_work_whole_is_refused() {
-        refuse_distributed_work(&space(true));
-    }
-
-    #[test]
-    fn contracting_a_level_dealt_per_axis_is_the_walk_it_always_was() {
-        refuse_distributed_work(&space(false));
-    }
 }

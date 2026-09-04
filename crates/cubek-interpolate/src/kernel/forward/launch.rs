@@ -5,12 +5,12 @@ use super::{
     geometry::TileGeometry,
     space::{self, CHANNEL},
 };
+use crate::InputStage;
 use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
-use crate::InputStage;
 use cubek_tile::{Geometry, Launcher};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.

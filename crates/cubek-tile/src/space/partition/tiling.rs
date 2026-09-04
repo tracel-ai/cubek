@@ -1,15 +1,15 @@
-//! A level-centric builder for a multi-level [`Space`]. [`Tiling::over`] threads the operands
-//! through, then one [`level`](OperandTiling::level) per decomposition: its walk order,
-//! buffering, who works on which axes ([`LevelCuts`]), and where each operand it materializes
-//! lives. Each level maps 1:1 to the [`Level`](super::Level) the [`Walk`](crate::Walk) consumes;
-//! no transpose.
+//! A level-centric builder for a multi-level [`Space`]: [`Tiling::over`] declares the axes and
+//! their extents, then one [`level`](Tiling::level) per decomposition states who works on which
+//! axes ([`LevelCuts`]), coarse to fine. Each level maps 1:1 to the [`Level`](super::Level) the
+//! [`Walk`](crate::Walk) consumes; no transpose.
+//!
+//! Geometry only. How a level is walked (its order, how deep its stages are buffered), where an
+//! operand is materialized and what runs on the cells are the kernel's to write, level by level,
+//! against this space.
 
-use crate::{Axis, ByAxis, Extent, Instruction, Space};
+use crate::{Axis, ByAxis, Extent, Space};
 
-use super::{
-    Buffering, ComputeScope, Distribution, Handout, OperandSet, Partitioner, Spatial, Spread,
-    WalkOrder, Work,
-};
+use super::{ComputeScope, Distribution, Handout, Partitioner, Spatial, Spread, Work};
 
 /// How one axis is cut at one level: the sub-tile `edge` and how that level hands the tiles out.
 ///
@@ -32,16 +32,11 @@ impl Cut {
     }
 }
 
-/// One decomposition level: its walk order, buffering, and the [`Cut`] for every axis.
+/// One decomposition level: the [`Cut`] for every axis, and the axes it distributes as one.
 struct LevelSpec {
-    order: WalkOrder,
-    buffering: Buffering,
     /// The axes this level distributes as one, if any ([`LevelCuts::distribute`]).
     work: Option<Work>,
     cuts: Vec<(Axis, Cut)>,
-    /// Whether any operand stated a residence here. A level that cuts nothing but moves an
-    /// operand is not null, so it is not droppable.
-    moves_an_operand: bool,
 }
 
 impl LevelSpec {
@@ -54,140 +49,68 @@ impl LevelSpec {
     }
 }
 
-/// The builder's entry point, and the only one: a space is always built over an operand set,
-/// even when that set is empty.
-pub struct Tiling;
+/// Builds a [`Space`] one level at a time. Start with [`over`](Tiling::over) (static extents)
+/// or [`axes`](Tiling::axes) (extents resolved in-kernel), add levels with
+/// [`level`](Tiling::level), then [`build`](Tiling::build).
+pub struct Tiling {
+    extents: Vec<(Axis, Extent)>,
+    levels: Vec<LevelSpec>,
+}
 
 impl Tiling {
-    /// Build a space together with its operands. `extents` declares every axis and its top extent,
-    /// fixing the canonical axis order; cuts may come in any order and are realigned to it. Each
-    /// level closure gets the cut collector and the operand set, so an operand's residence is
-    /// stated where the level is declared ([`Operand::stage`](crate::Operand::stage)) and a level
-    /// stating nothing leaves it in place. A space with no operand passes the empty set,
-    /// `Tiling::over(&mut (), …)`.
-    pub fn over<'o, O: OperandSet>(
-        operands: &'o mut O,
-        extents: &[(Axis, usize)],
-    ) -> OperandTiling<'o, O> {
-        OperandTiling {
+    /// Declare every axis and its top extent, fixing the canonical axis order; cuts may come in
+    /// any order and are realigned to it.
+    pub fn over(extents: &[(Axis, usize)]) -> Tiling {
+        Tiling {
             extents: extents
                 .iter()
                 .map(|&(axis, extent)| (axis, Extent::Static(extent)))
                 .collect(),
             levels: Vec::new(),
-            instruction: None,
-            operands,
         }
     }
 
     /// [`over`](Tiling::over) with every top extent [`Dynamic`](Extent::Dynamic): the kernel
     /// form, resolved in-kernel from the tensors, so one compiled kernel serves every shape. The
     /// launch stamps the real extents back on with [`Space::with_extents`].
-    pub fn axes<'o, O: OperandSet>(operands: &'o mut O, axes: &[Axis]) -> OperandTiling<'o, O> {
-        OperandTiling {
+    pub fn axes(axes: &[Axis]) -> Tiling {
+        Tiling {
             extents: axes.iter().map(|&axis| (axis, Extent::Dynamic)).collect(),
             levels: Vec::new(),
-            instruction: None,
-            operands,
         }
     }
-}
 
-/// Builds a [`Space`] one level at a time, carrying the operands each level places. Add levels
-/// with [`level`](Self::level), end the chain with [`instruction`](Self::instruction) where
-/// something contracts at the last one, then [`build`](Self::build).
-pub struct OperandTiling<'o, O> {
-    extents: Vec<(Axis, Extent)>,
-    levels: Vec<LevelSpec>,
-    instruction: Option<Instruction>,
-    operands: &'o mut O,
-}
-
-impl<O: OperandSet> OperandTiling<'_, O> {
     /// Add a decomposition level (coarse to fine): `f` states who works on which axes, on the
-    /// collector, and states, per operand it materializes, where it lives here
-    /// ([`Operand::stage`](crate::Operand::stage)).
-    pub fn level(
-        mut self,
-        order: WalkOrder,
-        buffering: Buffering,
-        f: impl FnOnce(&mut LevelCuts, &mut O),
-    ) -> Self {
+    /// collector. A level that cuts nothing is one region, and is kept: the kernel walks what
+    /// was stated, level for level.
+    pub fn level(mut self, f: impl FnOnce(&mut LevelCuts)) -> Self {
         let mut cuts = LevelCuts::new();
-        let index = self.levels.len();
-        f(&mut cuts, self.operands);
-        let moves_an_operand = self.operands.each().any(|o| o.stated_at(index));
-        for operand in self.operands.each() {
-            operand.close_level(index);
-        }
-        self.push(order, buffering, cuts.cuts, cuts.work, moves_an_operand);
+        f(&mut cuts);
+        self.push(cuts.cuts, cuts.work);
         self
     }
 
-    /// The last level, and what runs on the cells it cuts out. Walk order and buffering are
-    /// fixed: one cell has nothing below it to double-buffer and no siblings to order. A space
-    /// nothing contracts in ends with [`level`](Self::level) instead and states no instruction.
-    pub fn instruction(
-        mut self,
-        instruction: Instruction,
-        f: impl FnOnce(&mut LevelCuts, &mut O),
-    ) -> Self {
-        assert!(
-            self.instruction.is_none(),
-            "Tiling::instruction: stated once, already {:?}",
-            self.instruction
-        );
-        self.instruction = Some(instruction);
-        self.level(WalkOrder::RowMajor, Buffering::SINGLE, f)
-    }
-
-    /// Build the [`Space`]: the extents, the stack of levels that cut something, and what runs
-    /// once they are exhausted. The operands are the caller's own and stay theirs; this seals
-    /// them, so one residence per level stands and every later
-    /// [`stage`](crate::Operand::stage) panics.
+    /// Build the [`Space`]: the extents and the stack of levels.
     pub fn build(self) -> Space {
-        // A dropped level is one no operand stated anything at, so its stage is the padded
-        // `InPlace`; dropping it here keeps the residence column one entry per surviving level.
-        let kept = self.kept_levels();
         let mut space = Space::from_extents(&self.extents);
-        for (level, _) in self.levels.iter().zip(&kept).filter(|&(_, &keep)| keep) {
+        for level in &self.levels {
             let edges = self.edges(level);
             let dists: Vec<_> = self
                 .extents
                 .iter()
                 .map(|&(a, _)| (a, level.cut(a).dist))
                 .collect();
-            let builder = match level.order {
-                WalkOrder::RowMajor => {
-                    Partitioner::row_major(ByAxis::new(&edges), ByAxis::new(&dists))
-                }
-                WalkOrder::Reversed => {
-                    Partitioner::reversed(ByAxis::new(&edges), ByAxis::new(&dists))
-                }
-            };
-            space =
-                space.with_partitioner(builder.distributing(level.buffering, level.work.clone()));
+            space = space.with_partitioner(
+                Partitioner::new(ByAxis::new(&edges), ByAxis::new(&dists))
+                    .distributing(level.work.clone()),
+            );
         }
-        for operand in self.operands.each() {
-            operand.keep_levels(&kept);
-            operand.seal();
-        }
-        match self.instruction {
-            Some(instruction) => space.with_instruction(instruction),
-            None => space,
-        }
+        space
     }
 
     /// Close `cuts` into a level. They must cover exactly the declared axes (any order);
     /// [`build`](Self::build) realigns them to the extents' canonical order.
-    fn push(
-        &mut self,
-        order: WalkOrder,
-        buffering: Buffering,
-        cuts: Vec<(Axis, Cut)>,
-        work: Option<Work>,
-        moves_an_operand: bool,
-    ) {
+    fn push(&mut self, cuts: Vec<(Axis, Cut)>, work: Option<Work>) {
         // Per axis first: it names the one that is wrong, where the count only says the total
         // is off.
         for &(axis, _) in &self.extents {
@@ -206,57 +129,10 @@ impl<O: OperandSet> OperandTiling<'_, O> {
             cuts.len(),
             self.extents.len()
         );
-        self.levels.push(LevelSpec {
-            order,
-            buffering,
-            work,
-            cuts,
-            moves_an_operand,
-        });
+        self.levels.push(LevelSpec { work, cuts });
     }
 
-    /// Which levels [`build`](Self::build) keeps, one flag per declared level. A level cutting
-    /// nothing is dropped: the [`Space`] is the kernel-cache key, so keeping it compiles the same
-    /// program twice. Five things keep one anyway: a deeper pipeline than its parent, work it
-    /// distributes as one, an operand moving here, the instruction it carries, and being the only
-    /// level left, which is not a fallback but the difference between a tile and its cell.
-    fn kept_levels(&self) -> Vec<bool> {
-        // The extents handed to the next level: the top extents, then each kept level's edges.
-        // Nothing is staged above the first level, so its parent buffers once. A `Dynamic` top
-        // extent is never equal to an edge, so the first level under one is always kept.
-        let mut parent = self.extents.clone();
-        let mut parent_buffering = Buffering::SINGLE;
-        let mut kept_any = false;
-        let last = self.levels.len().saturating_sub(1);
-
-        self.levels
-            .iter()
-            .enumerate()
-            .map(|(index, level)| {
-                let edges: Vec<_> = self
-                    .edges(level)
-                    .into_iter()
-                    .map(|(axis, edge)| (axis, Extent::Static(edge)))
-                    .collect();
-                let last_standing = index == last && !kept_any;
-                let keep = edges != parent
-                    || level.buffering != parent_buffering
-                    || level.work.is_some()
-                    || level.moves_an_operand
-                    || (self.instruction.is_some() && index == last)
-                    || last_standing;
-                if keep {
-                    parent = edges;
-                    parent_buffering = level.buffering;
-                    kept_any = true;
-                }
-                keep
-            })
-            .collect()
-    }
-
-    /// One level's sub-tile edges, realigned to the canonical (extents) axis order, which is
-    /// what makes them comparable to the extents handed down.
+    /// One level's sub-tile edges, realigned to the canonical (extents) axis order.
     fn edges(&self, level: &LevelSpec) -> Vec<(Axis, usize)> {
         self.extents
             .iter()
@@ -268,9 +144,6 @@ impl<O: OperandSet> OperandTiling<'_, O> {
 /// Collects what one level says, in two verbs: [`distribute`](Self::distribute) hands some axes'
 /// regions to a hardware scope's workers, [`walk`](Self::walk) leaves the rest to every one of
 /// them. Between them they name each of the space's axes exactly once.
-///
-/// `&mut` receivers, so in a [`Tiling::over`] closure the two read as peer lines beside the
-/// operands' [`stage`](crate::Operand::stage) statements.
 pub struct LevelCuts {
     cuts: Vec<(Axis, Cut)>,
     work: Option<Work>,
@@ -309,10 +182,8 @@ impl LevelCuts {
     /// inside another is not one.
     ///
     /// That index runs over these axes' tiles at this level and one region of the level below, so
-    /// a share can end part way through a region's own work. Where that region is an output tile
-    /// and the level below walks the contraction, several workers end up holding pieces of the
-    /// same cell, and the destination folds them exactly as it does under a dial
-    /// ([`SplitShare`](crate::SplitShare)).
+    /// a share can end part way through a region's own work ([`Walk::window`](crate::Walk::window)
+    /// is how a kernel takes its share).
     ///
     /// An axis named here is not named by [`walk`](Self::walk): a level states each of its axes
     /// once.

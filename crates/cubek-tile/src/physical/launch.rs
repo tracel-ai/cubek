@@ -7,8 +7,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource,
-    Unset,
+    Axis, ComputeScope, CubeAxis, Geometry, Set, Space, StridedOperand, StridedTileSource, Unset,
 };
 
 impl Space {
@@ -144,18 +143,7 @@ impl<'c, R: Runtime> Launcher<'c, R> {
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
-    /// [`arg`](Self::arg) driven by a sealed [`Operand`]: the subspace is the operand's axes
-    /// and the per-level residences its stages, stated once where the levels were declared, so
-    /// neither can drift from the space the way a hand-passed array can.
-    pub fn bind<'a>(
-        &'a self,
-        operand: &'a Operand,
-        binding: TensorBinding<R>,
-    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
-        self.arg(binding).subspace(operand.axes()).operand(operand)
-    }
-
-    /// [`bind`](Self::bind) over a stated geometry rather than a binding, for an operand with no
+    /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
     /// tensor: the destination a fused store writes through
     /// ([`Tile::of_sink`](crate::Tile::of_sink)) or the producer a fused read comes from
     /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is the physical extents and
@@ -166,17 +154,11 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// [`build`](StridedTileSource::build): there is no tensor to ship, and the *settled* geometry
     /// comes back beside the spec. The two part company where a broadcast batch dim is dropped,
     /// which is why the settled one travels rather than the call site reproducing the drop.
-    pub fn bind_geometry<'a>(
-        &'a self,
-        operand: &'a Operand,
-        geometry: &Geometry,
-    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
+    pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset, R> {
         StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
-            .subspace(operand.axes())
-            .operand(operand)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for

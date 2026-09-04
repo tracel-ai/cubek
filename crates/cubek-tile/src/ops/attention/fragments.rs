@@ -34,12 +34,7 @@ impl<EA: Float> Tile<EA> {
     /// Fragments whose columns all lie at or past `cols_bound` are skipped, their cells left to
     /// the softmax's mask probe. A fragment straddling the bound is computed whole, so the block
     /// the caller hands over must be readable to its edge.
-    pub fn score_fragments<EI: Numeric>(
-        &mut self,
-        q: &Tile<EI>,
-        k: &Tile<EI>,
-        cols_bound: usize,
-    ) {
+    pub fn score_fragments<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
         let mma = comptime!(Contraction::of(
             Matmul::Score,
             &self.space,
@@ -320,8 +315,8 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
             _ => (axis, extent),
         })
         .collect();
-    Tiling::over(&mut (), &extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&extents)
+        .level(|l| {
             l.walk(&cuts);
         })
         .build()

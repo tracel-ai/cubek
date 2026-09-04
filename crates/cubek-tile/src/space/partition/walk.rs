@@ -129,7 +129,7 @@ impl Walk {
             scales,
             base: 0usize,
             steps,
-            order: comptime!(space.partitioner().order()),
+            order: comptime!(WalkOrder::RowMajor),
             space,
             unroll: comptime!(false),
         }
@@ -201,7 +201,9 @@ impl Walk {
 
     /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
-        let idx = self.base.fadd(walk_index(i, self.steps, comptime!(self.order)));
+        let idx = self
+            .base
+            .fadd(walk_index(i, self.steps, comptime!(self.order)));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
@@ -291,6 +293,13 @@ impl Iterable for WalkExpand {
         RangeExpand::new(start, total).expand_unroll(scope, |scope, i| {
             body(scope, self.__expand_region_method(scope, i));
         });
+    }
+
+    /// The region count when it folds to a constant, which is what lets `for region in walk`
+    /// drop the loop around a single region: a level that cuts nothing is one region, walked
+    /// straight through rather than under a one-trip loop.
+    fn const_len(&self) -> Option<usize> {
+        crate::fold::constant(&self.steps).map(|n| n as usize)
     }
 }
 

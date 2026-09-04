@@ -2,8 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, Monoid, RegisterBlock, Semiring, Space, TileArg, Tiling, Walk,
-    WalkOrder, cubes, planes,
+    Axis, CubeAxis, Monoid, RegisterBlock, Semiring, Space, TileArg, Tiling, Walk, cubes, planes,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -25,14 +24,14 @@ pub fn cpu_gemm_space(bp: &CpuGemmBlueprint, batch: &[Axis], k: usize) -> Space 
     let batch_tiles: Vec<_> = batch.iter().map(|&a| (a, 1)).collect();
     let axes: Vec<_> = batch.iter().copied().chain([M, N, K]).collect();
 
-    Tiling::axes(&mut (), &axes)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::axes(&axes)
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &batch_tiles)
                 .distribute(cubes(CubeAxis::X), &[(M, cube_m)])
                 .distribute(cubes(CubeAxis::Y), &[(N, cube_n)])
                 .walk(&[(K, k)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(planes(), &[(M, leaf.m)])
                 .distribute(planes(), &[(N, leaf.n)])
                 .walk(&batch_tiles)

@@ -94,9 +94,6 @@ impl<T: Numeric> Tile<T> {
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        // The engine's own backstop: the builder checks this too, but a hand-built
-        // `QuantTileArgLaunch` reaches here without passing through it.
-        comptime!(validate_dequant_at(dequant_at, space.instruction()));
         comptime!(cubecl::std::quant::check_table_bindings(
             &scheme,
             table.is_some()
@@ -298,7 +295,6 @@ impl<T: Numeric> Tile<T> {
             "Tile::of: the projection addresses {physical_rank} physical dims but {dims_given} \
              were given"
         ));
-        let stage = comptime!(spec.stage_plan(space.instruction()));
         // How the buffer holds its values: what a quantized operand's scheme says, else what the
         // spec states. One statement, whichever door minted it, so nothing below asks twice.
         let packing = #[comptime]
@@ -322,7 +318,6 @@ impl<T: Numeric> Tile<T> {
         // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
         // and the space are both in hand.
         comptime!(projection.validate_composition(|axis| space.extent(axis)));
-        comptime!(spec.validate_stage_width(vector_size, packing != Packing::Plain));
         let coord_rank = comptime!(projection.coordinate_rank());
         comptime!(assert!(
             spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
@@ -410,7 +405,7 @@ impl<T: Numeric> Tile<T> {
                         Overhang::Fits
                     },
                     write,
-                    stage,
+                    units: spec.units,
                 }),
                 lanes: comptime!(Lanes {
                     share: LaneShare::Whole,

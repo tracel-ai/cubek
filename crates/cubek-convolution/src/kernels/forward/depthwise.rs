@@ -85,31 +85,28 @@ impl DepthwiseSpace {
             width,
             plane_size,
         } = *self;
-        Tiling::over(
-            &mut (),
-            &[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)],
-        )
-        // The channel axis takes X so that the fastest-moving cube index is the one memory is
-        // contiguous along.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
-                .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
-                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                .walk(&[(RH, rh), (RW, rw)]);
-        })
-        // Rows across the cube's planes, channels across each plane's lanes. Columns stay
-        // sequential: they are the register block, not a split.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            // Round-robin, so a lane holding several channel lines takes every
-            // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
-            // between what neighbouring lanes read and breaks the coalescing the whole NHWC
-            // layout is for.
-            l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
-                .distribute(planes(), &[(OH, 1)])
-                .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
-        })
-        .build()
+        Tiling::over(&[(B, b), (OH, oh), (OW, ow), (C, c), (RH, rh), (RW, rw)])
+            // The channel axis takes X so that the fastest-moving cube index is the one memory is
+            // contiguous along.
+            .level(|l| {
+                l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
+                    .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
+                    .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
+                    .distribute(cubes(CubeAxis::Z), &[(B, 1)])
+                    .walk(&[(RH, rh), (RW, rw)]);
+            })
+            // Rows across the cube's planes, channels across each plane's lanes. Columns stay
+            // sequential: they are the register block, not a split.
+            .level(|l| {
+                // Round-robin, so a lane holding several channel lines takes every
+                // `plane_size`-th rather than a contiguous run: a contiguous run puts a stride
+                // between what neighbouring lanes read and breaks the coalescing the whole NHWC
+                // layout is for.
+                l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
+                    .distribute(planes(), &[(OH, 1)])
+                    .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
+            })
+            .build()
     }
 }
 
@@ -272,7 +269,13 @@ impl DepthwiseTiling {
 
     /// The space this tiling implies for a problem of these extents, in the form the kernel
     /// builds it from.
-    fn plan(&self, geometry: &Geometry, lanes: usize, tile_c: usize, width: usize) -> DepthwiseSpace {
+    fn plan(
+        &self,
+        geometry: &Geometry,
+        lanes: usize,
+        tile_c: usize,
+        width: usize,
+    ) -> DepthwiseSpace {
         DepthwiseSpace {
             b: geometry.b,
             oh: geometry.oh,

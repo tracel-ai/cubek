@@ -82,10 +82,9 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
 
     let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
     let expected = references::tiled_matmul(m, n, k, tile);
-    let (_, expected) =
-        TestInput::builder(client, shape![m / tile, n / tile, tile, tile])
-            .custom(expected)
-            .generate_with_f32_host_data();
+    let (_, expected) = TestInput::builder(client, shape![m / tile, n / tile, tile, tile])
+        .custom(expected)
+        .generate_with_f32_host_data();
     assert_equals_approx(&output, &expected, 1e-3)
         .as_test_outcome()
         .enforce()

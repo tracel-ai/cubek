@@ -2,7 +2,7 @@
 
 use cubecl::{TestRuntime, prelude::*};
 use cubek_interpolate::{
-    InterpolateBlueprint, InterpolateStrategy, InputStage,
+    InputStage, InterpolateBlueprint, InterpolateStrategy,
     definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,

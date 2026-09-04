@@ -13,19 +13,18 @@ use cubek_tile::*;
 
 use super::problem::TileQuantStageProblem;
 
-/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
-/// fan-out. Bound on the accumulator at the kernel top so the numbers measure the staging, not
-/// the instruction.
-const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64),
-};
 use super::strategy::StageDepth;
+
+/// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
+/// fan-out, so the numbers measure the staging, not the instruction.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 
-/// `C = A · dequant(B)`, `B` the packed weight: the staged lowering picks the stage form.
+/// `C = A · dequant(B)`, `B` the packed weight staged in its stored form: both inputs stage
+/// into shared memory per cube region, the plane's lanes read windows of the stage.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>(
@@ -38,8 +37,23 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    c.mma(&a, &b, Semiring::SUM_PROD);
+    let c = c.tile(space);
+    let cubes = Walk::over(c.op_space(&a, &b));
+    let mut ring = Ring::smem(&cubes, &a, &b, StageStorage::Strided, 1usize);
+    pipelined(cubes, &mut ring, |slot, region| {
+        let c_cube = c.at(region);
+        slot.consume(|a_s, b_s| {
+            for lane in Walk::over(c_cube.op_space(a_s, b_s)) {
+                let mut c_lane = c_cube.at(&lane);
+                c_lane.mma_with(
+                    &a_s.at(&lane),
+                    &b_s.at(&lane),
+                    REGISTER_BLOCK,
+                    Semiring::SUM_PROD,
+                );
+            }
+        });
+    });
 }
 
 /// The packed-weight scheme this bench quantizes `B` under: `Q8S`, block size `1 × bn`
@@ -109,32 +123,23 @@ struct TileQuantStageBench {
 impl TileQuantStageBench {
     /// L0 stages one `m × tn × tk` cube tile; L1 spreads that tile's `N` across the plane's lanes,
     /// one served line each, so the leaf is `mr = m`, `nr = 1`: unrolled while `m <= 64` (the
-    /// `mr·nr` cliff), keeping the unroll state constant as depth varies. Both inputs state
-    /// their shared stage where L0 is declared: L0 fills it, L1 reads windows of it, which is
-    /// the staging this bench measures. The output stages nothing.
-    fn space(&self) -> (Space, (Operand, Operand, Operand)) {
+    /// `mr·nr` cliff), keeping the unroll state constant as depth varies. The kernel stages both
+    /// inputs at L0 and reads windows of the stage at L1, which is the staging this bench
+    /// measures. The output stages nothing.
+    fn space(&self) -> Space {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         let tn = plane_size * un;
-        let f32t = f32::elem_type_native();
-        let mut operands = (
-            Operand::new(&[M, K], f32t),
-            Operand::new(&[K, N], f32t),
-            Operand::new(&[M, N], f32t),
-        );
-        let space = Tiling::over(&mut operands, &[(M, self.m), (N, self.n), (K, self.k)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        Tiling::over(&[(M, self.m), (N, self.n), (K, self.k)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X), &[(N, tn)])
                     .walk(&[(M, self.m), (K, self.tk)]);
-                o.0.stage(Residence::Smem);
-                o.1.stage(Residence::Smem);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            .level(|l| {
                 l.distribute(lanes(plane_size), &[(N, un)])
                     .walk(&[(M, self.m), (K, self.tk)]);
             })
-            .build();
-        (space, operands)
+            .build()
     }
 }
 
@@ -144,7 +149,7 @@ impl Benchmark for TileQuantStageBench {
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let (space, _) = self.space();
+        let space = self.space();
         let a = TileInput::builder(&self.client, space.project(&[M, K]))
             .untiled()
             .arange();
@@ -160,17 +165,19 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let (space, ops) = self.space();
-        let launcher = space.launcher(&self.client);
-        let a = launcher.bind(&ops.0, a.handle().binding()).build();
+        let space = self.space();
+        let launcher = Launcher::new(&self.client, space, &[]);
+        let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
         let b = launcher
-            .bind(&ops.1, b.tile.handle().binding())
+            .arg(b.tile.handle().binding())
+            .subspace(&[K, N])
             .vectorize(self.pack)
             .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
             .build();
         // The register instruction lines the accumulator at the RHS's served width.
         let c = launcher
-            .bind(&ops.2, c.handle().binding())
+            .arg(c.handle().binding())
+            .subspace(&[M, N])
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
@@ -184,7 +191,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.space().clone().with_instruction(INSTRUCTION),
+            launcher.space().clone(),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

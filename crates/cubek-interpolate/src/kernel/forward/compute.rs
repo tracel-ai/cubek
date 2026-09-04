@@ -2,8 +2,8 @@ use super::{
     filter::{SeparableFilter, SeparableFilterFamily, SeparableWeights, TapDistance},
     space::*,
 };
-use cubecl::{ir::ElemType, prelude::*};
 use crate::InputStage;
+use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
     Axis, Phase, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg, Walk, affine_along,
     pipelined, separable_product, sum_of,

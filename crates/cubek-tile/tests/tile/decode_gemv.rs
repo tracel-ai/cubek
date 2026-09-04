@@ -164,10 +164,7 @@ fn serving_geometry(promoted: bool) {
         // stored word each along `KI`, so a step reads one contiguous span of the block.
         .instruction(Instruction::registers(rows_per_lane * factor), |l, _| {
             l.distribute(lanes(groups), &[(M, rows_per_lane)])
-                .distribute(
-                    lanes(group_lanes).interleaved(),
-                    &[(KI, factor)],
-                )
+                .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
                 .walk(&[(N, n), (KB, 1)]);
         })
         .build();
