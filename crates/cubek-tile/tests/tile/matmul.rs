@@ -650,9 +650,9 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for plane in Walk::over(acc_o.op_space(a_s, b_s)) {
-                let mut acc_p = acc_o.at(&plane);
-                acc_p.mma(&a_s.at(&plane), &b_s.at(&plane), Semiring::SUM_PROD);
+            for region in Walk::over(acc_o.op_space(a_s, b_s)) {
+                let mut acc_p = acc_o.at(&region);
+                acc_p.mma(&a_s.at(&region), &b_s.at(&region), Semiring::SUM_PROD);
             }
         });
     });
@@ -681,10 +681,10 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for plane in Walk::over(acc_o.op_space(a_s, b_s)) {
-                let acc_p = acc_o.at(&plane);
-                let a_p = a_s.at(&plane);
-                let b_p = b_s.at(&plane);
+            for region in Walk::over(acc_o.op_space(a_s, b_s)) {
+                let acc_p = acc_o.at(&region);
+                let a_p = a_s.at(&region);
+                let b_p = b_s.at(&region);
                 for frag in Walk::over(acc_p.op_space(&a_p, &b_p)).unrolled() {
                     let mut acc_f = acc_p.at(&frag);
                     acc_f.mma(&a_p.at(&frag), &b_p.at(&frag), Semiring::SUM_PROD);
@@ -718,10 +718,10 @@ fn cmma_matmul_five_levels<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for plane in Walk::over(acc_o.op_space(a_s, b_s)) {
-                let acc_p = acc_o.at(&plane);
-                let a_p = a_s.at(&plane);
-                let b_p = b_s.at(&plane);
+            for region in Walk::over(acc_o.op_space(a_s, b_s)) {
+                let acc_p = acc_o.at(&region);
+                let a_p = a_s.at(&region);
+                let b_p = b_s.at(&region);
                 for step in Walk::over(acc_p.op_space(&a_p, &b_p)) {
                     let acc_k = acc_p.at(&step);
                     let a_k = a_p.at(&step);

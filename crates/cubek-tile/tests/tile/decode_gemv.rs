@@ -56,22 +56,22 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
     out.zero();
-    for cube in Walk::over(out.op_space(&w, &x)) {
-        let out_cube = out.at(&cube);
-        let w_cube = w.at(&cube);
-        let x_cube = x.at(&cube);
-        let scales_cube = at_all(&scales, &cube);
-        for plane in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
-            let out_plane = out_cube.at(&plane);
-            let w_plane = w_cube.at(&plane);
-            let x_plane = x_cube.at(&plane);
-            let scales_plane = at_all(&scales_cube, &plane);
-            for lane in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
-                let mut out_lane = out_plane.at(&lane);
+    for region in Walk::over(out.op_space(&w, &x)) {
+        let out_cube = out.at(&region);
+        let w_cube = w.at(&region);
+        let x_cube = x.at(&region);
+        let scales_cube = at_all(&scales, &region);
+        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
+            let out_plane = out_cube.at(&region);
+            let w_plane = w_cube.at(&region);
+            let x_plane = x_cube.at(&region);
+            let scales_plane = at_all(&scales_cube, &region);
+            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
+                let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane),
-                    &at_all(&scales_plane, &lane),
+                    &w_plane.at(&region),
+                    &x_plane.at(&region),
+                    &at_all(&scales_plane, &region),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -106,22 +106,22 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut acc =
         out.block_accumulator::<E, E>(&w, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
     acc.zero();
-    for cube in Walk::over(acc.op_space(&w, &x)) {
-        let acc_cube = acc.at(&cube);
-        let w_cube = w.at(&cube);
-        let x_cube = x.at(&cube);
-        let scales_cube = at_all(&scales, &cube);
-        for plane in Walk::over(acc_cube.op_space(&w_cube, &x_cube)) {
-            let acc_plane = acc_cube.at(&plane);
-            let w_plane = w_cube.at(&plane);
-            let x_plane = x_cube.at(&plane);
-            let scales_plane = at_all(&scales_cube, &plane);
-            for lane in Walk::over(acc_plane.op_space(&w_plane, &x_plane)) {
-                let mut acc_lane = acc_plane.at(&lane);
+    for region in Walk::over(acc.op_space(&w, &x)) {
+        let acc_cube = acc.at(&region);
+        let w_cube = w.at(&region);
+        let x_cube = x.at(&region);
+        let scales_cube = at_all(&scales, &region);
+        for region in Walk::over(acc_cube.op_space(&w_cube, &x_cube)) {
+            let acc_plane = acc_cube.at(&region);
+            let w_plane = w_cube.at(&region);
+            let x_plane = x_cube.at(&region);
+            let scales_plane = at_all(&scales_cube, &region);
+            for region in Walk::over(acc_plane.op_space(&w_plane, &x_plane)) {
+                let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane),
-                    &at_all(&scales_plane, &lane),
+                    &w_plane.at(&region),
+                    &x_plane.at(&region),
+                    &at_all(&scales_plane, &region),
                     Semiring::SUM_PROD,
                 );
             }

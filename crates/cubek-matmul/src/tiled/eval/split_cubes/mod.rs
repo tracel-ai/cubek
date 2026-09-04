@@ -65,11 +65,11 @@ fn plain_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let mut c_cube = c.at(&cube);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
         c_cube.mm_with(
-            &a.at(&cube),
-            &b.at(&cube),
+            &a.at(&region),
+            &b.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -88,11 +88,11 @@ fn atomic_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(space);
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let mut c_cube = c.at(&cube);
-        let a_cube = a.at(&cube);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
+        let a_cube = a.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, REGISTER_BLOCK, Monoid::Sum);
-        acc.mm(&a_cube, &b.at(&cube), Semiring::SUM_PROD);
+        acc.mm(&a_cube, &b.at(&region), Semiring::SUM_PROD);
         acc.drain_cast_into(&mut c_cube);
     }
 }
@@ -110,15 +110,15 @@ fn atomic_matmul_lanes<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(space);
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let mut c_cube = c.at(&cube);
-        let a_cube = a.at(&cube);
-        let b_cube = b.at(&cube);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
+        let a_cube = a.at(&region);
+        let b_cube = b.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.zero();
-        for lane in Walk::over(acc.op_space(&a_cube, &b_cube)) {
-            let mut acc_lane = acc.at(&lane);
-            acc_lane.mma(&a_cube.at(&lane), &b_cube.at(&lane), Semiring::SUM_PROD);
+        for region in Walk::over(acc.op_space(&a_cube, &b_cube)) {
+            let mut acc_lane = acc.at(&region);
+            acc_lane.mma(&a_cube.at(&region), &b_cube.at(&region), Semiring::SUM_PROD);
         }
         acc.drain_cast_into(&mut c_cube);
     }
@@ -133,9 +133,9 @@ fn fold_splits<E: Numeric>(
 ) {
     let partials = partials.tile(comptime!(space.clone()));
     let out = out.tile(space);
-    for cube in Walk::over(out.reduce_space(&partials)) {
-        let mut out_cube = out.at(&cube);
-        out_cube.reduce_axis(&partials.at(&cube), Monoid::Sum);
+    for region in Walk::over(out.reduce_space(&partials)) {
+        let mut out_cube = out.at(&region);
+        out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
 }
 

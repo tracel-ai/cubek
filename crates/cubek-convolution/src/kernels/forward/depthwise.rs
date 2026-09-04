@@ -134,10 +134,10 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(space);
 
-    for cube in Walk::over(out.op_space(&weight, &input)) {
-        let out_cube = out.at(&cube);
-        let weight_cube = weight.at(&cube);
-        let input_cube = input.at(&cube);
+    for region in Walk::over(out.op_space(&weight, &input)) {
+        let out_cube = out.at(&region);
+        let weight_cube = weight.at(&region);
+        let input_cube = input.at(&region);
         for cell in Walk::over(out_cube.op_space(&weight_cube, &input_cube)) {
             let mut out_cell = out_cube.at(&cell);
             out_cell.mm_with(

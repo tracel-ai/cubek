@@ -98,10 +98,10 @@ pub fn cmma_kernel<
         let acc_stage = acc.at(stage);
         slot.consume(|a_s, b_s| {
             // This plane's box of the stage.
-            for plane in Walk::over(acc_stage.op_space(a_s, b_s)) {
-                let acc_plane = acc_stage.at(&plane);
-                let a_p = a_s.at(&plane);
-                let b_p = b_s.at(&plane);
+            for region in Walk::over(acc_stage.op_space(a_s, b_s)) {
+                let acc_plane = acc_stage.at(&region);
+                let a_p = a_s.at(&region);
+                let b_p = b_s.at(&region);
                 // The instruction's K steps through the box, the operands loaded into
                 // fragments per step.
                 for step in Walk::over(acc_plane.op_space(&a_p, &b_p)).unrolled() {

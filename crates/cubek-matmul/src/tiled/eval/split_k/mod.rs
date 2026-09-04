@@ -73,11 +73,11 @@ fn split_k_matmul_one_level<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let mut c_cube = c.at(&cube);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
         c_cube.mma_with(
-            &a.at(&cube),
-            &b.at(&cube),
+            &a.at(&region),
+            &b.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -97,15 +97,15 @@ fn split_k_matmul_two_levels<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(space);
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let c_cube = c.at(&cube);
-        let a_cube = a.at(&cube);
-        let b_cube = b.at(&cube);
-        for lane in Walk::over(c_cube.op_space(&a_cube, &b_cube)) {
-            let mut c_lane = c_cube.at(&lane);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let c_cube = c.at(&region);
+        let a_cube = a.at(&region);
+        let b_cube = b.at(&region);
+        for region in Walk::over(c_cube.op_space(&a_cube, &b_cube)) {
+            let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
-                &a_cube.at(&lane),
-                &b_cube.at(&lane),
+                &a_cube.at(&region),
+                &b_cube.at(&region),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
             );

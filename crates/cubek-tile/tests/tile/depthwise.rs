@@ -52,15 +52,15 @@ fn depthwise_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(space);
-    for cube in Walk::over(out.op_space(&input, &weight)) {
-        let out_cube = out.at(&cube);
-        let input_cube = input.at(&cube);
-        let weight_cube = weight.at(&cube);
-        for plane in Walk::over(out_cube.op_space(&input_cube, &weight_cube)) {
-            let mut out_plane = out_cube.at(&plane);
+    for region in Walk::over(out.op_space(&input, &weight)) {
+        let out_cube = out.at(&region);
+        let input_cube = input.at(&region);
+        let weight_cube = weight.at(&region);
+        for region in Walk::over(out_cube.op_space(&input_cube, &weight_cube)) {
+            let mut out_plane = out_cube.at(&region);
             out_plane.mm_with(
-                &input_cube.at(&plane),
-                &weight_cube.at(&plane),
+                &input_cube.at(&region),
+                &weight_cube.at(&region),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
             );

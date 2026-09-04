@@ -42,11 +42,11 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     pipelined(cubes, &mut ring, |slot, region| {
         let c_cube = c.at(region);
         slot.consume(|a_s, b_s| {
-            for lane in Walk::over(c_cube.op_space(a_s, b_s)) {
-                let mut c_lane = c_cube.at(&lane);
+            for region in Walk::over(c_cube.op_space(a_s, b_s)) {
+                let mut c_lane = c_cube.at(&region);
                 c_lane.mma_with(
-                    &a_s.at(&lane),
-                    &b_s.at(&lane),
+                    &a_s.at(&region),
+                    &b_s.at(&region),
                     REGISTER_BLOCK,
                     Semiring::SUM_PROD,
                 );

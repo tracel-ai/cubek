@@ -50,11 +50,11 @@ fn split_partials<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let partials = partials.tile(space);
-    for cube in Walk::over(partials.op_space(&a, &b)) {
-        let mut partials_cube = partials.at(&cube);
+    for region in Walk::over(partials.op_space(&a, &b)) {
+        let mut partials_cube = partials.at(&region);
         partials_cube.mm_with(
-            &a.at(&cube),
-            &b.at(&cube),
+            &a.at(&region),
+            &b.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -71,9 +71,9 @@ fn reduce_splits<E: Numeric>(
 ) {
     let partials = partials.tile(comptime!(space.clone()));
     let out = out.tile(space);
-    for cube in Walk::over(out.reduce_space(&partials)) {
-        let mut out_cube = out.at(&cube);
-        out_cube.reduce_axis(&partials.at(&cube), Monoid::Sum);
+    for region in Walk::over(out.reduce_space(&partials)) {
+        let mut out_cube = out.at(&region);
+        out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
 }
 

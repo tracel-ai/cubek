@@ -107,24 +107,24 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     out.zero();
 
     // This cube's strip of rows.
-    for cube in Walk::over(out.op_space(&w, &x)) {
-        let out_cube = out.at(&cube);
-        let w_cube = w.at(&cube);
-        let x_cube = x.at(&cube);
-        let scales_cube = at_all(&scale_tiles, &cube);
+    for region in Walk::over(out.op_space(&w, &x)) {
+        let out_cube = out.at(&region);
+        let w_cube = w.at(&region);
+        let x_cube = x.at(&region);
+        let scales_cube = at_all(&scale_tiles, &region);
         // This plane's group of rows.
-        for plane in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
-            let out_plane = out_cube.at(&plane);
-            let w_plane = w_cube.at(&plane);
-            let x_plane = x_cube.at(&plane);
-            let scales_plane = at_all(&scales_cube, &plane);
+        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
+            let out_plane = out_cube.at(&region);
+            let w_plane = w_cube.at(&region);
+            let x_plane = x_cube.at(&region);
+            let scales_plane = at_all(&scales_cube, &region);
             // This lane's rows against its share of the contraction.
-            for lane in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
-                let mut out_lane = out_plane.at(&lane);
-                let scales_lane = at_all(&scales_plane, &lane);
+            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
+                let mut out_lane = out_plane.at(&region);
+                let scales_lane = at_all(&scales_plane, &region);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane),
+                    &w_plane.at(&region),
+                    &x_plane.at(&region),
                     &scales_lane,
                     config,
                     Semiring::SUM_PROD,

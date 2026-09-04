@@ -111,10 +111,10 @@ fn interpolate_block<E: Float>(
     input: &Tile<E>,
     #[comptime] config: RegisterBlock,
 ) {
-    for plane in Walk::over(output.op_space(weights, input)) {
-        let output_plane = output.at(&plane);
-        let weights_plane = weights.at(&plane);
-        let input_plane = input.at(&plane);
+    for region in Walk::over(output.op_space(weights, input)) {
+        let output_plane = output.at(&region);
+        let weights_plane = weights.at(&region);
+        let input_plane = input.at(&region);
         for cell in Walk::over(output_plane.op_space(&weights_plane, &input_plane)) {
             let mut output_cell = output_plane.at(&cell);
             output_cell.mm_with(

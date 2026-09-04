@@ -84,10 +84,10 @@ pub fn cpu_gemm_kernel<
     acc.zero();
 
     // This cube's box, K whole: one region.
-    for cube in Walk::over(c.op_space(&a, &b)) {
-        let acc_cube = acc.at(&cube);
-        let a_cube = a.at(&cube);
-        let b_cube = b.at(&cube);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let acc_cube = acc.at(&region);
+        let a_cube = a.at(&region);
+        let b_cube = b.at(&region);
         // This plane's block, stepped through K in the instruction's depth.
         for step in Walk::over(acc_cube.op_space(&a_cube, &b_cube)) {
             let mut acc_step = acc_cube.at(&step);
