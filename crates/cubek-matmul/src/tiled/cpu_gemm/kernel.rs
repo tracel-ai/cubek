@@ -105,20 +105,8 @@ pub fn cpu_gemm_kernel<
     // block per plane, the instruction's shape.
     let leaf = comptime!(bp.instruction);
     let fragments = comptime!(Fragments::new(1, 1, leaf.m, leaf.n, leaf.k));
-    let acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
-    // Each plane zeroes the block it holds: the cube and plane levels over the output's space
-    // (no K) hand every plane its one window. The output sizes the walk; a register block
-    // holds no extent to witness a dynamic axis with.
-    for region in c.runtime_space().level(comptime!(bp.cube_level(&batch, k))) {
-        let acc_cube = acc.at(&region);
-        for step in acc_cube
-            .runtime_space()
-            .level(comptime!(bp.plane_level(&batch)))
-        {
-            let mut acc_plane = acc_cube.at(&step);
-            acc_plane.zero();
-        }
-    }
+    let mut acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
 
     // This cube's box, K whole: one region.
     for region in c
