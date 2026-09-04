@@ -91,8 +91,8 @@ macro_rules! output_arg {
 /// The space both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space() -> Space {
-    Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+    Tiling::over(&[(ROW, ROWS), (COL, COLS)])
+        .level(|level| {
             level.walk(&[(ROW, 2), (COL, 3)]);
         })
         .build()
@@ -150,15 +150,15 @@ fn a_sink_stores_where_a_buffer_stores() {
 }
 
 // ===========================================================================
-// The host half: `Launcher::bind_geometry`
+// The host half: `Launcher::geometry`
 // ===========================================================================
 
 /// The same sink store, with the destination's [`TileSpec`] and geometry derived on the host by
-/// [`Launcher::bind_geometry`] instead of stated at the call site.
+/// [`Launcher::geometry`] instead of stated at the call site.
 ///
 /// This is the pair a fused store actually reaches for. The kernels above take their spec off a
 /// `TileArg`, but a destination written through a call has no `TileArg` to take it off, which is
-/// the whole reason `bind_geometry` exists: it runs the derivation a bound operand runs and hands
+/// the whole reason `geometry` exists: it runs the derivation a bound operand runs and hands
 /// both halves, the spec *and* the geometry it settled on, so neither is restated here.
 #[cube(launch)]
 fn derived_sink_kernel<E: Float>(
@@ -189,7 +189,7 @@ fn derived_sink_kernel<E: Float>(
     dst.copy_from(&src);
 }
 
-/// A sink whose spec and geometry both come from [`Launcher::bind_geometry`] stores what the buffer
+/// A sink whose spec and geometry both come from [`Launcher::geometry`] stores what the buffer
 /// stores: the host-derived pair addresses the destination the same way the binding-derived one
 /// does, which is the only thing that makes a fused store a drop-in for the kernel it replaces.
 #[test]
@@ -204,10 +204,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
 
     // What the destination would have been, had it been a tensor to bind.
     let derived = launcher
-        .bind_geometry(
-            &Operand::new(&[ROW, COL], dtype),
-            &Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]),
-        )
+        .geometry(&Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]))
+        .subspace(&[ROW, COL])
         .vectorize(1)
         .build_spec();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
@@ -246,6 +244,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
 const M: Axis = Axis(2);
 const N: Axis = Axis(3);
 const K: Axis = Axis(4);
+/// The register block the promoted accumulator contracts through.
+const BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// The promoted matmul, storing to a buffer: `launch_promoted_matmul`'s twin, kept here so the
 /// comparison is between two kernels in one file rather than across suites.
@@ -260,9 +260,15 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    acc.zero();
+    // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
+    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+        let mut acc_region = acc.at(&region);
+        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// The same contraction, draining into a sink.
@@ -284,7 +290,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
-    let c = Tile::<E>::of_sink(
+    let mut c = Tile::<E>::of_sink(
         sink,
         geometry,
         1usize,
@@ -292,8 +298,14 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         comptime!(c.spec.clone()),
         Write::Replace,
     );
-    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b, Semiring::SUM_PROD);
+    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    acc.zero();
+    // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
+    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+        let mut acc_region = acc.at(&region);
+        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// The same contraction again, this time reading its **lhs** through an erased source.
@@ -322,9 +334,15 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         comptime!(a.spec.clone()),
     );
     let b = b.tile(comptime!(space.clone()));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<EA, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    acc.zero();
+    // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
+    for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
+        let mut acc_region = acc.at(&region);
+        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// Which backing the contraction under test is given.
@@ -338,21 +356,11 @@ enum Backed {
     Source,
 }
 
-/// The output operand: register-resident at the level the accumulator opens, in place below it.
-fn accumulator_in_registers(space: &Space) -> Operand {
-    let mut out = Operand::new(&[M, N], f32::elem_type_native());
-    out.stage(Residence::Register);
-    for _ in 1..space.partitioner().depth() {
-        out.stage(Residence::InPlace);
-    }
-    out
-}
-
 /// `K` walked in four steps above a one-block leaf: every step returns to the same promoted
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Space {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    let partitioner = Partitioner::row_major(
+    let partitioner = Partitioner::over(
         ByAxis::new(&[(M, edge), (N, edge), (K, edge)]),
         ByAxis::new(&[
             (M, Distribution::Sequential),
@@ -360,7 +368,7 @@ fn matmul_space() -> Space {
             (K, Distribution::Sequential),
         ]),
     )
-    .buffered(Buffering::SINGLE);
+    .level();
     Space::new(&[(M, m), (N, n), (K, k)]).with_partitioner(partitioner)
 }
 
@@ -378,11 +386,9 @@ fn run_matmul(backed: Backed) -> HostData {
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
     // that folded the destination in instead of writing it would show up as the poison.
     let c = TileInput::builder(&client, space.project(&[M, N]))
-        .operand(&accumulator_in_registers(&space))
         .untiled()
         .uniform(4242, 10., 100.);
 
-    let instructed = space.clone().with_instruction(Instruction::registers(16));
     let (count, dim) = (space.cube_count(), space.cube_dim(&client));
     match backed {
         Backed::Sink => sink_matmul::launch(
@@ -392,7 +398,7 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            instructed,
+            space.clone(),
             dtype,
             dtype,
         ),
@@ -403,7 +409,7 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            instructed,
+            space.clone(),
             dtype,
             dtype,
         ),
@@ -414,7 +420,7 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            instructed,
+            space.clone(),
             dtype,
             dtype,
         ),
@@ -489,8 +495,8 @@ const MASKED_ROWS: usize = 5;
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space() -> Space {
-    Tiling::over(&mut (), &[(ROW, MASKED_ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+    Tiling::over(&[(ROW, MASKED_ROWS), (COL, COLS)])
+        .level(|level| {
             level.walk(&[(ROW, 2), (COL, 2)]);
         })
         .build()
@@ -572,7 +578,6 @@ fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let launcher = masked_space().launcher(&client);
-    let operand = Operand::new(&[ROW, COL], dtype);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()
@@ -584,11 +589,13 @@ fn run_masked(erased: Erased) -> HostData {
     // Bound both ways: the width and the armed check are the launcher's derivation, so the sink
     // walks the tile the buffer kernel walks rather than one this test talked it into.
     let src = launcher
-        .bind(&operand, input.binding())
+        .arg(input.binding())
+        .subspace(&[ROW, COL])
         .vectorize(2)
         .build();
     let out = launcher
-        .bind(&operand, output.clone().binding())
+        .arg(output.clone().binding())
+        .subspace(&[ROW, COL])
         .vectorize(2)
         .build();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());

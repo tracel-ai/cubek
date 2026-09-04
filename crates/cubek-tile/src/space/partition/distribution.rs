@@ -38,15 +38,14 @@ pub fn planes() -> Spatial {
     }
 }
 
-/// The tiles ride the plane's lanes. How many lanes is the hardware's `plane_size`, unknown until
-/// launch, so the count is deferred ([`Coverage::PlaneLanes`]) and stamped by
-/// [`Space::launcher`](crate::Space::launcher). State [`instances`](Spatial::instances) to take a
-/// subset, which is what carving one plane between several axes needs.
-pub fn lanes() -> Spatial {
+/// The tiles ride `n` of the plane's lanes, one each. The whole plane is the hardware's
+/// `plane_size`, which every routine has in hand where it builds its space; carving one plane
+/// between several axes states each axis's share.
+pub fn lanes(n: usize) -> Spatial {
     Spatial {
         scope: ComputeScope::Unit,
         spread: Spread::Contiguous,
-        coverage: Coverage::PlaneLanes,
+        coverage: Coverage::Instances(n),
     }
 }
 
@@ -141,10 +140,6 @@ pub enum Coverage {
     Instances(usize),
     /// Pin each instance's share to `t` tiles; use `grid / t` instances.
     TilesEach(usize),
-    /// A `Unit` axis's deferred count: resolved to `Instances(plane_size)` at launch
-    /// ([`resolve_lanes`](Distribution::resolve_lanes), driven by `Space::launcher`). Every
-    /// accessor panics on it; it must never reach geometry or the walk unresolved.
-    PlaneLanes,
 }
 
 /// How a `Spatial` axis's tiles are dealt to its instances. Disjoint either way,
@@ -182,27 +177,9 @@ impl Distribution {
         planes().into()
     }
 
-    /// Spread across the plane's lanes: [`lanes`] with nothing else stated.
-    pub fn unit() -> Self {
-        lanes().into()
-    }
-
-    /// Resolve a deferred [`PlaneLanes`](Coverage::PlaneLanes) count to
-    /// `Instances(plane_size)`; every other distribution passes through. Called once at
-    /// launch, so geometry and the walk only ever see a concrete instance count.
-    pub(crate) fn resolve_lanes(self, plane_size: usize) -> Self {
-        match self {
-            Distribution::Spatial {
-                scope,
-                spread,
-                coverage: Coverage::PlaneLanes,
-            } => Distribution::Spatial {
-                scope,
-                spread,
-                coverage: Coverage::Instances(plane_size),
-            },
-            other => other,
-        }
+    /// Spread across `n` of the plane's lanes: [`lanes`] with nothing else stated.
+    pub fn unit(n: usize) -> Self {
+        lanes(n).into()
     }
 }
 
@@ -211,7 +188,6 @@ impl Coverage {
         match self {
             Coverage::Instances(instances) => instances,
             Coverage::TilesEach(tiles) => grid / tiles,
-            Coverage::PlaneLanes => panic!("{UNRESOLVED_LANES}"),
         }
     }
 
@@ -219,7 +195,6 @@ impl Coverage {
         match self {
             Coverage::Instances(n) => Some(n),
             Coverage::TilesEach(_) => None,
-            Coverage::PlaneLanes => panic!("{UNRESOLVED_LANES}"),
         }
     }
 
@@ -227,15 +202,9 @@ impl Coverage {
         match self {
             Coverage::TilesEach(t) => Some(t),
             Coverage::Instances(_) => None,
-            Coverage::PlaneLanes => panic!("{UNRESOLVED_LANES}"),
         }
     }
 }
-
-/// The panic every [`Coverage::PlaneLanes`] accessor raises: the deferred lane count was
-/// never resolved, so the space was not launched through [`Space::launcher`].
-const UNRESOLVED_LANES: &str =
-    "Coverage::PlaneLanes: unresolved Unit lane count; launch through space.launcher(client)";
 
 /// `TilesEach` pins it, `Instances` splits the `grid` (folded, so a constant grid
 /// keeps its constant).
@@ -244,11 +213,6 @@ pub(crate) fn tiles_per_instance(grid: usize, #[comptime] cov: Coverage) -> usiz
     match cov {
         Coverage::Instances(instances) => grid.fdiv(instances.runtime()),
         Coverage::TilesEach(tiles) => tiles.runtime(),
-        Coverage::PlaneLanes => {
-            panic!(
-                "Coverage::PlaneLanes: unresolved Unit lane count; launch through space.launcher(client)"
-            )
-        }
     }
 }
 
@@ -259,11 +223,6 @@ pub(crate) fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
     match cov {
         Coverage::Instances(instances) => instances.runtime(),
         Coverage::TilesEach(tiles) => grid.fdiv(tiles.runtime()),
-        Coverage::PlaneLanes => {
-            panic!(
-                "Coverage::PlaneLanes: unresolved Unit lane count; launch through space.launcher(client)"
-            )
-        }
     }
 }
 

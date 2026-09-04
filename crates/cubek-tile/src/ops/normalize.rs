@@ -152,7 +152,7 @@ mod tests {
         let scope = test_scope();
         let plane_tile = PlaneTile::<f32>::__expand_acc(
             &scope,
-            Instruction::Cmma,
+            PlaneForm::Cmma,
             8,
             8,
             MatrixAxes::trailing_pair(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),

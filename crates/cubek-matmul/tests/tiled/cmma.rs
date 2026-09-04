@@ -75,6 +75,7 @@ fn cmma_partition_1x1_f32() {
         partition: Partition { m: 1, n: 1 },
         planes: PlaneGrid { m: 2, n: 1 },
         stage_k: 48,
+        buffering: 2,
         delivery: CmmaDelivery::Copy,
     };
     test_matmul_strategy(
@@ -132,6 +133,7 @@ fn cmma_tma_rejects_oversized_box() {
         partition: Partition { m: 2, n: 8 },
         planes: PlaneGrid { m: 2, n: 4 },
         stage_k: 16,
+        buffering: 2,
         delivery: CmmaDelivery::Tma,
     };
     let problem = rect(64, 1024, 64, f16_elems());

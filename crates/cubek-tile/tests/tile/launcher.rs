@@ -5,9 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Boundary, Buffering, CubeAxis, DequantAt, Divisor, Geometry, Offset, Operand,
-    PhysicalAxisMap, Projection, Residence, Scale, StorageTiling, StridedOperand, TileSpec, Tiling,
-    WalkOrder, cubes, planes,
+    Axis, Boundary, CubeAxis, DequantAt, Divisor, Geometry, Offset, PhysicalAxisMap, Projection,
+    Scale, StorageTiling, StridedOperand, TileSpec, Tiling, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -73,14 +72,6 @@ fn geometry_after_dynamic_panics() {
 const B0: Axis = Axis(3);
 const B1: Axis = Axis(4);
 
-/// An `f32` operand over `axes` staged `Smem` at the one level: the gathered-arg tests'
-/// hand-built stages (their spaces are assembled outside `Tiling::over`).
-fn smem_operand(axes: &[Axis]) -> Operand {
-    let mut operand = Operand::new(axes, f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand
-}
-
 fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
     let mut strides = vec![1usize; shape.len()];
     for i in (0..shape.len().saturating_sub(1)).rev() {
@@ -98,14 +89,14 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 /// X/Y, 8×8 plane leaves with `leaf_k = 4`.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> cubek_tile::Space {
     let batches = [(B0, 1), (B1, 1)];
-    Tiling::over(&mut (), &[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &batches)
                 .distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, k)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(planes(), &[(M, 8)])
                 .distribute(planes(), &[(N, 8)])
                 .walk(&batches)
@@ -198,16 +189,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
     assert!(!broadcast.spec.axes().contains(&B1));
 }
 
-// ---- Launcher::bind_geometry -----------------------------------------------
-
-/// An `f32` operand over `axes`, staged once per level of [`batched_space`]: `Smem` at the cube
-/// level, in place at the leaf. What a destination a fused store writes through would declare.
-fn staged_operand(axes: &[Axis]) -> Operand {
-    let mut operand = Operand::new(axes, f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand.stage(Residence::InPlace);
-    operand
-}
+// ---- Launcher::geometry ----------------------------------------------------
 
 /// The pair the API exists for: a destination with no tensor to bind derives *the same* spec a
 /// bound one does. If these ever diverge, a fused store walks a different tile than the unfused
@@ -217,15 +199,16 @@ fn spec_derives_what_a_bound_operand_derives() {
     let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so the derivation has a check to arm and something to say.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
-    let operand = staged_operand(&[M, K]);
     let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
 
     let bound = launch
-        .bind(&operand, binding(&client, geometry.shape()))
+        .arg(binding(&client, geometry.shape()))
+        .subspace(&[M, K])
         .vectorize(1)
         .build();
     let derived = launch
-        .bind_geometry(&operand, &geometry)
+        .geometry(&geometry)
+        .subspace(&[M, K])
         .vectorize(1)
         .build_spec();
 
@@ -236,30 +219,29 @@ fn spec_derives_what_a_bound_operand_derives() {
 
 /// The knobs a bound operand tunes are the same knobs an unbound one tunes, which is why what
 /// comes back is the builder rather than a finished spec. A fused operand that knows its bounds
-/// better than the concrete overhang does, or that stages narrower than it reads, states it *on*
-/// the derivation; hand-building a spec beside it is the drift `build_spec` exists to remove.
+/// better than the concrete overhang does states it *on* the derivation; hand-building a spec
+/// beside it is the drift `build_spec` exists to remove.
 #[test]
 fn spec_tunes_what_a_bound_operand_tunes() {
     let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so the derivation arms a check there is something to disarm.
     let launch = batched_space(1, 1, 64, 64, 18).launcher(&client);
-    let operand = staged_operand(&[M, K]);
     let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
 
     let derived = launch
-        .bind_geometry(&operand, &geometry)
+        .geometry(&geometry)
+        .subspace(&[M, K])
         .vectorize(1)
         .build_spec();
     assert!(derived.spec.is_checked());
 
     let tuned = launch
-        .bind_geometry(&operand, &geometry)
+        .geometry(&geometry)
+        .subspace(&[M, K])
         .vectorize(1)
         .checked(false)
-        .stage_width(2)
         .build_spec();
     assert!(!tuned.spec.is_checked());
-    assert_eq!(tuned.spec.stage_width, Some(2));
 }
 
 /// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
@@ -273,10 +255,8 @@ fn spec_returns_the_geometry_it_settled_on() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     let derived = launch
-        .bind_geometry(
-            &staged_operand(&[M, K]),
-            &Geometry::of_dims(&[(64, 16), (16, 1)]),
-        )
+        .geometry(&Geometry::of_dims(&[(64, 16), (16, 1)]))
+        .subspace(&[M, K])
         .vectorize(1)
         .build_spec();
 
@@ -288,7 +268,7 @@ fn spec_returns_the_geometry_it_settled_on() {
     );
 }
 
-/// A leading broadcast dim is refused, not silently folded away. `bind_geometry` labels the
+/// A leading broadcast dim is refused, not silently folded away. `geometry` labels the
 /// operand's own axes, and no batches are stated here, so a dim past them has no axis to belong
 /// to: the derivation that *would* drop it is the one that never runs here, and a caller who
 /// states a rank the projection cannot address learns it at the launch rather than through a
@@ -300,10 +280,8 @@ fn spec_refuses_a_dim_it_cannot_label() {
     let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
 
     let _ = launch
-        .bind_geometry(
-            &staged_operand(&[M, K]),
-            &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
-        )
+        .geometry(&Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]))
+        .subspace(&[M, K])
         .vectorize(1)
         .build_spec();
 }
@@ -321,10 +299,8 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 
     // Three dims stated, the leading one broadcast over B1.
     let derived = launch
-        .bind_geometry(
-            &staged_operand(&[M, K]),
-            &Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]),
-        )
+        .geometry(&Geometry::of_dims(&[(1, 1024), (64, 16), (16, 1)]))
+        .subspace(&[M, K])
         .batches(&[B0, B1])
         .vectorize(1)
         .build_spec();
@@ -352,10 +328,8 @@ fn spec_refuses_a_width_the_geometry_cannot_serve() {
 
     // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
     let _ = launch
-        .bind_geometry(
-            &staged_operand(&[M, K]),
-            &Geometry::of_dims(&[(64, 17), (16, 1)]),
-        )
+        .geometry(&Geometry::of_dims(&[(64, 17), (16, 1)]))
+        .subspace(&[M, K])
         .vectorize(2)
         .build_spec();
 }
@@ -539,8 +513,8 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
 #[test]
 fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
@@ -549,7 +523,6 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -567,8 +540,8 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
 #[test]
 fn arg_gathered_rational_stages() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
@@ -577,7 +550,6 @@ fn arg_gathered_rational_stages() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -593,8 +565,8 @@ fn arg_gathered_rational_stages() {
 #[test]
 fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
@@ -603,7 +575,6 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         .launcher_over(&client, &[N]);
     let _ = staged
         .arg(binding(&client, &[79, 64]))
-        .operand(&smem_operand(&[M, K, N]))
         .gathered(Projection::new(
             &[M, K, N],
             &[
@@ -619,8 +590,8 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
 #[test]
 fn arg_gathered_cancelling_divisor_stages() {
     let client = cubecl::test_device().client();
-    let staged = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let staged = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 16)])
                 .distribute(cubes(CubeAxis::Y), &[(N, 32)])
                 .walk(&[(K, 16)]);
@@ -637,7 +608,6 @@ fn arg_gathered_cancelling_divisor_stages() {
     assert!(!projection.is_rational());
     let _ = staged
         .arg(binding(&client, &[512, 64]))
-        .operand(&smem_operand(&[M, K, N]))
         .gathered(projection)
         .build();
 }
@@ -875,68 +845,4 @@ fn quantized_packed_store_narrow_line_panics() {
             .per_tensor(ScaleDtype::F32)
             .with_store(QuantStore::PackedU32(0)),
     );
-}
-
-#[test]
-#[should_panic(expected = "never Smem-resident")]
-fn stage_width_without_smem_panics() {
-    let client = cubecl::test_device().client();
-    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
-    let _ = launch
-        .arg(binding(&client, &[64, 16]))
-        .subspace(&[M, K])
-        .stage_width(4)
-        .build();
-}
-
-/// A padded stage assembles its lines out of scalar cells, so there is nothing for it to do for
-/// an operand global memory already vectorizes.
-#[test]
-#[should_panic(expected = "must be unvectorized")]
-fn stage_width_refuses_a_vectorized_operand() {
-    let client = cubecl::test_device().client();
-    let space = batched_space(1, 1, 64, 64, 16);
-    let launch = space.launcher(&client);
-    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand.stage(Residence::InPlace);
-    let _ = launch
-        .bind(&operand, binding(&client, &[64, 16]))
-        .vectorize(4)
-        .stage_width(8)
-        .build();
-}
-
-/// A stage served at the operand's own scalar width pads nothing, so stating it is a mistake
-/// rather than a no-op.
-#[test]
-#[should_panic(expected = "must widen the operand's own")]
-fn stage_width_must_widen() {
-    let client = cubecl::test_device().client();
-    let space = batched_space(1, 1, 64, 64, 16);
-    let launch = space.launcher(&client);
-    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand.stage(Residence::InPlace);
-    let _ = launch
-        .bind(&operand, binding(&client, &[64, 16]))
-        .stage_width(1)
-        .build();
-}
-
-#[test]
-#[should_panic(expected = "not supported for quantized operands")]
-fn stage_width_refuses_quant() {
-    let client = cubecl::test_device().client();
-    let space = batched_space(1, 1, 64, 64, 16);
-    let launch = space.launcher(&client);
-    let mut operand = Operand::new(&[M, K], f32::elem_type_native());
-    operand.stage(Residence::Smem);
-    operand.stage(Residence::InPlace);
-    let scales = binding(&client, &[1, 8]);
-    let _ = launch
-        .bind(&operand, binding(&client, &[64, 16]))
-        .quantized(&[scales], quant_scheme(), DequantAt::Read)
-        .stage_width(4)
-        .build();
 }

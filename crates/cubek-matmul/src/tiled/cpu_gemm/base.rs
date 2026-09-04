@@ -68,7 +68,7 @@ fn nearest_divisor(g: usize, target: usize) -> usize {
 }
 
 /// The `m × n × k` extent of the innermost instruction
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InstructionShape {
     pub m: usize,
     pub n: usize,
@@ -76,7 +76,7 @@ pub struct InstructionShape {
 }
 
 /// How many planes a cube's stage tile is divided into, along `m` and `n`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlaneGrid {
     pub m: usize,
     pub n: usize,
@@ -84,7 +84,7 @@ pub struct PlaneGrid {
 
 /// A fully-resolved CpuGemm plan: the leaf each plane computes ([`InstructionShape`]) and how
 /// finely a cube's stage tile is split across planes ([`PlaneGrid`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CpuGemmBlueprint {
     pub instruction: InstructionShape,
     pub planes: PlaneGrid,

@@ -76,6 +76,7 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
+        buffering: 2,
         delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
     }))
     .into();

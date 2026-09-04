@@ -1,8 +1,8 @@
 use super::geometry::TileGeometry;
-use cubecl::{client::Client, ir::ElemType};
+use cubecl::client::Client;
 use cubek_tile::{
-    Axis, Buffering, Compaction, CubeAxis, Instruction, LevelCuts, Operand, PhysicalAxisMap,
-    Projection, RegisterBlock, Residence, Space, Tiling, WalkOrder, cubes, lanes, planes,
+    Axis, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Tiling, cubes, lanes, planes,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -12,101 +12,99 @@ pub const TAP_H: Axis = Axis(3);
 pub const TAP_W: Axis = Axis(4);
 pub const CHANNEL: Axis = Axis(5);
 
-/// The instruction leaf, which the device decides.
-pub fn instruction(client: &Client) -> Instruction {
+/// The register block the leaf runs under, which the device decides.
+pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
-        Some(_) => Instruction::Registers {
-            config: RegisterBlock::new(256).split_edge(),
-        },
-        None => Instruction::Registers {
-            config: RegisterBlock::new(64).lane_fanout(),
-        },
+        Some(_) => RegisterBlock::new(256).split_edge(),
+        None => RegisterBlock::new(64).lane_fanout(),
     }
 }
 
-/// Every level runs a single-slot ring. CHANNEL is the cube walk's only moving axis, and it moves
-/// only past `lanes * 4` channels; below that the walk is one region, where a deeper pipeline has
-/// no fill to hide and pays the ring's prologue and drain for nothing.
-#[allow(clippy::too_many_arguments)]
-pub fn interpolate_space(
-    batch: usize,
-    height: usize,
-    width: usize,
-    channels: usize,
-    plane_size: usize,
-    taps: usize,
-    geometry: TileGeometry,
-    instruction: Instruction,
-    dtype: ElemType,
-    residence: Residence,
-) -> (Space, Operand) {
-    assert!(
-        geometry.lane_cols * geometry.lane_channels == plane_size,
-        "interpolate_space: the lane split covers {} of the plane's {plane_size} lanes",
-        geometry.lane_cols * geometry.lane_channels
-    );
-    let channels_per_cube = geometry.channels_per_cube();
-    let mut in_operand = (Operand::new(
-        &[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W, CHANNEL],
-        dtype,
-    ),);
-    let space = Tiling::over(
-        &mut in_operand,
-        &[
+/// The space one launch runs over, in the terms the kernel builds it from. The kernel's
+/// comptime argument, so the space the launch sizes its grid from is the space the kernel
+/// walks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct InterpolateSpace {
+    pub batch: usize,
+    pub height: usize,
+    pub width: usize,
+    pub channels: usize,
+    pub plane_size: usize,
+    pub taps: usize,
+    pub geometry: TileGeometry,
+}
+
+impl InterpolateSpace {
+    /// Three levels. CHANNEL is the cube walk's only moving axis, and it moves only past
+    /// `lanes * 4` channels; below that the walk is one region.
+    pub fn space(&self) -> Space {
+        let Self {
+            batch,
+            height,
+            width,
+            channels,
+            plane_size,
+            taps,
+            geometry,
+        } = *self;
+        assert!(
+            geometry.lane_cols * geometry.lane_channels == plane_size,
+            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
+            geometry.lane_cols * geometry.lane_channels
+        );
+        let channels_per_cube = geometry.channels_per_cube();
+        Tiling::over(&[
             (BATCH, batch),
             (OUTPUT_H, height),
             (OUTPUT_W, width),
             (TAP_H, taps),
             (TAP_W, taps),
             (CHANNEL, channels),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, input| {
-        level
-            .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
-            .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
-            .distribute(cubes(CubeAxis::X), &[(OUTPUT_W, geometry.cols_per_cube())])
-            .walk(&[(TAP_H, taps), (TAP_W, taps), (CHANNEL, channels_per_cube)]);
-        input.0.stage(residence);
-    })
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
-        level
-            .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
-            .walk(&[
+        ])
+        .level(|level| {
+            level
+                .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
+                .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
+                .distribute(cubes(CubeAxis::X), &[(OUTPUT_W, geometry.cols_per_cube())])
+                .walk(&[(TAP_H, taps), (TAP_W, taps), (CHANNEL, channels_per_cube)]);
+        })
+        .level(|level| {
+            level
+                .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
+                .walk(&[
+                    (BATCH, 1),
+                    (OUTPUT_W, geometry.cols_per_cube()),
+                    (TAP_H, taps),
+                    (TAP_W, taps),
+                    (CHANNEL, channels_per_cube),
+                ]);
+        })
+        .level(|level| {
+            lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
+            lanes_over(
+                level,
+                CHANNEL,
+                geometry.lane_channels,
+                geometry.channel_block,
+            );
+            level.walk(&[
                 (BATCH, 1),
-                (OUTPUT_W, geometry.cols_per_cube()),
+                (OUTPUT_H, geometry.rows_per_plane),
                 (TAP_H, taps),
                 (TAP_W, taps),
-                (CHANNEL, channels_per_cube),
             ]);
-    })
-    .instruction(instruction, |level, _| {
-        lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
-        lanes_over(
-            level,
-            CHANNEL,
-            geometry.lane_channels,
-            geometry.channel_block,
-        );
-        level.walk(&[
-            (BATCH, 1),
-            (OUTPUT_H, geometry.rows_per_plane),
-            (TAP_H, taps),
-            (TAP_W, taps),
-        ]);
-    })
-    .build();
-
-    (space, in_operand.0)
+        })
+        .build()
+    }
 }
 
-/// `edge`-sized tiles of `axis` dealt to `instances` lanes of the plane. A bare `lanes()` claims
-/// the whole plane for one axis; the interpolation splits it across two, so the count is stated
-/// outright. One lane is no split at all, and is walked so the coordinate stays comptime.
+/// `edge`-sized tiles of `axis` dealt to `instances` lanes of the plane. The interpolation
+/// splits the plane across two axes, so the count is stated outright. One lane is no split at
+/// all, and is walked so the coordinate stays comptime.
 fn lanes_over(level: &mut LevelCuts, axis: Axis, instances: usize, edge: usize) {
     match instances {
         1 => level.walk(&[(axis, edge)]),
-        n => level.distribute(lanes().instances(n), &[(axis, edge)]),
+        n => level.distribute(lanes(n), &[(axis, edge)]),
     };
 }
 

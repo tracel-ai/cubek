@@ -29,6 +29,20 @@ const KI: Axis = Axis(3);
 const NB: Axis = Axis(4);
 const NI: Axis = Axis(5);
 
+/// The register block every contraction here runs under.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
+/// Every scale level windowed to `region`.
+#[cube]
+fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
+    let mut at = Sequence::new();
+    #[unroll]
+    for k in 0..scales.len() {
+        at.push(scales.index(k).at(region));
+    }
+    at
+}
+
 /// A packed operand copied into a plain one: the words unpack at the read, and nothing in the
 /// kernel, the spec or the launch mentions a scale.
 #[cube(launch)]
@@ -59,7 +73,17 @@ fn packed_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// [`packed_matmul`] with two scale levels: `nvfp4`'s shape.
@@ -79,7 +103,17 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// **`nvfp4`'s shape, end to end.** `e2m1` values eight to a word, a scale per sixteen of them, and
@@ -145,12 +179,11 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
     nvfp4_shaped_matmul::launch(
         &client,
@@ -233,7 +266,17 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&x, &w)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &x.at(&region),
+            &w.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
@@ -254,12 +297,22 @@ fn native_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// The decode gemv, whole: one row of activations against packed weights read straight from
-/// global memory, their scales beside them, accumulating in registers. `N` spreads across cubes,
-/// which is all a gemv has to spread.
+/// global memory, their scales beside them, accumulating in a register block opened above the
+/// walk. `N` spreads across cubes, which is all a gemv has to spread.
 #[cube(launch)]
 fn packed_gemv<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
@@ -273,9 +326,20 @@ fn packed_gemv<E: Numeric, V: Size>(
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
-    acc.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    // The accumulator lives in registers across the whole walk and drains once.
+    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&x, &w)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &x.at(&region),
+            &w.at(&region),
+            &at_all(&scales, &region),
+            Semiring::SUM_PROD,
+        );
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// Four 8-bit values per word.
@@ -631,12 +695,11 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
     packed_matmul::launch(
         &client,
@@ -747,12 +810,11 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
     packed_matmul::launch(
         &client,
@@ -868,21 +930,17 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
     packed_matmul_rhs::launch(
         &client,
@@ -1008,21 +1066,17 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
     packed_matmul_rhs::launch(
         &client,
@@ -1153,21 +1207,17 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
     packed_matmul_rhs::launch(
         &client,
@@ -1276,12 +1326,11 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
     native_matmul::launch(
         &client,
@@ -1398,17 +1447,14 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, 1),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, 1),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
             (NI, bn),
@@ -1416,12 +1462,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
-
-    // One entry per level: the accumulator opens at the outermost and lives to the leaf.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
+    .build();
 
     packed_gemv::launch(
         &client,
@@ -1467,8 +1508,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                     PhysicalAxisMap::of(M),
                     PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
-            ))
-            .residence(&residence),
+            )),
         ),
         space,
         dtype,
@@ -1544,17 +1584,14 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, 1),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, 1),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
             (NI, bn),
@@ -1562,11 +1599,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
-
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
+    .build();
 
     packed_gemv::launch(
         &client,
@@ -1612,8 +1645,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                     PhysicalAxisMap::of(M),
                     PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
-            ))
-            .residence(&residence),
+            )),
         ),
         space,
         dtype,
@@ -1644,9 +1676,14 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
-    acc.mm(&x, &w, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&x, &w)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
@@ -1705,17 +1742,12 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(N, bn)])
                 .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
-
-    // One entry per level: the accumulator opens at the outermost and lives to the leaf.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
+        .build();
 
     packed_gemv_unscaled::launch(
         &client,
@@ -1745,7 +1777,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         dtype,

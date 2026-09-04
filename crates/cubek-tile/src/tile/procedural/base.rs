@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, DivGuard, Fold, FoldExpand, Region, Space, StagePlan, TapMask};
+use crate::{Axis, Coords, DivGuard, Fold, FoldExpand, Region, Space, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -37,24 +37,13 @@ pub struct ProceduralData<T: Numeric> {
     recipe: VirtualRecipe<T>,
     #[cube(comptime)]
     pub(crate) space: Space,
-    /// Where this source lives at each level below. A recipe has no bytes to leave in place, so
-    /// [`Tile::procedural`](crate::Tile::procedural) stages nothing; a level asking for a stage
-    /// through [`Tile::procedural_resident`](crate::Tile::procedural_resident) cooperatively
-    /// materializes the recipe into it ([`MemData::fill_procedural`](crate::MemData)), which is
-    /// how a source with no bytes reaches a leaf that cannot evaluate one.
-    #[cube(comptime)]
-    pub(crate) stage: StagePlan,
     #[cube(comptime)]
     _marker: PhantomData<T>,
 }
 
 #[cube]
 impl<T: Numeric> ProceduralData<T> {
-    pub(crate) fn new_virtual(
-        #[comptime] space: Space,
-        recipe: VirtualRecipe<T>,
-        #[comptime] stage: StagePlan,
-    ) -> Self {
+    pub(crate) fn new_virtual(#[comptime] space: Space, recipe: VirtualRecipe<T>) -> Self {
         let mut origin = Coords::<u32>::new();
         let mut bound = Coords::<u32>::new();
         #[unroll]
@@ -82,7 +71,6 @@ impl<T: Numeric> ProceduralData<T> {
             normalization: None,
             recipe,
             space,
-            stage,
             _marker: PhantomData,
         }
     }
@@ -103,7 +91,6 @@ impl<T: Numeric> ProceduralData<T> {
             normalization: comptime!(self.normalization.clone()),
             recipe: self.recipe.clone(),
             space: comptime!(space.divide()),
-            stage: comptime!(self.stage.descend()),
             _marker: PhantomData,
         }
     }

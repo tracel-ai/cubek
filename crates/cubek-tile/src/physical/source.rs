@@ -10,9 +10,8 @@ use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Instruction, LoadMethod, Packing,
-    PhysicalAxis, Projection, QuantTileArgLaunch, Residence, Space, StageStorage, StorageTiling,
-    TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -44,11 +43,6 @@ struct TileSourceData<'a> {
     projection: Option<Projection>,
     v: usize,
     boundary: Option<Option<Boundary>>,
-    storage: Option<StageStorage>,
-    /// Where the operand lives at each level of `space`, coarse to fine; empty stages nothing.
-    residence: Vec<Residence>,
-    /// The width the operand's next Smem stage is served at; `None` serves it at `v`.
-    stage_width: Option<usize>,
     /// How this operand's values sit in its binding: several to a stored word, or as they are.
     packing: Packing,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
@@ -92,9 +86,6 @@ impl<'a> StridedTileSource<'a, Unset, Unset, Unset> {
                 projection: None,
                 v: 1,
                 boundary: None,
-                storage: None,
-                residence: Vec::new(),
-                stage_width: None,
                 packing: Packing::Plain,
                 units: 0,
                 quant: None,
@@ -181,35 +172,6 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
     /// states the mode and [`build`](Self::build) picks the axes it lands on.
     pub fn with_boundary(mut self, boundary: Option<Boundary>) -> Self {
         self.data.boundary = Some(boundary);
-        self
-    }
-
-    /// The [`StageStorage`] layout of the smem stages derived from this operand. Default
-    /// [`StageStorage::for_stages`]: storage-tiled for a cmma operand, plain strided otherwise.
-    pub fn storage(mut self, storage: StageStorage) -> Self {
-        self.data.storage = Some(storage);
-        self
-    }
-
-    /// Take the per-level residences from `operand`'s stages, stated where the levels were
-    /// declared ([`Operand::stage`](crate::Operand::stage)). Default: every level
-    /// [`InPlace`](Residence::InPlace). Independent of the level's
-    /// [`Buffering`](crate::Buffering), so operands at one level may differ.
-    pub fn operand(self, operand: &crate::Operand) -> Self {
-        self.residence(&operand.residences())
-    }
-
-    /// [`operand`](Self::operand)'s raw form, for the bridges that already hold the column.
-    pub(crate) fn residence(mut self, residence: &[Residence]) -> Self {
-        self.data.residence = residence.to_vec();
-        self
-    }
-
-    /// Serve this operand's next shared-memory stage in `width`-wide lines rather than in the
-    /// [`vectorize`](Self::vectorize) width it is read from global memory in, padding its
-    /// innermost axis out to whole lines.
-    pub fn stage_width(mut self, width: usize) -> Self {
-        self.data.stage_width = Some(width);
         self
     }
 
@@ -338,17 +300,11 @@ impl Quantization {
     }
 
     /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
-    /// operand's cuts and served width, the [`DequantAt`] against the reader that would have to honour
-    /// it. Both rules live here because both are facts about this quantization and nothing else.
-    pub(crate) fn validate(
-        &self,
-        space: &Space,
-        vector_size: usize,
-        register_stage: Option<Instruction>,
-    ) {
+    /// operand's cuts and served width. Where the [`DequantAt`] can be honoured is the fragment
+    /// load's to say, at the kernel's own call.
+    pub(crate) fn validate(&self, space: &Space, vector_size: usize) {
         cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
         validate_scheme(space, vector_size, self.scheme);
-        validate_dequant_at(self.dequant_at, register_stage);
         cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
     }
 }
@@ -452,9 +408,6 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             projection,
             v,
             boundary,
-            storage,
-            residence,
-            stage_width,
             packing,
             units,
             quant,
@@ -537,29 +490,10 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             .map(|pa| boundary.filter(|_| !settled(pa)))
             .collect::<Vec<_>>();
 
-        // Validate that explicit residences match the space's depth: extra or missing levels lead
-        // to silent misconfiguration.
-        let depth = space.partitioner().depth();
-        assert!(
-            residence.is_empty() || residence.len() == depth,
-            "StridedTileSource::residence: {} residences stated but the space has {depth} levels",
-            residence.len()
-        );
-
-        let mut spec = TileSpec::new(projection)
+        let spec = TileSpec::new(projection)
             .boundaries(&boundaries)
             .units(units)
-            .residence(&residence);
-        if let Some(width) = stage_width {
-            spec = spec.stage_width(width);
-        }
-        spec = spec.packing(packing);
-        // At launch rather than at trace time, so the failure carries a host backtrace; the same
-        // check runs again in `Tile::of` for specs that never pass through this builder.
-        spec.validate_stage_width(v, quant.is_some());
-        if let Some(storage) = storage {
-            spec = spec.storage(storage);
-        }
+            .packing(packing);
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
             assert!(
@@ -567,7 +501,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
                 "StridedTileSource::quantized: a gathered operand cannot be quantized; its scale \
                  grid is shaped over its logical axes, which its buffer's dims no longer match"
             );
-            quant.validate(&space.project(spec.axes()), v, space.instruction());
+            quant.validate(&space.project(spec.axes()), v);
         }
         Realized {
             tensor: binding.map(|mut binding| {
@@ -735,32 +669,5 @@ impl<'a> StridedTileSource<'a, Set, Set, Set> {
     /// Build the quantized operand.
     pub fn build(self) -> QuantOperand {
         self.build_quant()
-    }
-}
-
-/// Refuse a [`DequantAt`] nothing can honour. Called by [`build`](StridedTileSource::build) so a
-/// bad plan fails on the caller's thread, and again by
-/// [`Tile::of_dequant`](crate::Tile::of_dequant), which every launch path reaches.
-///
-/// Only the instruction form can differ here: this operand is [`Delivery::Copy`](crate::Delivery)
-/// by construction, and a strided load decodes whatever it moves, but a fragment load takes a raw
-/// window at one element type, so it needs its values already served.
-pub(crate) fn validate_dequant_at(dequant_at: DequantAt, register_stage: Option<Instruction>) {
-    match (dequant_at, register_stage) {
-        (DequantAt::Load, _) => {}
-        // A memory window is read through the quant-transparent matrix view; so is the
-        // manual-mma fragment load, which addresses one element at a time. Only the intrinsic
-        // transports are opaque.
-        (DequantAt::Read, None | Some(Instruction::Registers { .. })) => {}
-        (DequantAt::Read, Some(Instruction::Mma { io })) => assert!(
-            matches!(io.lhs_load_method, LoadMethod::Manual)
-                && matches!(io.rhs_load_method, LoadMethod::Manual),
-            "DequantAt::Read: the ldmatrix transport copies raw lanes, so it cannot decode as it \
-             reads; such an operand must be served by its load (DequantAt::Load)"
-        ),
-        (DequantAt::Read, Some(Instruction::Cmma)) => panic!(
-            "DequantAt::Read: a cmma fragment loads at one element type, so it cannot decode as \
-             it reads; such an operand must be served by its load (DequantAt::Load)"
-        ),
     }
 }

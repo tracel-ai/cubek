@@ -1,7 +1,7 @@
 //! Validation of the forward kernel.
 
 use cubek_interpolate::{
-    InterpolateBlueprint, InterpolateStrategy, Residence,
+    InputStage, InterpolateBlueprint, InterpolateStrategy,
     definition::{InterpolateError, InterpolateMode, InterpolateOptions, NearestMode},
     eval::cpu_reference::cpu_reference_interpolate_from_host,
     interpolate,
@@ -15,7 +15,7 @@ const TOLERANCE: f32 = 0.0001;
 
 /// The geometry these tests validate against: the shape the plane-derived split produced
 /// before every choice became the caller's.
-const BASELINE: InterpolateBlueprint = InterpolateBlueprint::new(Residence::InPlace, 4, 2, 1);
+const BASELINE: InterpolateBlueprint = InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 1);
 
 fn kernel_output(options: InterpolateOptions) {
     kernel_output_with(options, BASELINE);
@@ -115,7 +115,7 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
     // A CPU has no shared-memory residence, so the inferred intents deliberately collapse to the
     // always-launchable in-place blueprint. The overflow fallback is a GPU-only path.
     if client.properties().hardware.num_cpu_cores.is_some() {
-        assert_eq!(blueprint.input_residence, Residence::InPlace);
+        assert_eq!(blueprint.input_residence, InputStage::InPlace);
         kernel_output_using(
             options,
             InterpolateStrategy::MinimizeLatency,
@@ -125,7 +125,7 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
         return;
     }
 
-    assert_eq!(blueprint.input_residence, Residence::Smem);
+    assert_eq!(blueprint.input_residence, InputStage::Smem);
 
     let (refused, ..) = kernel_run(
         options,
@@ -153,8 +153,8 @@ fn test_interpolate_kernel_intent_falls_back_when_the_stage_cannot_fit() {
 fn test_interpolate_kernel_staging_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for blueprint in [
-        InterpolateBlueprint::new(Residence::Smem, 4, 2, 1),
-        InterpolateBlueprint::new(Residence::InPlace, 4, 2, 1),
+        InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1),
+        InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 1),
     ] {
         kernel_output_with(options, blueprint);
     }
@@ -164,13 +164,13 @@ fn test_interpolate_kernel_staging_configurations() {
 fn test_interpolate_kernel_geometry_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     for blueprint in [
-        InterpolateBlueprint::new(Residence::InPlace, 1, 1, 1),
-        InterpolateBlueprint::new(Residence::Smem, 1, 1, 1),
-        InterpolateBlueprint::new(Residence::InPlace, 1, 2, 1),
-        InterpolateBlueprint::new(Residence::InPlace, 4, 2, 2),
-        InterpolateBlueprint::new(Residence::InPlace, 4, 4, 1),
-        InterpolateBlueprint::new(Residence::InPlace, 2, 2, 1),
-        InterpolateBlueprint::new(Residence::InPlace, 2, 4, 2),
+        InterpolateBlueprint::new(InputStage::InPlace, 1, 1, 1),
+        InterpolateBlueprint::new(InputStage::Smem, 1, 1, 1),
+        InterpolateBlueprint::new(InputStage::InPlace, 1, 2, 1),
+        InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 2),
+        InterpolateBlueprint::new(InputStage::InPlace, 4, 4, 1),
+        InterpolateBlueprint::new(InputStage::InPlace, 2, 2, 1),
+        InterpolateBlueprint::new(InputStage::InPlace, 2, 4, 2),
     ] {
         kernel_output_with(options, blueprint);
     }
@@ -182,7 +182,7 @@ fn test_interpolate_kernel_geometry_configurations() {
 #[test]
 fn test_interpolate_kernel_channel_block_configurations() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
-    for residence in [Residence::InPlace, Residence::Smem] {
+    for residence in [InputStage::InPlace, InputStage::Smem] {
         for block in [1, 2, 4] {
             kernel_output_with(
                 options,
@@ -205,7 +205,7 @@ fn test_interpolate_kernel_padded_channel_stage() {
         for block in [channels, 4] {
             kernel_output_shaped(
                 options,
-                InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(block),
+                InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(block),
                 channels,
             );
         }
@@ -224,7 +224,7 @@ fn test_interpolate_kernel_padded_channel_stage_every_mode() {
     ] {
         kernel_output_shaped(
             InterpolateOptions::new(mode).with_align_corners(false),
-            InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+            InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(4),
             3,
         );
     }
@@ -237,7 +237,7 @@ fn test_interpolate_kernel_padded_channel_stage_multi_block() {
     let options = InterpolateOptions::new(InterpolateMode::Bilinear).with_align_corners(false);
     kernel_output_shaped(
         options,
-        InterpolateBlueprint::new(Residence::Smem, 4, 2, 1).with_channel_block(4),
+        InterpolateBlueprint::new(InputStage::Smem, 4, 2, 1).with_channel_block(4),
         6,
     );
 }

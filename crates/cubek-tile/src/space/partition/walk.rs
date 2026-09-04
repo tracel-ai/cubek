@@ -1,6 +1,17 @@
-//! The [`Walk`]: the (sub-)Spaces partitioning a [`Space`] yields, as a runtime
-//! odometer over the per-axis tile counts. Each step is a [`Region`] (a `Space` at
-//! an origin); a [`Tile`] locates itself at it.
+//! The [`Walk`]: the regions one level of a [`Space`] hands the instance running the code.
+//!
+//! A walk is a sequence with random access and nothing else: [`over`](Walk::over) computes
+//! once how many regions this cube or plane owns at the level ([`total`](Walk::total)) and how
+//! an index maps to one ([`region`](Walk::region)): decode the index as an odometer over the
+//! level's walked axes, last declared axis fastest, and add this instance's share on the
+//! distributed axes. It never iterates the instances themselves, the hardware does that, and it
+//! holds no current region: `for region in walk` is `for i in 0..total { region(i) }`. The
+//! only things a walk can be told are its order ([`reversed`](Walk::reversed)) and whether it
+//! unrolls ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering)
+//! is a schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
+//!
+//! Each region is a [`Region`] (a `Space` at an origin); a [`Tile`] windows itself to it with
+//! `at`, coming back at the level below.
 
 use cubecl::prelude::*;
 
@@ -9,7 +20,7 @@ use crate::{
 };
 
 use super::walk_order::walk_index;
-use super::{ComputeScope, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles.
 #[derive(CubeType)]
@@ -28,14 +39,17 @@ pub struct Walk {
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
     steps: usize,
-    /// The space the regions are cut from, which is also what a schedule sizes its slots to
-    /// ([`pipelined_walk`](crate::pipelined_walk)).
+    /// The space the regions are cut from, which is also what a ring sizes its slots to
+    /// ([`Ring::smem`](crate::Ring::smem)).
     #[cube(comptime)]
     pub(crate) space: Space,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
-    unroll: bool,
+    pub(crate) unroll: bool,
+    /// The order the steps visit the odometer in ([`reversed`](Walk::reversed)).
+    #[cube(comptime)]
+    order: WalkOrder,
 }
 
 #[cube]
@@ -126,8 +140,23 @@ impl Walk {
             scales,
             base: 0usize,
             steps,
+            order: comptime!(WalkOrder::RowMajor),
             space,
             unroll: comptime!(false),
+        }
+    }
+
+    /// This walk with its steps visited last to first.
+    pub fn reversed(self) -> Walk {
+        Walk {
+            counts: self.counts,
+            positions: self.positions,
+            scales: self.scales,
+            base: self.base,
+            steps: self.steps,
+            space: comptime!(self.space.clone()),
+            unroll: comptime!(self.unroll),
+            order: comptime!(WalkOrder::Reversed),
         }
     }
 
@@ -148,6 +177,7 @@ impl Walk {
             steps: self.steps,
             space: comptime!(self.space.clone()),
             unroll: comptime!(unroll),
+            order: comptime!(self.order),
         }
     }
 
@@ -171,6 +201,7 @@ impl Walk {
             steps,
             space: comptime!(self.space.clone()),
             unroll: comptime!(self.unroll),
+            order: comptime!(self.order),
         }
     }
 
@@ -181,11 +212,9 @@ impl Walk {
 
     /// Returns the ith region of the walk
     pub fn region(&self, i: usize) -> Region {
-        let idx = self.base.fadd(walk_index(
-            i,
-            self.steps,
-            comptime!(self.space.partitioner().order()),
-        ));
+        let idx = self
+            .base
+            .fadd(walk_index(i, self.steps, comptime!(self.order)));
         Region::new(self.resolve(idx), self.space.clone())
     }
 
@@ -276,6 +305,13 @@ impl Iterable for WalkExpand {
             body(scope, self.__expand_region_method(scope, i));
         });
     }
+
+    /// The region count when it folds to a constant, which is what lets `for region in walk`
+    /// drop the loop around a single region: a level that cuts nothing is one region, walked
+    /// straight through rather than under a one-trip loop.
+    fn const_len(&self) -> Option<usize> {
+        crate::fold::constant(&self.steps).map(|n| n as usize)
+    }
 }
 
 /// Whole `grid` when `Sequential`, else this instance's `Spatial` share.
@@ -291,7 +327,7 @@ fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
 /// it through the axis's shared-dim stride to the per-axis instance coordinate.
 #[cube]
-pub(crate) fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
+pub fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     match comptime!(unit) {
         ComputeScope::Cube(dim) => {
             let cube_pos = match comptime!(dim) {

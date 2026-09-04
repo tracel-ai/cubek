@@ -2,10 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{
-    Axis, Buffering, CubeAxis, Geometry, Instruction, RegisterBlock, Residence, StorageTiling,
-    Tiling, WalkOrder, cubes, planes,
-};
+use cubek_tile::{Axis, Geometry, Launcher, StorageTiling};
 
 use crate::{
     definition::{
@@ -13,8 +10,11 @@ use crate::{
         broadcast_batches,
     },
     routine::{BlueprintStrategy, DeviceSettings},
-    tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
-    tiled::{K, M, MatmulOperands, N, batch_axis},
+    tiled::cpu_gemm::{
+        base::CpuGemmRoutine,
+        kernel::{cpu_gemm_kernel, cpu_gemm_space},
+    },
+    tiled::{K, M, N, batch_axis},
 };
 
 /// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
@@ -169,54 +169,15 @@ pub fn launch_ref(
         .filter(|&p| out_batches[p] > 1)
         .collect();
 
-    // A cube owns a tile of `planes.m × planes.n` leaves; each plane (a CPU worker thread)
-    // owns one leaf.
-    let leaf = blueprint.instruction;
-    let plane_grid = blueprint.planes;
-    let cube_m = plane_grid.m * leaf.m;
-    let cube_n = plane_grid.n * leaf.n;
-
-    let batch_axes: Vec<_> = batch.iter().map(|&p| batch_axis(p)).collect();
-    // One tile of every batch axis, which is what each level states of them.
-    let batch_tiles: Vec<_> = batch_axes.iter().map(|&a| (a, 1)).collect();
+    let batch_axes: Vec<Axis> = batch.iter().map(|&p| batch_axis(p)).collect();
     let extents: Vec<_> = (batch_axes.iter().zip(&batch))
         .map(|(&a, &p)| (a, out_batches[p]))
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // One level per decomposition, coarse→fine: the cube grid (a serial loop on CPU), then the
-    // plane split (the parallel worker threads). Batch axes ride one-per-cube on Z then iterate
-    // sequentially; K is contracted sequentially in both leaves. Both inputs are read where they
-    // already lie, so no level stages them. The accumulator states its residence at the cube
-    // grid: `out` spans no contracted axis, so that level holds one region per cube, and a
-    // register-resident accumulator there spans the whole `K` walk below it.
-    let mut ops = MatmulOperands::new(dtypes);
-    let space = Tiling::over(&mut ops, &extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.distribute(cubes(CubeAxis::Z), &batch_tiles)
-                .distribute(cubes(CubeAxis::X), &[(M, cube_m)])
-                .distribute(cubes(CubeAxis::Y), &[(N, cube_n)])
-                .walk(&[(K, k)]);
-            o.out.stage_as(Residence::Register, dtypes.acc_register);
-        })
-        // A CPU backend: a wide scalar register budget to unroll against, the dual-path edge
-        // specialization, and a flat scalar K-walk (no lanes to fan out over).
-        .instruction(
-            Instruction::Registers {
-                config: RegisterBlock::new(256).split_edge(),
-            },
-            |l, _| {
-                l.distribute(planes(), &[(M, leaf.m)])
-                    .distribute(planes(), &[(N, leaf.n)])
-                    .walk(&batch_tiles)
-                    .walk(&[(K, leaf.k)]);
-            },
-        )
-        .build();
-
-    // Geometry off the concrete extents, kernel space fully dynamic (one compiled kernel per
-    // shape family), overhang checks derived per operand: all inside the launcher.
-    let launch = space.launcher(client);
+    // The kernel's own statement of the space, with this launch's extents stamped on: geometry
+    // off the concrete extents, overhang checks derived per operand, all inside the launcher.
+    let launch = Launcher::new(client, cpu_gemm_space(&blueprint, &batch_axes, k), &extents);
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher
@@ -238,18 +199,21 @@ pub fn launch_ref(
     // dims drop out).
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let a = launch
-        .bind(&ops.a, lhs.into_data())
+        .arg(lhs.into_data())
+        .subspace(&[M, K])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, lhs_levels))
         .build();
     let b = launch
-        .bind(&ops.b, rhs)
+        .arg(rhs)
+        .subspace(&[K, N])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
         .build();
     let c = launch
-        .bind(&ops.out, out)
+        .arg(out)
+        .subspace(&[M, N])
         .batches(&out_batch_axes)
         .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
@@ -264,11 +228,13 @@ pub fn launch_ref(
         a.arg(),
         b.arg(),
         c.arg(),
-        launch.space().clone(),
-        ops.a.dtype(),
-        ops.b.dtype(),
-        ops.out.dtype(),
-        ops.out.current_dtype(),
+        blueprint.clone(),
+        batch_axes,
+        k,
+        dtypes.lhs_global,
+        dtypes.rhs_global,
+        dtypes.acc_global,
+        dtypes.acc_register,
     );
     Ok(())
 }

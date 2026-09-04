@@ -8,7 +8,6 @@
 mod base;
 mod kernel;
 mod launch;
-mod operands;
 
 pub use base::{QuantGemvBlueprint, QuantGemvProblem, QuantGemvRoutine, QuantGemvStrategy};
 pub use launch::{QuantGemvBindings, QuantGemvElems, launch_ref};

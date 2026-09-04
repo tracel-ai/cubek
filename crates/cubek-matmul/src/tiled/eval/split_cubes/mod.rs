@@ -35,15 +35,12 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Buffering, CubeAxis, Instruction, Monoid,
-    PhysicalAxisMap, Projection, RegisterBlock, Residence, Semiring, Space, TileArg, TileArgLaunch,
-    TileSpec, Tiling, WalkOrder, cubes, lanes,
+    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Monoid, PhysicalAxisMap, Projection,
+    RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec, Tiling, Walk, cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
-const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(64),
-};
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(64);
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -67,10 +64,19 @@ fn plain_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    c.mm(&a, &b, Semiring::SUM_PROD);
+    let c = c.tile(space);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
+        c_cube.mm_with(
+            &a.at(&region),
+            &b.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
+/// This cube's slice of `K` contracted into a register block, drained through the atomic fold.
 #[cube(launch)]
 fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -82,8 +88,40 @@ fn atomic_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b, Semiring::SUM_PROD);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
+        let a_cube = a.at(&region);
+        let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, REGISTER_BLOCK, Monoid::Sum);
+        acc.mm(&a_cube, &b.at(&region), Semiring::SUM_PROD);
+        acc.drain_cast_into(&mut c_cube);
+    }
+}
+
+/// [`atomic_matmul`] with the cube's slice cut again across the plane's lanes: each lane
+/// contracts its own slice into the block, the plane combines in registers at the drain.
+#[cube(launch)]
+fn atomic_matmul_lanes<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile(space);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_cube = c.at(&region);
+        let a_cube = a.at(&region);
+        let b_cube = b.at(&region);
+        let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, REGISTER_BLOCK, Monoid::Sum);
+        acc.zero();
+        for region in Walk::over(acc.op_space(&a_cube, &b_cube)) {
+            let mut acc_lane = acc.at(&region);
+            acc_lane.mma(&a_cube.at(&region), &b_cube.at(&region), Semiring::SUM_PROD);
+        }
+        acc.drain_cast_into(&mut c_cube);
+    }
 }
 
 #[cube(launch)]
@@ -94,8 +132,11 @@ fn fold_splits<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let partials = partials.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    out.reduce_axis(&partials, Monoid::Sum);
+    let out = out.tile(space);
+    for region in Walk::over(out.reduce_space(&partials)) {
+        let mut out_cube = out.at(&region);
+        out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -156,8 +197,8 @@ impl Mapping {
         let splits = self.splits();
         match self {
             Mapping::DataParallel | Mapping::Atomic { .. } => {
-                Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                Tiling::over(&[(M, m), (N, n), (K, k)])
+                    .level(|l| {
                         l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                             .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                             .walk(&[(M, m)]);
@@ -165,8 +206,8 @@ impl Mapping {
                     .build()
             }
             Mapping::Workspace { .. } => {
-                Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, k / splits)])
-                    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+                Tiling::over(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
+                    .level(|l| {
                         l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                             .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
                             .walk(&[(M, m), (KI, k / splits)]);
@@ -176,33 +217,30 @@ impl Mapping {
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            Mapping::AtomicLanes { .. } => Tiling::over(&[(M, m), (N, n), (K, k)])
+                .level(|l| {
                     l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
                         .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                         .walk(&[(M, m)]);
                 })
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-                    l.distribute(lanes(), &[(K, k / splits / plane_size)])
+                .level(|l| {
+                    l.distribute(lanes(plane_size), &[(K, k / splits / plane_size)])
                         .walk(&[(M, m), (N, COLS)]);
                 })
-                .build()
-                .resolve_lanes(plane_size),
+                .build(),
         }
-        .with_instruction(INSTRUCTION)
     }
 
     /// The fold pass's space, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Space {
         let Problem { m, n, .. } = problem;
-        Tiling::over(&mut (), &[(M, m), (N, n), (KB, self.splits())])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        Tiling::over(&[(M, m), (N, n), (KB, self.splits())])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::X), &[(M, 1)])
                     .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
                     .walk(&[(KB, self.splits())]);
             })
             .build()
-            .with_instruction(INSTRUCTION)
     }
 
     /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.
@@ -325,7 +363,7 @@ impl Bound {
             folded,
             lhs_spec: mapping.lhs_spec(inside),
             rhs_spec: mapping.rhs_spec(inside),
-            out_spec: TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            out_spec: TileSpec::direct(&[M, N]),
         }
     }
 
@@ -341,8 +379,20 @@ impl Bound {
     fn launch(&self) {
         let dtype = f32::elem_type_native();
         match self.mapping {
-            Mapping::Atomic { .. } | Mapping::AtomicLanes { .. } => {
+            Mapping::Atomic { .. } => {
                 atomic_matmul::launch(
+                    &self.client,
+                    self.cube_count.clone(),
+                    self.cube_dim,
+                    TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
+                    TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
+                    AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
+                    self.space.clone(),
+                    dtype,
+                );
+            }
+            Mapping::AtomicLanes { .. } => {
+                atomic_matmul_lanes::launch(
                     &self.client,
                     self.cube_count.clone(),
                     self.cube_dim,

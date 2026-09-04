@@ -12,10 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{
-    Buffering, CubeAxis, Instruction, PhysicalAxisMap, Projection, Tiling, WalkOrder, cubes, lanes,
-    planes,
-};
+use cubek_tile::{Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -24,8 +21,7 @@ use crate::{
         M, N,
         quant_gemv::{
             base::{QuantGemvProblem, QuantGemvRoutine},
-            kernel::quant_gemv_kernel,
-            operands::{KB, KI, QuantGemvOperands},
+            kernel::{KB, KI, quant_gemv_kernel, quant_gemv_space},
         },
     },
 };
@@ -78,62 +74,9 @@ pub fn launch_ref(
         out,
     } = bindings;
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
-    let mut ops = QuantGemvOperands::new(
-        dtypes.served,
-        dtypes.x,
-        dtypes.scales,
-        scales.len(),
-        dtypes.out,
-    );
-
-    let extents = [
-        (M, problem.d_out),
-        (N, problem.rows),
-        (KB, blocks),
-        (KI, block),
-    ];
-    let space = Tiling::over(&mut ops, &extents)
-        // A strip of output rows per cube, walking all of `K`. Nothing is staged: the weight is
-        // read exactly once, so there is no reuse for a stage to amortize.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(cubes(CubeAxis::X), &[(M, blueprint.rows_per_cube)])
-                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
-        })
-        // One plane per group of rows.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(planes(), &[(M, blueprint.rows_per_plane)])
-                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
-        })
-        // The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving
-        // the contraction between them. Each takes one stored word of `KI`, and where a group
-        // reaches past one block it takes whole blocks of `KB` — a distribution deals one axis
-        // or the other and cannot straddle two. The partials the lanes hold drain inside the plane.
-        .instruction(
-            Instruction::registers(blueprint.rows_per_lane * factor),
-            |l, _| {
-                // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words.
-                // The lane counts are the blueprint's, derived on the host from the plane width:
-                // their product with the row groups is exactly it.
-                l.distribute(
-                    lanes().instances(blueprint.groups()),
-                    &[(M, blueprint.rows_per_lane)],
-                )
-                .distribute(
-                    lanes().instances(blueprint.block_lanes).interleaved(),
-                    &[(KB, 1)],
-                )
-                .distribute(
-                    lanes().instances(blueprint.inside_lanes).interleaved(),
-                    &[(KI, factor)],
-                )
-                .walk(&[(N, problem.rows)]);
-            },
-        )
-        .build();
-
-    // Every axis static: the extents fold the address arithmetic to constants, which is what a
-    // plan built out of the shape is for.
-    let launch = space.launcher_over(client, &[]);
+    // The kernel's own statement of the space; every axis static, so the launcher stamps
+    // nothing on.
+    let launch = Launcher::new(client, quant_gemv_space(&blueprint, problem), &[]);
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;
     // the scales span `KB` alone and address it as it stands.
@@ -144,7 +87,6 @@ pub fn launch_ref(
             &[M, KB, KI],
             &[PhysicalAxisMap::of(M), split()],
         ))
-        .operand(&ops.w)
         .packed(problem.field)
         // The served width, which is a whole word: the buffer binds one word wide.
         .vectorize(factor)
@@ -155,7 +97,6 @@ pub fn launch_ref(
             &[N, KB, KI],
             &[PhysicalAxisMap::of(N), split()],
         ))
-        .operand(&ops.x)
         // One word's worth of activations a step, so both operands serve the same count and the
         // contraction folds a whole line. Leave it scalar and the engine serves one value a
         // step, unpacks the word's other values and discards them.
@@ -165,7 +106,7 @@ pub fn launch_ref(
     // extent of one is a level that does not vary there, which is what makes it cover a tile of
     // the tiles below it.
     let mut s_args = SequenceArg::new();
-    for (op, binding) in ops.scales.iter().zip(scales) {
+    for binding in scales {
         let dims: Vec<usize> = binding.shape.iter().copied().collect();
         let full = [(M, problem.d_out), (KB, blocks)];
         if dims.len() != full.len() {
@@ -191,12 +132,12 @@ pub fn launch_ref(
             }
         }
         let projection = Projection::new(&[M, KB], &maps);
-        let level = launch.arg(binding).gathered(projection).operand(op).build();
+        let level = launch.arg(binding).gathered(projection).build();
         s_args.push(level.arg());
     }
     // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
-    let out_op = launch.bind(&ops.out, out).build();
+    let out_op = launch.arg(out).subspace(&[M, N]).build();
 
     quant_gemv_kernel::launch(
         client,
@@ -208,7 +149,8 @@ pub fn launch_ref(
         x_op.arg(),
         s_args,
         out_op.arg(),
-        launch.space().clone(),
+        blueprint,
+        *problem,
         dtypes.served,
         dtypes.x,
         dtypes.scales,

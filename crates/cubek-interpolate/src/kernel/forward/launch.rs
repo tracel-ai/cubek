@@ -5,12 +5,13 @@ use super::{
     geometry::TileGeometry,
     space::{self, CHANNEL},
 };
+use crate::InputStage;
 use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{client::Client, ir::ElemType, prelude::*};
-use cubek_tile::{Geometry, Residence};
+use cubek_tile::{Geometry, Launcher};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
@@ -32,7 +33,7 @@ pub(crate) fn interpolate_launch(
     let blueprint = strategy.blueprint(hardware, &problem);
     blueprint.validate()?;
 
-    if blueprint.input_residence == Residence::Smem && hardware.num_cpu_cores.is_some() {
+    if blueprint.input_residence == InputStage::Smem && hardware.num_cpu_cores.is_some() {
         return Err(InterpolateError::SharedMemoryUnsupportedOnCpu);
     }
 
@@ -47,7 +48,7 @@ pub(crate) fn interpolate_launch(
     // not get one rather than to record the in-place kernel under the staged name.
     let fallback = match strategy {
         InterpolateStrategy::Forced(_) => None,
-        _ => Some(Residence::InPlace),
+        _ => Some(InputStage::InPlace),
     };
 
     let geometry =
@@ -81,10 +82,10 @@ fn launch<F: SeparableFilterFamily>(
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    residence: Residence,
-    fallback: Option<Residence>,
+    residence: InputStage,
+    fallback: Option<InputStage>,
 ) -> Result<(), InterpolateError> {
-    let Some(fallback) = fallback.filter(|_| residence == Residence::Smem) else {
+    let Some(fallback) = fallback.filter(|_| residence == InputStage::Smem) else {
         return dispatch::<F>(client, input, output, options, dtype, geometry, residence);
     };
 
@@ -111,7 +112,7 @@ fn dispatch<F: SeparableFilterFamily>(
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    residence: Residence,
+    residence: InputStage,
 ) -> Result<(), InterpolateError> {
     let (input_h, input_w, output_h, output_w) = (
         input.shape[1],
@@ -134,19 +135,18 @@ fn dispatch<F: SeparableFilterFamily>(
         });
     }
 
-    let (space, in_operand) = space::interpolate_space(
-        output.shape[0],
-        output_h,
-        output_w,
-        output.shape[3],
-        lanes,
-        F::mode_properties().taps,
+    let plan = space::InterpolateSpace {
+        batch: output.shape[0],
+        height: output_h,
+        width: output_w,
+        channels: output.shape[3],
+        plane_size: lanes,
+        taps: F::mode_properties().taps,
         geometry,
-        space::instruction(client),
-        dtype,
-        residence,
-    );
-    let launch = space.launcher_over(client, &[]);
+    };
+    // The kernel's own statement of the space; every axis static, so the launcher stamps
+    // nothing on.
+    let launch = Launcher::new(client, plan.space(), &[]);
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -166,7 +166,7 @@ fn dispatch<F: SeparableFilterFamily>(
     // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
     // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
     // the device actually serves is worth asking for, and only over a stage that exists.
-    let stage_width = (residence == Residence::Smem
+    let stage_width = (residence == InputStage::Smem
         && geometry.channel_block != vector_size
         && client
             .io_optimized_vector_sizes(dtype.size())
@@ -181,7 +181,7 @@ fn dispatch<F: SeparableFilterFamily>(
 
     // Capacity is a hard limit, so it refuses here rather than trimming the window to fit. Whether
     // that refusal ends the launch or sends it back in place is the caller's to decide.
-    if residence == Residence::Smem {
+    if residence == InputStage::Smem {
         let available = client.properties().hardware.max_shared_memory_size;
         let requested = space::stage_window_bytes(
             row,
@@ -200,17 +200,13 @@ fn dispatch<F: SeparableFilterFamily>(
         }
     }
 
-    let mut input_arg = launch
+    let input_arg = launch
         .arg(input)
-        .operand(&in_operand)
         .gathered(space::input_projection(row, col, F::radius()))
         .checked(checked)
         .with_boundary(checked.then_some(properties.boundary))
-        .vectorize(vector_size);
-    if let Some(width) = stage_width {
-        input_arg = input_arg.stage_width(width);
-    }
-    let input_arg = input_arg.build();
+        .vectorize(vector_size)
+        .build();
     let output_arg = launch
         .arg(output)
         .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
@@ -230,7 +226,10 @@ fn dispatch<F: SeparableFilterFamily>(
         col.offset as i32,
         col.divisor as u32,
         F::radius(),
-        launch.space().clone(),
+        plan,
+        residence,
+        stage_width,
+        space::register_block(client),
         dtype,
     );
     Ok(())

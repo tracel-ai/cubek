@@ -17,6 +17,10 @@ const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
 const TAP: [Axis; 3] = [Axis(2), Axis(3), Axis(4)];
 
+/// The software instruction every leaf here runs under: a 16-cell budget, no edge split, no lane
+/// fan-out.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
 const ROWS: usize = 2;
 const COLS: usize = 3;
 /// Deliberately unequal, so a factor read at the wrong offset lands on the wrong tap count.
@@ -79,8 +83,45 @@ fn separable_kernel<E: Float>(
         Tile::<E>::procedural::<Weights<E>>(comptime!(space.project(&weight_axes)), weights::<E>())
     };
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
+}
+
+/// [`separable_kernel`] with the input staged into shared memory, served in `width`-wide lines
+/// where one is stated (the operand is scalar, the stage pads it out to whole lines).
+#[cube(launch)]
+fn separable_kernel_staged<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] width: Option<usize>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&weight_axes)),
+        weights::<E>(),
+    );
+
+    let output = output.tile(space);
+    let walk = Walk::over(output.op_space(&weights, &input));
+    let mut ring = Ring::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
+    pipelined(walk, &mut ring, |slot, region| {
+        let mut out = output.at(region);
+        let weights = weights.at(region);
+        slot.consume(|input| {
+            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+        });
+    });
 }
 
 /// Small integers, so the accumulation is exact in `f32`.
@@ -125,17 +166,14 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ],
-    )
-    .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[
+        (ROW, ROWS),
+        (COL, COLS),
+        (TAP[0], TAPS[0]),
+        (TAP[1], TAPS[1]),
+        (TAP[2], TAPS[2]),
+    ])
+    .level(|l| {
         l.walk(&[
             (ROW, ROWS),
             (COL, COLS),
@@ -214,17 +252,14 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ],
-    )
-    .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[
+        (ROW, ROWS),
+        (COL, COLS),
+        (TAP[0], TAPS[0]),
+        (TAP[1], TAPS[1]),
+        (TAP[2], TAPS[2]),
+    ])
+    .level(|l| {
         l.walk(&[
             (ROW, ROWS),
             (COL, COLS),
@@ -235,11 +270,9 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
     })
     .build();
 
-    let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL])
-        .residence(&[Residence::Smem])
-        .stage_width(4);
+    let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]);
 
-    separable_kernel::launch(
+    separable_kernel_staged::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -248,7 +281,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        true,
+        Some(4),
         space,
         f32_ty,
     );
@@ -292,8 +325,16 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
         weights::<E>(),
     );
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// Native Q8S served in `QV`-wide lines: `served / pack` is `QV`, so a scalar physical width
@@ -335,17 +376,14 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (ROW, ROWS),
-            (COL, QCOLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ],
-    )
-    .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[
+        (ROW, ROWS),
+        (COL, QCOLS),
+        (TAP[0], TAPS[0]),
+        (TAP[1], TAPS[1]),
+        (TAP[2], TAPS[2]),
+    ])
+    .level(|l| {
         l.walk(&[
             (ROW, ROWS),
             (COL, QCOLS),
@@ -430,17 +468,14 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (ROW, ROWS),
-            (COL, pack),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ],
-    )
-    .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[
+        (ROW, ROWS),
+        (COL, pack),
+        (TAP[0], TAPS[0]),
+        (TAP[1], TAPS[1]),
+        (TAP[2], TAPS[2]),
+    ])
+    .level(|l| {
         l.walk(&[
             (ROW, ROWS),
             (COL, pack),
@@ -558,8 +593,16 @@ fn resample_kernel<E: Float>(
         weights
     };
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 #[test]
@@ -588,8 +631,8 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
         })
         .build();
@@ -665,7 +708,9 @@ fn procedural_mask_kernel<E: Float>(
             separable_product(factors),
         )
         .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
-        output.at(&region).mma(&weights, &rhs, Semiring::SUM_PROD);
+        output
+            .at(&region)
+            .mma_with(&weights, &rhs, REGISTER_BLOCK, Semiring::SUM_PROD);
     }
 }
 
@@ -677,8 +722,8 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let space = Tiling::over(&mut (), &[(ROW, 1), (COL, 1), (TAP[0], 3)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
+        .level(|l| {
             l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)]);
         })
         .build();
@@ -718,8 +763,44 @@ fn resample_kernel_masked<E: Float>(
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
+}
+
+/// [`resample_kernel_masked`] with the input staged: the stage records the window it was filled
+/// from, and the mask is put to that rectangle.
+#[cube(launch)]
+fn resample_kernel_masked_staged<E: Float>(
+    input: &TileArg<'_, E, Const<1>>,
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let input = input.tile(comptime!(space.clone()));
+    let weights = Tile::<E>::procedural_separable::<Weights<E>>(
+        comptime!(space.project(&[ROW, TAP[0]])),
+        resample_weights::<E>(),
+    )
+    .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
+
+    let output = output.tile(space);
+    let walk = Walk::over(output.op_space(&weights, &input));
+    let mut ring = Ring::smem_single(&walk, &input, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut ring, |slot, region| {
+        let mut out = output.at(region);
+        let weights = weights.at(region);
+        slot.consume(|input| {
+            out.mm_with(&weights, input, REGISTER_BLOCK, Semiring::SUM_PROD);
+        });
+    });
 }
 
 #[test]
@@ -740,8 +821,8 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
         })
         .build();
@@ -816,8 +897,8 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
         })
         .build();
@@ -829,10 +910,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
             PhysicalAxisMap::of(COL),
         ],
     ))
-    .checked(true)
-    .residence(&[Residence::Smem]);
+    .checked(true);
 
-    resample_kernel_masked::launch(
+    resample_kernel_masked_staged::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -893,8 +973,16 @@ fn column_spanning_resample_kernel<E: Float>(
     )
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 #[test]
@@ -916,8 +1004,8 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
         })
         .build();
@@ -975,8 +1063,16 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 #[test]
@@ -997,8 +1093,8 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+        .level(|l| {
             l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
         })
         .build();
@@ -1075,8 +1171,16 @@ fn zero_sum_fallback_kernel<E: Float>(
         }),
     );
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+    for region in Walk::over(output.op_space(&weights, &input)) {
+        let mut out = output.at(&region);
+        out.mm_with(
+            &weights.at(&region),
+            &input.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 #[test]
@@ -1095,8 +1199,8 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+        .level(|l| {
             l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]);
         })
         .build();

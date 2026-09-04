@@ -19,11 +19,9 @@ pub struct TmaData<T: Numeric> {
     view: ViewMut<'static, T, CoordsDyn>,
     pos: CoordsDyn,
     pub(crate) bound: CoordsDyn,
-    /// Where this operand lives at each level below, descended by [`at`](TmaData::at) alongside
-    /// the space. A bulk copy only ever lands in shared memory, but the levels *under* that stage
-    /// still state their own residences, so the whole plan rides along.
+    /// The launch's cube size, `0` when unknown ([`Access::units`](crate::Access)).
     #[cube(comptime)]
-    pub(crate) stage: StagePlan,
+    pub(crate) units: usize,
 }
 
 #[cube]
@@ -33,7 +31,7 @@ impl<T: Numeric> TmaData<T> {
     pub(crate) fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
         #[comptime] space: Space,
-        #[comptime] stage: StagePlan,
+        #[comptime] units: usize,
     ) -> Tile<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
@@ -46,7 +44,7 @@ impl<T: Numeric> TmaData<T> {
                 view,
                 pos,
                 bound,
-                stage,
+                units,
             }),
             space: comptime!(space),
         }
@@ -98,7 +96,7 @@ impl<T: Numeric> TmaData<T> {
             view: self.view.clone(),
             pos,
             bound: self.bound.clone(),
-            stage: comptime!(self.stage.descend()),
+            units: self.units,
         }
     }
 }

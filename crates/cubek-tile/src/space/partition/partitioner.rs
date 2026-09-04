@@ -3,50 +3,11 @@
 
 use crate::{Axis, ByAxis};
 
-use super::{ComputeScope, Coverage, Distribution, Spatial, WalkOrder};
-
-/// How deeply a level's walk buffers its regions, and nothing else: whether an operand is
-/// materialized at all, and into what, is the operand's own
-/// [`Residence`](crate::Residence), stated per level. The two are independent: a level every
-/// operand rides [`InPlace`](crate::Residence::InPlace) still runs the depth stated here, over
-/// slots that allocate nothing.
-///
-/// A depth, not a menu: the walk is one circular software pipeline of `depth` slots
-/// ([`Ring`](crate::Ring)), so single and double buffering are the `1` and `2` of the same
-/// schedule rather than two hand-written ones.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Buffering(usize);
-
-impl Buffering {
-    /// One slot: fill a region, consume it, repeat.
-    pub const SINGLE: Buffering = Buffering(1);
-    /// Two slots alternating, so one region's fill overlaps the other's compute.
-    pub const DOUBLE: Buffering = Buffering(2);
-    /// Three slots circular, so two fills are in flight over one compute.
-    pub const TRIPLE: Buffering = Buffering(3);
-
-    /// A pipeline `depth` slots deep. Panics on `0`, which buffers nothing and computes nothing.
-    pub const fn new(depth: usize) -> Self {
-        assert!(depth > 0, "Buffering: a pipeline needs at least one slot");
-        Buffering(depth)
-    }
-
-    /// How many slots the walk drives.
-    pub const fn depth(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for Buffering {
-    fn default() -> Self {
-        Self::SINGLE
-    }
-}
+use super::{ComputeScope, Coverage, Distribution, Spatial};
 
 /// A space holds exactly one; [`divide`](crate::Space::divide) consumes the level and
-/// hands [`next`](Partitioner::next) down. A `Level` carries how deeply its walk buffers
-/// ([`Buffering`]); `Final` carries nothing, since what the terminal tile contracts through
-/// ([`Instruction`](crate::Instruction)) is each operand's own operand.s statement.
+/// hands [`next`](Partitioner::next) down. `Final` carries nothing: what runs on the terminal
+/// tile is the kernel's own call.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Partitioner {
     Final,
@@ -133,7 +94,7 @@ impl Work {
     pub(crate) fn instances(&self) -> usize {
         match self.dist.coverage() {
             Coverage::Instances(n) => n,
-            Coverage::TilesEach(_) | Coverage::PlaneLanes => panic!(
+            Coverage::TilesEach(_) => panic!(
                 "LevelCuts::distribute: state how many instances share the work \
                  (`.instances(n)`); a share of the whole cannot be derived from a grid whose \
                  length is only known at launch"
@@ -148,16 +109,10 @@ pub struct Level {
     dists: ByAxis<Distribution>,
     scope: LevelScope,
     work: Option<Work>,
-    order: WalkOrder,
-    buffering: Buffering,
     next: Partitioner,
 }
 
 impl Level {
-    pub fn buffering(&self) -> Buffering {
-        self.buffering
-    }
-
     pub(crate) fn scope(&self) -> LevelScope {
         self.scope
     }
@@ -207,52 +162,17 @@ impl Partitioner {
         (0..dists.len()).map(|i| dists.axis_at(i)).collect()
     }
 
-    pub fn order(&self) -> WalkOrder {
-        self.level().order
-    }
-
     /// The axes this level distributes as one, if any. Panics on
     /// [`Final`](Partitioner::Final), which carries no level.
     pub fn work(&self) -> Option<&Work> {
         self.level().work.as_ref()
     }
 
-    /// How many levels this chain has left, i.e. how many residences an operand descending it
-    /// states ([`StagePlan`](crate::StagePlan)).
+    /// How many levels this chain has left.
     pub fn depth(&self) -> usize {
         match self {
             Partitioner::Final => 0,
             Partitioner::Level(level) => 1 + level.next.depth(),
-        }
-    }
-
-    /// Resolve every level's deferred [`PlaneLanes`](super::Coverage::PlaneLanes) count to
-    /// `Instances(plane_size)`. The launch's single stamping pass, so geometry and the walk
-    /// only ever see concrete instance counts.
-    pub(crate) fn resolve_lanes(self, plane_size: usize) -> Partitioner {
-        match self {
-            Partitioner::Final => Partitioner::Final,
-            Partitioner::Level(level) => {
-                let Level {
-                    edges,
-                    dists,
-                    scope,
-                    work,
-                    order,
-                    buffering,
-                    next,
-                } = *level;
-                // Resolving lane counts keeps every axis `Spatial`, so the scope is unchanged.
-                Partitioner::Level(Box::new(Level {
-                    edges,
-                    dists: dists.map(|_, d| d.resolve_lanes(plane_size)),
-                    scope,
-                    work,
-                    order,
-                    buffering,
-                    next: next.resolve_lanes(plane_size),
-                }))
-            }
         }
     }
 
@@ -265,8 +185,6 @@ impl Partitioner {
                     dists,
                     scope,
                     work,
-                    order,
-                    buffering,
                     next,
                 } = *level;
                 Partitioner::Level(Box::new(Level {
@@ -274,8 +192,6 @@ impl Partitioner {
                     dists,
                     scope,
                     work,
-                    order,
-                    buffering,
                     next: next.append(tail),
                 }))
             }
@@ -295,30 +211,32 @@ impl Partitioner {
     }
 }
 
-/// A [`Partitioner`] with its split and walk order set but no [`Buffering`] yet.
+/// A [`Partitioner`] with its split set, one level deep, closed by
+/// [`level`](PartitionerBuilder::level) or [`distributing`](PartitionerBuilder::distributing).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PartitionerBuilder {
     sub_tile: ByAxis<usize>,
     dists: ByAxis<Distribution>,
-    order: WalkOrder,
+}
+
+impl Partitioner {
+    /// One level cutting each axis to `sub_tile` and dealing it per `dists`; declared axis order,
+    /// last axis fastest.
+    pub fn over(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>) -> PartitionerBuilder {
+        PartitionerBuilder { sub_tile, dists }
+    }
 }
 
 impl PartitionerBuilder {
-    pub(super) fn new(
-        sub_tile: ByAxis<usize>,
-        dists: ByAxis<Distribution>,
-        order: WalkOrder,
-    ) -> Self {
-        PartitionerBuilder {
-            sub_tile,
-            dists,
-            order,
-        }
+    /// Close the level. [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels
+    /// are stacked with [`with_partitioner`](crate::Space::with_partitioner).
+    pub fn level(self) -> Partitioner {
+        self.distributing(None)
     }
 
-    /// [`next`](Partitioner::next) is [`Final`](Partitioner::Final) until levels are
-    /// stacked with [`with_partitioner`](crate::Space::with_partitioner).
-    fn finish(self, buffering: Buffering, work: Option<Work>) -> Partitioner {
+    /// [`level`](Self::level) for a level that distributes some of its axes' work as one
+    /// ([`Work`]).
+    pub fn distributing(self, work: Option<Work>) -> Partitioner {
         // The finest scope any axis rides; `Sequential` when none spreads at all.
         let scope = self
             .dists
@@ -331,22 +249,8 @@ impl PartitionerBuilder {
             dists: self.dists,
             scope,
             work,
-            order: self.order,
-            buffering,
             next: Partitioner::Final,
         }))
-    }
-
-    /// Close the level with the depth its walk buffers to. The one way to state it: a depth is a
-    /// number, so naming a few of them would only hide that.
-    pub fn buffered(self, buffering: Buffering) -> Partitioner {
-        self.finish(buffering, None)
-    }
-
-    /// [`buffered`](Self::buffered) for a level that distributes some of its axes' work as one
-    /// ([`Work`]).
-    pub fn distributing(self, buffering: Buffering, work: Option<Work>) -> Partitioner {
-        self.finish(buffering, work)
     }
 }
 
@@ -360,8 +264,8 @@ mod tests {
 
     #[test]
     fn a_level_with_no_spatial_axis_is_sequential() {
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        let space = Tiling::over(&[(M, 8), (N, 8)])
+            .level(|l| {
                 l.walk(&[(M, 4), (N, 4)]);
             })
             .build();
@@ -371,8 +275,8 @@ mod tests {
 
     #[test]
     fn cube_axes_alone_separate_what_the_launch_grid_does() {
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        let space = Tiling::over(&[(M, 8), (N, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
                     .distribute(cubes(CubeAxis::X), &[(N, 4)]);
             })
@@ -385,8 +289,8 @@ mod tests {
     /// level reads as `Planes`. Reading only the first axis, or the coarsest, would say `Cubes`.
     #[test]
     fn a_plane_axis_beside_a_cube_axis_reaches_inside_the_cube() {
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        let space = Tiling::over(&[(M, 8), (N, 8)])
+            .level(|l| {
                 l.distribute(cubes(CubeAxis::Y), &[(M, 4)])
                     .distribute(planes(), &[(N, 4)]);
             })
@@ -396,10 +300,10 @@ mod tests {
 
     #[test]
     fn a_unit_axis_is_the_finest_scope() {
-        let space = Tiling::over(&mut (), &[(M, 8), (N, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        let space = Tiling::over(&[(M, 8), (N, 8)])
+            .level(|l| {
                 l.distribute(planes(), &[(M, 4)])
-                    .distribute(lanes(), &[(N, 4)]);
+                    .distribute(lanes(4), &[(N, 4)]);
             })
             .build();
         assert_eq!(space.partitioner().scope(), LevelScope::Lanes);
