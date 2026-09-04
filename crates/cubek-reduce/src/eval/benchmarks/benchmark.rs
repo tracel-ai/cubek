@@ -193,10 +193,11 @@ impl<E: Float> Benchmark for ReduceBench<E> {
     /// Measure with device timestamps around the launch, so the reported duration
     /// is the kernel's, not the host's view of launch+sync.
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        self.client
+        let (launched, duration) = self
+            .client
             .profile(|| self.execute(args), "reduce-bench")
-            .map(|it| it.1)
-            .map_err(|err| format!("{err:?}"))
+            .map_err(|err| format!("{err:?}"))?;
+        launched.map(|_| duration)
     }
 
     fn num_samples(&self) -> usize {

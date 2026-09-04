@@ -212,9 +212,10 @@ impl<AP: AttentionPrecision> Benchmark for BackwardBench<AP> {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        self.client
+        let (launched, duration) = self
+            .client
             .profile(|| self.execute(args), "attention-backward-bench")
-            .map(|it| it.1)
-            .map_err(|e| format!("{e:?}"))
+            .map_err(|e| format!("{e:?}"))?;
+        launched.map(|_| duration)
     }
 }

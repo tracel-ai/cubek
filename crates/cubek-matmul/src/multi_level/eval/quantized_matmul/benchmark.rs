@@ -297,10 +297,11 @@ impl Benchmark for QuantMatmulBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<cubecl::benchmark::ProfileDuration, String> {
-        self.client
+        let (launched, duration) = self
+            .client
             .profile(|| self.execute(args), "quant-matmul-bench")
-            .map(|it| it.1)
-            .map_err(|err| format!("{err:?}"))
+            .map_err(|err| format!("{err:?}"))?;
+        launched.map(|_| duration)
     }
 }
 
