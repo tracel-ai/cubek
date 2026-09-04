@@ -177,7 +177,11 @@ pub fn launch_ref(
 
     // The kernel's own statement of the space, with this launch's extents stamped on: geometry
     // off the concrete extents, overhang checks derived per operand, all inside the launcher.
-    let launch = Launcher::new(client, &extents, &cpu_gemm_levels(&blueprint, &batch_axes, k));
+    let launch = Launcher::new(
+        client,
+        &extents,
+        &cpu_gemm_levels(&blueprint, &batch_axes, k),
+    );
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher

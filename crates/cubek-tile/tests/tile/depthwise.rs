@@ -56,7 +56,10 @@ fn depthwise_kernel<E: Numeric>(
         let out_cube = out.at(&region);
         let input_cube = input.at(&region);
         let weight_cube = weight.at(&region);
-        for region in out_cube.op_space(&input_cube, &weight_cube).level(comptime!(nest.at(1))) {
+        for region in out_cube
+            .op_space(&input_cube, &weight_cube)
+            .level(comptime!(nest.at(1)))
+        {
             let mut out_plane = out_cube.at(&region);
             out_plane.mm_with(
                 &input_cube.at(&region),

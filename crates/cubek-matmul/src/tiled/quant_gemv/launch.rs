@@ -21,7 +21,7 @@ use crate::{
         M, N,
         quant_gemv::{
             base::{QuantGemvProblem, QuantGemvRoutine},
-            kernel::{KB, KI, quant_gemv_kernel, quant_gemv_extents, quant_gemv_levels},
+            kernel::{KB, KI, quant_gemv_extents, quant_gemv_kernel, quant_gemv_levels},
         },
     },
 };

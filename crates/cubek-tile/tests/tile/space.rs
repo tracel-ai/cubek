@@ -118,7 +118,16 @@ fn levels_chain_into_a_multi_level_scheme() {
     assert_eq!(level1.extent(M), 16);
     assert_eq!(level2.extent(M), 4);
     assert_eq!(level2.extent(N), 4);
-    assert_eq!(leaf(&space, &[sequential(&[(M, 16), (N, 16)]), sequential(&[(M, 4), (N, 4)])]), level2);
+    assert_eq!(
+        leaf(
+            &space,
+            &[
+                sequential(&[(M, 16), (N, 16)]),
+                sequential(&[(M, 4), (N, 4)])
+            ]
+        ),
+        level2
+    );
 }
 
 // ---- overhangs -------------------------------------------------------------

@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Boundary, CubeAxis, DequantAt, Divisor, Geometry, Offset, PhysicalAxisMap, Projection,
-    Scale, StorageTiling, StridedOperand, TileSpec, Nest, cubes, planes,
+    Axis, Boundary, CubeAxis, DequantAt, Divisor, Geometry, Nest, Offset, PhysicalAxisMap,
+    Projection, Scale, StorageTiling, TileSpec, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -776,9 +776,9 @@ fn arg_more_batch_dims_than_axes_panics() {
 /// in-kernel assert fires on a device thread, which surfaces as zeroed output.
 fn quantize(v: usize, scheme: QuantScheme) {
     let client = cubecl::test_device().client();
-    let space = batched_space(1, 1, 64, 64, 16).space.project(&[M, K]);
-    let _ = StridedOperand::source(binding(&client, &[64, 16]))
-        .space(&space)
+    let launch = batched_space(1, 1, 64, 64, 16).launcher(&client);
+    let _ = launch
+        .arg(binding(&client, &[64, 16]))
         .subspace(&[M, K])
         .vectorize(v)
         .checked(false)

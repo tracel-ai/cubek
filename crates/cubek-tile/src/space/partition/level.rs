@@ -1,11 +1,14 @@
 //! One decomposition [`Level`]: how each axis of a space is cut and dealt out, and the axes dealt
 //! as one. The value a kernel's loop states ([`Space::level`](crate::Space::level)), the value
-//! a [`Region`](crate::Region) carries down to `at`, and the only thing a level of a tiling is.
+//! a [`Region`](crate::Region) carries down to `at`, and the value a launch sizes its grid from
+//! ([`cube_count`](crate::cube_count), [`cube_dim`](crate::cube_dim)). A blueprint hands the
+//! same value to both, one method per level, so the grid and the loops cannot disagree.
 //!
-//! Built by [`Level::cuts`], the one constructor: two verbs on a [`LevelCuts`] collector,
-//! [`distribute`](LevelCuts::distribute) for axes a hardware scope's workers take and
-//! [`walk`](LevelCuts::walk) for axes every one of them steps through. Between them they name
-//! each of the space's axes exactly once, and nothing outside this module builds a level.
+//! Built by [`Level::cuts`], the constructor kernels and blueprints use: two verbs on a
+//! [`LevelCuts`] collector, [`distribute`](LevelCuts::distribute) for axes a hardware scope's
+//! workers take and [`walk`](LevelCuts::walk) for axes every one of them steps through. Between
+//! them they name each of the space's axes exactly once. [`Level::over`] is the raw form, edges
+//! and distributions by axis, for a test that spells a distribution out.
 
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
@@ -179,11 +182,9 @@ impl Level {
         work: Option<Work>,
     ) -> Level {
         // The finest scope any axis rides; `Sequential` when none spreads at all.
-        let scope = dists
-            .values()
-            .fold(LevelScope::Sequential, |scope, dist| {
-                scope.max(LevelScope::of(dist))
-            });
+        let scope = dists.values().fold(LevelScope::Sequential, |scope, dist| {
+            scope.max(LevelScope::of(dist))
+        });
         Level {
             edges,
             dists,
@@ -211,7 +212,9 @@ impl Level {
     /// The axes this level cuts, in canonical order. A level keeps every axis of the operation,
     /// so an operand's projection (`{M, N}`) still finds its contraction here.
     pub(crate) fn axes(&self) -> Vec<Axis> {
-        (0..self.dists.len()).map(|i| self.dists.axis_at(i)).collect()
+        (0..self.dists.len())
+            .map(|i| self.dists.axis_at(i))
+            .collect()
     }
 
     pub(crate) fn contains(&self, axis: Axis) -> bool {
@@ -222,7 +225,6 @@ impl Level {
     pub fn work(&self) -> Option<&Work> {
         self.work.as_ref()
     }
-
 
     /// The space one region of this level covers: every axis of `space` cut to its edge, static
     /// whatever the parent was (an edge is comptime). Position-free; the positions are the walk.

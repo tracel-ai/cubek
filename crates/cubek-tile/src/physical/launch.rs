@@ -31,7 +31,10 @@ pub fn cube_dim(space: &Space, levels: &[Level], client: &Client) -> CubeDim {
         lanes == 1 || lanes == plane_size,
         "cube_dim: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
     );
-    CubeDim::new_2d(plane_size, instances_count(space, levels, ComputeScope::Plane))
+    CubeDim::new_2d(
+        plane_size,
+        instances_count(space, levels, ComputeScope::Plane),
+    )
 }
 
 /// Product of instance counts over every axis riding `scope`, across every level, times the
@@ -311,9 +314,15 @@ impl Nest {
         cube_dim(&self.space, &self.levels, client)
     }
 
-    /// The launcher over this nest's static extents.
+    /// The launcher over this nest: the kernel form frees every axis ([`Launcher::new`]), the
+    /// concrete space keeps the nest's extents.
     pub fn launcher<'c>(&self, client: &'c Client) -> Launcher<'c> {
-        self.launcher_over(client, &[])
+        let extents: Vec<(Axis, usize)> = self
+            .space
+            .axes()
+            .map(|a| (a, self.space.extent(a)))
+            .collect();
+        Launcher::new(client, &extents, &self.levels)
     }
 
     /// The launcher whose kernel form frees only the `dynamic` axes ([`Launcher::over`]).

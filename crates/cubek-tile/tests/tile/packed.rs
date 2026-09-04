@@ -176,10 +176,9 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     nvfp4_shaped_matmul::launch(
         &client,
@@ -324,7 +323,12 @@ fn packed_gemv<E: Numeric, V: Size>(
     scales.push(scale.tile(comptime!(nest.space.clone())));
     let mut c = c.tile(comptime!(nest.space.clone()));
     // The accumulator lives in registers across the whole walk and drains once.
-    let mut acc = c.block_accumulator::<E, E>(&x, comptime!(Fragments::of(&c.space, &x.space, nest.below(0))), REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &x,
+        comptime!(Fragments::of(&c.space, &x.space, nest.below(0))),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     for region in acc.op_space(&x, &w).level(comptime!(nest.at(0))) {
         let mut acc_r = acc.at(&region);
@@ -691,10 +695,9 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     packed_matmul::launch(
         &client,
@@ -805,10 +808,9 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
+    });
 
     packed_matmul::launch(
         &client,
@@ -1317,10 +1319,9 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
+    });
 
     native_matmul::launch(
         &client,
@@ -1665,7 +1666,12 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     let x = x.tile(comptime!(nest.space.clone()));
     let w = w.tile_packed::<E>(comptime!(nest.space.clone()));
     let mut c = c.tile(comptime!(nest.space.clone()));
-    let mut acc = c.block_accumulator::<E, E>(&x, comptime!(Fragments::of(&c.space, &x.space, nest.below(0))), REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &x,
+        comptime!(Fragments::of(&c.space, &x.space, nest.below(0))),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     for region in acc.op_space(&x, &w).level(comptime!(nest.at(0))) {
         let mut acc_r = acc.at(&region);
@@ -1730,11 +1736,10 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(N, bn)])
-                .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
-        });
+    let nest = Nest::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]).level(|l| {
+        l.distribute(cubes(CubeAxis::X), &[(N, bn)])
+            .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
+    });
 
     packed_gemv_unscaled::launch(
         &client,

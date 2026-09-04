@@ -1116,13 +1116,8 @@ impl<T: Numeric> MemData<T> {
             let mut residues = Coords::<u32>::new();
             #[unroll]
             for pa in 0..rank {
-                let (step, residue, span) = gathered_descent(
-                    comptime!(proj.clone()),
-                    region,
-                    &self.map,
-                    w,
-                    pa,
-                );
+                let (step, residue, span) =
+                    gathered_descent(comptime!(proj.clone()), region, &self.map, w, pa);
 
                 // `step` only moves forward, so add directly to the signed origin.
                 origin.push(self.window.origin.at(pa).fadd(step.fcast::<i32>()));

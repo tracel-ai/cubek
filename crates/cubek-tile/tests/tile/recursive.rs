@@ -4,7 +4,7 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Nest, Axis, Space, TileArg};
+use cubek_tile::{Axis, Nest, Space, TileArg};
 
 use super::references;
 

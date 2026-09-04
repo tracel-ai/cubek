@@ -295,7 +295,12 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
-                stage_smem(input, comptime!(walk.level.clone()), comptime!(storage.clone()), width)
+                stage_smem(
+                    input,
+                    comptime!(walk.level.clone()),
+                    comptime!(storage.clone()),
+                    width,
+                )
             };
             let staging = Staging::wrap(
                 staged_input,

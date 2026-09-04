@@ -541,7 +541,10 @@ impl<T: Numeric> Tile<T> {
                 comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))
             }
             TileKind::PlaneTile(_) => comptime!(((1, 1), rows, cols)),
-            TileKind::Gmem(_) | TileKind::Smem(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
                 panic!("Tile::fragment_grid: only a plane-resident accumulator holds fragments")
             }
         }

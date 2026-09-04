@@ -145,7 +145,10 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
         let out_outer = out.at(&outer);
         let input_outer = input.at(&outer);
         let weight_outer = weight.at(&outer);
-        for inner in out_outer.op_space(&input_outer, &weight_outer).level(comptime!(nest.at(1))) {
+        for inner in out_outer
+            .op_space(&input_outer, &weight_outer)
+            .level(comptime!(nest.at(1)))
+        {
             let mut out_inner = out_outer.at(&inner);
             out_inner.mm_with(
                 &input_outer.at(&inner),
@@ -177,7 +180,10 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     pipelined(walk, &mut ring, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
-            for inner in out_outer.op_space(input, weight).level(comptime!(nest.at(1))) {
+            for inner in out_outer
+                .op_space(input, weight)
+                .level(comptime!(nest.at(1)))
+            {
                 let mut out_inner = out_outer.at(&inner);
                 out_inner.mm_with(
                     &input.at(&inner),
@@ -391,8 +397,8 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(|l| {
+        let nest =
+            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]).level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
             });
 
@@ -532,10 +538,9 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -607,10 +612,9 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -678,10 +682,9 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -846,8 +849,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(|l| {
+        let nest =
+            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]).level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
             });
 
@@ -1094,8 +1097,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(|l| {
+        let nest =
+            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]).level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
             });
 
@@ -1359,8 +1362,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)])
-            .level(|l| {
+        let nest =
+            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]).level(|l| {
                 l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
             });
 
@@ -2109,10 +2112,9 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let nest = Nest::over(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, OW, RH, RW, CI],
@@ -2288,10 +2290,18 @@ fn conv_mma_kernel<E: Numeric>(
     let input = input.tile(comptime!(nest.space.clone()));
     let weight = weight.tile(comptime!(nest.space.clone()));
     let mut out = out.tile(comptime!(nest.space.clone()));
-    let mut acc = out.mma_accumulator::<E, E>(&input, comptime!(Fragments::of(&out.space, &input.space, nest.below(0))), io, Monoid::Sum);
+    let mut acc = out.mma_accumulator::<E, E>(
+        &input,
+        comptime!(Fragments::of(&out.space, &input.space, nest.below(0))),
+        io,
+        Monoid::Sum,
+    );
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0))).unrolled();
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(nest.at(0)))
+        .unrolled();
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_region = acc.at(region);
@@ -2341,10 +2351,9 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2455,8 +2464,7 @@ impl Resize1d {
     /// entries nest a second descent, which is where a rational window's leftover phase has to
     /// accumulate rather than restart.
     fn space(&self, oh_edges: &[usize]) -> Nest {
-        let mut tiling =
-            Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        let mut tiling = Nest::over(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
         for &edge in oh_edges {
             tiling = tiling.level(|l| {
                 l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
@@ -2815,7 +2823,12 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     offsets.push(offset);
 
     let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
-    let stage = MemData::stage(&input, comptime!(nest.at(0)), StageStorage::Strided, comptime!(None));
+    let stage = MemData::stage(
+        &input,
+        comptime!(nest.at(0)),
+        StageStorage::Strided,
+        comptime!(None),
+    );
     let _view = stage.nd::<E, Const<1>, Const<1>>(comptime!(Guard::Checked));
 }
 
@@ -2883,10 +2896,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2956,10 +2968,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
-        .level(|l| {
-            l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-        });
+    let nest = Nest::over(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]).level(|l| {
+        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],

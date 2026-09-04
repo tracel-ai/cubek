@@ -136,12 +136,30 @@ pub fn cmma_kernel<
     let mut c = c.tile(space);
 
     // The accumulator spans the whole K walk: opened here, drained after it.
-    let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
-    acc.zero();
+    let acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
+    // Each plane zeroes the fragments it holds: the stage and plane levels over the output's
+    // space (no K) hand every plane its one window. The output sizes the walk; a fragment
+    // holds no extent to witness a dynamic axis with.
+    for stage in c.runtime_space().level(comptime!(bp.stage_level(&batch))) {
+        let acc_stage = acc.at(&stage);
+        for plane in acc_stage
+            .runtime_space()
+            .level(comptime!(bp.plane_level(&batch)))
+        {
+            let mut acc_plane = acc_stage.at(&plane);
+            acc_plane.zero();
+        }
+    }
 
     // This cube's box, one stage of K per region, both inputs staged for it.
     let stages = c.op_space(&a, &b).level(comptime!(bp.stage_level(&batch)));
-    let mut ring = Ring::smem(&stages, &a, &b, comptime!(StageStorage::tiled(&block)), depth);
+    let mut ring = Ring::smem(
+        &stages,
+        &a,
+        &b,
+        comptime!(StageStorage::tiled(&block)),
+        depth,
+    );
     pipelined(stages, &mut ring, |slot, stage| {
         let acc_stage = acc.at(stage);
         slot.consume(|a_s, b_s| {

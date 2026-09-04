@@ -106,11 +106,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Nest::over(&[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                .walk(&[(M, m), (N, n), (KI, inside)]);
-        });
+    let split_space = Nest::over(&[(M, m), (N, n), (KB, splits), (KI, inside)]).level(|l| {
+        l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+            .walk(&[(M, m), (N, n), (KI, inside)]);
+    });
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
@@ -146,11 +145,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Nest::over(&[(M, m), (N, n), (KB, splits)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 1)])
-                .walk(&[(N, n), (KB, splits)]);
-        });
+    let fold_space = Nest::over(&[(M, m), (N, n), (KB, splits)]).level(|l| {
+        l.distribute(cubes(CubeAxis::X), &[(M, 1)])
+            .walk(&[(N, n), (KB, splits)]);
+    });
 
     reduce_splits::launch(
         &client,
@@ -314,7 +312,12 @@ fn atomic_split_matmul<E: Numeric>(
     let mut c = out.tile(comptime!(nest.space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space, nest.below(0))), REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &a,
+        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut acc_region = acc.at(&region);
@@ -345,11 +348,10 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)]);
-        });
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+        l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+            .walk(&[(M, m), (N, n)]);
+    });
 
     atomic_split_matmul::launch(
         &client,
@@ -481,12 +483,11 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(lanes(plane_size), &[(N, per_lane)])
-                .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m)]);
-        });
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+        l.distribute(lanes(plane_size), &[(N, per_lane)])
+            .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+            .walk(&[(M, m)]);
+    });
 
     atomic_split_matmul::launch(
         &client,
@@ -560,11 +561,10 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(planes(), &[(K, k / num_planes)])
-                .walk(&[(M, m), (N, n)]);
-        });
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+        l.distribute(planes(), &[(K, k / num_planes)])
+            .walk(&[(M, m), (N, n)]);
+    });
 
     atomic_split_matmul::launch(
         &client,
@@ -662,11 +662,10 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)]);
-        });
+    let nest = Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+        l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+            .walk(&[(M, m), (N, n)]);
+    });
 
     atomic_split_matmul_in_place::launch(
         &client,

@@ -8,8 +8,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, FragmentOwnership, FragmentShape, MaskProbe, MemData, Nest, RegisterBlock, RowState,
-    Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
+    Axis, FragmentOwnership, FragmentShape, Level, MaskProbe, MemData, Nest, RegisterBlock,
+    RowState, Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -339,9 +339,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     let val_dim = comptime!(v.space.extent(V));
     // The queries stage with the grid their lhs role reads: `frag` rows against `frag` of the
     // contracted head dim. Both matmuls contract through the tensor-core leaves.
-    let q_space = comptime!(
-        Space::new(&[(QP, rows), (D, d)])
-    );
+    let q_space = comptime!(Space::new(&[(QP, rows), (D, d)]));
     let mut q_s = MemData::<E>::smem(q_space, 1usize, StageStorage::Strided, 0usize);
     q_s.copy_from(&q);
 
@@ -969,9 +967,7 @@ fn attention_fold_split_kernel<W: Size>(
     // row axis, which is what the rank-2 rowwise leaves read.
     let split_rows = comptime!(splits * rows);
     let config = comptime!(RegisterBlock::new(budget));
-    let score_space = comptime!(
-        Space::new(&[(R, split_rows), (C, block)])
-    );
+    let score_space = comptime!(Space::new(&[(R, split_rows), (C, block)]));
     // The split outermost gives a team one contiguous run of rows; innermost
     // gives it a strided column. Only the declared order differs: the cuts
     // below are the same either way, and so is every op that reads them.
@@ -980,12 +976,8 @@ fn attention_fold_split_kernel<W: Size>(
     } else {
         [(T, splits), (R, rows)]
     });
-    let row_space = comptime!(
-        Space::new(&row_extents)
-    );
-    let acc_space = comptime!(
-        Space::new(&[(R, split_rows), (V, val_dim)])
-    );
+    let row_space = comptime!(Space::new(&row_extents));
+    let acc_space = comptime!(Space::new(&[(R, split_rows), (V, val_dim)]));
     let score_all =
         MemData::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
     let p_all = MemData::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
@@ -996,15 +988,26 @@ fn attention_fold_split_kernel<W: Size>(
     let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
     acc_all.zero();
 
-    // This team's windows.
+    // This team's windows: one slice of rows per team, the levels stated here on the
+    // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
-    let tw = score_all.runtime_space().level(comptime!(nest.at(0)));
+    let team_scores = comptime!(Level::cuts(&[R, C], |l| {
+        l.walk(&[(R, rows), (C, block)]);
+    }));
+    let tw = score_all.runtime_space().level(team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
-    let rw = factors_all.runtime_space().level(comptime!(nest.at(1)));
+    let row_axes = comptime!(row_extents.map(|(axis, _)| axis));
+    let team_rows = comptime!(Level::cuts(&row_axes, |l| {
+        l.walk(&[(T, 1), (R, rows)]);
+    }));
+    let rw = factors_all.runtime_space().level(team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let aw = acc_all.runtime_space().level(comptime!(nest.at(2)));
+    let team_acc = comptime!(Level::cuts(&[R, V], |l| {
+        l.walk(&[(R, rows), (V, val_dim)]);
+    }));
+    let aw = acc_all.runtime_space().level(team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 
     let kept = comptime!(Space::new(&[(R, rows)]));
@@ -1016,7 +1019,7 @@ fn attention_fold_split_kernel<W: Size>(
     // Interleaved split walk: team t folds blocks t, t + splits, …; every
     // team runs every round (the barriers must stay uniform), an out-of-range
     // block just skips its compute.
-    let k_walk = k.runtime_space().level(comptime!(nest.at(3)));
+    let k_walk = k.runtime_space().level(comptime!(nest.at(0)));
     let blocks = bound_s.div_ceil(block);
     let rounds = blocks.div_ceil(splits);
     for round in 0..rounds {

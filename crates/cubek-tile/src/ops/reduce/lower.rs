@@ -31,7 +31,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// The level's operation space for a reduction: the input's space, sized by whichever
-    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Walk::over`]),
+    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Space::level`]),
     /// [`op_space`](Tile::op_space)'s twin for one operand.
     pub fn reduce_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
         let merged = comptime!({

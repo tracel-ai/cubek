@@ -47,8 +47,7 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Nest, RegisterBlock, Semiring, TileArg, TileArgLaunch, cubes,
-    lanes,
+    Axis, CubeAxis, Nest, RegisterBlock, Semiring, TileArg, TileArgLaunch, cubes, lanes,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -101,7 +100,10 @@ fn split_k_matmul_two_levels<E: Numeric>(
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        for region in c_cube.op_space(&a_cube, &b_cube).level(comptime!(nest.at(1))) {
+        for region in c_cube
+            .op_space(&a_cube, &b_cube)
+            .level(comptime!(nest.at(1)))
+        {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
                 &a_cube.at(&region),
@@ -165,11 +167,10 @@ impl Mapping {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Nest::over(&[(M, m), (N, n), (K, k)])
-                .level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, 1)])
-                        .walk(&[(M, m), (K, k)]);
-                }),
+            Mapping::SeqK => Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+                l.distribute(cubes(CubeAxis::X), &[(N, 1)])
+                    .walk(&[(M, m), (K, k)]);
+            }),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Nest::over(&[(M, m), (N, n), (K, k)])
                 .level(|l| {
@@ -183,12 +184,11 @@ impl Mapping {
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
-                Nest::over(&[(M, m), (N, n), (K, k)])
-                    .level(|l| {
-                        l.distribute(cubes(CubeAxis::X), &[(N, cols)])
-                            .distribute(lanes(plane_size), &[(K, k / plane_size)])
-                            .walk(&[(M, m)]);
-                    })
+                Nest::over(&[(M, m), (N, n), (K, k)]).level(|l| {
+                    l.distribute(cubes(CubeAxis::X), &[(N, cols)])
+                        .distribute(lanes(plane_size), &[(K, k / plane_size)])
+                        .walk(&[(M, m)]);
+                })
             }
         }
     }

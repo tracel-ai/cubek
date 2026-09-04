@@ -35,9 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Fragments, Monoid, PhysicalAxisMap,
-    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec, Nest,
-    cubes, lanes,
+    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Fragments, Monoid, Nest, PhysicalAxisMap,
+    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec, cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -92,7 +91,12 @@ fn atomic_matmul<E: Numeric>(
     for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))), REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_cube.block_accumulator::<E, E>(
+            &a_cube,
+            comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.mm(&a_cube, &b.at(&region), Semiring::SUM_PROD);
         acc.drain_cast_into(&mut c_cube);
     }
@@ -115,7 +119,12 @@ fn atomic_matmul_lanes<E: Numeric>(
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))), REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_cube.block_accumulator::<E, E>(
+            &a_cube,
+            comptime!(Fragments::of(&c_cube.space, &a_cube.space, nest.below(1))),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.zero();
         for region in acc.op_space(&a_cube, &b_cube).level(comptime!(nest.at(1))) {
             let mut acc_lane = acc.at(&region);
@@ -197,21 +206,18 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => {
-                Nest::over(&[(M, m), (N, n), (K, k)])
-                    .level(|l| {
-                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                            .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                            .walk(&[(M, m)]);
-                    })
-            }
+            Mapping::DataParallel | Mapping::Atomic { .. } => Nest::over(&[(M, m), (N, n), (K, k)])
+                .level(|l| {
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
+                        .walk(&[(M, m)]);
+                }),
             Mapping::Workspace { .. } => {
-                Nest::over(&[(M, m), (N, n), (KB, splits), (KI, k / splits)])
-                    .level(|l| {
-                        l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                            .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                            .walk(&[(M, m), (KI, k / splits)]);
-                    })
+                Nest::over(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]).level(|l| {
+                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
+                        .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
+                        .walk(&[(M, m), (KI, k / splits)]);
+                })
             }
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
@@ -232,12 +238,11 @@ impl Mapping {
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Nest {
         let Problem { m, n, .. } = problem;
-        Nest::over(&[(M, m), (N, n), (KB, self.splits())])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(M, 1)])
-                    .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
-                    .walk(&[(KB, self.splits())]);
-            })
+        Nest::over(&[(M, m), (N, n), (KB, self.splits())]).level(|l| {
+            l.distribute(cubes(CubeAxis::X), &[(M, 1)])
+                .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
+                .walk(&[(KB, self.splits())]);
+        })
     }
 
     /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.

@@ -503,10 +503,21 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         };
+        // Only a plane-resident accumulator's drain replays the record; a memory tile a leaf
+        // cuts its own way (fragments over a stage) states no loop, so it records nothing.
+        let descent = match &tile_kind {
+            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
+                comptime!(self.descent.under(&region.level))
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(Descent::root()),
+        };
         Tile::<T> {
             tile_kind,
             space: comptime!(region.level.child(&self.space)),
-            descent: comptime!(self.descent.under(&region.level)),
+            descent,
         }
     }
 
@@ -783,7 +794,7 @@ impl<T: Numeric> TileExpand<T> {
 
 /// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
 /// [`witnesses`](Tile::witnesses) it, which is how an operation turns its comptime space into the
-/// runtime one [`Walk::over`](crate::Walk) takes. A fully-`Static` space short-circuits to no
+/// runtime one [`Space::level`] walks. A fully-`Static` space short-circuits to no
 /// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
 #[cube]
 pub fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(

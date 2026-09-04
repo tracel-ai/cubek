@@ -8,8 +8,6 @@
 //! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
 //! read off a space, and the descent is only ever read as one of them.
 
-
-
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
 /// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
 /// does span is *carried* (each lane gets a different cell). Which case a tile is in says how a

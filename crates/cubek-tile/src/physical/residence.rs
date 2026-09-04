@@ -9,7 +9,9 @@ use crate::Axis;
 pub enum StageStorage {
     /// Grouped into `block`-sized tiles, the fragment the instruction reads: one edge per axis of
     /// the operation, of which an operand takes its own.
-    Tiled { block: Vec<(Axis, usize)> },
+    Tiled {
+        block: Vec<(Axis, usize)>,
+    },
     Strided,
 }
 

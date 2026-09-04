@@ -75,7 +75,7 @@ impl<Acc: Numeric> Tile<Acc> {
 
     /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
     /// [`witnesses`](Tile::witnesses) each [`Dynamic`](crate::Extent) axis. The output contributes
-    /// no axis beyond `lhs ∪ rhs`. What a kernel walks at a level ([`Walk::over`]).
+    /// no axis beyond `lhs ∪ rhs`. What a kernel walks at a level ([`Space::level`]).
     ///
     /// The accumulator is asked for sizes all the same, and first: spanning an axis and being able
     /// to state its size are different things (a gathered operand's bound is the receptive field

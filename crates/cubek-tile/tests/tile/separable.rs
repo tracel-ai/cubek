@@ -80,11 +80,17 @@ fn separable_kernel<E: Float>(
             weights::<E>(),
         )
     } else {
-        Tile::<E>::procedural::<Weights<E>>(comptime!(nest.space.project(&weight_axes)), weights::<E>())
+        Tile::<E>::procedural::<Weights<E>>(
+            comptime!(nest.space.project(&weight_axes)),
+            weights::<E>(),
+        )
     };
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -113,7 +119,9 @@ fn separable_kernel_staged<E: Float>(
     );
 
     let output = output.tile(comptime!(nest.space.clone()));
-    let walk = output.op_space(&weights, &input).level(comptime!(nest.at(0)));
+    let walk = output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)));
     let mut ring = Ring::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -324,7 +332,10 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     );
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -590,7 +601,10 @@ fn resample_kernel<E: Float>(
     };
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -627,10 +641,9 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .level(|l| {
-            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        });
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]).level(|l| {
+        l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -717,10 +730,9 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 3)])
-        .level(|l| {
-            l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)]);
-        });
+    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 3)]).level(|l| {
+        l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)]);
+    });
 
     procedural_mask_kernel::launch(
         &client,
@@ -758,7 +770,10 @@ fn resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -786,7 +801,9 @@ fn resample_kernel_masked_staged<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(nest.space.clone()));
-    let walk = output.op_space(&weights, &input).level(comptime!(nest.at(0)));
+    let walk = output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)));
     let mut ring = Ring::smem_single(&walk, &input, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -815,10 +832,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .level(|l| {
-            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        });
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]).level(|l| {
+        l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -890,10 +906,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .level(|l| {
-            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        });
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]).level(|l| {
+        l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -966,7 +981,10 @@ fn column_spanning_resample_kernel<E: Float>(
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -996,10 +1014,9 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .level(|l| {
-            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        });
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]).level(|l| {
+        l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -1055,7 +1072,10 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1084,10 +1104,9 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
-        .level(|l| {
-            l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
-        });
+    let nest = Nest::over(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]).level(|l| {
+        l.walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]);
+    });
 
     let in_spec = TileSpec::new(Projection::new(
         &[ROW, TAP[0], COL],
@@ -1162,7 +1181,10 @@ fn zero_sum_fallback_kernel<E: Float>(
     );
 
     let output = output.tile(comptime!(nest.space.clone()));
-    for region in output.op_space(&weights, &input).level(comptime!(nest.at(0))) {
+    for region in output
+        .op_space(&weights, &input)
+        .level(comptime!(nest.at(0)))
+    {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1189,10 +1211,9 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
-        .level(|l| {
-            l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]);
-        });
+    let nest = Nest::over(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]).level(|l| {
+        l.walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]);
+    });
 
     zero_sum_fallback_kernel::launch(
         &client,

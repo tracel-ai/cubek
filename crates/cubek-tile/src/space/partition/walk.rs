@@ -79,7 +79,11 @@ impl Walk {
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
     /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
-    fn from_counts(#[comptime] space: Space, #[comptime] level: Level, grid: Coords<usize>) -> Walk {
+    fn from_counts(
+        #[comptime] space: Space,
+        #[comptime] level: Level,
+        grid: Coords<usize>,
+    ) -> Walk {
         let rank = comptime!(space.rank());
         let mut counts = Coords::<usize>::new();
         let mut positions = Coords::<usize>::new();

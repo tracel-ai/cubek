@@ -133,9 +133,28 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     for k in 0..scales.len() {
         scale_tiles.push(scales.index(k).tile(comptime!(space.clone())));
     }
-    let mut out = out.tile(space);
-    // The output folds every step into what it holds, so it starts from zero.
-    out.zero();
+    let out = out.tile(space);
+    // The output folds every step into what it holds, so each lane zeroes the window it owns:
+    // the three levels over `out`'s own space (no K) hand every lane its one window.
+    for region in out
+        .runtime_space()
+        .level(comptime!(bp.cube_level(&problem)))
+    {
+        let out_cube = out.at(&region);
+        for region in out_cube
+            .runtime_space()
+            .level(comptime!(bp.plane_level(&problem)))
+        {
+            let out_plane = out_cube.at(&region);
+            for region in out_plane
+                .runtime_space()
+                .level(comptime!(bp.lane_level(&problem)))
+            {
+                let mut out_lane = out_plane.at(&region);
+                out_lane.zero();
+            }
+        }
+    }
 
     // This cube's strip of rows.
     for region in out

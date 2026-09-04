@@ -88,10 +88,9 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::over(&[(ROW, ROWS), (COL, COLS)])
-                .level(|level| {
-                    level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
-                }),
+            nest: Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+                level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
+            }),
         }
     }
 
@@ -302,9 +301,22 @@ fn stream_matmul<E: Numeric>(
         let mut c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(&a_region, comptime!(Fragments::of(&c_region.space, &a_region.space, nest.below(1))), REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_region.block_accumulator::<E, E>(
+            &a_region,
+            comptime!(Fragments::of(
+                &c_region.space,
+                &a_region.space,
+                nest.below(1)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.zero();
-        for cell in acc.op_space(&a_region, &b_region).level(comptime!(nest.at(1))).window(from, steps) {
+        for cell in acc
+            .op_space(&a_region, &b_region)
+            .level(comptime!(nest.at(1)))
+            .window(from, steps)
+        {
             let mut acc_cell = acc.at(&cell);
             acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
         }
@@ -337,9 +349,21 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let mut c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(&a_region, comptime!(Fragments::of(&c_region.space, &a_region.space, nest.below(1))), REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_region.block_accumulator::<E, E>(
+            &a_region,
+            comptime!(Fragments::of(
+                &c_region.space,
+                &a_region.space,
+                nest.below(1)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.zero();
-        let cells = acc.op_space(&a_region, &b_region).level(comptime!(nest.at(1))).window(from, steps);
+        let cells = acc
+            .op_space(&a_region, &b_region)
+            .level(comptime!(nest.at(1)))
+            .window(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         pipelined(cells, &mut ring, |slot, cell| {
             let mut acc_cell = acc.at(cell);

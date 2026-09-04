@@ -172,7 +172,12 @@ fn rebase_kernel<E: Float>(
         },
     );
     // The second region starts at (2, 3), so its first logical coordinate reads row 2.
-    let region = Region::trailing(comptime!(nest.space.clone()), comptime!(nest.at(0)), 1usize, 1usize);
+    let region = Region::trailing(
+        comptime!(nest.space.clone()),
+        comptime!(nest.at(0)),
+        1usize,
+        1usize,
+    );
     let source = source.at(&region);
     let mut pos = Coords::<u32>::new();
     pos.push(0u32.runtime());
@@ -335,7 +340,12 @@ fn divided_direct_copy_kernel<E: Float>(
             value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
     );
-    let region = Region::trailing(comptime!(nest.space.clone()), comptime!(nest.at(0)), 0usize, 0usize);
+    let region = Region::trailing(
+        comptime!(nest.space.clone()),
+        comptime!(nest.at(0)),
+        0usize,
+        0usize,
+    );
     let source = source.at(&region);
     let output = output.tile(comptime!(nest.space.clone()));
     let mut output = output.at(&region);
@@ -353,10 +363,9 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::over(&[(ROW, ROWS), (COL, COLS)])
-                .level(|level| {
-                    level.walk(&[(ROW, 2), (COL, 3)]);
-                }),
+            nest: Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+                level.walk(&[(ROW, 2), (COL, 3)]);
+            }),
         }
     }
 
@@ -647,10 +656,9 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let nest = Nest::over(&[(ROW, ROWS), (COL, COLS)])
-        .level(|level| {
-            level.walk(&[(ROW, 2), (COL, 4)]);
-        });
+    let nest = Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+        level.walk(&[(ROW, 2), (COL, 4)]);
+    });
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -675,11 +683,13 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let concrete = Nest::over(&[(ROW, ROWS), (COL, COLS)])
-        .level(|level| {
-            level.walk(&[(ROW, 2), (COL, 4)]);
-        });
-    let space = Nest::new(concrete.space.clone().with_dynamic(&[ROW]), concrete.levels.clone());
+    let concrete = Nest::over(&[(ROW, ROWS), (COL, COLS)]).level(|level| {
+        level.walk(&[(ROW, 2), (COL, 4)]);
+    });
+    let space = Nest::new(
+        concrete.space.clone().with_dynamic(&[ROW]),
+        concrete.levels.clone(),
+    );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()

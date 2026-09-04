@@ -101,10 +101,9 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (K, block)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (K, block)]);
+    });
 
     matmul::launch(
         &client,
@@ -158,10 +157,9 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
+    });
 
     matmul::launch(
         &client,
@@ -240,10 +238,9 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        });
+    let nest = Nest::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]).level(|l| {
+        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
+    });
 
     scaled_matmul::launch(
         &client,
@@ -333,10 +330,9 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     matmul::launch(
         &client,
@@ -416,10 +412,9 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     scaled_matmul::launch(
         &client,
@@ -515,10 +510,9 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     wide_matmul::launch(
         &client,
@@ -625,10 +619,9 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     wide_scaled_matmul::launch(
         &client,
@@ -695,7 +688,12 @@ fn promoted_matmul<E: Numeric>(
     let a = a.tile(comptime!(nest.space.clone()));
     let b = b.tile(comptime!(nest.space.clone()));
     let mut c = c.tile(comptime!(nest.space.clone()));
-    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space, nest.below(0))), BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &a,
+        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     for region in acc.op_space(&a, &b).level(comptime!(nest.at(0))).unrolled() {
         let mut acc_region = acc.at(&region);
@@ -727,10 +725,9 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     promoted_matmul::launch(
         &client,
@@ -790,7 +787,12 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let b = b.tile(comptime!(nest.space.clone()));
     let scale = scale.tile(comptime!(nest.space.clone()));
     let mut c = c.tile(comptime!(nest.space.clone()));
-    let mut acc = c.block_accumulator::<E, E>(&a, comptime!(Fragments::of(&c.space, &a.space, nest.below(0))), BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E>(
+        &a,
+        comptime!(Fragments::of(&c.space, &a.space, nest.below(0))),
+        BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
     for region in acc.op_space(&a, &b).level(comptime!(nest.at(0))).unrolled() {
         let mut scales = Sequence::new();
@@ -830,10 +832,9 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     wide_scaled_promoted::launch(
         &client,
@@ -946,10 +947,9 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
-        .level(|l| {
-            l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-        });
+    let nest = Nest::over(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]).level(|l| {
+        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
+    });
 
     wide_typed_scaled_matmul::launch(
         &client,

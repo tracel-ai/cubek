@@ -1,4 +1,4 @@
-//! What a tile has been descended with: the [`Level`]s its ancestors' `at`s were handed, in
+//! What a plane-resident accumulator has been descended with: the [`Level`]s its ancestors' `at`s were handed, in
 //! nesting order. Recorded as the kernel walks, read back by the drain, which has to find each
 //! fragment's window in an output that was never walked.
 //!

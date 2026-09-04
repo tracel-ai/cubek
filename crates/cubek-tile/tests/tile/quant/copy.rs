@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, CubeAxis, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg, TileArgLaunch,
-    TileSpec, Nest, cubes, planes,
+    Axis, CubeAxis, DequantAt, Nest, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
+    TileArgLaunch, TileSpec, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -719,13 +719,14 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A nest that tiles into `bm×bn` blocks, one cube walking them.
-    let nest = Nest::over(&[(M, m), (N, n)])
-        .level(|l| {
-            l.walk(&[(M, bm), (N, bn)]);
-        });
+    let nest = Nest::over(&[(M, m), (N, n)]).level(|l| {
+        l.walk(&[(M, bm), (N, bn)]);
+    });
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
-    let output = TileInput::builder(&client, nest.space.clone()).untiled().zeros();
+    let output = TileInput::builder(&client, nest.space.clone())
+        .untiled()
+        .zeros();
 
     // One distinct scale per block, row-major over the block grid; a partial block still has one.
     let (sm, sn) = (m.div_ceil(bm), n.div_ceil(bn));

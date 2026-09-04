@@ -10,9 +10,8 @@ use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
-    Concrete, Level, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec,
-    validate_scheme,
+    Axis, Boundary, Concrete, ConcreteLayout, DequantAt, Geometry, Level, Packing, PhysicalAxis,
+    Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -467,11 +466,8 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
             // that same silence to drop one.
-            Some(axis) => {
-                concrete.is_some_and(|concrete| {
-                    concrete.contains(axis) && !concrete.overhangs(axis)
-                })
-            }
+            Some(axis) => concrete
+                .is_some_and(|concrete| concrete.contains(axis) && !concrete.overhangs(axis)),
             None => false,
         };
 

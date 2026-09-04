@@ -54,19 +54,30 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(nest.space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(nest.space.clone())));
-    let mut out = out.tile(comptime!(nest.space.clone()));
-    out.zero();
+    let out = out.tile(comptime!(nest.space.clone()));
+    // This instance's windows of `out`, each initialized once: the level projected
+    // onto `out`'s own axes walks nothing it does not span.
+    for region in out.runtime_space().level(comptime!(nest.at(0))) {
+        let mut out_w = out.at(&region);
+        out_w.zero();
+    }
     for region in out.op_space(&w, &x).level(comptime!(nest.at(0))) {
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in out_cube.op_space(&w_cube, &x_cube).level(comptime!(nest.at(1))) {
+        for region in out_cube
+            .op_space(&w_cube, &x_cube)
+            .level(comptime!(nest.at(1)))
+        {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in out_plane.op_space(&w_plane, &x_plane).level(comptime!(nest.at(2))) {
+            for region in out_plane
+                .op_space(&w_plane, &x_plane)
+                .level(comptime!(nest.at(2)))
+            {
                 let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&region),
@@ -103,20 +114,30 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(nest.space.clone())));
     let mut out = out.tile(comptime!(nest.space.clone()));
-    let mut acc =
-        out.block_accumulator::<E, E>(&w, comptime!(Fragments::of(&out.space, &w.space, nest.below(0))), comptime!(RegisterBlock::new(budget)), Monoid::Sum);
+    let mut acc = out.block_accumulator::<E, E>(
+        &w,
+        comptime!(Fragments::of(&out.space, &w.space, nest.below(0))),
+        comptime!(RegisterBlock::new(budget)),
+        Monoid::Sum,
+    );
     acc.zero();
     for region in acc.op_space(&w, &x).level(comptime!(nest.at(0))) {
         let acc_cube = acc.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in acc_cube.op_space(&w_cube, &x_cube).level(comptime!(nest.at(1))) {
+        for region in acc_cube
+            .op_space(&w_cube, &x_cube)
+            .level(comptime!(nest.at(1)))
+        {
             let acc_plane = acc_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in acc_plane.op_space(&w_plane, &x_plane).level(comptime!(nest.at(2))) {
+            for region in acc_plane
+                .op_space(&w_plane, &x_plane)
+                .level(comptime!(nest.at(2)))
+            {
                 let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
                     &w_plane.at(&region),
@@ -244,7 +265,7 @@ fn serving_geometry(promoted: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = nest.launcher(&client);
+    let launcher = nest.launcher_over(&client, &[]);
     let w_op = launcher
         .arg(w_tensor.binding())
         .gathered(Projection::new(
