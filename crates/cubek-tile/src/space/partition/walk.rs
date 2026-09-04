@@ -1,28 +1,29 @@
-//! The [`Walk`]: the regions one level of a [`Space`] hands the instance running the code.
+//! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code.
 //!
-//! A walk is a sequence with random access and nothing else: [`over`](Walk::over) computes
-//! once how many regions this cube or plane owns at the level ([`total`](Walk::total)) and how
-//! an index maps to one ([`region`](Walk::region)): decode the index as an odometer over the
-//! level's walked axes, last declared axis fastest, and add this instance's share on the
-//! distributed axes. It never iterates the instances themselves, the hardware does that, and it
-//! holds no current region: `for region in walk` is `for i in 0..total { region(i) }`. The
-//! only things a walk can be told are its order ([`reversed`](Walk::reversed)) and whether it
-//! unrolls ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering)
-//! is a schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
+//! A walk is a sequence with random access and nothing else: [`Space::level`] computes once how
+//! many regions this cube or plane owns at the level ([`total`](Walk::total)) and how an index
+//! maps to one ([`region`](Walk::region)): decode the index as an odometer over the level's
+//! walked axes, last declared axis fastest, and add this instance's share on the distributed
+//! axes. It never iterates the instances themselves, the hardware does that, and it holds no
+//! current region: `for region in walk` is `for i in 0..total { region(i) }`. The only things a
+//! walk can be told are its order ([`reversed`](Walk::reversed)) and whether it unrolls
+//! ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering) is a
+//! schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
 //!
-//! Each region is a [`Region`] (a `Space` at an origin); a [`Tile`] windows itself to it with
-//! `at`, coming back at the level below.
+//! Each region is a [`Region`] (the space at an origin, under the level); a [`Tile`] windows
+//! itself to it with `at`, coming back one level down.
 
 use cubecl::prelude::*;
 
 use crate::{
-    Coords, Fold, FoldExpand, Region, RegionExpand, Space, instance_count, tiles_per_instance,
+    Coords, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand, instance_count,
+    tiles_per_instance,
 };
 
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
-/// The runtime odometer over a [`Space`]'s tiles.
+/// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
 pub struct Walk {
     /// Per-axis walk counts: this instance's share on `Spatial` axes, the whole grid on
@@ -43,6 +44,9 @@ pub struct Walk {
     /// ([`Ring::smem`](crate::Ring::smem)).
     #[cube(comptime)]
     pub(crate) space: Space,
+    /// The level this walk steps: the statement the loop made.
+    #[cube(comptime)]
+    pub(crate) level: Level,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
@@ -53,22 +57,37 @@ pub struct Walk {
 }
 
 #[cube]
+impl Space {
+    /// The walk of `level` over this space's tiles: the statement a kernel's loop makes, and the
+    /// only way a level is stated. Comptime for `Static` axes, runtime for `Dynamic`.
+    pub fn level(self, #[comptime] level: Level) -> Walk {
+        Walk::of(self, level)
+    }
+}
+
+#[cube]
 impl Walk {
-    /// The [`Walk`] over `space`'s tiles
-    /// Comptime for `Static` axes, runtime for `Dynamic`.
+    /// The walk over `space`'s tiles under the head level of its own tiling. The form the
+    /// engine's own descents use where a tile still carries its tiling; a kernel states the level
+    /// itself ([`Space::level`]).
     pub fn over(space: Space) -> Walk {
+        let level = comptime!(space.partitioner().level().clone());
+        Walk::of(space, level)
+    }
+
+    fn of(space: Space, #[comptime] level: Level) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
-            let edge = comptime!(space.partitioner().edge(space.axis_at(p)));
+            let edge = comptime!(level.edge(space.axis_at(p)));
             counts.push(space.extents.count(p, edge));
         }
-        Walk::from_counts(comptime!(space.clone()), counts)
+        Walk::from_counts(comptime!(space.clone()), level, counts)
     }
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
     /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
-    fn from_counts(#[comptime] space: Space, grid: Coords<usize>) -> Walk {
+    fn from_counts(#[comptime] space: Space, #[comptime] level: Level, grid: Coords<usize>) -> Walk {
         let rank = comptime!(space.rank());
         let mut counts = Coords::<usize>::new();
         let mut positions = Coords::<usize>::new();
@@ -79,7 +98,7 @@ impl Walk {
         let mut instances = Coords::<usize>::new();
         #[unroll]
         for p in 0..rank {
-            let dist = comptime!(space.partitioner().distribution(space.axis_at(p)));
+            let dist = comptime!(level.distribution(space.axis_at(p)));
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
                 instances.push(instance_count(grid.at(p), comptime!(dist.coverage())));
             } else {
@@ -90,7 +109,7 @@ impl Walk {
         #[unroll]
         for p in 0..rank {
             let axis = comptime!(space.axis_at(p));
-            let dist = comptime!(space.partitioner().distribution(axis));
+            let dist = comptime!(level.distribution(axis));
             let count = axis_count(grid.at(p), dist);
             counts.push(count);
 
@@ -99,20 +118,17 @@ impl Walk {
                 // later same-scope axes' instance counts (the earlier axis is the more
                 // significant digit); `1` when this axis owns its scope.
                 //
-                // Both halves of that product, because the odometer is the partitioner's and this
+                // Both halves of that product, because the odometer is the level's and this
                 // space may be a projection of it: the axes here carry a possibly-runtime count,
                 // and the ones this space does not span a comptime one. Dropping the second half
                 // reads a contracted axis as weight `1` and aliases every outer digit onto a
-                // single value; see [`Space::inner_weight_unspanned`].
+                // single value; see [`Level::inner_weight_unspanned`].
                 let picks = comptime!(
                     ((p + 1)..rank)
-                        .filter(|&q| {
-                            space.partitioner().distribution(space.axis_at(q)).scope()
-                                == dist.scope()
-                        })
+                        .filter(|&q| level.distribution(space.axis_at(q)).scope() == dist.scope())
                         .collect::<Vec<_>>()
                 );
-                let unspanned = comptime!(space.inner_weight_unspanned(axis));
+                let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
                 let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
                 positions.push(
                     hardware_pos(comptime!(dist.scope_unchecked()))
@@ -142,6 +158,7 @@ impl Walk {
             steps,
             order: comptime!(WalkOrder::RowMajor),
             space,
+            level,
             unroll: comptime!(false),
         }
     }
@@ -155,6 +172,7 @@ impl Walk {
             base: self.base,
             steps: self.steps,
             space: comptime!(self.space.clone()),
+            level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
             order: comptime!(WalkOrder::Reversed),
         }
@@ -176,6 +194,7 @@ impl Walk {
             base: self.base,
             steps: self.steps,
             space: comptime!(self.space.clone()),
+            level: comptime!(self.level.clone()),
             unroll: comptime!(unroll),
             order: comptime!(self.order),
         }
@@ -200,6 +219,7 @@ impl Walk {
             base,
             steps,
             space: comptime!(self.space.clone()),
+            level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
             order: comptime!(self.order),
         }
@@ -215,7 +235,11 @@ impl Walk {
         let idx = self
             .base
             .fadd(walk_index(i, self.steps, comptime!(self.order)));
-        Region::new(self.resolve(idx), self.space.clone())
+        Region::new(
+            self.resolve(idx),
+            comptime!(self.space.clone()),
+            comptime!(self.level.clone()),
+        )
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates: each axis's odometer
@@ -242,7 +266,7 @@ impl Walk {
         );
         // `% count` is a no-op when `idx` has no more significant digit: a range fact,
         // which folding (which only sees values) cannot know.
-        if comptime!((0..p).all(|e| self.space.single_tile_at(e))) {
+        if comptime!((0..p).all(|e| self.level.single_tile(self.space.axis_at(e)))) {
             quot
         } else {
             quot.frem(self.counts.at(p))
@@ -253,7 +277,7 @@ impl Walk {
     /// instance owns a contiguous run (`digit + pos·share`) or the instances take
     /// turns (`digit·instances + pos`); a sequential digit passes through.
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        let dist = comptime!(self.space.partitioner().distribution(self.space.axis_at(p)));
+        let dist = comptime!(self.level.distribution(self.space.axis_at(p)));
         if comptime!(matches!(dist, Distribution::Sequential)) {
             digit
         } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {

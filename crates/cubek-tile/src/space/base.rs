@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, Distribution, LevelRole, MAX_AXES, Partitioner};
+use crate::{Axis, ByAxis, Distribution, Level, MAX_AXES, Partitioner};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -228,6 +228,11 @@ impl Space {
         self
     }
 
+    /// Append one [`Level`] below this space's levels.
+    pub fn with_level(self, level: Level) -> Self {
+        self.with_partitioner(Partitioner::single(level))
+    }
+
     pub fn partitioner(&self) -> &Partitioner {
         &self.partitioner
     }
@@ -281,9 +286,7 @@ impl Space {
     /// Whether axis position `p` is `Spatial` `TilesEach(1)`: its walk count is
     /// comptime `1`, so a step decode can skip it.
     pub(crate) fn single_tile_at(&self, p: usize) -> bool {
-        self.partitioner()
-            .distribution(self.axis_at(p))
-            .single_tile()
+        self.partitioner().level().single_tile(self.axis_at(p))
     }
 
     /// Whether this level cuts `axis` into a single, statically-known tile, so its walk
@@ -291,7 +294,7 @@ impl Space {
     /// level) has no comptime count and is never statically single; the `&&` short-circuits
     /// before [`count`](Space::count), which panics on `Dynamic`.
     pub(crate) fn single_static_tile(&self, axis: Axis) -> bool {
-        !self.is_dynamic(axis) && self.count(axis) == 1
+        self.partitioner().level().single_static_tile(self, axis)
     }
 
     /// Whether this level cuts its tiles into an m×n grid larger than 1×1, so each region must be
@@ -300,10 +303,7 @@ impl Space {
     pub(crate) fn cuts_tiles(&self) -> bool {
         match self.partitioner() {
             Partitioner::Final => false,
-            Partitioner::Level(level) => match level.role() {
-                LevelRole::Instance => false,
-                LevelRole::Partition => crate::partition_grid(self) != (1, 1),
-            },
+            Partitioner::Level(chain) => chain.level().cuts_tiles(self),
         }
     }
 
@@ -375,7 +375,7 @@ impl Space {
     /// Tiles along `axis`: `ceil(extent / sub-tile edge)`, so an indivisible axis gets a
     /// trailing partial tile (its overhang is masked at read/write).
     pub fn count(&self, axis: Axis) -> usize {
-        self.extent(axis).div_ceil(self.partitioner().edge(axis))
+        self.partitioner().level().count(self, axis)
     }
 
     /// Whether `axis` overhangs its tiling: some level's sub-tile edge fails to divide the
@@ -405,8 +405,7 @@ impl Space {
     /// structural fact as broadcast omission. A staged walk fills such an operand once, above
     /// the loop. Host-side, static extents.
     pub(crate) fn walk_invariant(&self, operand: &Space) -> bool {
-        self.axes()
-            .all(|axis| self.count(axis) == 1 || !operand.contains(axis))
+        self.partitioner().level().walk_invariant(self, operand)
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.

@@ -8,7 +8,7 @@
 //! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
 //! read off a space, and the descent is only ever read as one of them.
 
-use crate::{Axis, ComputeScope, Distribution, Extent, Space};
+use crate::{Axis, ComputeScope, Space};
 
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
 /// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
@@ -131,18 +131,7 @@ impl Space {
     pub(crate) fn lane_work(&self) -> LaneWork {
         let mut level = self.clone();
         while !level.is_final() {
-            let rides = level.partitioner().axes().into_iter().any(|axis| {
-                let Distribution::Spatial {
-                    scope: ComputeScope::Unit,
-                    coverage,
-                    ..
-                } = level.partitioner().distribution(axis)
-                else {
-                    return false;
-                };
-                coverage.instances_const() != Some(1)
-            });
-            if rides {
+            if level.partitioner().level().rides_lanes() {
                 return LaneWork::Own;
             }
             level = level.divide();
@@ -192,15 +181,7 @@ impl Space {
     /// count, or the tile grid divided by each instance's share. `None` where the extent is
     /// [`Dynamic`](Extent::Dynamic) and so the grid is only known at runtime.
     fn instances_along(&self, axis: Axis) -> Option<usize> {
-        let coverage = self.partitioner().distribution(axis).coverage();
-        match coverage.instances_const() {
-            Some(instances) => Some(instances),
-            // `TilesEach`: the grid decides, and the grid needs the extent.
-            None => match self.extent_raw(axis) {
-                Extent::Static(_) => Some(coverage.instances(self.count(axis))),
-                Extent::Dynamic => None,
-            },
-        }
+        self.partitioner().level().instances_along(self, axis)
     }
 
     /// The instance-index weight this space's own axis list cannot see: the instance counts of the
@@ -213,67 +194,14 @@ impl Space {
         if self.partitioner().is_final() {
             return 1;
         }
-        let scope = self.partitioner().distribution(axis).scope();
-        self.partitioner()
-            .axes()
-            .iter()
-            .skip_while(|&&a| a != axis)
-            .skip(1)
-            .filter(|&&a| !self.contains(a) && self.partitioner().distribution(a).scope() == scope)
-            .map(|&a| {
-                self.partitioner()
-                    .distribution(a)
-                    .coverage()
-                    .instances_const()
-                    .unwrap_or_else(|| panic!(
-                        "Space::inner_weight_unspanned: {a:?} is distributed inside {axis:?} at the \
-                         same scope but this space does not span it, and its instance count is not \
-                         comptime, so {axis:?}'s digit of the instance index cannot be decoded"
-                    ))
-            })
-            .product()
+        self.partitioner().level().inner_weight_unspanned(self, axis)
     }
 
     pub(crate) fn lane_share(&self) -> LaneShare {
         if self.partitioner().is_final() {
             return LaneShare::Whole;
         }
-        // Innermost first, so `weight` is the axis's stride in the lane index as it is reached,
-        // the same least-significant-last ordering `Walk::from_counts` decodes with.
-        let (mut weight, mut fold_mask) = (1usize, 0usize);
-        for axis in self.partitioner().axes().into_iter().rev() {
-            let Distribution::Spatial {
-                scope: ComputeScope::Unit,
-                coverage,
-                ..
-            } = self.partitioner().distribution(axis)
-            else {
-                continue;
-            };
-            // Asserted, not skipped: a `Unit` axis always carries an `Instances` count, and
-            // passing over one whose count we could not read would shift every inner axis's
-            // bits by its width.
-            let lanes = coverage
-                .instances_const()
-                .expect("Space::lane_share: a Unit axis must carry a const instance count");
-            if lanes == 1 {
-                continue;
-            }
-            assert!(
-                lanes.is_power_of_two(),
-                "Space::lane_share: {axis:?} rides {lanes} lanes, which is not a power of two, so its partials are not a bit range"
-            );
-            if !self.contains(axis) {
-                fold_mask |= (lanes - 1) * weight;
-            }
-            weight *= lanes;
-        }
-        match fold_mask {
-            0 => LaneShare::Whole,
-            // Every lane's bit folded: nothing is carried, so the plane shares the one cell.
-            mask if mask == weight - 1 => LaneShare::Plane,
-            fold_mask => LaneShare::Group { fold_mask },
-        }
+        self.partitioner().level().lane_share(self)
     }
 }
 
