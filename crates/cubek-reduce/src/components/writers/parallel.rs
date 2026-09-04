@@ -41,7 +41,9 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
         ParallelWriter::<'a, Out> {
             output: output.view_mut(layout),
             buffer: match accumulator_format {
-                AccumulatorFormat::Single => Value::new_single(Vector::empty()),
+                AccumulatorFormat::Single | AccumulatorFormat::SingleKey => {
+                    Value::new_single(Vector::empty())
+                }
                 AccumulatorFormat::Multiple(length) | AccumulatorFormat::Keys(length) => {
                     Value::new_Multiple(Array::new(length))
                 }

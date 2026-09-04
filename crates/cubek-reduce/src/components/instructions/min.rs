@@ -4,8 +4,9 @@ use super::{
 };
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
-        ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand,
+        Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, ReduceRequirements,
+        ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand, ValueOrder,
+        better_order_key, order_key_coordinate, order_key_value, pack_order_key, packs_into_key,
     },
     precision::ReducePrecision,
 };
@@ -28,6 +29,18 @@ impl ReduceFamily for Min {
 impl ReduceWithIndicesFamily for Min {
     type Instruction<P: ReducePrecision> = Self;
     type Config = ReduceOutputMode;
+}
+
+/// Whether this reduction carries its coordinate inside a packed key.
+///
+/// Only a coordinate-tracking min has anything to pack, and only a device with
+/// 64-bit integers can compare one.
+#[cube]
+fn packs_key<P: ReducePrecision>(this: &Min) -> comptime_type!(bool) {
+    let tracks_coordinates = comptime!(this.output.has_indices());
+    let packs = packs_into_key::<P::EA>();
+
+    comptime!(tracks_coordinates && packs)
 }
 
 /// Fold `candidate` into the accumulator, keeping the smaller item per vector
@@ -58,6 +71,18 @@ fn min_insert<T: Numeric, N: Size>(
     }
 }
 
+/// [`min_insert`] over a packed key: the NaN precedence, the ordering and the
+/// tie-break all ride the one unsigned comparison. The key ranks min's winner
+/// highest as it does max's, so the plane reductions stay `plane_max`.
+#[cube]
+fn min_key_insert<P: ReducePrecision>(
+    keys: &mut Value<Vector<OrderKey, P::SI>>,
+    candidate: Vector<OrderKey, P::SI>,
+) {
+    let winning = better_order_key::<P::SI>(keys.item(), candidate);
+    keys.assign(&Value::new_single(winning));
+}
+
 /// Reduce `item` across the plane to one winning candidate, with its lowest
 /// matching coordinate when the item carries one.
 #[cube]
@@ -86,8 +111,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         }
     }
 
-    fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
-        AccumulatorFormat::Single
+    fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
+        let packs = packs_key::<P>(this);
+
+        comptime!(if packs {
+            AccumulatorFormat::SingleKey
+        } else {
+            AccumulatorFormat::Single
+        })
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {
@@ -99,57 +130,100 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let args = if comptime!(this.output.has_indices()) {
-            Value::new_single(Vector::empty().fill(u32::MAX))
-        } else {
-            Value::new_None()
-        };
+        let packs = packs_key::<P>(this);
 
-        Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(min_identity::<P::EA>())),
-            args,
-            keys: Value::new_None(),
+        if comptime!(packs) {
+            Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                keys: Value::new_single(pack_order_key::<P::EA, P::SI>(
+                    Vector::new(min_identity::<P::EA>()),
+                    Vector::new(u32::MAX),
+                    ValueOrder::Ascending,
+                )),
+            }
+        } else {
+            let args = if comptime!(this.output.has_indices()) {
+                Value::new_single(Vector::empty().fill(u32::MAX))
+            } else {
+                Value::new_None()
+            };
+
+            Accumulator::<P> {
+                elements: Value::new_single(Vector::empty().fill(min_identity::<P::EA>())),
+                args,
+                keys: Value::new_None(),
+            }
         }
     }
 
     fn reduce(
-        _this: &Self,
+        this: &Self,
         accumulator: &mut Accumulator<P>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let (candidate, candidate_coord) = match reduce_step {
-            ReduceStep::Plane => plane_min_candidate(item.elements, &item.args),
-            ReduceStep::Identity => (item.elements, item.args),
-        };
+        let packs = packs_key::<P>(this);
 
-        min_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            Vector::cast_from(candidate),
-            &candidate_coord,
-        );
+        if comptime!(packs) {
+            let key = pack_order_key::<P::EA, P::SI>(
+                Vector::cast_from(item.elements),
+                item.args.item(),
+                ValueOrder::Ascending,
+            );
+            let candidate = match reduce_step {
+                ReduceStep::Plane => plane_max(key),
+                ReduceStep::Identity => key,
+            };
+
+            min_key_insert::<P>(&mut accumulator.keys, candidate);
+        } else {
+            let (candidate, candidate_coord) = match reduce_step {
+                ReduceStep::Plane => plane_min_candidate(item.elements, &item.args),
+                ReduceStep::Identity => (item.elements, item.args),
+            };
+
+            min_insert(
+                &mut accumulator.elements,
+                &mut accumulator.args,
+                Vector::cast_from(candidate),
+                &candidate_coord,
+            );
+        }
     }
 
-    fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
-        let (candidate, candidate_coord) =
-            plane_min_candidate(accumulator.elements.item(), &accumulator.args);
+    fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
+        let packs = packs_key::<P>(this);
 
-        min_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            candidate,
-            &candidate_coord,
-        );
+        if comptime!(packs) {
+            let winning = plane_max(accumulator.keys.item());
+            accumulator.keys.assign(&Value::new_single(winning));
+        } else {
+            let (candidate, candidate_coord) =
+                plane_min_candidate(accumulator.elements.item(), &accumulator.args);
+
+            min_insert(
+                &mut accumulator.elements,
+                &mut accumulator.args,
+                candidate,
+                &candidate_coord,
+            );
+        }
     }
 
-    fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        min_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            other.elements.item(),
-            &other.args,
-        );
+    fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
+        let packs = packs_key::<P>(this);
+
+        if comptime!(packs) {
+            min_key_insert::<P>(&mut accumulator.keys, other.keys.item());
+        } else {
+            min_insert(
+                &mut accumulator.elements,
+                &mut accumulator.args,
+                other.elements.item(),
+                &other.args,
+            );
+        }
     }
 
     fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode) {
@@ -157,52 +231,102 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn to_output_parallel<Out: Numeric, Idx: Numeric>(
-        _this: &Self,
+        this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        match accumulator.args {
-            Value::None => {
-                let acc = accumulator.elements.item();
-                let mut min = min_identity::<P::EA>();
-                #[unroll]
-                for k in 0..acc.vector_size() {
-                    let candidate = acc.extract(k);
-                    min = select_min(
-                        Vector::<P::EA, Const<1>>::new(candidate),
-                        Vector::<P::EA, Const<1>>::new(min),
-                    )
-                    .extract(0usize);
+        let packs = packs_key::<P>(this);
+
+        if comptime!(packs) {
+            let key =
+                Vector::<OrderKey, Const<1>>::new(min_finalize_key::<P>(accumulator.keys.item()));
+
+            (
+                Value::new_single(Out::cast_from(
+                    order_key_value::<P::EA, Const<1>>(key, ValueOrder::Ascending).extract(0usize),
+                )),
+                Value::new_single(Idx::cast_from(
+                    order_key_coordinate::<Const<1>>(key).extract(0usize),
+                )),
+            )
+        } else {
+            match accumulator.args {
+                Value::None => {
+                    let acc = accumulator.elements.item();
+                    let mut min = min_identity::<P::EA>();
+                    #[unroll]
+                    for k in 0..acc.vector_size() {
+                        let candidate = acc.extract(k);
+                        min = select_min(
+                            Vector::<P::EA, Const<1>>::new(candidate),
+                            Vector::<P::EA, Const<1>>::new(min),
+                        )
+                        .extract(0usize);
+                    }
+                    (Value::new_single(Out::cast_from(min)), Value::new_None())
                 }
-                (Value::new_single(Out::cast_from(min)), Value::new_None())
+                Value::Single(_) => {
+                    let (min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
+                    (
+                        Value::new_single(Out::cast_from(min)),
+                        Value::new_single(Idx::cast_from(coordinate)),
+                    )
+                }
+                Value::Multiple(_) => {
+                    panic!("a min accumulator holds at most one coordinate vector")
+                }
             }
-            Value::Single(_) => {
-                let (min, coordinate) = min_finalize_with_coords::<P>(&accumulator);
-                (
-                    Value::new_single(Out::cast_from(min)),
-                    Value::new_single(Idx::cast_from(coordinate)),
-                )
-            }
-            Value::Multiple(_) => panic!("a min accumulator holds at most one coordinate vector"),
         }
     }
 
     fn to_output_perpendicular<Out: Numeric, Idx: Numeric>(
-        _this: &Self,
+        this: &Self,
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let values = Value::new_single(Vector::cast_from(accumulator.elements.item()));
-        let indices = match accumulator.args {
-            Value::None => Value::new_None(),
-            Value::Single(coord) => Value::new_single(Vector::cast_from(coord.unwrap())),
-            Value::Multiple(_) => panic!("a min accumulator holds at most one coordinate vector"),
-        };
-        (values, indices)
+        let packs = packs_key::<P>(this);
+
+        if comptime!(packs) {
+            let key = accumulator.keys.item();
+
+            (
+                Value::new_single(Vector::cast_from(order_key_value::<P::EA, P::SI>(
+                    key,
+                    ValueOrder::Ascending,
+                ))),
+                Value::new_single(Vector::cast_from(order_key_coordinate::<P::SI>(key))),
+            )
+        } else {
+            let values = Value::new_single(Vector::cast_from(accumulator.elements.item()));
+            let indices = match accumulator.args {
+                Value::None => Value::new_None(),
+                Value::Single(coord) => Value::new_single(Vector::cast_from(coord.unwrap())),
+                Value::Multiple(_) => {
+                    panic!("a min accumulator holds at most one coordinate vector")
+                }
+            };
+            (values, indices)
+        }
     }
 }
 
 impl<P: ReducePrecision> ReduceWithIndices<P> for Min {}
+
+/// Collapse the vectorized accumulator lanes down to the one winning key, for
+/// the parallel layout.
+#[cube]
+fn min_finalize_key<P: ReducePrecision>(keys: Vector<OrderKey, P::SI>) -> OrderKey {
+    let vector_size = keys.vector_size().comptime();
+    let mut winning = keys.extract(0usize);
+
+    #[unroll]
+    for k in 1..vector_size {
+        let candidate = keys.extract(k);
+        winning = select(winning > candidate, winning, candidate);
+    }
+
+    winning
+}
 
 /// Collapse the vectorized accumulator lanes down to the final minimum and its
 /// coordinate, for the parallel layout.

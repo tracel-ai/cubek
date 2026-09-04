@@ -1,5 +1,5 @@
 use crate::components::{
-    instructions::{OrderKey, empty_order_key, lowest_coordinate_matching},
+    instructions::{OrderKey, ValueOrder, empty_order_key, lowest_coordinate_matching},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -59,9 +59,11 @@ pub struct ReduceRequirements {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Multiple(usize),
-    /// Slots holding a [`OrderKey`](super::OrderKey) each, so the values and the
+    /// Slots holding an [`OrderKey`](super::OrderKey) each, so the values and the
     /// coordinates share one storage rather than two.
     Keys(usize),
+    /// One [`OrderKey`](super::OrderKey), for the extrema that keep a single slot.
+    SingleKey,
     Single,
 }
 
@@ -69,7 +71,7 @@ impl AccumulatorFormat {
     pub fn len(&self) -> usize {
         match self {
             AccumulatorFormat::Multiple(k) | AccumulatorFormat::Keys(k) => *k,
-            AccumulatorFormat::Single => 1,
+            AccumulatorFormat::Single | AccumulatorFormat::SingleKey => 1,
         }
     }
 
@@ -302,7 +304,11 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
         }
 
         let is_winner = local_best.equal(&winning);
-        local_best = select_many(is_winner, empty_order_key::<N, S>(), local_best);
+        local_best = select_many(
+            is_winner,
+            empty_order_key::<N, S>(ValueOrder::Descending),
+            local_best,
+        );
     }
 }
 
@@ -318,7 +324,7 @@ pub fn plane_topk_key_merge<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local = empty_order_key::<N, S>();
+        let mut local = empty_order_key::<N, S>(ValueOrder::Descending);
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
@@ -601,13 +607,18 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 }
 
-/// A pair of shared memory used for [`Max`](super::Max) and [`Min`](super::Min).
+/// The shared memory used by [`Max`](super::Max) and [`Min`](super::Min), in
+/// whichever of the two spellings the instruction accumulates in.
 #[derive(CubeType)]
 pub struct ArgAccumulator<P: ReducePrecision> {
-    pub elements: Shared<[Vector<P::EA, P::SI>]>,
-    /// Empty unless the instruction tracks coordinates; its length is the single
-    /// source of truth for whether coordinates are staged (see `read`/`write`).
+    /// Empty when the accumulator is packed into `keys`.
+    pub elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
+    /// Empty unless the instruction stages coordinates beside the values; its
+    /// length is the single source of truth for whether they are (see
+    /// `read`/`write`).
     pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
+    /// Empty unless the instruction packs its coordinate into its value.
+    pub keys: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -621,40 +632,68 @@ pub enum ReduceStep {
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, _inst: &I) -> Self {
+    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, inst: &I) -> Self {
+        let format = I::accumulator_format(inst);
+        let packed = comptime!(matches!(format, AccumulatorFormat::SingleKey));
+
+        let mut elements = Sequence::new();
         let mut args = Sequence::new();
-        if coordinate {
-            args.push(Shared::new_slice(length));
+        let mut keys = Sequence::new();
+
+        if comptime!(packed) {
+            keys.push(Shared::new_slice(length));
+        } else {
+            elements.push(Shared::new_slice(length));
+            if coordinate {
+                args.push(Shared::new_slice(length));
+            }
         }
 
         ArgAccumulator::<P> {
-            elements: Shared::new_slice(length),
+            elements,
             args,
+            keys,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
-            Value::new_single(accumulator.args[0][index])
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                keys: Value::new_single(accumulator.keys[0][index]),
+            }
         } else {
-            Value::new_None()
-        };
+            let num_args = comptime!(accumulator.args.len());
+            let args = if comptime!(num_args != 0) {
+                Value::new_single(accumulator.args[0][index])
+            } else {
+                Value::new_None()
+            };
 
-        Accumulator::<P> {
-            elements: Value::new_single(accumulator.elements[index]),
-            args,
-            keys: Value::new_None(),
+            Accumulator::<P> {
+                elements: Value::new_single(accumulator.elements[0][index]),
+                args,
+                keys: Value::new_None(),
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator.elements[index] = item.elements.item();
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            let shared_keys = &mut accumulator.keys[0];
+            shared_keys[index] = item.keys.item();
+        } else {
+            let shared_elements = &mut accumulator.elements[0];
+            shared_elements[index] = item.elements.item();
 
-        let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
-            let shared_args = &mut accumulator.args[0];
-            shared_args[index] = item.args.item();
+            let num_args = comptime!(accumulator.args.len());
+            if comptime!(num_args != 0) {
+                let shared_args = &mut accumulator.args[0];
+                shared_args[index] = item.args.item();
+            }
         }
     }
 }

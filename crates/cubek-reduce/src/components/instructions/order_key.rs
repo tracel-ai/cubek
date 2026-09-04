@@ -2,15 +2,27 @@ use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 
 /// A candidate's value and coordinate folded into one unsigned integer whose
-/// unsigned order is the pair's order: value descending, and coordinate
-/// ascending where two values are equal.
+/// unsigned order is the pair's order: the value in the key's [`ValueOrder`],
+/// and the lower coordinate where two values are equal.
 ///
-/// The pair costs three comparisons and five selects per accumulator slot,
-/// against one comparison and two selects for the key, because the tie-break
-/// and the coordinate ride the single comparison the value already needed.
+/// An unpacked pair pays its tie-break and its coordinate swap on every element;
+/// the key pays neither, because both ride the single comparison the value
+/// already needed.
 pub(crate) type OrderKey = u64;
 
 const SIGN: u32 = 0x8000_0000;
+
+/// Which end of the value range an [`OrderKey`] ranks first.
+///
+/// A NaN outranks every number in both, so neither is the other's reverse and a
+/// key built for one cannot be read as the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ValueOrder {
+    /// Largest value first, as top-k and max rank.
+    Descending,
+    /// Smallest value first, as min ranks.
+    Ascending,
+}
 
 /// Whether an accumulation type packs into an [`OrderKey`] on this device.
 ///
@@ -37,26 +49,47 @@ pub(crate) fn packs_into_key<N: Numeric>() -> comptime_type!(bool) {
 pub(crate) fn pack_order_key<N: Numeric, S: Size>(
     value: Vector<N, S>,
     coordinate: Vector<u32, S>,
+    #[comptime] order: ValueOrder,
 ) -> Vector<OrderKey, S> {
-    // Descending, so that a lower coordinate makes a larger key and wins a tie.
-    let descending = Vector::new(u32::MAX) - coordinate;
+    // Inverted, so that a lower coordinate makes a larger key and wins a tie.
+    let rank = Vector::new(u32::MAX) - coordinate;
 
-    (Vector::<OrderKey, S>::cast_from(order_bits::<N, S>(value)) << Vector::new(32u64))
-        | Vector::<OrderKey, S>::cast_from(descending)
+    (Vector::<OrderKey, S>::cast_from(order_bits::<N, S>(value, order)) << Vector::new(32u64))
+        | Vector::<OrderKey, S>::cast_from(rank)
 }
 
 /// The key of a slot that has taken no candidate.
 ///
-/// It spells the `(min_value, u32::MAX)` the unpacked accumulator starts from,
-/// so a row shorter than `k` reports the same value and index either way.
+/// It spells the last-ranked value at `u32::MAX` that the unpacked accumulator
+/// starts from, so a row with nothing to rank reports the same value and index
+/// either way.
 #[cube]
-pub(crate) fn empty_order_key<N: Numeric, S: Size>() -> Vector<OrderKey, S> {
-    pack_order_key::<N, S>(Vector::new(N::min_value()), Vector::new(u32::MAX))
+pub(crate) fn empty_order_key<N: Numeric, S: Size>(
+    #[comptime] order: ValueOrder,
+) -> Vector<OrderKey, S> {
+    let last = match comptime!(order) {
+        ValueOrder::Descending => N::min_value(),
+        ValueOrder::Ascending => N::max_value(),
+    };
+
+    pack_order_key::<N, S>(Vector::new(last), Vector::new(u32::MAX), order)
+}
+
+/// The better-ranked of two keys, whichever [`ValueOrder`] built them.
+#[cube]
+pub(crate) fn better_order_key<S: Size>(
+    current: Vector<OrderKey, S>,
+    candidate: Vector<OrderKey, S>,
+) -> Vector<OrderKey, S> {
+    select_many(current.greater_than(&candidate), current, candidate)
 }
 
 #[cube]
-pub(crate) fn order_key_value<N: Numeric, S: Size>(key: Vector<OrderKey, S>) -> Vector<N, S> {
-    value_from_order_bits::<N, S>(Vector::cast_from(key >> Vector::new(32u64)))
+pub(crate) fn order_key_value<N: Numeric, S: Size>(
+    key: Vector<OrderKey, S>,
+    #[comptime] order: ValueOrder,
+) -> Vector<N, S> {
+    value_from_order_bits::<N, S>(Vector::cast_from(key >> Vector::new(32u64)), order)
 }
 
 #[cube]
@@ -64,46 +97,80 @@ pub(crate) fn order_key_coordinate<S: Size>(key: Vector<OrderKey, S>) -> Vector<
     Vector::new(u32::MAX) - Vector::cast_from(key & Vector::new(0xFFFF_FFFFu64))
 }
 
-/// The value's bits mapped so that unsigned comparison of the results is the
-/// value's own comparison.
+/// The value's bits mapped so that unsigned comparison of the results ranks the
+/// values in `order`.
 ///
 /// A float's sign bit orders backwards and its magnitude bits invert under it,
 /// hence the flip. `-0.0` is mapped onto `+0.0`, since the two compare equal and
 /// a key that told them apart would break the tie towards the wrong coordinate.
-/// NaN has no order to preserve and lands above every finite value.
+/// Both arms compare the float against zero rather than testing its sign bit, so
+/// that a NaN of either sign fails and lands above every number.
 #[cube]
-fn order_bits<N: Numeric, S: Size>(value: Vector<N, S>) -> Vector<u32, S> {
+fn order_bits<N: Numeric, S: Size>(
+    value: Vector<N, S>,
+    #[comptime] order: ValueOrder,
+) -> Vector<u32, S> {
     let bits = Vector::<u32, S>::reinterpret(value);
     let sign = Vector::new(SIGN);
     let elem = elem_type_of::<N>();
 
     match comptime!(elem) {
-        ElemType::Float(_) => select_many(
-            value.less_than(&Vector::new(N::from_int(0))),
-            Vector::new(u32::MAX) - bits,
-            bits | sign,
-        ),
-        ElemType::Int(_) => bits ^ sign,
-        ElemType::UInt(_) => bits,
+        ElemType::Float(_) => {
+            let zero = Vector::new(N::from_int(0));
+
+            match comptime!(order) {
+                ValueOrder::Descending => select_many(
+                    value.less_than(&zero),
+                    Vector::new(u32::MAX) - bits,
+                    bits | sign,
+                ),
+                ValueOrder::Ascending => {
+                    select_many(value.greater_than(&zero), sign - bits, bits | sign)
+                }
+            }
+        }
+        ElemType::Int(_) => reversed_if_ascending::<S>(bits ^ sign, order),
+        ElemType::UInt(_) => reversed_if_ascending::<S>(bits, order),
         _ => panic!("an order key packs floats, signed and unsigned integers only"),
     }
 }
 
 #[cube]
-fn value_from_order_bits<N: Numeric, S: Size>(bits: Vector<u32, S>) -> Vector<N, S> {
+fn value_from_order_bits<N: Numeric, S: Size>(
+    bits: Vector<u32, S>,
+    #[comptime] order: ValueOrder,
+) -> Vector<N, S> {
     let sign = Vector::new(SIGN);
     let elem = elem_type_of::<N>();
 
     let value_bits = match comptime!(elem) {
-        ElemType::Float(_) => select_many(
-            (bits & sign).equal(&Vector::new(0u32)),
-            Vector::new(u32::MAX) - bits,
-            bits ^ sign,
-        ),
-        ElemType::Int(_) => bits ^ sign,
-        ElemType::UInt(_) => bits,
+        ElemType::Float(_) => match comptime!(order) {
+            ValueOrder::Descending => select_many(
+                (bits & sign).equal(&Vector::new(0u32)),
+                Vector::new(u32::MAX) - bits,
+                bits ^ sign,
+            ),
+            // `<=` rather than a sign test, so that the one key both zeros share
+            // reads back as `+0.0` here as it does in the descending arm.
+            ValueOrder::Ascending => select_many(bits.less_equal(&sign), sign - bits, bits),
+        },
+        ElemType::Int(_) => reversed_if_ascending::<S>(bits, order) ^ sign,
+        ElemType::UInt(_) => reversed_if_ascending::<S>(bits, order),
         _ => panic!("an order key packs floats, signed and unsigned integers only"),
     };
 
     Vector::<N, S>::reinterpret(value_bits)
+}
+
+/// Reverse an unsigned image that already rises with the value, so that it falls
+/// with it instead. Its own inverse, so both directions of the map use it.
+#[cube]
+fn reversed_if_ascending<S: Size>(
+    rising: Vector<u32, S>,
+    #[comptime] order: ValueOrder,
+) -> Vector<u32, S> {
+    match comptime!(order) {
+        ValueOrder::Descending => rising,
+        ValueOrder::Ascending => Vector::new(u32::MAX) - rising,
+    }
 }

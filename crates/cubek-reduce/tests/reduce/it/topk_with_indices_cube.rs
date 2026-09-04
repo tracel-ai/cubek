@@ -75,7 +75,7 @@ fn cube_planes_topk_with_indices_k5() {
 }
 
 // The fused min/max monomorphise over `Min`/`Max` the same way, so the cube
-// routine is likewise the only caller of `ArgAccumulator`'s optional index
+// routine is likewise the only caller of `ArgAccumulator`'s optional key and index
 // slices; the single-output paths stage through the mixed accumulator instead.
 #[test]
 fn cube_planes_min_with_indices() {

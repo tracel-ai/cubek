@@ -8,8 +8,9 @@ use crate::components::instructions::AccumulatorFormat;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{
-    Accumulator, Item, OrderKey, Value, ValueExpand, empty_order_key, order_key_coordinate,
-    order_key_value, pack_order_key, packs_into_key, plane_topk_key_insert, plane_topk_key_merge,
+    Accumulator, Item, OrderKey, Value, ValueExpand, ValueOrder, empty_order_key,
+    order_key_coordinate, order_key_value, pack_order_key, packs_into_key, plane_topk_key_insert,
+    plane_topk_key_merge,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -289,7 +290,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_keys::<P>(this);
 
         if comptime!(packed) {
-            let empty = empty_order_key::<P::EA, P::SI>();
+            let empty = empty_order_key::<P::EA, P::SI>(ValueOrder::Descending);
 
             let mut keys = Array::new(comptime!(this.k));
             #[unroll]
@@ -337,8 +338,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_keys::<P>(this);
 
         if comptime!(packed) {
-            let key =
-                pack_order_key::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
+            let key = pack_order_key::<P::EA, P::SI>(
+                Vector::cast_from(item.elements),
+                item.args.item(),
+                ValueOrder::Descending,
+            );
             let keys = accumulator.keys.multiple_mut();
 
             match reduce_step {
@@ -430,8 +434,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             #[unroll]
             for i in 0..this.k {
                 let key = Vector::<OrderKey, P::SI>::new(keys[i]);
-                out_values[i] =
-                    Out::cast_from(order_key_value::<P::EA, P::SI>(key).extract(0usize));
+                out_values[i] = Out::cast_from(
+                    order_key_value::<P::EA, P::SI>(key, ValueOrder::Descending).extract(0usize),
+                );
                 out_indices[i] = Idx::cast_from(order_key_coordinate::<P::SI>(key).extract(0usize));
             }
 
@@ -480,7 +485,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             let mut out_indices = Array::new(this.k);
             #[unroll]
             for i in 0..this.k {
-                out_values[i] = Vector::cast_from(order_key_value::<P::EA, P::SI>(keys[i]));
+                out_values[i] = Vector::cast_from(order_key_value::<P::EA, P::SI>(
+                    keys[i],
+                    ValueOrder::Descending,
+                ));
                 out_indices[i] = Vector::cast_from(order_key_coordinate::<P::SI>(keys[i]));
             }
 
@@ -616,7 +624,7 @@ fn topk_finalize_keys<P: ReducePrecision>(
 ) -> Array<OrderKey> {
     let vector_size = keys[0].vector_size().comptime();
 
-    let empty = empty_order_key::<P::EA, P::SI>().extract(0usize);
+    let empty = empty_order_key::<P::EA, P::SI>(ValueOrder::Descending).extract(0usize);
 
     let mut topk = Array::new(k);
     #[unroll]

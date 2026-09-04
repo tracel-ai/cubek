@@ -53,7 +53,8 @@ impl ReduceOperationConfig {
     /// slot count). `acc_elem_size` is the accumulation element size (`P::EA`),
     /// `vector_size` the input vectorization. Mirrors each instruction's
     /// `SharedAccumulator` layout: one value slice, plus a `u32` index slice for
-    /// `Arg*`, scaled by `k` for top-k.
+    /// `Arg*`, scaled by `k` for top-k. A packed key slice replaces that pair and
+    /// is exactly as wide, so the count holds whichever spelling is emitted.
     pub fn shared_memory_bytes_per_accumulator(
         &self,
         acc_elem_size: usize,
@@ -230,6 +231,11 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     }
                 }
             }
+            AccumulatorFormat::SingleKey => DynamicSharedAccumulator::<P> {
+                elements: SharedAccumulatorKind::new_None(),
+                args: SharedAccumulatorKind::new_None(),
+                keys: SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
+            },
             AccumulatorFormat::Keys(len) => {
                 let mut keys = Sequence::new();
                 #[unroll]
