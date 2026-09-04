@@ -1,7 +1,8 @@
 //! Row-wise ops on a final tile: the legacy fragment row ops re-expressed on
 //! tiles. Each op runs over the unit's owned rows (`rpu` contiguous rows per
-//! unit, unit u starting at `u*rpu`) with no syncs. The backward's row ops
-//! (prepass rowsum) join here.
+//! unit, unit u starting at `u*rpu`) with no syncs, a line — the tile's vector
+//! width of adjacent columns — at a time, every loop over a comptime bound.
+//! The backward's row ops (prepass rowsum) join here.
 
 use cubecl::prelude::*;
 
@@ -10,7 +11,8 @@ use crate::*;
 #[cube]
 impl<EA: Float> Tile<EA> {
     /// `self = self * scale`, masked entries driven to `min_value` (below the
-    /// masked-logit threshold), per owned row.
+    /// masked-logit threshold), per owned row. A row is read and written a
+    /// line at a time, the tile's vector width of adjacent columns.
     pub fn scale_and_mask(
         &mut self,
         scale: EA,
@@ -20,7 +22,9 @@ impl<EA: Float> Tile<EA> {
     ) {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
-        let size!(W) = self.vector_size();
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
         let mut view = self.flat_mut::<W>();
 
         #[unroll]
@@ -28,14 +32,16 @@ impl<EA: Float> Tile<EA> {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
                 let q = probe.row_q(r);
-                for c in 0..cols {
-                    let masked = probe.masked(q, probe.origin_s + c, mask);
-                    let val = select(
-                        masked,
-                        EA::min_value(),
-                        view.read(r * cols + c).extract(0usize) * scale,
-                    );
-                    view.write(r * cols + c, Vector::cast_from(val));
+                #[unroll]
+                for line in 0..lines {
+                    let i = r * lines + line;
+                    let mut v = view.read(i) * Vector::<EA, W>::cast_from(scale);
+                    #[unroll]
+                    for j in 0..w {
+                        let masked = probe.masked(q, probe.origin_s + line * w + j, mask);
+                        v.insert(j, select(masked, EA::min_value(), v.extract(j)));
+                    }
+                    view.write(i, v);
                 }
             }
         }
@@ -45,7 +51,9 @@ impl<EA: Float> Tile<EA> {
     pub fn row_max(&self, acc: &mut Array<EA>, base: &Array<EA>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
-        let size!(W) = self.vector_size();
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
         let view = self.flat::<W>();
 
         #[unroll]
@@ -53,8 +61,13 @@ impl<EA: Float> Tile<EA> {
             acc[ri] = base[ri];
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
-                for c in 0..cols {
-                    acc[ri] = max(acc[ri], view.read(r * cols + c).extract(0usize));
+                #[unroll]
+                for line in 0..lines {
+                    let v = view.read(r * lines + line);
+                    #[unroll]
+                    for j in 0..w {
+                        acc[ri] = max(acc[ri], v.extract(j));
+                    }
                 }
             }
         }
@@ -66,7 +79,9 @@ impl<EA: Float> Tile<EA> {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let threshold = EA::new(LOGIT_MASKED);
-        let size!(W) = self.vector_size();
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
         let mut view = self.flat_mut::<W>();
 
         #[unroll]
@@ -75,9 +90,15 @@ impl<EA: Float> Tile<EA> {
             if r < rows {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
-                for c in 0..cols {
-                    let e = live * (view.read(r * cols + c).extract(0usize) - safe_m).exp();
-                    view.write(r * cols + c, Vector::cast_from(e));
+                #[unroll]
+                for line in 0..lines {
+                    let i = r * lines + line;
+                    let mut v = view.read(i);
+                    #[unroll]
+                    for j in 0..w {
+                        v.insert(j, live * (v.extract(j) - safe_m).exp());
+                    }
+                    view.write(i, v);
                 }
             }
         }
@@ -87,7 +108,9 @@ impl<EA: Float> Tile<EA> {
     pub fn row_sum(&self, acc: &mut Array<EA>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
-        let size!(W) = self.vector_size();
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
         let view = self.flat::<W>();
 
         #[unroll]
@@ -95,8 +118,13 @@ impl<EA: Float> Tile<EA> {
             acc[ri] = EA::from_int(0);
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
-                for c in 0..cols {
-                    acc[ri] += view.read(r * cols + c).extract(0usize);
+                #[unroll]
+                for line in 0..lines {
+                    let v = view.read(r * lines + line);
+                    #[unroll]
+                    for j in 0..w {
+                        acc[ri] += v.extract(j);
+                    }
                 }
             }
         }
@@ -281,24 +309,30 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// Cast-copy the owned rows into `dest`.
+    /// Cast-copy the owned rows into `dest`, which is laid out in the same
+    /// lines.
     pub(crate) fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, #[comptime] rpu: usize) {
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
-        let size!(W) = self.vector_size();
-        let size!(WP) = dest.vector_size();
+        let w = self.vector_size();
+        let wp = dest.vector_size();
+        comptime!(assert!(
+            w == wp,
+            "write_rows_to: the probabilities are laid out in the score's lines"
+        ));
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
         let src = self.flat::<W>();
-        let mut dst = dest.flat_mut::<WP>();
+        let mut dst = dest.flat_mut::<W>();
 
         #[unroll]
         for ri in 0..rpu {
             let r = UNIT_POS_X as usize * rpu + ri;
             if r < rows {
-                for c in 0..cols {
-                    dst.write(
-                        r * cols + c,
-                        Vector::cast_from(src.read(r * cols + c).extract(0usize)),
-                    );
+                #[unroll]
+                for line in 0..lines {
+                    let i = r * lines + line;
+                    dst.write(i, Vector::<EP, W>::cast_from(src.read(i)));
                 }
             }
         }

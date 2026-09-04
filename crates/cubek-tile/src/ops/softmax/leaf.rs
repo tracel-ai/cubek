@@ -33,12 +33,6 @@ impl<EA: Float> Tile<EA> {
         mask: &Tile<u32>,
         scale: EA,
     ) -> Array<EA> {
-        // Row-serial scalar reads; a vectorized leaf is a later drop-in swap.
-        let wp = p.vector_size();
-        comptime!(assert!(
-            wp == 1,
-            "softmax: vectorized tiles not supported yet"
-        ));
         let corr = self.softmax_in_place(state, probe, mask, scale);
         match comptime!(state.share) {
             RowShare::Unit { rows } => self.write_rows_to(p, rows),
@@ -73,11 +67,11 @@ impl<EA: Float> Tile<EA> {
             "softmax reduces the score axis absent from the state's space; \
              v1 requires it to be the trailing axis"
         ));
-        // Row-serial scalar reads; a vectorized leaf is a later drop-in swap.
+        // The passes read a row a line at a time, so the lines must not straddle rows.
         let w = self.vector_size();
         comptime!(assert!(
-            w == 1,
-            "softmax: vectorized tiles not supported yet"
+            self.space.extent_at(1).is_multiple_of(w),
+            "softmax: the score's line width divides its columns"
         ));
 
         let rows = comptime!(state.share.rows());

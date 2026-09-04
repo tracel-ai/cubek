@@ -331,6 +331,8 @@ fn attention_fold_cmma_kernel<E: Float>(
     #[comptime] frag: usize,
     #[comptime] planes: usize,
     #[comptime] in_place: bool,
+    #[comptime] score_vec: usize,
+    #[comptime] lanes: usize,
 ) {
     let q = q.tile(comptime!(space.clone()));
     let k = k.tile(comptime!(space.clone()));
@@ -355,20 +357,27 @@ fn attention_fold_cmma_kernel<E: Float>(
     // With `planes > 1` the space states each plane's slice of the grid above the instruction:
     // the leaf then holds its slice's accumulators across the contraction instead of walking the
     // whole grid one fragment at a time.
+    // The score (and P) tile may be lined: the softmax passes read a row a line at a time and the
+    // fragments store and load it through its element slice either way.
     let score_space = comptime!(sliced(&[(R, rows), (C, block)], planes, frag));
     let mut score = MemData::<f32>::smem(
         score_space.clone(),
-        1usize,
+        score_vec,
         comptime!(StagePlan::in_place()),
     );
-    let mut p = MemData::<f32>::smem(score_space, 1usize, comptime!(StagePlan::in_place()));
+    let mut p = MemData::<f32>::smem(score_space, score_vec, comptime!(StagePlan::in_place()));
     let row_space = comptime!(Space::new(&[(R, rows)]));
     let mut factors =
         MemData::<f32>::smem(row_space.clone(), 1usize, comptime!(StagePlan::in_place()));
     let acc_space = comptime!(sliced(&[(R, rows), (V, val_dim)], planes, frag));
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
     acc.zero();
-    let mut state = RowState::<f32>::new(row_space, units);
+    // `lanes > 1` puts the softmax at plane ownership, the row-slice per plane and its lanes
+    // splitting the lines; one lane is the unit arm.
+    let mut state = match comptime!(lanes > 1) {
+        true => RowState::<f32>::over_planes(row_space, units, lanes),
+        false => RowState::<f32>::new(row_space, units),
+    };
     let share = comptime!(state.share);
     let rpu = comptime!(share.rows());
     let bound_s = bound as usize;
@@ -456,6 +465,7 @@ fn sliced(extents: &[(Axis, usize); 2], planes: usize, frag: usize) -> Space {
 /// `spanned` gives `k` and `v` a leading axis the launch spans rather than iterates — the shape a
 /// client's cache has, where a KV head is an axis of the operand and a cube owns one position of
 /// it.
+#[allow(clippy::too_many_arguments)]
 fn run_cmma<E: Float + CubeElement>(
     (units, rows, s_total, block, d, val_dim, frag): (
         usize,
@@ -471,19 +481,31 @@ fn run_cmma<E: Float + CubeElement>(
     spanned: bool,
     planes: usize,
     in_place: bool,
+    score_vec: usize,
+    planar: bool,
 ) {
     let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
-    if planes > 1 {
-        let hw = &client.properties().hardware;
-        let exact = hw.plane_size_min == hw.plane_size_max;
-        if !exact || units != planes * hw.plane_size_min as usize {
-            TestOutcome::Validated(ValidationResult::Skipped(format!(
-                "a stated slice needs a cube of exactly {planes} planes; this device commits to none"
-            )))
-            .enforce();
-            return;
-        }
+    let hw = &client.properties().hardware;
+    let exact = hw.plane_size_min == hw.plane_size_max;
+    if planes > 1 && (!exact || units != planes * hw.plane_size_min as usize) {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "a stated slice needs a cube of exactly {planes} planes; this device commits to none"
+        )))
+        .enforce();
+        return;
     }
+    if planar && !exact {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "a planar softmax needs a plane width the device commits to".into(),
+        ))
+        .enforce();
+        return;
+    }
+    let lanes = if planar {
+        hw.plane_size_min as usize
+    } else {
+        1
+    };
     let f32_ty = f32::elem_type_native();
     let e_ty = E::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
@@ -599,6 +621,8 @@ fn run_cmma<E: Float + CubeElement>(
         frag,
         planes,
         in_place,
+        score_vec,
+        lanes,
     );
 
     let out = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
@@ -649,7 +673,16 @@ fn run_cmma<E: Float + CubeElement>(
 /// before it folded in, reads back here as zeros or as one block's answer.
 #[test]
 fn fold_cmma_single_fragment() {
-    run_cmma::<f32>((32, 8, 16, 8, 8, 8, 8), 16, false, false, 1, false);
+    run_cmma::<f32>(
+        (32, 8, 16, 8, 8, 8, 8),
+        16,
+        false,
+        false,
+        1,
+        false,
+        1,
+        false,
+    );
 }
 
 /// Fragments are owned, not shared, and a contraction deeper than one fragment closes: two planes
@@ -657,7 +690,16 @@ fn fold_cmma_single_fragment() {
 /// leaves whole fragments stale; a step dropped leaves half a dot product.
 #[test]
 fn fold_cmma_fragment_grid() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 32, false, false, 1, false);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        32,
+        false,
+        false,
+        1,
+        false,
+        1,
+        false,
+    );
 }
 
 /// The attended prefix may end inside a block: the mask probe owns the tail, so score fragments
@@ -666,7 +708,16 @@ fn fold_cmma_fragment_grid() {
 /// accumulator.
 #[test]
 fn fold_cmma_causal_ragged_bound() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, false, 1, false);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        false,
+        1,
+        false,
+        1,
+        false,
+    );
 }
 
 /// The keys and values a client hands over are not bare matrices: a KV head is an axis of the
@@ -676,7 +727,16 @@ fn fold_cmma_causal_ragged_bound() {
 /// matrix here and returns zeros.
 #[test]
 fn fold_cmma_spanned_leading_axis() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 1, false);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        1,
+        false,
+        1,
+        false,
+    );
 }
 
 /// The space states each plane's slice of the grid, so a plane holds its slice's accumulators
@@ -686,14 +746,32 @@ fn fold_cmma_spanned_leading_axis() {
 /// against the wrong column, comes out here as a wrong row rather than zeros.
 #[test]
 fn fold_cmma_plane_slices() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, false);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        false,
+        1,
+        false,
+    );
 }
 
 /// A slice one fragment wide: `cn = 1`, so the reuse loop degenerates and the accumulator
 /// bookkeeping is all that is left to get wrong.
 #[test]
 fn fold_cmma_plane_slices_one_fragment_wide() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 32, false, false, 2, false);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        32,
+        false,
+        false,
+        2,
+        false,
+        1,
+        false,
+    );
 }
 
 /// The probabilities left in place over the scores: the mix contracts the score tile itself,
@@ -701,7 +779,16 @@ fn fold_cmma_plane_slices_one_fragment_wide() {
 /// (the pre-exponentiation cells, or the previous block's) comes out here as wrong rows.
 #[test]
 fn fold_cmma_in_place() {
-    run_cmma::<f32>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, true);
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        1,
+        false,
+    );
 }
 
 /// Half operands with the probabilities at the accumulate element: the mix's instruction takes
@@ -709,14 +796,111 @@ fn fold_cmma_in_place() {
 /// through. Skipped where the device states no half fragment accumulating at f32.
 #[test]
 fn fold_cmma_in_place_half_operands() {
-    run_cmma::<half::f16>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, true);
+    run_cmma::<half::f16>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        1,
+        false,
+    );
 }
 
 /// The same half operands through a written P tile at f32 — the mix is mixed-type either way,
 /// so a device that refuses it fails here as well, not only in place.
 #[test]
 fn fold_cmma_half_operands() {
-    run_cmma::<half::f16>((64, 16, 32, 16, 16, 16, 8), 24, true, true, 2, false);
+    run_cmma::<half::f16>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        false,
+        1,
+        false,
+    );
+}
+
+/// The softmax at plane ownership under the fragment arm: each plane owns a slice of the rows
+/// and its lanes split the columns, with the plane reductions closing each row.
+#[test]
+fn fold_cmma_planar_softmax() {
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        1,
+        true,
+    );
+}
+
+/// A lined score tile: the passes read a row two columns at a time, the fragments store into
+/// and load from the same lines, and the mix contracts them in place. A pass indexing lines as
+/// columns reads the wrong half of every row.
+#[test]
+fn fold_cmma_lined_scores() {
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        2,
+        false,
+    );
+}
+
+/// Lined and planar at once, the shape a fold on a plane-width device takes: 16 columns in lines
+/// of 4 leave 4 lines for 32 lanes, so the lane guard is live and most lanes own no line.
+#[test]
+fn fold_cmma_planar_lined_scores() {
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        4,
+        true,
+    );
+}
+
+/// The lined P tile written rather than left in place: the cast-write moves whole lines.
+#[test]
+fn fold_cmma_planar_lined_written_p() {
+    run_cmma::<f32>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        false,
+        2,
+        true,
+    );
+}
+
+/// Half operands, lined scores, planar softmax, P in place: every density at once.
+#[test]
+fn fold_cmma_planar_lined_half_operands() {
+    run_cmma::<half::f16>(
+        (64, 16, 32, 16, 16, 16, 8),
+        24,
+        true,
+        true,
+        2,
+        true,
+        2,
+        true,
+    );
 }
 
 /// The split fold: teams on the cube's y dim each fold a disjoint slice of
