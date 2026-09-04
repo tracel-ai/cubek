@@ -45,17 +45,17 @@ use crate::{
     components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
 };
 
-/// Run `strategy` on a seeded f32 reduce problem and return its output as a
-/// [`HostData`].
+/// Run `strategy` on a seeded reduce problem at `input_dtype` and return its
+/// output as a [`HostData`].
 pub fn strategy_result(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
     strategy: ReduceStrategy,
     config: ReduceOperationConfig,
+    input_dtype: ElemType,
     seed: u64,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::elem_type_native();
     let output_dtype = output_dtype_for(&config, input_dtype);
     let accumulation_dtype = f32::elem_type_native();
 
@@ -111,9 +111,9 @@ pub fn strategy_result_with_indices(
     axis: usize,
     strategy: ReduceStrategy,
     config: ReduceOperationConfig,
+    input_dtype: ElemType,
     seed: u64,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::elem_type_native();
     let index_dtype = u32::elem_type_native();
     let accumulation_dtype = f32::elem_type_native();
 
@@ -175,17 +175,18 @@ pub fn cpu_reference_result(
     shape: Vec<usize>,
     axis: usize,
     config: ReduceOperationConfig,
+    input_dtype: ElemType,
     seed: u64,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
-    let input_dtype = f32::elem_type_native();
-
     if let Some(p) = progress {
         let out_shape = output_shape_for(&shape, axis, &config);
         let total: usize = out_shape.iter().product();
         p.set_total(total as u64);
     }
 
+    // A narrow dtype rounds on the way in, so the reference folds what the
+    // tensor ended up holding rather than what the generator was handed.
     let (_input_handle, input_host) = TestInput::builder(client.clone(), shape)
         .dtype(input_dtype)
         .uniform(seed, -1., 1.)
@@ -232,7 +233,9 @@ fn output_shape_for(shape: &[usize], axis: usize, config: &ReduceOperationConfig
     out
 }
 
-fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -> ElemType {
+/// What a `reduce` of `config` writes: a coordinate for the `Arg*` family, the
+/// input's own element type for everything else.
+pub fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -> ElemType {
     match config {
         ReduceOperationConfig::ArgMax
         | ReduceOperationConfig::ArgMin

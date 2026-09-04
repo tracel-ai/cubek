@@ -30,6 +30,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
                 problem.axis,
                 strategy.clone(),
                 problem.config,
+                problem.precision.dtype(),
                 seeds[0],
             ),
             ReduceBenchKind::Fused => strategy_result_with_indices(
@@ -38,6 +39,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
                 problem.axis,
                 strategy.clone(),
                 problem.config,
+                problem.precision.dtype(),
                 seeds[0],
             ),
         }
@@ -56,6 +58,7 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
             problem.shape.clone(),
             problem.axis,
             problem.config,
+            problem.precision.dtype(),
             seeds[0],
             progress,
         )
