@@ -466,43 +466,6 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-/// The per-instance tile count of `axis` at this level, `None` when it is runtime.
-fn per_instance_tiles(level: &Space, axis: Axis) -> Option<usize> {
-    let edge = level.partitioner().edge(axis);
-    match level.partitioner().distribution(axis) {
-        Distribution::Sequential => match level.extent_raw(axis) {
-            Extent::Static(e) => Some(e.div_ceil(edge)),
-            Extent::Dynamic => None,
-        },
-        Distribution::Spatial { coverage, .. } => match coverage {
-            Coverage::TilesEach(t) => Some(t),
-            Coverage::Instances(n) => match level.extent_raw(axis) {
-                Extent::Static(e) => Some(e.div_ceil(edge).div_ceil(n)),
-                Extent::Dynamic => None,
-            },
-        },
-    }
-}
-
-/// The `m × n` grid a partition level cuts, read off its trailing two axes; leading (batch) axes
-/// must hand out one tile. Valid only on a [`Partition`](LevelRole::Partition) level; the role
-/// says whether it applies, this only reads the counts.
-pub(crate) fn partition_grid(space: &Space) -> (usize, usize) {
-    let rank = space.rank();
-    for (p, axis) in space.axes().enumerate() {
-        let tiles = per_instance_tiles(space, axis)
-            .expect("plane partition level: tile counts must be comptime");
-        assert!(
-            p >= rank - 2 || tiles == 1,
-            "plane partition level: leading (batch) axes must hand out one tile"
-        );
-    }
-    (
-        per_instance_tiles(space, space.axis_at(rank - 2)).unwrap(),
-        per_instance_tiles(space, space.axis_at(rank - 1)).unwrap(),
-    )
-}
-
 /// The whole remaining walk's tile grid for one instance: `(1, 1)` when every level is an instance
 /// level, else the componentwise product of the partition levels' tile counts (the grid may be
 /// split across stacked levels, e.g. an N-walk staging level over an M-only static walk).
@@ -513,7 +476,7 @@ pub(crate) fn partition_shape(space: &Space) -> (usize, usize) {
         // Only a partition level contributes a grid; an instance level spreads across hardware.
         match level.partitioner().role() {
             LevelRole::Partition => {
-                let (m, n) = partition_grid(&level);
+                let (m, n) = level.partitioner().level().partition_grid(&level);
                 shape = (shape.0 * m, shape.1 * n);
             }
             LevelRole::Instance => {}

@@ -8,7 +8,7 @@
 //! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
 //! read off a space, and the descent is only ever read as one of them.
 
-use crate::{Axis, ComputeScope, Space};
+use crate::{Axis, Space};
 
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
 /// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
@@ -38,6 +38,23 @@ pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare 
             LaneShare::Group { fold_mask: a | b }
         }
         _ => panic!("join_lane_share: {parent:?} under {level:?}: nothing folds under a plane"),
+    }
+}
+
+/// A descent's split share, given the parent's and the level's: partial stays partial.
+pub(crate) fn join_split_share(parent: SplitShare, level: SplitShare) -> SplitShare {
+    match (parent, level) {
+        (SplitShare::Whole, SplitShare::Whole) => SplitShare::Whole,
+        (SplitShare::Partial, _) | (_, SplitShare::Partial) => SplitShare::Partial,
+    }
+}
+
+/// A descent's lane work, given the parent's and whether the level rides lanes: once something
+/// does, every lane below has its own share.
+pub(crate) fn join_lane_work(parent: LaneWork, rides: bool) -> LaneWork {
+    match (parent, rides) {
+        (LaneWork::Own, _) | (_, true) => LaneWork::Own,
+        (LaneWork::Repeated, false) => LaneWork::Repeated,
     }
 }
 
@@ -146,35 +163,17 @@ impl Space {
     /// is the whole axis. Answered conservatively where the instance count is not comptime, since
     /// calling it whole loses every partial but one.
     pub(crate) fn split_share_of(&self, axes: &[Axis]) -> SplitShare {
+        let spanned = self.project(axes);
+        let mut share = SplitShare::Whole;
         let mut level = self.clone();
         while !level.is_final() {
-            // Work distributed as one is not an axis: a share of it covers part of a cell
-            // whenever the index runs over an axis the operand does not span, and which part is
-            // not something the level's per-axis distributions record.
-            if let Some(work) = level.partitioner().work()
-                && work.axes().iter().any(|axis| !axes.contains(axis))
-            {
-                return SplitShare::Partial;
-            }
-            let split = level.partitioner().axes().into_iter().any(|axis| {
-                // An axis the operand spans is carried, not split: it gives each instance a cell
-                // of its own rather than a slice of one.
-                if axes.contains(&axis) {
-                    return false;
-                }
-                let dist = level.partitioner().distribution(axis);
-                match dist.scope() {
-                    Some(ComputeScope::Cube(_)) | Some(ComputeScope::Plane) => {}
-                    Some(ComputeScope::Unit) | None => return false,
-                }
-                level.instances_along(axis) != Some(1)
-            });
-            if split {
-                return SplitShare::Partial;
-            }
+            share = join_split_share(
+                share,
+                level.partitioner().level().split_share_of(&level, &spanned),
+            );
             level = level.divide();
         }
-        SplitShare::Whole
+        share
     }
 
     /// How many instances `axis` is dealt out to at this level, where that is comptime: the pinned

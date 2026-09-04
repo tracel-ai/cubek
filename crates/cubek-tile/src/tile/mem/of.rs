@@ -254,11 +254,11 @@ impl<T: Numeric> Tile<T> {
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<T> {
-        // Asked before the projection, which is what drops the contracted axis: only the whole
-        // space still has the extent that says whether that axis is split or merely cut.
-        let split_share = comptime!(space.split_share_of(spec.axes()));
-        let lane_work = comptime!(space.lane_work());
-        // The one projection: the kernel's space narrowed to this operand's axes.
+        // The one projection: the kernel's space narrowed to this operand's axes. What the
+        // instances and lanes are to these cells is stamped level by level on the way down
+        // ([`MemData::at`]): a fresh tile has been dealt out by nothing yet.
+        let split_share = comptime!(SplitShare::Whole);
+        let lane_work = comptime!(LaneWork::Repeated);
         let space = comptime!(space.project(spec.axes()));
         let projection = comptime!(spec.projection.clone());
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business

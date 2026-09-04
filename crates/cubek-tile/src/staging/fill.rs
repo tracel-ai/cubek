@@ -37,7 +37,7 @@ pub(crate) struct SlotPlan {
 }
 
 impl SlotPlan {
-    pub(crate) fn new(operands: &[SlotOperand], op_space: &Space) -> SlotPlan {
+    pub(crate) fn new(operands: &[SlotOperand], op_space: &Space, level: &Level) -> SlotPlan {
         // Fix an operand only when its window is genuinely invariant across the walk. A barrier
         // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
         // splitting an invariant out would corrupt its phase. A dynamic level can't decide
@@ -47,7 +47,7 @@ impl SlotPlan {
         let planned_operands = operands
             .iter()
             .map(|op| {
-                let mode = if can_fix_invariants && op_space.walk_invariant(op.space) {
+                let mode = if can_fix_invariants && level.walk_invariant(op_space, op.space) {
                     WindowMode::Fixed
                 } else {
                     WindowMode::Streamed
@@ -113,6 +113,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
                 SlotOperand::new(rhs_delivery, &rhs.space),
             ],
             &walk.space,
+            &walk.level,
         ));
         let mut slots = Sequence::<Staging<(Tile<Lhs>, Tile<Rhs>)>>::new();
         #[unroll]
@@ -275,6 +276,7 @@ impl<T: Numeric> Ring<Tile<T>> {
         let plan = comptime!(SlotPlan::new(
             &[SlotOperand::new(delivery, &input.space)],
             &walk.space,
+            &walk.level,
         ));
 
         let mut slots = Sequence::<Staging<Tile<T>>>::new();
@@ -426,6 +428,7 @@ mod tests {
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
+            space.partitioner().level(),
         );
         for slot in 0..2 {
             assert_eq!(plan.operand_plan(FIRST, slot).mode, WindowMode::Streamed);
@@ -446,6 +449,7 @@ mod tests {
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
+            space.partitioner().level(),
         );
         assert_eq!(plan.operand_plan(FIRST, 0).mode, WindowMode::Fixed);
         assert_eq!(plan.operand_plan(FIRST, 1).mode, WindowMode::Reused);
@@ -466,6 +470,7 @@ mod tests {
         let plan = SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
+            space.partitioner().level(),
         );
         assert_eq!(plan.operand_plan(FIRST, 0).mode, WindowMode::Streamed);
     }

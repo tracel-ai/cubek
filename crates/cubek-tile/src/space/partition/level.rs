@@ -7,7 +7,7 @@
 //! [`walk`](LevelCuts::walk) for axes every one of them steps through. Between them they name
 //! each of the space's axes exactly once, and nothing outside this module builds a level.
 
-use crate::{Axis, ByAxis, Extent, LaneShare, Space};
+use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
 use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
 
@@ -293,12 +293,14 @@ impl Level {
     }
 
     /// How many instances `axis` is dealt out to at this level, where that is comptime: the
-    /// pinned count, or the tile grid divided by each instance's share. `None` where the extent
-    /// is [`Dynamic`](Extent::Dynamic) and so the grid is only known at runtime.
+    /// pinned count, or the tile grid divided by each instance's share. `None` where the grid is
+    /// not known here: the extent is [`Dynamic`](Extent::Dynamic), or `space` is a projection
+    /// that dropped the axis (a drain descending an output through its own space).
     pub(crate) fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         let coverage = self.distribution(axis).coverage();
         match coverage.instances_const() {
             Some(instances) => Some(instances),
+            None if !space.contains(axis) => None,
             None => match space.extent_raw(axis) {
                 Extent::Static(_) => Some(coverage.instances(self.count(space, axis))),
                 Extent::Dynamic => None,
@@ -374,6 +376,41 @@ impl Level {
             // Every lane's bit folded: nothing is carried, so the plane shares the one cell.
             mask if mask == weight - 1 => LaneShare::Plane,
             fold_mask => LaneShare::Group { fold_mask },
+        }
+    }
+
+    /// What one instance of an operand spanning `spanned` holds of its cells after this level
+    /// is dealt out over `space`: [`Partial`](SplitShare::Partial) where a `Plane` or `Cube` axis
+    /// the operand does not span is dealt across several instances, so each contracts a slice.
+    /// Asked with the level's whole space, not the operand's projection: a projection has dropped
+    /// the contracted axis and so cannot tell a split from a cut whose edge is the whole axis.
+    /// Answered conservatively where the instance count is not comptime, since calling it whole
+    /// loses every partial but one.
+    pub(crate) fn split_share_of(&self, space: &Space, spanned: &Space) -> SplitShare {
+        // Work distributed as one is not an axis: a share of it covers part of a cell whenever
+        // the index runs over an axis the operand does not span, and which part is not something
+        // the level's per-axis distributions record.
+        if let Some(work) = self.work()
+            && work.axes().iter().any(|axis| !spanned.contains(*axis))
+        {
+            return SplitShare::Partial;
+        }
+        let split = self.axes().into_iter().any(|axis| {
+            // An axis the operand spans is carried, not split: it gives each instance a cell of
+            // its own rather than a slice of one.
+            if spanned.contains(axis) {
+                return false;
+            }
+            match self.distribution(axis).scope() {
+                Some(ComputeScope::Cube(_)) | Some(ComputeScope::Plane) => {}
+                Some(ComputeScope::Unit) | None => return false,
+            }
+            self.instances_along(space, axis) != Some(1)
+        });
+        if split {
+            SplitShare::Partial
+        } else {
+            SplitShare::Whole
         }
     }
 

@@ -10,7 +10,7 @@ use cubecl::prelude::*;
 pub struct Region {
     coords: Coords<u32>,
     #[cube(comptime)]
-    space: Space,
+    pub(crate) space: Space,
     #[cube(comptime)]
     pub(crate) level: Level,
 }

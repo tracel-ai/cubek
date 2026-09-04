@@ -471,7 +471,7 @@ impl<T: Numeric> Tile<T> {
             // onto the one tile.
             TileKind::PlaneTile(t) => {
                 comptime!(assert!(
-                    !self.space.cuts_tiles(),
+                    !region.level.cuts_tiles(&self.space),
                     "Tile::at: a level that cuts tiles cannot select into a single plane \
                      tile (it needs a partition, or a memory output)"
                 ));
@@ -489,12 +489,12 @@ impl<T: Numeric> Tile<T> {
                 // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a
                 // cut axis takes its constant digit and an uncut one selects the whole
                 // partition. A `Dynamic` axis (top level only) stays runtime, yielding `None`.
-                let mi = if comptime!(self.space.single_static_tile(a0)) {
+                let mi = if comptime!(region.level.single_static_tile(&self.space, a0)) {
                     comptime!(Some(0u64))
                 } else {
                     region.coord(a0).constant()
                 };
-                let ni = if comptime!(self.space.single_static_tile(a1)) {
+                let ni = if comptime!(region.level.single_static_tile(&self.space, a1)) {
                     comptime!(Some(0u64))
                 } else {
                     region.coord(a1).constant()
@@ -502,7 +502,10 @@ impl<T: Numeric> Tile<T> {
                 match comptime!(mi.zip(ni)) {
                     Some((c0, c1)) => {
                         let (sub_m, sub_n) = comptime!({
-                            let (cm, cn) = (self.space.count(a0), self.space.count(a1));
+                            let (cm, cn) = (
+                                region.level.count(&self.space, a0),
+                                region.level.count(&self.space, a1),
+                            );
                             assert!(
                                 p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
                                 "Tile::at: the level's grid must divide the partition"
@@ -522,7 +525,7 @@ impl<T: Numeric> Tile<T> {
                     // the static levels below. A rolled *cut* would be a caller bug.
                     None => {
                         comptime!(assert!(
-                            !self.space.cuts_tiles(),
+                            !region.level.cuts_tiles(&self.space),
                             "Tile::at: a level that cuts a partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
                         ));

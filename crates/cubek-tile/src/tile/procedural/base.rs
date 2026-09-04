@@ -80,7 +80,7 @@ impl<T: Numeric> ProceduralData<T> {
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = comptime!(space.axis_at(p));
-            let edge = comptime!(space.partitioner().edge(axis) as u32);
+            let edge = comptime!(region.level.edge(axis) as u32);
             origin.push(self.origin.at(p) + region.coord(axis).fcast::<u32>() * edge);
         }
         ProceduralData::<T> {

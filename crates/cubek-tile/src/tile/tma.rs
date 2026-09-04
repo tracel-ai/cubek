@@ -87,7 +87,7 @@ impl<T: Numeric> TmaData<T> {
         #[unroll]
         for p in 0..space.rank() {
             let axis = space.axis_at(p);
-            let edge = space.partitioner().edge(axis);
+            let edge = comptime!(region.level.edge(axis));
             let index = region.coord(axis);
             pos.push(self.pos[p] + (index * edge) as u32);
         }
