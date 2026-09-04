@@ -32,14 +32,15 @@ fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let mut c = c.tile(comptime!(nest.space.clone()));
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -94,28 +95,30 @@ fn reduce_body<E: Numeric>(
 fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let mut output = output.tile(comptime!(nest.space.clone()));
-    reduce_body(&input, &mut output, comptime!(nest.at(0)), read, monoid);
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
+    reduce_body(&input, &mut output, comptime!(level.clone()), read, monoid);
 }
 
 #[cube(launch)]
 fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let mut output = output.tile(comptime!(nest.space.clone()));
-    reduce_body(&input, &mut output, comptime!(nest.at(0)), read, monoid);
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
+    reduce_body(&input, &mut output, comptime!(level.clone()), read, monoid);
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
@@ -125,23 +128,24 @@ fn reduce_kernel_v4<E: Numeric>(
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
             coefficient: E::new(1.0_f32),
             axis: K,
         },
     );
-    let mut output = output.tile(comptime!(nest.space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
     reduce_body(
         &input,
         &mut output,
-        comptime!(nest.at(0)),
+        comptime!(level.clone()),
         read,
         comptime!(Monoid::Max),
     );
@@ -199,7 +203,8 @@ fn run(
             c_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(c_axes),
         ),
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         f32_ty,
     );
 
@@ -430,7 +435,8 @@ fn run_reduce_with_vw(
                 nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 read,
                 monoid,
                 f32_ty,
@@ -443,7 +449,8 @@ fn run_reduce_with_vw(
                 nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 read,
                 monoid,
                 f32_ty,
@@ -702,7 +709,8 @@ fn run_reduce_checked(
             TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         read,
         monoid,
         f32_ty,
@@ -832,7 +840,8 @@ fn check_procedural_reduce(read: Read) {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M]),
         ),
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         read,
         dtype,
     );
@@ -1122,20 +1131,25 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let mut out = output.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
+    let mut out = output.tile(comptime!(space.clone()));
     let mut acc = out.block_accumulator::<E, E>(
         &input,
-        comptime!(Fragments::new(&out.space, &input.space, nest.below(0))),
+        comptime!(Fragments::new(
+            &out.space,
+            &input.space,
+            std::slice::from_ref(&level)
+        )),
         REGISTER_BLOCK,
         monoid,
     );
     acc.init(Monoid::identity::<E>(monoid));
-    for region in acc.reduce_space(&input).level(comptime!(nest.at(0))) {
+    for region in acc.reduce_space(&input).level(comptime!(level.clone())) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
@@ -1180,7 +1194,8 @@ fn resident_max_over_lane_split_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         Monoid::Max,
         f32_ty,
     );
@@ -1245,7 +1260,8 @@ fn resident_max_over_lane_group_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         Monoid::Max,
         f32_ty,
     );

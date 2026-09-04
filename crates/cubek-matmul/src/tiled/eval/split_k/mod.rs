@@ -47,7 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, CubeAxis, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, cubes, lanes,
+    Axis, CubeAxis, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, cubes,
+    lanes,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -66,13 +67,14 @@ fn split_k_matmul_one_level<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let c = c.tile(comptime!(nest.space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         c_cube.mma_with(
             &a.at(&region),
@@ -90,19 +92,21 @@ fn split_k_matmul_two_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let c = c.tile(comptime!(nest.space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(outer.clone())) {
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         for region in c_cube
             .op_space(&a_cube, &b_cube)
-            .level(comptime!(nest.at(1)))
+            .level(comptime!(inner.clone()))
         {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
@@ -294,7 +298,8 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
         ),
         Levels::Two => split_k_matmul_two_levels::launch(
@@ -304,7 +309,9 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
+            nest.at(1),
             dtype,
         ),
     }
@@ -345,7 +352,8 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.nest.clone(),
+                self.nest.space.clone(),
+                self.nest.at(0),
                 dtype,
             ),
             Levels::Two => split_k_matmul_two_levels::launch(
@@ -355,7 +363,9 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.nest.clone(),
+                self.nest.space.clone(),
+                self.nest.at(0),
+                self.nest.at(1),
                 dtype,
             ),
         }

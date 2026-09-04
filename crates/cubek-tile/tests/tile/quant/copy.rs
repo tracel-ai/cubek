@@ -34,7 +34,7 @@ fn copy_non_quantized_matches_reference() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         dtype,
     );
 
@@ -77,7 +77,7 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         launch.cube_dim(),
         input.arg(),
         output.arg(),
-        launch.nest(),
+        launch.space().clone(),
         f32::elem_type_native(),
     );
 
@@ -138,7 +138,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             DequantAt::Read,
         ),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         input_dtype,
         out_dtype,
     );
@@ -222,7 +222,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         v,
         input_op.arg(),
         output.arg(),
-        launcher.nest(),
+        launcher.space().clone(),
         input_dtype,
         out_dtype,
     );
@@ -294,7 +294,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         pack,
         input_op.arg(),
         output.arg(),
-        launcher.nest(),
+        launcher.space().clone(),
         input_dtype,
         out_dtype,
     );
@@ -395,7 +395,7 @@ fn copy_quantized_lookup_matches_reference() {
         pack,
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -460,7 +460,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
         w,
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -518,7 +518,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
         w,
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -587,7 +587,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         pack,
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         input_dtype,
         out_dtype,
     );
@@ -617,11 +617,11 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 pub fn plain_copy<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let mut output = output.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }
 
@@ -632,12 +632,12 @@ pub fn plain_copy<E: Numeric>(
 pub fn dequant_copy<I: Numeric, O: Numeric, VI: Size, VO: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, O, VO>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {
-    let input = input.tile::<O>(comptime!(nest.space.clone()));
-    let mut output = output.tile(comptime!(nest.space.clone()));
+    let input = input.tile::<O>(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }
 
@@ -772,7 +772,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
             DequantAt::Read,
         ),
         TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
-        nest.clone(),
+        nest.space.clone(),
         input_dtype,
         out_dtype,
     );

@@ -30,19 +30,21 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     a: &TileArg<'_, E, VA>,
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(I)] _b_dtype: ElemType,
     #[define(E)] _e_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile::<E>(comptime!(nest.space.clone()));
-    let c = c.tile(comptime!(nest.space.clone()));
-    let cubes = c.op_space(&a, &b).level(comptime!(nest.at(0)));
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile::<E>(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    let cubes = c.op_space(&a, &b).level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&cubes, &a, &b, StageStorage::Strided, 1usize);
     pipelined(cubes, &mut ring, |slot, region| {
         let c_cube = c.at(region);
         slot.consume(|a_s, b_s| {
-            for region in c_cube.op_space(a_s, b_s).level(comptime!(nest.at(1))) {
+            for region in c_cube.op_space(a_s, b_s).level(comptime!(inner.clone())) {
                 let mut c_lane = c_cube.at(&region);
                 c_lane.mma_with(
                     &a_s.at(&region),
@@ -204,7 +206,9 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.nest(),
+            launcher.space().clone(),
+            launcher.concrete().at(0),
+            launcher.concrete().at(1),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

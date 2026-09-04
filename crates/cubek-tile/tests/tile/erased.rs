@@ -43,11 +43,11 @@ impl<T: Float> Recipe<T> for Position {
 #[cube(launch)]
 fn buffer_kernel<E: Float>(
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let mut dst = out.tile(comptime!(nest.space.clone()));
-    let src = Tile::<E>::procedural::<Position>(comptime!(nest.space.clone()), Position {});
+    let mut dst = out.tile(comptime!(space.clone()));
+    let src = Tile::<E>::procedural::<Position>(comptime!(space.clone()), Position {});
     dst.copy_from(&src);
 }
 
@@ -59,7 +59,7 @@ fn buffer_kernel<E: Float>(
 #[cube(launch)]
 fn sink_kernel<E: Float>(
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
@@ -69,11 +69,11 @@ fn sink_kernel<E: Float>(
         sink,
         geometry,
         1usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
     );
-    let src = Tile::<E>::procedural::<Position>(comptime!(nest.space.clone()), Position {});
+    let src = Tile::<E>::procedural::<Position>(comptime!(space.clone()), Position {});
     dst.copy_from(&src);
 }
 
@@ -110,7 +110,7 @@ fn run(sink: bool) -> HostData {
             nest.cube_count(),
             nest.cube_dim(&client),
             output_arg!(output),
-            nest.clone(),
+            nest.space.clone(),
             dtype,
         ),
         false => buffer_kernel::launch(
@@ -118,7 +118,7 @@ fn run(sink: bool) -> HostData {
             nest.cube_count(),
             nest.cube_dim(&client),
             output_arg!(output),
-            nest.clone(),
+            nest.space.clone(),
             dtype,
         ),
     }
@@ -165,7 +165,7 @@ fn derived_sink_kernel<E: Float>(
     cols: u32,
     row_stride: u32,
     col_stride: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[comptime] spec: TileSpec,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -179,11 +179,11 @@ fn derived_sink_kernel<E: Float>(
         sink,
         geometry,
         1usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         spec,
         Write::Replace,
     );
-    let src = Tile::<E>::procedural::<Position>(comptime!(nest.space.clone()), Position {});
+    let src = Tile::<E>::procedural::<Position>(comptime!(space.clone()), Position {});
     dst.copy_from(&src);
 }
 
@@ -218,7 +218,7 @@ fn a_launcher_derived_spec_addresses_the_sink() {
         derived.geometry.shape()[1] as u32,
         derived.geometry.strides()[0] as u32,
         derived.geometry.strides()[1] as u32,
-        launcher.nest(),
+        launcher.space().clone(),
         derived.spec,
         dtype,
     );
@@ -252,22 +252,31 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let mut c = c.tile(comptime!(nest.space.clone()));
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
         BLOCK,
         Monoid::Sum,
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in acc.op_space(&a, &b).level(comptime!(nest.at(0))).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -284,12 +293,13 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
@@ -297,19 +307,27 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         sink,
         geometry,
         1usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         comptime!(c.spec.clone()),
         Write::Replace,
     );
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
         BLOCK,
         Monoid::Sum,
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in acc.op_space(&a, &b).level(comptime!(nest.at(0))).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -327,7 +345,8 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
     #[define(EA)] _acc_dtype: ElemType,
 ) {
@@ -338,20 +357,28 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         source,
         geometry,
         1usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         comptime!(a.spec.clone()),
     );
-    let b = b.tile(comptime!(nest.space.clone()));
-    let mut c = c.tile(comptime!(nest.space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let mut c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
-        comptime!(Fragments::new(&c.space, &a.space, nest.below(0))),
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
         BLOCK,
         Monoid::Sum,
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in acc.op_space(&a, &b).level(comptime!(nest.at(0))).unrolled() {
+    for region in acc
+        .op_space(&a, &b)
+        .level(comptime!(level.clone()))
+        .unrolled()
+    {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -404,7 +431,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -415,7 +443,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -426,7 +455,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             dtype,
             dtype,
         ),
@@ -515,11 +545,11 @@ fn masked_space() -> Nest {
 fn wide_buffer_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
     out: &TileArg<'_, E, Const<2>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(nest.space.clone()));
-    let mut dst = out.tile(comptime!(nest.space.clone()));
+    let src = input.tile(comptime!(space.clone()));
+    let mut dst = out.tile(comptime!(space.clone()));
     dst.copy_from(&src);
 }
 
@@ -528,17 +558,17 @@ fn wide_buffer_kernel<E: Float>(
 fn wide_sink_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
     out: &TileArg<'_, E, Const<2>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let src = input.tile(comptime!(nest.space.clone()));
+    let src = input.tile(comptime!(space.clone()));
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
     let mut dst = Tile::<E>::of_sink(
         sink,
         geometry,
         2usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
     );
@@ -551,7 +581,7 @@ fn wide_sink_kernel<E: Float>(
 fn wide_source_kernel<E: Float>(
     input: &TileArg<'_, E, Const<2>>,
     out: &TileArg<'_, E, Const<2>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.tensor, 2usize);
@@ -560,10 +590,10 @@ fn wide_source_kernel<E: Float>(
         source,
         geometry,
         2usize,
-        comptime!(nest.space.clone()),
+        comptime!(space.clone()),
         comptime!(input.spec.clone()),
     );
-    let mut dst = out.tile(comptime!(nest.space.clone()));
+    let mut dst = out.tile(comptime!(space.clone()));
     dst.copy_from(&src);
 }
 
@@ -610,7 +640,7 @@ fn run_masked(erased: Erased) -> HostData {
             dim,
             src.arg(),
             out.arg(),
-            launcher.nest(),
+            launcher.space().clone(),
             dtype,
         ),
         Erased::Source => wide_source_kernel::launch(
@@ -619,7 +649,7 @@ fn run_masked(erased: Erased) -> HostData {
             dim,
             src.arg(),
             out.arg(),
-            launcher.nest(),
+            launcher.space().clone(),
             dtype,
         ),
         Erased::Neither => wide_buffer_kernel::launch(
@@ -628,7 +658,7 @@ fn run_masked(erased: Erased) -> HostData {
             dim,
             src.arg(),
             out.arg(),
-            launcher.nest(),
+            launcher.space().clone(),
             dtype,
         ),
     }

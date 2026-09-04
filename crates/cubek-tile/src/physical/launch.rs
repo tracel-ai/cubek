@@ -11,10 +11,10 @@ use crate::{
     StridedTileSource, Unset,
 };
 
-/// A space and the levels a kernel walks it with, outermost first. A blueprint lists its level
-/// methods into one for the launch; a kernel with no blueprint (a test, a benchmark mapping)
-/// takes one as a comptime argument and states each loop with one of its levels. The launch
-/// reads the grid off the same levels the loops state.
+/// A space and the levels a kernel walks it with, outermost first: what a launch sizes its grid
+/// from. A blueprint lists its level methods into one; a kernel with no blueprint (a test, a
+/// benchmark mapping) is handed its space and each of its levels from one, as comptime
+/// arguments, so its loops state the levels the grid was read from.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Nest {
     pub space: Space,
@@ -151,12 +151,6 @@ impl<'c> Launcher<'c> {
     /// The kernel-form space tile arguments project from.
     pub fn space(&self) -> &Space {
         &self.kernel
-    }
-
-    /// The kernel-form space with the levels: what a kernel taking its nest as a comptime
-    /// argument is handed.
-    pub fn nest(&self) -> Nest {
-        Nest::new(self.kernel.clone(), self.concrete.levels.clone())
     }
 
     /// The concrete nest, for overhang and divisibility decisions.

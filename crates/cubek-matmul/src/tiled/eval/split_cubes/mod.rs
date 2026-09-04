@@ -35,8 +35,9 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Fragments, Monoid, Nest, PhysicalAxisMap,
-    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec, cubes, lanes,
+    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Fragments, Level, Monoid, Nest,
+    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -59,13 +60,14 @@ fn plain_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let c = c.tile(comptime!(nest.space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         c_cube.mm_with(
             &a.at(&region),
@@ -82,18 +84,19 @@ fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let c = out.tile(comptime!(nest.space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(
             &a_cube,
-            comptime!(Fragments::new(&c_cube.space, &a_cube.space, nest.below(1))),
+            comptime!(Fragments::new(&c_cube.space, &a_cube.space, &[])),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -109,24 +112,33 @@ fn atomic_matmul_lanes<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let a = a.tile(comptime!(nest.space.clone()));
-    let b = b.tile(comptime!(nest.space.clone()));
-    let c = out.tile(comptime!(nest.space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(nest.at(0))) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile(comptime!(space.clone()));
+    for region in c.op_space(&a, &b).level(comptime!(outer.clone())) {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(
             &a_cube,
-            comptime!(Fragments::new(&c_cube.space, &a_cube.space, nest.below(1))),
+            comptime!(Fragments::new(
+                &c_cube.space,
+                &a_cube.space,
+                &[inner.clone()]
+            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        for region in acc.op_space(&a_cube, &b_cube).level(comptime!(nest.at(1))) {
+        for region in acc
+            .op_space(&a_cube, &b_cube)
+            .level(comptime!(inner.clone()))
+        {
             let mut acc_lane = acc.at(&region);
             acc_lane.mma(&a_cube.at(&region), &b_cube.at(&region), Semiring::SUM_PROD);
         }
@@ -138,12 +150,13 @@ fn atomic_matmul_lanes<E: Numeric>(
 fn fold_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let partials = partials.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.reduce_space(&partials).level(comptime!(nest.at(0))) {
+    let partials = partials.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out.reduce_space(&partials).level(comptime!(level.clone())) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -392,7 +405,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.nest.clone(),
+                    self.nest.space.clone(),
+                    self.nest.at(0),
                     dtype,
                 );
             }
@@ -404,7 +418,9 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.nest.clone(),
+                    self.nest.space.clone(),
+                    self.nest.at(0),
+                    self.nest.at(1),
                     dtype,
                 );
             }
@@ -416,7 +432,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[M, N])),
-                    self.nest.clone(),
+                    self.nest.space.clone(),
+                    self.nest.at(0),
                     dtype,
                 );
             }
@@ -428,7 +445,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
-                    self.nest.clone(),
+                    self.nest.space.clone(),
+                    self.nest.at(0),
                     dtype,
                 );
                 fold_splits::launch(
@@ -437,7 +455,8 @@ impl Bound {
                     self.fold_cube_dim,
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
                     TileArgLaunch::new(self.folded.tensor_arg(1), TileSpec::direct(&[M, N])),
-                    self.fold_space.clone(),
+                    self.fold_space.space.clone(),
+                    self.fold_space.at(0),
                     dtype,
                 );
             }

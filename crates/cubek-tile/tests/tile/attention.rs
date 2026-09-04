@@ -32,17 +32,18 @@ fn attention_fold_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] blocks: Level,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
     #[comptime] budget: usize,
     #[comptime] in_place: bool,
 ) {
-    let q = q.tile(comptime!(nest.space.clone()));
-    let k = k.tile(comptime!(nest.space.clone()));
-    let v = v.tile(comptime!(nest.space.clone()));
-    let mask_tile = mask.tile(comptime!(nest.space.clone()));
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(comptime!(space.clone()));
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -77,7 +78,7 @@ fn attention_fold_kernel<W: Size>(
     sync_cube();
 
     // The fold: one S block per region.
-    for region in k.runtime_space().level(comptime!(nest.at(0))) {
+    for region in k.runtime_space().level(comptime!(blocks.clone())) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -228,7 +229,8 @@ fn run(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         units,
         causal,
         block,
@@ -321,7 +323,8 @@ fn attention_fold_cmma_kernel<E: Float>(
     out: &mut Tensor<f32>,             // [QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] blocks: Level,
     #[comptime] units: usize,
     #[comptime] causal: bool,
     #[comptime] block: usize,
@@ -332,10 +335,10 @@ fn attention_fold_cmma_kernel<E: Float>(
     #[comptime] lanes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let q = q.tile(comptime!(nest.space.clone()));
-    let k = k.tile(comptime!(nest.space.clone()));
-    let v = v.tile(comptime!(nest.space.clone()));
-    let mask_tile = mask.tile(comptime!(nest.space.clone()));
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(comptime!(space.clone()));
 
     let rows = comptime!(q.space.extent(QP));
     let d = comptime!(q.space.extent(D));
@@ -376,7 +379,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for region in k.runtime_space().level(comptime!(nest.at(0))) {
+    for region in k.runtime_space().level(comptime!(blocks.clone())) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -628,7 +631,8 @@ fn run_cmma<E: Float + CubeElement>(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         units,
         causal,
         block,
@@ -940,7 +944,8 @@ fn attention_fold_split_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] blocks: Level,
     #[comptime] team: usize,
     #[comptime] splits: usize,
     #[comptime] causal: bool,
@@ -948,10 +953,10 @@ fn attention_fold_split_kernel<W: Size>(
     #[comptime] budget: usize,
     #[comptime] split_inner: bool,
 ) {
-    let q = q.tile(comptime!(nest.space.clone()));
-    let k = k.tile(comptime!(nest.space.clone()));
-    let v = v.tile(comptime!(nest.space.clone()));
-    let mask_tile = mask.tile(comptime!(nest.space.clone()));
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mask_tile = mask.tile(comptime!(space.clone()));
 
     let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
     let q_rows = comptime!(q.space.extent(QP));
@@ -1025,7 +1030,7 @@ fn attention_fold_split_kernel<W: Size>(
     // Interleaved split walk: team t folds blocks t, t + splits, …; every
     // team runs every round (the barriers must stay uniform), an out-of-range
     // block just skips its compute.
-    let k_walk = k.runtime_space().level(comptime!(nest.at(0)));
+    let k_walk = k.runtime_space().level(comptime!(blocks.clone()));
     let blocks = bound_s.div_ceil(block);
     let rounds = blocks.div_ceil(splits);
     for round in 0..rounds {
@@ -1214,7 +1219,8 @@ fn run_split_at(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         team,
         splits,
         causal,
@@ -1304,15 +1310,16 @@ fn attention_stream_test_kernel<W: Size>(
     out: &TileArg<'_, f32, W>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] blocks: Level,
     #[comptime] lanes: usize,
     #[comptime] splits: usize,
     #[comptime] block: usize,
 ) {
-    let q = q.tile(comptime!(nest.space.clone()));
-    let k = k.tile(comptime!(nest.space.clone()));
-    let v = v.tile(comptime!(nest.space.clone()));
-    let mut out = out.tile(comptime!(nest.space.clone()));
+    let q = q.tile(comptime!(space.clone()));
+    let k = k.tile(comptime!(space.clone()));
+    let v = v.tile(comptime!(space.clone()));
+    let mut out = out.tile(comptime!(space.clone()));
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
@@ -1325,7 +1332,7 @@ fn attention_stream_test_kernel<W: Size>(
     // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
-    let k_walk = k.runtime_space().level(comptime!(nest.at(0)));
+    let k_walk = k.runtime_space().level(comptime!(blocks.clone()));
     let blocks = bound_s.div_ceil(block);
     let per_team = blocks.div_ceil(splits);
     let start_b = t * per_team;
@@ -1410,7 +1417,8 @@ fn run_stream(
         ),
         scale,
         bound_s as u32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         lanes,
         splits,
         block,

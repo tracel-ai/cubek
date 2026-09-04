@@ -4,7 +4,7 @@
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equals_approx};
-use cubek_tile::{Axis, Nest, Space, TileArg};
+use cubek_tile::{Axis, Space, TileArg};
 
 use super::references;
 
@@ -34,7 +34,7 @@ fn recursive_two_level_tiled_view() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        Nest::new(space.clone(), vec![]),
+        space.clone(),
         f32::elem_type_native(),
     );
 
@@ -60,11 +60,11 @@ fn recursive_two_level_tiled_view() {
 fn copy_logical<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let mut output = output.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
+    let mut output = output.tile(comptime!(space.clone()));
     let r = input.view::<Const<1>>();
     let mut w = output.view_mut::<Const<1>>();
     let shape = r.shape();

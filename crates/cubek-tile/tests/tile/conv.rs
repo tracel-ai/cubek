@@ -50,13 +50,17 @@ fn conv_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()))
+    {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -78,13 +82,16 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -104,13 +111,16 @@ fn conv_kernel_smem_padded<E: Numeric>(
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
     #[comptime] width: usize,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()));
     let mut ring = Ring::smem_single_at(
         &walk,
         &input,
@@ -135,19 +145,24 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for outer in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for outer in out
+        .op_space(&input, &weight)
+        .level(comptime!(outer.clone()))
+    {
         let out_outer = out.at(&outer);
         let input_outer = input.at(&outer);
         let weight_outer = weight.at(&outer);
         for inner in out_outer
             .op_space(&input_outer, &weight_outer)
-            .level(comptime!(nest.at(1)))
+            .level(comptime!(inner.clone()))
         {
             let mut out_inner = out_outer.at(&inner);
             out_inner.mm_with(
@@ -169,20 +184,24 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] config: RegisterBlock,
     #[comptime] depth: usize,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
             for inner in out_outer
                 .op_space(input, weight)
-                .level(comptime!(nest.at(1)))
+                .level(comptime!(inner.clone()))
             {
                 let mut out_inner = out_outer.at(&inner);
                 out_inner.mm_with(
@@ -254,7 +273,8 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
@@ -267,7 +287,8 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             f32_ty,
         ),
         (
@@ -291,7 +312,8 @@ fn run(
                 config,
                 depth,
                 width,
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 f32_ty,
             )
         }
@@ -304,7 +326,9 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
+            nest.at(1),
             f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
@@ -317,7 +341,9 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
+            nest.at(1),
             f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
@@ -932,7 +958,8 @@ impl Conv1d {
                 w_arg.arg(),
                 out_arg.arg(),
                 RegisterBlock::new(16),
-                launch.nest(),
+                launch.space().clone(),
+                launch.concrete().at(0),
                 f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
@@ -945,7 +972,8 @@ impl Conv1d {
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 depth,
-                launch.nest(),
+                launch.space().clone(),
+                launch.concrete().at(0),
                 f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
@@ -1085,7 +1113,8 @@ fn conv_kernel_dynamic<E: Numeric>(
     out: &TileArg<'_, E, Const<1>>,
     stride: u32,
     dilation: u32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     // In `Projection::dynamic_scale_index` order: physical axis 0's terms, `OH` then `RH`.
@@ -1093,10 +1122,13 @@ fn conv_kernel_dynamic<E: Numeric>(
     coefficients.push(stride);
     coefficients.push(dilation);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, Coords::new());
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()))
+    {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1167,7 +1199,8 @@ impl Conv1d {
             ),
             self.stride as u32,
             self.dilation as u32,
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
             f32_ty,
         );
 
@@ -1225,16 +1258,20 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()))
+    {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1253,16 +1290,19 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), Coords::new(), offsets);
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
+    let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -1282,7 +1322,8 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     stride: u32,
     dilation: u32,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -1291,10 +1332,13 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()))
+    {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1315,7 +1359,8 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     stride: u32,
     dilation: u32,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -1324,10 +1369,12 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    let walk = out.op_space(&input, &weight).level(comptime!(nest.at(0)));
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    let walk = out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -1448,7 +1495,8 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
@@ -1461,7 +1509,8 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
@@ -1472,7 +1521,8 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
@@ -1483,7 +1533,8 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                nest.clone(),
+                nest.space.clone(),
+                nest.at(0),
                 f32_ty,
             ),
         }
@@ -2096,13 +2147,13 @@ fn conv2d_staged_mixed_steps() {
 fn projected_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     out: &mut Tensor<f32>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[comptime] matrices: usize,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
     let size!(W) = input.vector_size();
 
     #[unroll]
@@ -2203,7 +2254,7 @@ fn conv2d_projected_matrix_view() {
         nest.cube_dim(&client),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        nest.clone(),
+        nest.space.clone(),
         matrices,
         rows,
         cols,
@@ -2236,12 +2287,12 @@ fn conv2d_projected_matrix_view() {
 fn fragment_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     out: &mut Tensor<f32>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[comptime] rows: usize,
     #[comptime] cols: usize,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
     let size!(W) = input.vector_size();
     let view = input.fragment_matrix::<E, W, W>(rows, cols);
 
@@ -2280,7 +2331,7 @@ fn conv2d_fragment_matrix_view() {
         nest.cube_dim(&client),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        nest.clone(),
+        nest.space.clone(),
         rows,
         cols,
         f32_ty,
@@ -2315,15 +2366,20 @@ fn conv_mma_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     #[comptime] io: MmaIOConfig,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let mut out = out.tile(comptime!(nest.space.clone()));
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let mut out = out.tile(comptime!(space.clone()));
     let mut acc = out.mma_accumulator::<E, E>(
         &input,
-        comptime!(Fragments::new(&out.space, &input.space, nest.below(0))),
+        comptime!(Fragments::new(
+            &out.space,
+            &input.space,
+            std::slice::from_ref(&level)
+        )),
         io,
         Monoid::Sum,
     );
@@ -2331,7 +2387,7 @@ fn conv_mma_kernel<E: Numeric>(
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = out
         .op_space(&input, &weight)
-        .level(comptime!(nest.at(0)))
+        .level(comptime!(level.clone()))
         .unrolled();
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
@@ -2429,7 +2485,8 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             TileSpec::direct(&[OH, CO]),
         ),
         io,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         f32_ty,
     );
 
@@ -2740,7 +2797,8 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     out: &TileArg<'_, E, Const<1>>,
     divisor: u32,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     // The one carried coefficient is the divisor: both scales are Static, so it is the whole
@@ -2750,10 +2808,13 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(level.clone()))
+    {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -2828,7 +2889,8 @@ fn resize1d_rational_dynamic() {
         ),
         resize.divisor as u32,
         resize.offset as i32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         f32_ty,
     );
 
@@ -2852,7 +2914,8 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     divisor: u32,
     offset: i32,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let mut coefficients = Coords::<u32>::new();
@@ -2860,10 +2923,10 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     let mut offsets = Coords::<i32>::new();
     offsets.push(offset);
 
-    let input = input.tile_gathered(comptime!(nest.space.clone()), coefficients, offsets);
+    let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let stage = MemData::stage(
         &input,
-        comptime!(nest.at(0)),
+        comptime!(level.clone()),
         StageStorage::Strided,
         comptime!(None),
     );
@@ -2915,7 +2978,8 @@ fn resize1d_dynamic_stage_read_before_fill() {
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         resize.divisor as u32,
         resize.offset as i32,
-        nest.clone(),
+        nest.space.clone(),
+        nest.at(0),
         f32_ty,
     );
 }

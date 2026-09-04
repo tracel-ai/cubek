@@ -46,19 +46,24 @@ fn depthwise_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = input.tile(comptime!(nest.space.clone()));
-    let weight = weight.tile(comptime!(nest.space.clone()));
-    let out = out.tile(comptime!(nest.space.clone()));
-    for region in out.op_space(&input, &weight).level(comptime!(nest.at(0))) {
+    let input = input.tile(comptime!(space.clone()));
+    let weight = weight.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+    for region in out
+        .op_space(&input, &weight)
+        .level(comptime!(outer.clone()))
+    {
         let out_cube = out.at(&region);
         let input_cube = input.at(&region);
         let weight_cube = weight.at(&region);
         for region in out_cube
             .op_space(&input_cube, &weight_cube)
-            .level(comptime!(nest.at(1)))
+            .level(comptime!(inner.clone()))
         {
             let mut out_plane = out_cube.at(&region);
             out_plane.mm_with(
@@ -238,7 +243,9 @@ impl Depthwise {
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            nest.clone(),
+            nest.space.clone(),
+            nest.at(0),
+            nest.at(1),
             f32_ty,
         );
 

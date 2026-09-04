@@ -28,12 +28,12 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     weights: &TileArg<'_, u32, Const<1>>,
     scales: &TileArg<'_, S, F>,
     out: &TileArg<'_, E, W>,
-    #[comptime] nest: Nest,
+    #[comptime] space: Space,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let weights = weights.tile_packed::<E>(comptime!(nest.space.clone()));
-    let scales = scales.tile(comptime!(nest.space.clone()));
-    let mut out = out.tile(comptime!(nest.space.clone()));
+    let weights = weights.tile_packed::<E>(comptime!(space.clone()));
+    let scales = scales.tile(comptime!(space.clone()));
+    let mut out = out.tile(comptime!(space.clone()));
     out.mul(&weights, &scales);
 }
 
@@ -130,7 +130,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),
-        nest.clone(),
+        nest.space.clone(),
         [dtype, dtype],
     );
 
