@@ -113,6 +113,13 @@ fn split_k_matmul_two_levels<E: Numeric>(
     }
 }
 
+/// How many levels a mapping's space is walked in, which picks the kernel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Levels {
+    One,
+    Two,
+}
+
 /// How a problem is mapped onto the plane's lanes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mapping {
@@ -189,29 +196,11 @@ impl Mapping {
         }
     }
 
-    /// The kernel this mapping's space is walked by: one level, or the plane split as a
-    /// second.
-    #[allow(clippy::too_many_arguments)]
-    fn launch(
-        self,
-        client: &ComputeClient<TestRuntime>,
-        cube_count: CubeCount,
-        cube_dim: CubeDim,
-        a: TileArgLaunch<'_, f32, Const<1>, TestRuntime>,
-        b: TileArgLaunch<'_, f32, Const<1>, TestRuntime>,
-        c: TileArgLaunch<'_, f32, Const<1>, TestRuntime>,
-        space: Space,
-        dtype: ElemType,
-    ) {
+    /// Whether this mapping's space is walked in one level, or with the plane split as a second.
+    fn levels(self) -> Levels {
         match self {
-            Mapping::SeqK | Mapping::SplitK { .. } | Mapping::SplitKT { .. } => {
-                split_k_matmul_one_level::launch::<TestRuntime>(
-                    client, cube_count, cube_dim, a, b, c, space, dtype,
-                )
-            }
-            Mapping::NSpread { .. } => split_k_matmul_two_levels::launch::<TestRuntime>(
-                client, cube_count, cube_dim, a, b, c, space, dtype,
-            ),
+            Mapping::SeqK | Mapping::SplitK { .. } | Mapping::SplitKT { .. } => Levels::One,
+            Mapping::NSpread { .. } => Levels::Two,
         }
     }
 
@@ -310,16 +299,28 @@ fn run(
         .untiled()
         .zeros();
 
-    mapping.launch(
-        client,
-        space.cube_count(),
-        mapping.cube_dim(&space, client),
-        TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-        TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
-        TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-        space,
-        dtype,
-    );
+    match mapping.levels() {
+        Levels::One => split_k_matmul_one_level::launch::<TestRuntime>(
+            client,
+            space.cube_count(),
+            mapping.cube_dim(&space, client),
+            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+            TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+            space,
+            dtype,
+        ),
+        Levels::Two => split_k_matmul_two_levels::launch::<TestRuntime>(
+            client,
+            space.cube_count(),
+            mapping.cube_dim(&space, client),
+            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+            TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
+            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+            space,
+            dtype,
+        ),
+    }
     c
 }
 
@@ -349,16 +350,28 @@ impl Benchmark for SplitKBench {
     fn execute(&self, _: Self::Input) -> Result<Self::Output, String> {
         let (a, b, c) = (&self.a, &self.b, &self.c);
         let dtype = f32::elem_type_native();
-        self.mapping.launch(
-            &self.client,
-            self.cube_count.clone(),
-            self.cube_dim,
-            TileArgLaunch::new(a.tensor_arg(1), a.spec()),
-            TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
-            TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            self.space.clone(),
-            dtype,
-        );
+        match self.mapping.levels() {
+            Levels::One => split_k_matmul_one_level::launch::<TestRuntime>(
+                &self.client,
+                self.cube_count.clone(),
+                self.cube_dim,
+                TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+                TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
+                TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+                self.space.clone(),
+                dtype,
+            ),
+            Levels::Two => split_k_matmul_two_levels::launch::<TestRuntime>(
+                &self.client,
+                self.cube_count.clone(),
+                self.cube_dim,
+                TileArgLaunch::new(a.tensor_arg(1), a.spec()),
+                TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
+                TileArgLaunch::new(c.tensor_arg(1), c.spec()),
+                self.space.clone(),
+                dtype,
+            ),
+        }
         Ok(())
     }
 

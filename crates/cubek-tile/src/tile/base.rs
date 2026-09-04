@@ -111,6 +111,18 @@ fn bound_position(projection: &Projection, axis: Axis) -> usize {
 
 #[cube]
 impl<T: Numeric> Tile<T> {
+    /// Evaluate a procedural tile at scalar logical coordinates relative to its current region.
+    pub fn procedural_value(&self, pos: Coords<u32>) -> T {
+        match &self.tile_kind {
+            TileKind::Procedural(data) => data.evaluate(&pos, comptime!(self.space.clone())),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => panic!("Tile::procedural_value: tile is not procedural"),
+        }
+    }
+
     /// How this operand's bytes reach a stage: a strided copy, a bulk tensor-map transaction, or
     /// a cooperative evaluation. A plane fragment has no bytes to move and panics here.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
@@ -594,7 +606,7 @@ impl<T: Numeric> Tile<T> {
     /// Seed this tile with `monoid`'s identity, so a fold under it starts from a value folding it
     /// in leaves unchanged. `Sum` goes through [`zero`](Tile::zero), which every accumulator form
     /// can do; the other monoids need a real value and so reach only [`init`](Tile::init)'s forms.
-    pub(crate) fn init_identity(&mut self, #[comptime] monoid: Monoid) {
+    pub fn init_identity(&mut self, #[comptime] monoid: Monoid) {
         match comptime!(monoid) {
             Monoid::Sum => self.zero(),
             Monoid::Prod | Monoid::Max | Monoid::Min => self.init(Monoid::identity::<T>(monoid)),

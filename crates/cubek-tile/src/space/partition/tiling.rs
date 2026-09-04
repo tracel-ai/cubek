@@ -101,7 +101,7 @@ impl Tiling {
                 .map(|&(a, _)| (a, level.cut(a).dist))
                 .collect();
             space = space.with_partitioner(
-                Partitioner::new(ByAxis::new(&edges), ByAxis::new(&dists))
+                Partitioner::over(ByAxis::new(&edges), ByAxis::new(&dists))
                     .distributing(level.work.clone()),
             );
         }

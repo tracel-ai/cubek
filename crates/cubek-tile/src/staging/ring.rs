@@ -119,13 +119,11 @@ pub mod pipelined {
         }
 
         let laps = total
-            .clone()
             .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
             .__expand_fdiv_method(scope, depth.into_expand(scope));
         let body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
-                    .clone()
                     .__expand_fmul_method(scope, depth.into_expand(scope))
                     .__expand_fadd_method(scope, j.into_expand(scope));
                 if depth == 1 {
@@ -133,28 +131,27 @@ pub mod pipelined {
                     let region = walk.__expand_region_method(scope, region_idx);
                     ring.fill_streamed(scope, FIRST_SLOT, &region);
                     ring.publish(scope, FIRST_SLOT);
-                    let mut slot = ring.__expand_slot_mut_method(scope, FIRST_SLOT);
-                    compute(scope, &mut slot, &region);
+                    let slot = ring.__expand_slot_mut_method(scope, FIRST_SLOT);
+                    compute(scope, slot, &region);
                 } else {
-                    let ahead = region_idx
-                        .clone()
-                        .__expand_fadd_method(scope, (depth - 1).into_expand(scope));
+                    let ahead =
+                        region_idx.__expand_fadd_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
                     let draining = region_idx.__expand_lt_method(scope, &total);
                     if_else_expand(scope, prefetching, |scope| {
-                        let prefetch = walk.__expand_region_method(scope, ahead.clone());
+                        let prefetch = walk.__expand_region_method(scope, ahead);
                         ring.fill_streamed(scope, (j + depth - 1) % depth, &prefetch);
-                        let region = walk.__expand_region_method(scope, region_idx.clone());
-                        let mut slot = ring.__expand_slot_mut_method(scope, j);
-                        compute(scope, &mut slot, &region);
+                        let region = walk.__expand_region_method(scope, region_idx);
+                        let slot = ring.__expand_slot_mut_method(scope, j);
+                        compute(scope, slot, &region);
                     })
                     .or_else(scope, |scope| {
                         // The walk is draining: no fill follows, so this consume publishes.
                         if_expand(scope, draining, |scope| {
-                            let region = walk.__expand_region_method(scope, region_idx.clone());
+                            let region = walk.__expand_region_method(scope, region_idx);
                             ring.publish(scope, j);
-                            let mut slot = ring.__expand_slot_mut_method(scope, j);
-                            compute(scope, &mut slot, &region);
+                            let slot = ring.__expand_slot_mut_method(scope, j);
+                            compute(scope, slot, &region);
                         });
                     });
                 }

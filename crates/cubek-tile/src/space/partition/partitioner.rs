@@ -222,7 +222,7 @@ pub struct PartitionerBuilder {
 impl Partitioner {
     /// One level cutting each axis to `sub_tile` and dealing it per `dists`; declared axis order,
     /// last axis fastest.
-    pub fn new(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>) -> PartitionerBuilder {
+    pub fn over(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>) -> PartitionerBuilder {
         PartitionerBuilder { sub_tile, dists }
     }
 }

@@ -201,6 +201,7 @@ impl<T: Numeric> MemData<T> {
     /// quotiented out) instead of becoming direct: its buffer is the same shape of window the gmem
     /// operand was, so [`Tile::nd`] and [`at`](MemData::at) address it through exactly the machinery
     /// they address gmem through, and the fill stays a plain box copy.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn smem_gathered(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
@@ -672,11 +673,11 @@ mod tests {
     /// `16 -> 8 -> 4` on both axes, so the space, its `divide()`, and its `final_space()` are
     /// three distinct block shapes to nest.
     fn space() -> Space {
-        Tiling::over(&mut (), &[(M, 16), (N, 16)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        Tiling::over(&[(M, 16), (N, 16)])
+            .level(|l| {
                 l.walk(&[(M, 8), (N, 8)]);
             })
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+            .level(|l| {
                 l.walk(&[(M, 4), (N, 4)]);
             })
             .build()
@@ -684,8 +685,8 @@ mod tests {
 
     /// [`space`] plus the ungathered innermost axis a gathered projection is required to carry.
     fn gathered_space() -> Space {
-        Tiling::over(&mut (), &[(M, 16), (N, 16), (K, 8)])
-            .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        Tiling::over(&[(M, 16), (N, 16), (K, 8)])
+            .level(|l| {
                 l.walk(&[(M, 8), (N, 8), (K, 4)]);
             })
             .build()

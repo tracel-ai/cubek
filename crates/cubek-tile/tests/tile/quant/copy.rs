@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, Buffering, CubeAxis, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
-    TileArgLaunch, TileSpec, Tiling, WalkOrder, cubes, planes,
+    Axis, CubeAxis, DequantAt, QuantTileArg, QuantTileArgLaunch, Space, TileArg, TileArgLaunch,
+    TileSpec, Tiling, cubes, planes,
 };
 
 const M: Axis = Axis(0);
@@ -52,12 +52,12 @@ fn copy_non_quantized_matches_reference() {
 fn copy_spread_across_cubes_and_planes_matches_reference() {
     let (m, n) = (4, 512);
     let client = <TestRuntime as Runtime>::client(&Default::default());
-    let launch = Tiling::over(&mut (), &[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let launch = Tiling::over(&[(M, m), (N, n)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Y), &[(M, 1)])
                 .distribute(cubes(CubeAxis::X), &[(N, 128)]);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)]);
         })
         .build()
@@ -720,8 +720,8 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A space that tiles into `bm×bn` blocks, one cube walking them.
-    let space = Tiling::over(&mut (), &[(M, m), (N, n)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n)])
+        .level(|l| {
             l.walk(&[(M, bm), (N, bn)]);
         })
         .build();

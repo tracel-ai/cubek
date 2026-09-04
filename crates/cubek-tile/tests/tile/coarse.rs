@@ -29,6 +29,8 @@ const DEPTH: usize = 32;
 /// Contracted values per coarse value: the quantization block, in the shape this stands in for.
 const BLOCK: usize = 8;
 const BLOCKS: usize = DEPTH / BLOCK;
+/// The leaf's register block.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// `c = a · b` with `a` coarse along the contracted axis: one value per block of `K`, read by
 /// every `k` the block covers.
@@ -43,7 +45,16 @@ fn coarse_lhs_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    c.mm(&a, &b, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_region = c.at(&region);
+        c_region.mma_with(
+            &a.at(&region),
+            &b.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// `⌊k / BLOCK⌋` on the contracted axis, the row addressed as it stands: the coarse operand's
@@ -58,12 +69,11 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Space {
-    Tiling::over(&mut (), &[(M, ROWS), (N, COLS), (K, DEPTH)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&[(M, ROWS), (N, COLS), (K, DEPTH)])
+        .level(|l| {
             l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
         })
         .build()
-        .with_instruction(Instruction::registers(16))
 }
 
 /// Distinct per `(m, block)` and not integers, so an off-by-one block index cannot pass.

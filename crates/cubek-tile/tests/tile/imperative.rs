@@ -1,7 +1,6 @@
 //! The walk written by the kernel: the levels are loops, the stages are rings the kernel
-//! allocates, and the accumulator is a bracket the kernel opens and drains. What the declarative
-//! path lowers `c.mm(a, b)` into, spelled out, and the reference every routine's rewrite is
-//! measured against.
+//! allocates, and the leaf runs under the register block the kernel states. The reference every
+//! routine's rewrite is measured against.
 #![allow(non_snake_case)]
 
 use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
@@ -13,6 +12,9 @@ use super::references;
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 const K: Axis = Axis(2);
+
+/// The software instruction the leaf runs: a 16-cell budget, no edge split, no lane fan-out.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 /// `c = a · b` over a K walk whose blocks of `a` and `b` are double-buffered in shared memory,
 /// the leaf running the software instruction on the block's final tiles.
@@ -39,7 +41,12 @@ fn ring_matmul<E: Numeric>(
             // The block's own grid of final tiles, each contracted by the leaf.
             for cell in Walk::over(c_block.op_space(a_s, b_s)) {
                 let mut c_cell = c_block.at(&cell);
-                c_cell.mma(&a_s.at(&cell), &b_s.at(&cell), Semiring::SUM_PROD);
+                c_cell.mma_with(
+                    &a_s.at(&cell),
+                    &b_s.at(&cell),
+                    REGISTER_BLOCK,
+                    Semiring::SUM_PROD,
+                );
             }
         });
     });
@@ -49,11 +56,11 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let tile = 4usize;
     let dtype = f32::elem_type_native();
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
             l.walk(&[(M, m), (N, n), (K, block_k)]);
         })
-        .instruction(Instruction::registers(16), |l, _| {
+        .level(|l| {
             l.walk(&[(M, tile), (N, tile), (K, tile)]);
         })
         .build();

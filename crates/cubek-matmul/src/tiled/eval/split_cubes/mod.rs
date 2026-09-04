@@ -93,7 +93,7 @@ fn atomic_matmul<E: Numeric>(
         let a_cube = a.at(&cube);
         let mut acc = c_cube.block_accumulator::<E, E>(&a_cube, REGISTER_BLOCK, Monoid::Sum);
         acc.mm(&a_cube, &b.at(&cube), Semiring::SUM_PROD);
-        c_cube.drain_cast_into(&acc);
+        acc.drain_cast_into(&mut c_cube);
     }
 }
 
@@ -120,7 +120,7 @@ fn atomic_matmul_lanes<E: Numeric>(
             let mut acc_lane = acc.at(&lane);
             acc_lane.mma(&a_cube.at(&lane), &b_cube.at(&lane), Semiring::SUM_PROD);
         }
-        c_cube.drain_cast_into(&acc);
+        acc.drain_cast_into(&mut c_cube);
     }
 }
 

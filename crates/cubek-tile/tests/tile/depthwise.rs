@@ -29,9 +29,7 @@ use cubek_tile::*;
 
 /// What runs on the cells the last level cuts out: a sixteen-scalar register block, no edge
 /// specialization, no lane fan-out: the lines here run along the channel, not along `K`.
-const INSTRUCTION: Instruction = Instruction::Registers {
-    config: RegisterBlock::new(16),
-};
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
 // Output positions, window taps, and the one channel axis every operand shares.
 const B: Axis = Axis(5);
@@ -41,7 +39,8 @@ const C: Axis = Axis(2);
 const RH: Axis = Axis(3);
 const RW: Axis = Axis(4);
 
-/// The same body the dense convolution runs. `C` being in the accumulator's own axes is what
+/// The same body the dense convolution runs: this cube's box of the output, then this plane's
+/// channel of it, contracted whole at the leaf. `C` being in the accumulator's own axes is what
 /// makes it a batch axis rather than a contracted one; the leaf reads that off the spaces.
 #[cube(launch)]
 fn depthwise_kernel<E: Numeric>(
@@ -53,8 +52,21 @@ fn depthwise_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    out.mm(&input, &weight, Semiring::SUM_PROD);
+    let out = out.tile(space);
+    for cube in Walk::over(out.op_space(&input, &weight)) {
+        let out_cube = out.at(&cube);
+        let input_cube = input.at(&cube);
+        let weight_cube = weight.at(&cube);
+        for plane in Walk::over(out_cube.op_space(&input_cube, &weight_cube)) {
+            let mut out_plane = out_cube.at(&plane);
+            out_plane.mm_with(
+                &input_cube.at(&plane),
+                &weight_cube.at(&plane),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            );
+        }
+    }
 }
 
 /// Small integers, so the accumulation is exact in `f32` and the reference compares for equality.
@@ -118,21 +130,18 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let space = Tiling::over(
-            &mut (),
-            &[
-                (B, self.b),
-                (OH, self.oh),
-                (OW, self.ow),
-                (C, self.c),
-                (RH, self.rh),
-                (RW, self.rw),
-            ],
-        )
+        let space = Tiling::over(&[
+            (B, self.b),
+            (OH, self.oh),
+            (OW, self.ow),
+            (C, self.c),
+            (RH, self.rh),
+            (RW, self.rw),
+        ])
         // Two levels, not one. A single all-`sequential` level puts the whole
         // convolution in one instance; the grid has to separate the output before
         // anything else about the kernel matters.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
                 .distribute(cubes(CubeAxis::Y), &[(OW, tile_ow)])
                 .distribute(cubes(CubeAxis::Z), &[(OH, tile_oh)])
@@ -142,7 +151,7 @@ impl Depthwise {
         // Channels across the cube's planes; the leaf spreads each plane's tile over its
         // own lanes, so consecutive lanes still read consecutive channels of one pixel,
         // which is the whole reason to keep NHWC here.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(planes(), &[(C, 1)]).walk(&[
                 (OW, 1),
                 (OH, 1),
@@ -151,8 +160,7 @@ impl Depthwise {
                 (RW, self.rw),
             ]);
         })
-        .build()
-        .with_instruction(INSTRUCTION);
+        .build();
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case: it is only the weight and accumulator that change.
@@ -216,8 +224,7 @@ impl Depthwise {
             .zeros()
             .generate_without_host_data();
 
-        // The weight follows the gathered input's plan, as the dense case has it do.
-        let w_spec = TileSpec::direct(&[RH, RW, C]).residence(&in_spec.residence);
+        let w_spec = TileSpec::direct(&[RH, RW, C]);
         let out_spec = TileSpec::direct(&[B, OH, OW, C]);
 
         depthwise_kernel::launch::<TestRuntime>(

@@ -32,40 +32,18 @@ impl<T: Float> Recipe<T> for AxisValue {
     }
 }
 
-/// Walk the whole space, ringing each region of `source` through whatever residence it states,
-/// and copy it into `output`. A source left [`in place`](StagePlan::in_place) is evaluated where
-/// it is read; one asking for a stage is materialized into shared memory first.
+/// Walk the whole space and copy each region of `source`, evaluated where it is read, into
+/// `output`.
 #[cube]
 fn materialize<E: Numeric>(
     source: &Tile<E>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
 ) {
-    let output = output.tile(comptime!(space.clone()));
-    let mut ring = Ring::unary(
-        source,
-        comptime!(space.clone()),
-        comptime!(space.clone()),
-        1usize,
-    );
-    // A staged slot already holds this region's window; an in-place payload is the source itself,
-    // undivided, and still has to select the region out. The engine's own schedules get this from
-    // `read_operand`, which a test cannot reach.
-    let plan = source.stage_plan();
-    let windowed = comptime!(plan.head() != Residence::InPlace);
-    let walk = Walk::over(source.runtime_space());
-    for region in walk {
-        let staging = ring.slot_mut(0usize);
-        staging.fill_streamed(source, &region);
-        staging.publish();
-        staging.consume(|staged| {
-            let window = if comptime!(windowed) {
-                staged.clone()
-            } else {
-                staged.at(&region)
-            };
-            output.at(&region).copy_from(&window);
-        });
+    let output = output.tile(space);
+    for region in Walk::over(source.runtime_space()) {
+        let mut output_region = output.at(&region);
+        output_region.copy_from(&source.at(&region));
     }
 }
 
@@ -89,24 +67,48 @@ fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordina
     )
 }
 
-/// `stage` picks whether the recipe is evaluated at the read site or first materialized into
-/// shared memory: the walk must produce the same grid either way.
+/// The product recipe evaluated where it is read: every region of the walk copies its window of
+/// the source straight into the output.
 #[cube(launch)]
-fn product_kernel<E: Float>(
+fn product_kernel_in_place<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] stage: StagePlan,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural_resident::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+    let source = Tile::<E>::procedural::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.clone()),
         product_of(
             affine_along(ROW, E::from_int(0), E::from_int(1)),
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
-        stage,
     );
     materialize(&source, output, space);
+}
+
+/// The same recipe materialized into shared memory first: a ring of one slot fills each region's
+/// window cooperatively, and the output copies the stage. The grid must be the same either way.
+#[cube(launch)]
+fn product_kernel_staged<E: Float>(
+    output: &TileArg<'_, E, Const<1>>,
+    #[comptime] space: Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    let source = Tile::<E>::procedural::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+        comptime!(space.clone()),
+        product_of(
+            affine_along(ROW, E::from_int(0), E::from_int(1)),
+            affine_along(COL, E::from_int(0), E::from_int(1)),
+        ),
+    );
+    let output = output.tile(space);
+    let walk = Walk::over(source.runtime_space());
+    let mut ring = Ring::smem_single(&walk, &source, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut ring, |slot, region| {
+        let mut output_region = output.at(region);
+        slot.consume(|staged| {
+            output_region.copy_from(staged);
+        });
+    });
 }
 
 /// The recipe under test: `row - frac((col * scale + offset) / divisor)`, a two-axis expression
@@ -351,8 +353,8 @@ impl Harness {
         Self {
             client: <TestRuntime as Runtime>::client(&Default::default()),
             dtype: f32::elem_type_native(),
-            space: Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
-                .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+            space: Tiling::over(&[(ROW, ROWS), (COL, COLS)])
+                .level(|level| {
                     level.walk(&[(ROW, 2), (COL, 3)]);
                 })
                 .build(),
@@ -410,31 +412,34 @@ fn sinc(t: f32) -> f32 {
     }
 }
 
-/// Walk the product recipe with the source staged as `stage` says; the grid is the same either
-/// way.
-fn check_product(stage: StagePlan) {
+#[test]
+fn user_recipe_evaluates_in_place() {
     let h = Harness::new();
     let output = h.output();
-    product_kernel::launch::<TestRuntime>(
+    product_kernel_in_place::launch::<TestRuntime>(
         &h.client,
         h.space.cube_count(),
         h.space.cube_dim(&h.client),
         output_arg!(output),
         h.space.clone(),
-        stage,
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
 }
 
 #[test]
-fn user_recipe_evaluates_in_place() {
-    check_product(StagePlan::in_place());
-}
-
-#[test]
 fn user_recipe_materializes_through_a_staged_walk() {
-    check_product(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
+    let h = Harness::new();
+    let output = h.output();
+    product_kernel_staged::launch::<TestRuntime>(
+        &h.client,
+        h.space.cube_count(),
+        h.space.cube_dim(&h.client),
+        output_arg!(output),
+        h.space.clone(),
+        h.dtype,
+    );
+    assert_grid(&h.read(output), |row, col| (row * col) as f32);
 }
 
 #[test]
@@ -643,8 +648,8 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
-    let space = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+    let space = Tiling::over(&[(ROW, ROWS), (COL, COLS)])
+        .level(|level| {
             level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
@@ -672,8 +677,8 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = <TestRuntime as Runtime>::client(&Default::default());
     let dtype = f32::elem_type_native();
-    let concrete = Tiling::over(&mut (), &[(ROW, ROWS), (COL, COLS)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |level, _| {
+    let concrete = Tiling::over(&[(ROW, ROWS), (COL, COLS)])
+        .level(|level| {
             level.walk(&[(ROW, 2), (COL, 4)]);
         })
         .build();
