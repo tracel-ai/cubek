@@ -90,6 +90,7 @@ impl Benchmark for ReduceBench {
     fn prepare(&self) -> Self::Input {
         let client = self.device.client();
         let elem = self.value_dtype;
+        let output_elem = crate::eval::cpu_reference::output_dtype_for(&self.config, elem);
 
         let input = TestInput::builder(client.clone(), Shape::from(self.shape.clone()))
             .dtype(elem)
@@ -102,7 +103,7 @@ impl Benchmark for ReduceBench {
             _ => 1,
         };
         shape_out[self.axis] = reduce_len;
-        let out = TensorHandle::empty(&client, shape_out.clone(), elem);
+        let out = TensorHandle::empty(&client, shape_out.clone(), output_elem);
         let indices = TensorHandle::empty(&client, shape_out, u32::elem_type_native());
 
         (input, out, indices)
