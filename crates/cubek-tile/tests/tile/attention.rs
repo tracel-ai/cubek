@@ -98,12 +98,12 @@ fn attention_fold_kernel<W: Size>(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, share);
+        acc.rescale_rows(&corr, share);
         sync_cube();
 
         // The mix folds the rescale in; stale cache beyond the attended
         // prefix must not ride a zero probability into the accumulator.
-        acc.mix(&p, &vb, &factors, cols_bound);
+        acc.mix(&p, &vb, cols_bound);
         sync_cube();
     }
 
@@ -373,10 +373,10 @@ fn attention_fold_cmma_kernel(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, share);
+        acc.rescale_rows(&corr, share);
         sync_cube();
 
-        acc.mix(&p, &vb, &factors, cols_bound);
+        acc.mix(&p, &vb, cols_bound);
         sync_cube();
     }
 
@@ -768,7 +768,6 @@ fn attention_fold_split_kernel<W: Size>(
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
     let rw = Walk::over(factors_all.runtime_space());
-    let mut factors = factors_all.at(&rw.region(t));
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
     let aw = Walk::over(acc_all.runtime_space());
@@ -810,13 +809,13 @@ fn attention_fold_split_kernel<W: Size>(
                 materialized: false,
             };
             let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-            factors.store_rows(&corr, share);
+            acc.rescale_rows(&corr, share);
         }
         sync_cube();
 
         if live {
             let vb = v.at(&region);
-            acc.mix(&p, &vb, &factors, cols_bound);
+            acc.mix(&p, &vb, cols_bound);
         }
         sync_cube();
     }

@@ -158,21 +158,16 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// [`mix`](Tile::mix) under a hardware instruction:
-    /// `self[r, :] = self[r, :] · factors[r] + Σ_{c < cols_bound} p[r, c] · val[c, :]`.
-    ///
-    /// The rescale runs where the running total lies, cube-wide, before any fragment is loaded:
-    /// no elementwise math touches a fragment, so the accumulator is scaled in shared memory and
-    /// read back as an accumulator fragment, which is the one sync this leaf owns. The caller
-    /// syncs on both sides.
+    /// `self[r, :] += Σ_{c < cols_bound} p[r, c] · val[c, :]`.
     ///
     /// Contraction steps at or past `cols_bound` are skipped: stale cache beyond the attended
     /// prefix (possibly NaN) must not ride a zero probability. A step straddling the bound is
-    /// contracted whole, so the block must be readable to its edge.
+    /// contracted whole, so the block must be readable to its edge. No fragment survives a
+    /// barrier and no elementwise math touches one.
     pub(crate) fn mix_fragments<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
-        factors: &Tile<EA>,
         cols_bound: usize,
     ) {
         let mma = comptime!(Contraction::of(
@@ -185,9 +180,6 @@ impl<EA: Float> Tile<EA> {
         let val_dim = comptime!(trailing(&self.space).1);
         let cols = comptime!(trailing(&p.space).1);
         let steps = comptime!(cols / kc);
-
-        self.scale_rows(factors);
-        sync_cube();
 
         let p = p.retiled(comptime!(tiled(&p.space, m, kc)));
 

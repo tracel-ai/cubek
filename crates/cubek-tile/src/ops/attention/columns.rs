@@ -95,7 +95,6 @@ impl<EA: Float> Tile<EA> {
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
-        factors: &Tile<EA>,
         cols_bound: usize,
         #[comptime] config: RegisterBlock,
     ) {
@@ -120,12 +119,8 @@ impl<EA: Float> Tile<EA> {
         let size!(WP) = wp;
         let size!(WV) = wv;
 
-        let wf = factors.vector_size();
-        comptime!(assert!(wf == 1, "mix_columns: a scalar factors tile"));
-        let size!(WF) = wf;
         let pf = p.flat::<WP>();
         let vf = val.flat::<WV>();
-        let ff = factors.flat::<WF>();
         let mut out = self.flat_mut::<W>();
 
         let bound = min(cols_bound, cols);
@@ -153,12 +148,11 @@ impl<EA: Float> Tile<EA> {
             }
             #[unroll]
             for i in 0..height {
-                let f = ff.read(base + i).extract(0usize);
                 #[unroll]
                 for j in 0..wv {
                     let idx = (base + i) * val_dim + li * wv + j;
                     let cur = out.read(idx).extract(0usize);
-                    out.write(idx, Vector::cast_from(cur * f + acc[i].extract(j)));
+                    out.write(idx, Vector::cast_from(cur + acc[i].extract(j)));
                 }
             }
             visit += workers;

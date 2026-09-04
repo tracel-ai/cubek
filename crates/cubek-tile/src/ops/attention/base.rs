@@ -34,21 +34,23 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// The value matmul with the online-softmax rescale fused in:
-    /// `self[r, :] = self[r, :] · factors[r] + Σ_{c < cols_bound} p[r, c] · val[c, :]`.
+    /// The value matmul: `self[r, :] += Σ_{c < cols_bound} p[r, c] · val[c, :]`.
     ///
     /// `self` is a rank-2 `{rows, val_dim}` accumulator, `p` the `{rows, cols}` probabilities and
     /// `val` one block of `{cols, val_dim}` values. Columns at or past `cols_bound` are skipped:
     /// stale cache beyond the attended prefix (possibly NaN) must not ride a zero probability. The
     /// hardware arm skips them by the whole contraction step, so one straddling the bound is still
-    /// read to its edge. The caller syncs on both sides.
+    /// read to its edge.
+    ///
+    /// The online-softmax rescale is not here: the row's owner applies it in
+    /// [`rescale_rows`](Tile::rescale_rows) straight out of [`softmax`](Tile::softmax), before
+    /// the one sync that separates the two. The caller syncs on both sides.
     ///
     /// The instruction states its shape as it does for [`score`](Tile::score).
     pub fn mix<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
-        factors: &Tile<EA>,
         cols_bound: usize,
     ) {
         match comptime!(self.space.instruction().expect(
@@ -56,10 +58,8 @@ impl<EA: Float> Tile<EA> {
              `.instruction(Instruction::Cmma, |l, o| ...)`, or `Instruction::registers(budget)` for \
              the software one, so the level it is cut at says what runs on its cells"
         )) {
-            Instruction::Registers { config } => {
-                self.mix_columns(p, val, factors, cols_bound, config)
-            }
-            Instruction::Cmma => self.mix_fragments(p, val, factors, cols_bound),
+            Instruction::Registers { config } => self.mix_columns(p, val, cols_bound, config),
+            Instruction::Cmma => self.mix_fragments(p, val, cols_bound),
             Instruction::Mma { .. } => comptime!(panic!(
                 "mix: the manual-mma form is not wired for the attention leaves; state \
                  Instruction::Cmma or Instruction::registers(budget)"

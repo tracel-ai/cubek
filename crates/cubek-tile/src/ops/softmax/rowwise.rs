@@ -210,6 +210,40 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
+    /// The online-softmax rescale, by the row's owner: `self[r, :] *= corr[ri]` for the rows
+    /// `share` gives this worker, straight out of [`softmax`](Tile::softmax) and before the sync
+    /// that hands the accumulator to [`mix`](Tile::mix). The correction is the worker's own
+    /// register — no factors tile, no cube-wide sweep, no barrier of its own. Under
+    /// [`Plane`](RowShare::Plane) the lanes split the row's lines.
+    pub fn rescale_rows(&mut self, corr: &Array<EA>, #[comptime] share: RowShare) {
+        let rank = comptime!(self.space.rank());
+        let rows = comptime!(self.space.extent_at(rank - 2));
+        let cols = comptime!(self.space.extent_at(rank - 1));
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
+        let rpw = comptime!(share.rows());
+        let lanes = comptime!(share.lanes());
+        let lane = UNIT_POS_X as usize % lanes;
+        let worker = UNIT_POS_X as usize / lanes;
+        let mut view = self.flat_mut::<W>();
+        #[unroll]
+        for ri in 0..rpw {
+            let r = worker * rpw + ri;
+            if r < rows {
+                let factor = Vector::<EA, W>::cast_from(corr[ri]);
+                #[unroll]
+                for li in 0..comptime!(lines.div_ceil(lanes)) {
+                    let line = lane + li * lanes;
+                    if comptime!(lines % lanes == 0) || line < lines {
+                        let i = r * lines + line;
+                        view.write(i, view.read(i) * factor);
+                    }
+                }
+            }
+        }
+    }
+
     /// Multiply each row by its factor: `self[r, c] *= factors[r]`.
     ///
     /// The accumulator rescale between fold steps, and the epilogue
