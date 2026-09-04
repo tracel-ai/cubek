@@ -4,7 +4,6 @@
 
 #![cfg(all(feature = "benchmarks", feature = "tiled"))]
 
-use cubecl::Runtime;
 use cubek_matmul::{
     eval::benchmarks::gemm::GemmProblem, multi_level::Strategy as MultiLevel, strategy::Strategy,
     tiled::Strategy as Tiled,
@@ -78,6 +77,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         partition: Partition { m: 1, n: 4 },
         planes: PlaneGrid { m: 4, n: 1 },
         stage_k: 32,
+        buffering: 2,
         delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
     }))
     .into();
@@ -149,6 +149,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
             partition: Partition { m: 1, n: 4 },
             planes: PlaneGrid { m: 4, n: 1 },
             stage_k,
+            buffering: 2,
             delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
         }))
         .into()
@@ -263,7 +264,7 @@ fn gemm_cyclic_cmma_sweep() {
 #[test]
 #[ignore = "debug probe"]
 fn print_cmma_configs() {
-    let client = cubecl::TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     for c in client.properties().features.matmul.cmma.iter() {
         println!("{:?}", c);
     }

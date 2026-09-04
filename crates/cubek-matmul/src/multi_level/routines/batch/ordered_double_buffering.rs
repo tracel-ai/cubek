@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use cubecl::{CubeCount, CubeDim, Runtime, client::ComputeClient, ir::AddressType};
+use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
 
 use crate::{
     definition::{MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes},
@@ -103,22 +103,22 @@ where
     RC: RuntimeConfig,
 {
     #[allow(clippy::too_many_arguments, clippy::result_large_err)]
-    fn launch<MA: MatmulArgs<Config = RC>, R: Runtime>(
-        client: &ComputeClient<R>,
+    fn launch<MA: MatmulArgs<Config = RC>>(
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        config: ConfigRuntimeArg<MA, R>,
-        cube_count_input: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        config: ConfigRuntimeArg<MA>,
+        cube_count_input: CubeMappingLaunch,
         blueprint: Self::Blueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
         {
             unsafe {
-                <OrderedDoubleBufferingBatch<RC>>::launch_unchecked::<MA, R>(
+                <OrderedDoubleBufferingBatch<RC>>::launch_unchecked::<MA>(
                     client,
                     cube_dim,
                     cube_count,
@@ -137,14 +137,14 @@ where
     }
 
     #[allow(clippy::result_large_err)]
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), MatmulSetupError> {
-        batch_validate_blueprint::<OrderedDoubleBufferingBatch<RC>, RC, R>(
+        batch_validate_blueprint::<OrderedDoubleBufferingBatch<RC>, RC>(
             client,
             blueprint,
             problem,
@@ -157,9 +157,9 @@ where
         OrderedDoubleBufferingBatch::<RC>::num_stages()
     }
 
-    fn expand_blueprint<R: Runtime>(
+    fn expand_blueprint(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: &BlueprintStrategy<RC, Self>,
     ) -> Result<ExpandInfo<Self::Blueprint>, MatmulSetupError> {
         let mut dtypes = MatmulElems::from_globals(&problem.global_dtypes);
@@ -175,7 +175,7 @@ where
 
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
-            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane::<R>(
+            BlueprintStrategy::Inferred(strategy) => infer_blueprint_plane(
                 tile_matmul,
                 &device_settings.client,
                 problem,
@@ -201,9 +201,9 @@ where
         Ok(ExpandInfo { blueprint, dtypes })
     }
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         expand_info: ExpandInfo<Self::Blueprint>,
     ) -> Result<LaunchInfo<Self::Blueprint>, MatmulSetupError> {
         let ExpandInfo { blueprint, dtypes } = expand_info;

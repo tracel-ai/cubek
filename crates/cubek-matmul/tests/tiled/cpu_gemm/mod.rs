@@ -2,7 +2,7 @@ mod inner_layout;
 mod layouts;
 
 use crate::harness::test_matmul_strategy;
-use cubecl::{Runtime, frontend::Scalar, ir::AddressType, zspace::shape};
+use cubecl::{frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
     routine::BlueprintStrategy,
@@ -48,7 +48,7 @@ fn mixed_precision_f16_inputs_f32_acc() {
         k: 64,
         tile_size: 8,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -104,7 +104,7 @@ fn very_small_square() {
         k: 8,
         tile_size: 4,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -154,7 +154,7 @@ fn small_square() {
         k: 64,
         tile_size: 8,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -204,7 +204,7 @@ fn rectangular() {
         k: 64,
         tile_size: 16,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -254,7 +254,7 @@ fn single_tile() {
         k: 8,
         tile_size: 8,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -293,7 +293,7 @@ fn single_tile() {
 #[test]
 fn many_tiles_inferred_size() {
     let (batch, m, n, k) = (1, 64, 64, 128);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -324,7 +324,7 @@ fn many_tiles_inferred_size() {
 #[test]
 fn transposed_lhs_m_not_vector_multiple() {
     let (batch, m, n, k) = (1, 7, 8, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -353,7 +353,7 @@ fn transposed_lhs_m_not_vector_multiple() {
 #[test]
 fn transposed_lhs_batched() {
     let (batch, m, n, k, tile_size) = (2, 33, 64, 64, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -403,7 +403,7 @@ fn batched_small() {
         k: 32,
         tile_size: 8,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -453,7 +453,7 @@ fn batched_rectangular() {
         k: 64,
         tile_size: 16,
     };
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -491,7 +491,7 @@ fn batched_rectangular() {
 #[test]
 fn indivisible_all_axes() {
     let (batch, m, n, k, tile_size) = (1, 10, 10, 10, 4);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -529,7 +529,7 @@ fn indivisible_all_axes() {
 #[test]
 fn indivisible_rectangular_batched() {
     let (batch, m, n, k, tile_size) = (2, 30, 20, 32, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -567,7 +567,7 @@ fn indivisible_rectangular_batched() {
 #[test]
 fn indivisible_inferred() {
     let (batch, m, n, k) = (1, 37, 41, 53);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -598,7 +598,7 @@ fn indivisible_inferred() {
 #[test]
 fn matvec_inferred() {
     let (batch, m, n, k) = (1, 64, 1, 64);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -628,7 +628,7 @@ fn matvec_inferred() {
 #[test]
 fn narrow_n_inferred() {
     let (batch, m, n, k) = (1, 32, 3, 48);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -659,7 +659,7 @@ fn narrow_n_inferred() {
 #[test]
 fn broadcast_rhs_unbatched() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![4], shape![1], 16, 16, 32, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -697,7 +697,7 @@ fn broadcast_rhs_unbatched() {
 #[test]
 fn broadcast_lhs_unbatched() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![1], shape![4], 16, 16, 32, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -737,7 +737,7 @@ fn broadcast_lhs_unbatched() {
 fn broadcast_two_axes() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) =
         (shape![4, 1], shape![1, 3], 16, 16, 32, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -776,7 +776,7 @@ fn broadcast_two_axes() {
 fn batched_two_axes() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) =
         (shape![2, 3], shape![2, 3], 16, 16, 32, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -814,7 +814,7 @@ fn batched_two_axes() {
 #[test]
 fn broadcast_indivisible() {
     let (lhs_batches, rhs_batches, m, n, k, tile_size) = (shape![3], shape![1], 10, 14, 10, 4);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -863,7 +863,7 @@ fn cpu_gemm_rejects_input_register_type() {
     use cubek_std::InputBinding;
     use cubek_test_utils::TestInput;
 
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32t = f32::elem_type_native();
     let tensor = |seed| {
         TestInput::builder(client.clone(), shape![32, 32])
@@ -878,7 +878,7 @@ fn cpu_gemm_rejects_input_register_type() {
     let mut dtypes = MatmulElems::from_single_dtype(f32t);
     dtypes.lhs_register = ElemType::Float(FloatKind::TF32);
 
-    match launch_ref::<TestRuntime>(
+    match launch_ref(
         &client,
         WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f32t)).unwrap(),
         WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f32t)).unwrap(),
@@ -915,7 +915,7 @@ fn accumulator_holds_steps_the_output_element_cannot() {
     use cubek_test_utils::{HostData, HostDataType, HostDataVec, TestInput};
 
     let (m, n, k, tile) = (8, 8, 8192, 8);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -935,7 +935,7 @@ fn accumulator_holds_steps_the_output_element_cannot() {
     let rhs = build(vec![k, n], rhs_data);
     let out = build(vec![m, n], vec![0.0; m * n]);
 
-    launch_ref::<TestRuntime>(
+    launch_ref(
         &client,
         WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f16t)).unwrap(),
         WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f16t)).unwrap(),

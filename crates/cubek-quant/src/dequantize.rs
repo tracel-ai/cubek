@@ -222,11 +222,11 @@ fn dequantize_symmetric_native_kernel<F: Float, N: Size, FS: Numeric, Q: Numeric
 
 #[allow(clippy::result_large_err)]
 /// Convert the tensor back to a higher precision data type.
-pub fn launch_ref<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
-    scales: &[TensorBinding<R>],
+pub fn launch_ref(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
+    scales: &[TensorBinding],
     scheme: &QuantScheme,
     output_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -283,13 +283,13 @@ pub fn launch_ref<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dequantize_packed<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
+fn dequantize_packed(
+    client: &Client,
+    input: TensorBinding,
     scheme: QuantScheme,
-    scale: TensorBinding<R>,
-    global: Option<TensorBinding<R>>,
-    output: TensorBinding<R>,
+    scale: TensorBinding,
+    global: Option<TensorBinding>,
+    output: TensorBinding,
     output_dtype: ElemType,
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {
@@ -346,13 +346,13 @@ fn dequantize_packed<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn dequantize_native<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
+fn dequantize_native(
+    client: &Client,
+    input: TensorBinding,
     scheme: QuantScheme,
-    scale: TensorBinding<R>,
-    global: Option<TensorBinding<R>>,
-    output: TensorBinding<R>,
+    scale: TensorBinding,
+    global: Option<TensorBinding>,
+    output: TensorBinding,
     output_dtype: ElemType,
     scale_dtype: ElemType,
 ) -> Result<(), LaunchError> {

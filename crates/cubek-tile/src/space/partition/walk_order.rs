@@ -1,7 +1,6 @@
-//! Concrete walk orders: example traversal policies plugged into the partitioner.
+//! The orders a [`Walk`](crate::Walk) visits its regions in.
 
-use super::{Distribution, Partitioner, PartitionerBuilder};
-use crate::{ByAxis, Fold, FoldExpand};
+use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;
 
 /// A new order is a new variant here plus a [`walk_index`] arm.
@@ -11,17 +10,6 @@ pub enum WalkOrder {
     RowMajor,
     /// step `i` visits `total - i - 1`.
     Reversed,
-}
-
-impl Partitioner {
-    /// Declared axis order, last axis fastest.
-    pub fn row_major(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>) -> PartitionerBuilder {
-        PartitionerBuilder::new(sub_tile, dists, WalkOrder::RowMajor)
-    }
-
-    pub fn reversed(sub_tile: ByAxis<usize>, dists: ByAxis<Distribution>) -> PartitionerBuilder {
-        PartitionerBuilder::new(sub_tile, dists, WalkOrder::Reversed)
-    }
 }
 
 #[cube]

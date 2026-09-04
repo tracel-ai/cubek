@@ -43,7 +43,7 @@ impl<EA: Float> Tile<EA> {
 
     /// [`softmax`](Tile::softmax) with the probabilities left where the scores
     /// were: after it, `self` holds the unnormalized P of this step, and is
-    /// what the value matmul ([`mix`](Tile::mix)) contracts. One tile, one
+    /// what the value matmul contracts. One tile, one
     /// pass over it fewer, and no cast — the mix reads P at the accumulate
     /// element, which its hardware arm takes against values at theirs.
     pub fn softmax_in_place(

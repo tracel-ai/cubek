@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, ir::AddressType, prelude::*, zspace::shape};
+use cubecl::{ir::AddressType, prelude::*, zspace::shape};
 use cubek_convolution::{
     ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
     components::{ConvolutionOperation, ConvolutionProblem, Dimensionality},
@@ -21,7 +21,7 @@ use super::common::{default_partition_buffering, default_swizzle, default_tiling
 /// overlap 8, 7, and 6 real input positions respectively.
 #[test]
 fn backward_weight_supports_end_only_padding() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtypes = MatmulElems::from_single_dtype(half::f16::elem_type_native());
 
     let batches = 1;

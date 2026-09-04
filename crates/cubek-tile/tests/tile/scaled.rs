@@ -14,7 +14,7 @@
 //! The scales resolve at their own granularity through their own projection: a plain `KB` for a
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, zspace::shape};
+use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
@@ -24,6 +24,20 @@ const N: Axis = Axis(1);
 /// The contraction, as the two axes a block makes of it: which block, and where inside it.
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
+
+/// The register block the contractions here run under, but for the wide-lhs one.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
+/// Every scale level windowed to `region`.
+#[cube]
+fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
+    let mut at = Sequence::new();
+    #[unroll]
+    for k in 0..scales.len() {
+        at.push(scales.index(k).at(region));
+    }
+    at
+}
 
 /// `c = (a ⊗ s) · b`, with `s` at whatever granularity its own projection states.
 #[cube(launch)]
@@ -40,7 +54,17 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &a.at(&region),
+            &b.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// [`scaled_matmul`] with the accumulator promoted to registers: the partials never round-trip
@@ -58,9 +82,19 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&a, &b)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &a.at(&region),
+            &b.at(&region),
+            &at_all(&scales, &region),
+            Semiring::SUM_PROD,
+        );
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -82,7 +116,17 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &a.at(&region),
+            &b.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// **Two scale levels, applied in order.** `nvfp4`'s shape: a scale per block of the contraction,
@@ -96,7 +140,7 @@ fn two_levels_fold_in_order() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -124,14 +168,13 @@ fn two_levels_fold_in_order() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    two_level_scaled_matmul::launch::<TestRuntime>(
+    two_level_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -197,7 +240,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     // Small integers, so the reference is exact.
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -221,14 +264,13 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -290,7 +332,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
     let (per_region, inside) = (1, block / 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -313,14 +355,13 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -386,7 +427,7 @@ fn a_scale_over_no_axis_covers_everything() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -409,14 +450,13 @@ fn a_scale_over_no_axis_covers_everything() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -476,7 +516,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
     let (per_region, inside) = (2, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -499,14 +539,13 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -570,7 +609,7 @@ fn f16_scales_are_read_as_f16() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let scale_dtype = f16::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -594,14 +633,13 @@ fn f16_scales_are_read_as_f16() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -663,7 +701,7 @@ fn scales_over_the_columns_scale_the_rhs() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -686,14 +724,13 @@ fn scales_over_the_columns_scale_the_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -755,7 +792,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
     let (per_region, inside) = (1, block / 2);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -778,14 +815,13 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -846,7 +882,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
     let (per_region, inside) = (2, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -869,14 +905,13 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    scaled_matmul::launch::<TestRuntime>(
+    scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -930,17 +965,16 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
     }
 }
 
-/// **The gap the decode gemv was waiting on.** The output states [`Residence::Register`] at its
-/// outermost level, so the accumulator is a register block living across the whole walk and the
-/// scaled steps fold into it directly: refused before, and the same numbers as the memory-backed
-/// form.
+/// **The gap the decode gemv was waiting on.** The kernel opens a register block above the whole
+/// walk, so the scaled steps fold into it directly: refused before, and the same numbers as the
+/// memory-backed form.
 #[test]
 fn a_promoted_accumulator_takes_the_scaled_contraction() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -963,18 +997,13 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    // One entry per level: Register at the outermost, in place below it.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
-
-    scaled_matmul_promoted::launch::<TestRuntime>(
+    scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1007,7 +1036,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         [dtype, dtype],
@@ -1043,9 +1072,19 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&a, &b)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &a.at(&region),
+            &b.at(&region),
+            &at_all(&scales, &region),
+            Semiring::SUM_PROD,
+        );
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
@@ -1062,7 +1101,7 @@ fn rhs_scales_are_served_several_at_a_time() {
     let (per_region, inside) = (1, block);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -1086,18 +1125,13 @@ fn rhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    // One entry per level: Register at the outermost, in place below it.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
-
-    wide_rhs_scaled_matmul_promoted::launch::<TestRuntime>(
+    wide_rhs_scaled_matmul_promoted::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1133,7 +1167,7 @@ fn rhs_scales_are_served_several_at_a_time() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         [dtype, dtype],
@@ -1155,6 +1189,8 @@ fn rhs_scales_are_served_several_at_a_time() {
 }
 
 /// [`scaled_matmul`] with the lhs's scales served as lines: `SW` of them per read, along `KB`.
+/// The fold rides the lane walk, which reads one line per `lw` steps and takes a fixed component
+/// of it; the scalar walk has no line ordinal to fold under, so this block fans out over lanes.
 #[cube(launch)]
 fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     a: &TileArg<'_, E, Const<4>>,
@@ -1169,7 +1205,17 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&a, &b, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &a.at(&region),
+            &b.at(&region),
+            &at_all(&scales, &region),
+            comptime!(RegisterBlock::new(64).lane_fanout()),
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// **Scales served as lines along the contraction.** The lhs's scales vary over `KB` and nothing
@@ -1183,7 +1229,7 @@ fn lhs_scales_are_served_several_at_a_time() {
     let (cols, block, blocks, lanes) = (4, 4, 4, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -1207,18 +1253,13 @@ fn lhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]);
         })
-        .build()
-        // The fold rides the lane walk, which reads one line per `lw` steps and takes a fixed
-        // component of it; the scalar walk has no line ordinal to fold under.
-        .with_instruction(Instruction::Registers {
-            config: RegisterBlock::new(64).lane_fanout(),
-        });
+        .build();
 
-    wide_lhs_scaled_matmul::launch::<TestRuntime>(
+    wide_lhs_scaled_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),

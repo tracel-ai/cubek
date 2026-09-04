@@ -15,10 +15,10 @@ impl<T: LaunchArg + CubeType<ExpandType: Clone> + Clone + Send + Sync> RuntimeCo
 /// directly; materialize such an operand into a contiguous tensor. A broadcast
 /// *batch* dim is only `MildlyPermuted` and stays untouched (handled natively).
 #[allow(clippy::result_large_err)]
-pub(crate) fn into_contiguous_if_highly_permuted<R: Runtime>(
-    client: &ComputeClient<R>,
-    binding: InputBinding<R>,
-) -> Result<InputBinding<R>, MatmulSetupError> {
+pub(crate) fn into_contiguous_if_highly_permuted(
+    client: &Client,
+    binding: InputBinding,
+) -> Result<InputBinding, MatmulSetupError> {
     match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
         MatrixBatchLayout::HighlyPermuted => Ok(binding.into_contiguous(client)?),
         _ => Ok(binding),
@@ -32,8 +32,8 @@ pub trait Routine<RC: RuntimeConfig>: Sized {
 }
 
 /// What the routine reads about the device before it can shape a blueprint.
-pub struct DeviceSettings<R: Runtime> {
-    pub client: ComputeClient<R>,
+pub struct DeviceSettings {
+    pub client: Client,
     pub plane_dim: u32,
     pub vector_sizes: MatmulVectorSizes,
     pub max_cube_count: (u32, u32, u32),

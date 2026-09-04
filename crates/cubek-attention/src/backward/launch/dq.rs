@@ -3,7 +3,7 @@
 //! Each program instance owns one Q-block and sweeps all KV-blocks. `S` and
 //! `dP` are recomputed inside the loop, never materialized to HBM.
 
-use cubecl::{CubeDim, Runtime, calculate_cube_count_elemwise, client::ComputeClient, prelude::*};
+use cubecl::{CubeDim, calculate_cube_count_elemwise, client::Client, prelude::*};
 
 use crate::backward::definition::BackwardConfig;
 use crate::forward::definition::{AttentionGlobalTypes, AttentionSetupError};
@@ -90,15 +90,15 @@ fn flash_attention_backward_dq_kernel<E: Float>(
 /// Output:
 /// - `dq`:      `[B, H, N, d]`: written cleanly.
 #[allow(clippy::too_many_arguments)]
-pub fn flash_attention_backward_dq<R: Runtime>(
-    client: &ComputeClient<R>,
-    q: TensorBinding<R>,
-    k: TensorBinding<R>,
-    v: TensorBinding<R>,
-    do_: TensorBinding<R>,
-    lse: TensorBinding<R>,
-    d: TensorBinding<R>,
-    dq: TensorBinding<R>,
+pub fn flash_attention_backward_dq(
+    client: &Client,
+    q: TensorBinding,
+    k: TensorBinding,
+    v: TensorBinding,
+    do_: TensorBinding,
+    lse: TensorBinding,
+    d: TensorBinding,
+    dq: TensorBinding,
     _global_dtypes: &AttentionGlobalTypes,
     config: BackwardConfig,
 ) -> Result<(), AttentionSetupError> {
@@ -120,7 +120,7 @@ pub fn flash_attention_backward_dq<R: Runtime>(
         .max(d.required_address_type(dtype.size()))
         .max(dq.required_address_type(dtype.size()));
 
-    flash_attention_backward_dq_kernel::launch::<R>(
+    flash_attention_backward_dq_kernel::launch(
         client,
         cube_count,
         cube_dim,

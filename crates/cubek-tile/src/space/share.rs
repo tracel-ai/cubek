@@ -93,7 +93,7 @@ impl SplitShare {
                  slice of the contraction, and none of them holds a whole cell. \
                  Drain into an accumulating destination (bind it as an `AccumulateArg`), \
                  distribute the contraction across the plane's lanes instead \
-                 (`distribute(lanes(), ..)`, combined in the plane's registers), or give the \
+                 (`distribute(lanes(n), ..)`, combined in the plane's registers), or give the \
                  output an axis of its own for the split."
             ),
         }
@@ -250,9 +250,9 @@ impl Space {
             else {
                 continue;
             };
-            // Asserted, not skipped: a `Unit` axis always resolves to `Instances`
-            // (`Distribution::unit` defers through `PlaneLanes`), and passing over one whose
-            // count we could not read would shift every inner axis's bits by its width.
+            // Asserted, not skipped: a `Unit` axis always carries an `Instances` count, and
+            // passing over one whose count we could not read would shift every inner axis's
+            // bits by its width.
             let lanes = coverage
                 .instances_const()
                 .expect("Space::lane_share: a Unit axis must carry a const instance count");

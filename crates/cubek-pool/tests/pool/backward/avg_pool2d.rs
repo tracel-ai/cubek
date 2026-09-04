@@ -1,12 +1,12 @@
 use super::{make_problem, run_pool_backward_test};
-use cubecl::{Runtime, TestRuntime, zspace::Shape};
+use cubecl::zspace::Shape;
 use cubek_pool::definition::AvgPoolOptions;
 
 const AVG_POOL2D_BACKWARD_TOLERANCE: f32 = 0.000001;
 
 #[test]
 fn test_avg_pool2d_backward() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         [4, 4],
         Shape::from([2, 4, 4, 2]),
@@ -25,7 +25,7 @@ fn test_avg_pool2d_backward() {
 
 #[test]
 fn test_avg_pool2d_backward_strided_no_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         [6, 6],
         Shape::from([2, 3, 3, 4]),
@@ -44,7 +44,7 @@ fn test_avg_pool2d_backward_strided_no_pad() {
 
 #[test]
 fn test_avg_pool2d_backward_exclude_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         [5, 5],
         Shape::from([1, 3, 3, 1]),
@@ -63,7 +63,7 @@ fn test_avg_pool2d_backward_exclude_pad() {
 
 #[test]
 fn test_avg_pool2d_backward_non_square_asymmetric() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         [5, 7],
         Shape::from([2, 6, 3, 3]),
@@ -82,7 +82,7 @@ fn test_avg_pool2d_backward_non_square_asymmetric() {
 
 #[test]
 fn test_avg_pool2d_backward_ceil_mode() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         [5, 5],
         Shape::from([2, 3, 3, 4]),

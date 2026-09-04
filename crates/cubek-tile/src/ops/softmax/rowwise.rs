@@ -245,7 +245,7 @@ impl<EA: Float> Tile<EA> {
 
     /// The online-softmax rescale, by the row's owner: `self[r, :] *= corr[ri]` for the rows
     /// `share` gives this worker, straight out of [`softmax`](Tile::softmax) and before the sync
-    /// that hands the accumulator to [`mix`](Tile::mix). The correction is the worker's own
+    /// that hands the accumulator to the value matmul. The correction is the worker's own
     /// register — no factors tile, no cube-wide sweep, no barrier of its own. Under
     /// [`Plane`](RowShare::Plane) the lanes split the row's lines.
     pub fn rescale_rows(&mut self, corr: &Array<EA>, #[comptime] share: RowShare) {

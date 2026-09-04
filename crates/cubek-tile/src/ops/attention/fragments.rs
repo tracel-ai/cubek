@@ -1,8 +1,7 @@
 //! Attention's matmul leaves at fragment ownership: the plane is the worker, and each plane
-//! contracts every `planes`-th fragment of the output through the hardware instruction the space
-//! states. The [`columns`](super::columns) twin runs the same two matmuls at unit ownership under
-//! the software instruction; which one a call reaches is the space's
-//! [`instruction`](crate::Space::instruction) and nothing else.
+//! contracts every `planes`-th fragment of the output through the hardware instruction. The
+//! [`columns`](super::columns) twin runs the same two matmuls at unit ownership under the
+//! software instruction; the kernel picks which one it calls.
 //!
 //! Trailing-two-axes convention (the matmul's, and [`columns`](super::columns)'s): the two axes a
 //! matmul contracts are each tile's *last* two, and an axis above them is one the caller's walk has
@@ -25,7 +24,7 @@ use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// [`score`](Tile::score) under a hardware instruction: `self[r, c] = dot(q[r, :], k[c, :])`,
+    /// The score matmul under a hardware instruction: `self[r, c] = dot(q[r, :], k[c, :])`,
     /// one fragment per visit.
     ///
     /// `k` is read through a col-major operand fragment, so the score contracts `k`'s trailing
@@ -34,12 +33,7 @@ impl<EA: Float> Tile<EA> {
     /// Fragments whose columns all lie at or past `cols_bound` are skipped, their cells left to
     /// the softmax's mask probe. A fragment straddling the bound is computed whole, so the block
     /// the caller hands over must be readable to its edge.
-    pub(crate) fn score_fragments<EI: Numeric>(
-        &mut self,
-        q: &Tile<EI>,
-        k: &Tile<EI>,
-        cols_bound: usize,
-    ) {
+    pub fn score_fragments<EI: Numeric>(&mut self, q: &Tile<EI>, k: &Tile<EI>, cols_bound: usize) {
         let mma = comptime!(Contraction::of(
             Matmul::Score,
             &self.space,
@@ -157,14 +151,14 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`mix`](Tile::mix) under a hardware instruction:
+    /// The value matmul under a hardware instruction:
     /// `self[r, :] += Σ_{c < cols_bound} p[r, c] · val[c, :]`.
     ///
     /// Contraction steps at or past `cols_bound` are skipped: stale cache beyond the attended
     /// prefix (possibly NaN) must not ride a zero probability. A step straddling the bound is
     /// contracted whole, so the block must be readable to its edge. No fragment survives a
     /// barrier and no elementwise math touches one.
-    pub(crate) fn mix_fragments<EP: Numeric, EI: Numeric>(
+    pub fn mix_fragments<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
@@ -358,10 +352,9 @@ impl Contraction {
         }
         let (rows, cols) = trailing(out);
         let contracted = trailing(lhs).1;
-        // A visit covers the box the level the instruction sits on cuts, or the whole tile where
-        // that level cut nothing. A level *above* the instruction (a plane's slice of the grid)
-        // is not the fragment, so the box is read at the instruction's own level.
-        let (acc_box, lhs_box) = (instruction_box(out), instruction_box(lhs));
+        // A visit covers the finest tile the space states. A level above it (a plane's slice of
+        // the grid) is not the fragment, so the box is read all the way down.
+        let (acc_box, lhs_box) = (out.final_space(), lhs.final_space());
         let (m, n) = trailing(&acc_box);
         let (lhs_rows, k) = trailing(&lhs_box);
         let stored = match layout {
@@ -458,21 +451,11 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
             _ => (axis, extent),
         })
         .collect();
-    Tiling::over(&mut (), &extents)
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&extents)
+        .level(|l| {
             l.walk(&cuts);
         })
         .build()
-}
-
-/// The box the instruction's own level cuts, under whatever levels sit above it: a plane's
-/// slice of the grid is a level, and it is not the fragment.
-fn instruction_box(space: &Space) -> Space {
-    let mut level = space.clone();
-    while !level.is_final() && !level.divide().is_final() {
-        level = level.divide();
-    }
-    level.sub_tile_space()
 }
 
 /// The slice one plane owns, when the space states one: a level above the instruction, cut

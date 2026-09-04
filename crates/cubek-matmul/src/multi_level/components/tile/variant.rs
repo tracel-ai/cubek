@@ -25,17 +25,17 @@ pub trait TileVariant: Sized {
     fn can_cast_stage_element() -> bool;
 
     /// Whether this kind benefits from swizzling on the given client.
-    fn should_swizzle<R: Runtime>(client: &ComputeClient<R>) -> bool;
+    fn should_swizzle(client: &Client) -> bool;
 
     /// Compute resources required to run this kind.
     fn cubedim_resource() -> Result<CubeDimResource, InvalidConfigError>;
 
     /// Whether a specific MMA configuration is supported on the given client.
-    fn is_supported<R: Runtime>(client: &ComputeClient<R>, config: MmaConfig) -> bool;
+    fn is_supported(client: &Client, config: MmaConfig) -> bool;
 
     /// All sizes supported for the given element-type triple, if any.
-    fn supported_sizes<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn supported_sizes(
+        client: &Client,
         lhs_ty: ElemType,
         rhs_ty: ElemType,
         acc_ty: ElemType,
@@ -50,8 +50,8 @@ pub trait TileVariant: Sized {
     ) -> Self;
 
     /// Per-kind blueprint validation.
-    fn validate<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate(
+        client: &Client,
         blueprint: &BatchMatmulBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,

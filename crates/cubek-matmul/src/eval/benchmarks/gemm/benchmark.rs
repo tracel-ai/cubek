@@ -1,7 +1,6 @@
 use cubecl::{
-    Runtime, TestRuntime,
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
-    client::ComputeClient,
+    client::Client,
     future,
     prelude::*,
     std::tensor::TensorHandle,
@@ -33,8 +32,8 @@ fn bench_with<MP: MatmulPrecision>(
     strategy: &Strategy,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let elems = MatmulElems::new_deprecated::<MP>();
 
     let bench = GemmBench {
@@ -67,20 +66,20 @@ struct GemmBench {
     lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
     strategy: Strategy,
-    device: <TestRuntime as Runtime>::Device,
-    client: ComputeClient<TestRuntime>,
+    device: cubecl::Device,
+    client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
 fn make_uniform(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: [usize; 3],
     dtype: ElemType,
     seed: u64,
     lo: f32,
     hi: f32,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .uniform(seed, lo, hi)
@@ -88,11 +87,11 @@ fn make_uniform(
 }
 
 impl Benchmark for GemmBench {
-    type Input = (TensorHandle<TestRuntime>, TensorHandle<TestRuntime>);
+    type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let tl = matches!(self.lhs_layout, MatrixLayout::ColMajor);
         let tr = matches!(self.rhs_layout, MatrixLayout::ColMajor);
 
@@ -126,7 +125,7 @@ impl Benchmark for GemmBench {
     }
 
     fn execute(&self, (lhs, rhs): Self::Input) -> Result<Self::Output, String> {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         let out = TensorHandle::empty(
             &client,
             vec![self.b, self.m, self.n],
@@ -150,10 +149,10 @@ impl Benchmark for GemmBench {
     }
 
     fn name(&self) -> String {
-        let client = <TestRuntime as Runtime>::client(&self.device);
+        let client = self.device.client();
         format!(
             "{}-matmul-Lhs<{}-{}-{}>-Rhs<{}-{}-{}>-{}-{}-{}",
-            <TestRuntime as Runtime>::name(&client),
+            client.name(),
             self.dtypes.lhs_global,
             self.dtypes.lhs_stage,
             self.dtypes.lhs_register,

@@ -6,7 +6,7 @@ use crate::{
     definition::{InterpolateOptions, InterpolateProblem},
 };
 use cubecl::std::tensor::TensorHandle;
-use cubecl::{TestRuntime, client::ComputeClient, prelude::*, zspace::Strides};
+use cubecl::{client::Client, prelude::*, zspace::Strides};
 use cubek_test_utils::{HostData, Progress, TestInput};
 
 pub(crate) fn f32_elem_type() -> ElemType {
@@ -14,20 +14,20 @@ pub(crate) fn f32_elem_type() -> ElemType {
 }
 
 pub(crate) fn make_random_f32_host(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: Vec<usize>,
     seed: u64,
-) -> (TensorHandle<TestRuntime>, HostData) {
+) -> (TensorHandle, HostData) {
     TestInput::builder(client.clone(), shape)
         .uniform(seed, -1., 1.)
         .generate_with_f32_host_data()
 }
 
 pub(crate) fn make_zero_handle(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: Vec<usize>,
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
         .zeros()
@@ -35,7 +35,7 @@ pub(crate) fn make_zero_handle(
 }
 
 pub fn kernel_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: InterpolateProblem,
     strategy: InterpolateStrategy,
     seed: u64,
@@ -47,7 +47,7 @@ pub fn kernel_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: InterpolateProblem,
     seed: u64,
     progress: Option<&Progress>,

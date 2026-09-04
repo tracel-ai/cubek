@@ -4,8 +4,7 @@
 //! is one team spanning every unit. The hardware twin, where the worker is a plane and the visit
 //! a fragment, is [`fragments`](super::fragments).
 //!
-//! Reached through [`score`](crate::Tile::score) and [`mix`](crate::Tile::mix), which read the
-//! instruction off the accumulator's space. Trailing-two-axes convention
+//! Called by name from the kernel, which picks the arm. Trailing-two-axes convention
 //! (matmul's): leading degenerate axes ride the flat index.
 
 use cubecl::prelude::*;
@@ -14,10 +13,10 @@ use crate::{instruction::registers::horizontal, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// [`score`](Tile::score) under the software instruction. Each unit streams whole `k` rows
+    /// The score matmul under the software instruction. Each unit streams whole `k` rows
     /// for its owned columns, so a gmem `k` is read once per team; `q` is read `cols` times over
     /// and belongs in shared memory.
-    pub(crate) fn score_columns<EI: Numeric>(
+    pub fn score_columns<EI: Numeric>(
         &mut self,
         q: &Tile<EI>,
         k: &Tile<EI>,
@@ -84,14 +83,14 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`mix`](Tile::mix) under the software instruction. A unit owns one `(row chunk, value
+    /// The value matmul under the software instruction. A unit owns one `(row chunk, value
     /// line)` pair at a time, cyclically: the line is the inner digit, so adjacent units read
     /// adjacent lines of `val` and a gmem `val` is read once per team, coalesced. The rows are the
     /// other digit because a leaf spread over the value lines alone would sit entirely on the axis
     /// vectorization divides, where widening starves the grid and narrowing starves the bus.
     ///
     /// The rescale rides the same visit because each cell has exactly one owner here.
-    pub(crate) fn mix_columns<EP: Numeric, EI: Numeric>(
+    pub fn mix_columns<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,

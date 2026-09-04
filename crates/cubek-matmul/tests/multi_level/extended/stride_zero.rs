@@ -6,7 +6,6 @@
 //! `into_contiguous`), while the plane strategies reject it. The `gemm_*` tests
 //! pin that behaviour.
 
-use cubecl::{Runtime, TestRuntime};
 use cubek_matmul::{multi_level::Strategy as MultiLevel, routine::BlueprintStrategy};
 use cubek_std::MatrixLayout;
 use cubek_test_utils::TestOutcome;
@@ -216,7 +215,7 @@ fn gemm_broadcast_outcome(
     lhs_layout: MatrixLayout,
     rhs_layout: MatrixLayout,
 ) -> Option<TestOutcome> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let gemm = || MultiLevel::Gemm(BlueprintStrategy::default()).into();
     let baseline = run_with_strides(
         client.clone(),

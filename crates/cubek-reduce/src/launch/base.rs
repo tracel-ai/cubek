@@ -55,10 +55,10 @@ impl ReduceWithIndicesDtypes {
 ///
 /// Returns the blueprint, the launch settings, and the output vectorization axis.
 #[allow(clippy::too_many_arguments)]
-fn prepare_reduce_launch<Run: Runtime>(
-    client: &ComputeClient<Run>,
-    input: &TensorBinding<Run>,
-    output: &TensorBinding<Run>,
+fn prepare_reduce_launch(
+    client: &Client,
+    input: &TensorBinding,
+    output: &TensorBinding,
     reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
@@ -86,7 +86,7 @@ fn prepare_reduce_launch<Run: Runtime>(
 
     let out_vec_axis = output_vectorization_axis(&input.strides, reduce_axis, vectorization_mode);
 
-    let (vector_size_input, vector_size_output) = generate_vector_size::<Run>(
+    let (vector_size_input, vector_size_output) = generate_vector_size(
         client,
         input,
         output,
@@ -95,6 +95,27 @@ fn prepare_reduce_launch<Run: Runtime>(
         vectorization_mode,
         &strategy.vectorization,
     );
+    // The rolled top-k selection network (`k * k > TOPK_UNROLL_BUDGET`) keeps
+    // per-lane accumulator and finalize arrays whose dynamic indexing places
+    // them in per-thread local memory, and their footprint scales with
+    // `k * vector_size` (about 48 bytes per slot at width 8). Past roughly
+    // 4 KiB per thread the NVIDIA Vulkan driver corrupts memory around the
+    // local-memory window (observed on 610.62 with an RTX 5090, with both the
+    // SPIR-V and the WGSL compiler: k = 64 at width 8 is clean, k = 96 faults):
+    // the kernel still returns correct results, but a later dispatch dies with
+    // `VK_ERROR_DEVICE_LOST`. Keep the rolled path scalar - its cost is
+    // dominated by the k-slot selection network, not the input read - so the
+    // slots shrink about six-fold, which holds k = 300, the object-detection
+    // case that exposed this, comfortably below the fault threshold.
+    let (vector_size_input, vector_size_output) = match &problem.instruction {
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k)
+            if *k * *k > crate::components::instructions::TOPK_UNROLL_BUDGET =>
+        {
+            (1, 1)
+        }
+        _ => (vector_size_input, vector_size_output),
+    };
+
     // Both fused outputs share this width, so it must be legal for the index dtype too.
     // Cap to the largest width the index dtype supports that does not exceed the values
     // width (widths are powers of two, so the cap still divides the layout constraints the
@@ -141,10 +162,10 @@ fn prepare_reduce_launch<Run: Runtime>(
 /// See the main entrypoint `reduce` in `lib.rs` for an example how to call this function
 /// with the appropriate assumptions.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn launch_reduce<Run: Runtime>(
-    client: &ComputeClient<Run>,
-    input: TensorBinding<Run>,
-    output: TensorBinding<Run>,
+pub(crate) fn launch_reduce(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceDtypes,
@@ -154,7 +175,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
         .required_address_type(dtypes.input.size())
         .max(output.required_address_type(dtypes.output.size()));
 
-    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch::<Run>(
+    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch(
         client,
         &input,
         &output,
@@ -167,7 +188,7 @@ pub(crate) fn launch_reduce<Run: Runtime>(
     )?;
 
     unsafe {
-        reduce_kernel::launch_unchecked::<TensorArgs, Run>(
+        reduce_kernel::launch_unchecked::<TensorArgs>(
             client,
             settings.cube_count,
             settings.cube_dim,
@@ -227,34 +248,32 @@ pub fn reduce_kernel<
 /// fused `to_output_both_*` conversions ignore the mode; it only sizes the
 /// accumulator, and `Indices` is what turns coordinate tracking on.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
-    client: &ComputeClient<Run>,
-    input: TensorBinding<Run>,
-    values: TensorBinding<Run>,
-    indices: TensorBinding<Run>,
+pub(crate) fn launch_reduce_with_indices(
+    client: &Client,
+    input: TensorBinding,
+    values: TensorBinding,
+    indices: TensorBinding,
     reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceWithIndicesDtypes,
     operation: ReduceOperationConfig,
 ) -> Result<(), ReduceError> {
     match operation {
-        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => {
-            launch_fused::<Run, TopK>(
-                client,
-                input,
-                values,
-                indices,
-                reduce_axis,
-                strategy,
-                dtypes,
-                TopKConfig {
-                    k,
-                    output: ReduceOutputMode::Indices,
-                },
-                ReduceOperationConfig::ArgTopK(k),
-            )
-        }
-        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Run, Max>(
+        ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k) => launch_fused::<TopK>(
+            client,
+            input,
+            values,
+            indices,
+            reduce_axis,
+            strategy,
+            dtypes,
+            TopKConfig {
+                k,
+                output: ReduceOutputMode::Indices,
+            },
+            ReduceOperationConfig::ArgTopK(k),
+        ),
+        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Max>(
             client,
             input,
             values,
@@ -265,7 +284,7 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
             ReduceOutputMode::Indices,
             ReduceOperationConfig::ArgMax,
         ),
-        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Run, Min>(
+        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Min>(
             client,
             input,
             values,
@@ -283,11 +302,11 @@ pub(crate) fn launch_reduce_with_indices<Run: Runtime>(
 /// The launch shared by every fused operation: only the instruction family, its
 /// config, and the `Arg*` config sizing the blueprint differ.
 #[allow(clippy::too_many_arguments)]
-fn launch_fused<Run: Runtime, R: ReduceWithIndicesFamily>(
-    client: &ComputeClient<Run>,
-    input: TensorBinding<Run>,
-    values: TensorBinding<Run>,
-    indices: TensorBinding<Run>,
+fn launch_fused<R: ReduceWithIndicesFamily>(
+    client: &Client,
+    input: TensorBinding,
+    values: TensorBinding,
+    indices: TensorBinding,
     reduce_axis: usize,
     strategy: ReduceStrategy,
     dtypes: ReduceWithIndicesDtypes,
@@ -299,7 +318,7 @@ fn launch_fused<Run: Runtime, R: ReduceWithIndicesFamily>(
         .max(values.required_address_type(dtypes.values.size()))
         .max(indices.required_address_type(dtypes.indices.size()));
 
-    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch::<Run>(
+    let (blueprint, settings, out_vec_axis) = prepare_reduce_launch(
         client,
         &input,
         &values,
@@ -318,7 +337,7 @@ fn launch_fused<Run: Runtime, R: ReduceWithIndicesFamily>(
     )?;
 
     unsafe {
-        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, R, Run>(
+        reduce_with_indices_kernel::launch_unchecked::<TensorArgs, R>(
             client,
             settings.cube_count,
             settings.cube_dim,

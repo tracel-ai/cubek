@@ -1,5 +1,5 @@
 mod matmul_unit {
-    use cubecl::{TestRuntime, client::ComputeClient};
+    use cubecl::{TestRuntime, client::Client};
     use cubek_matmul::{
         definition::MatmulProblem,
         multi_level::{
@@ -10,7 +10,7 @@ mod matmul_unit {
 
     use crate::harness::{test_matmul_strategy, test_matmul_test_strategy};
 
-    fn launch_simple(c: ComputeClient<TestRuntime>, p: MatmulProblem, bp: BatchMatmulBlueprint) {
+    fn launch_simple(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
         test_matmul_strategy(
             c,
             p,
@@ -18,11 +18,7 @@ mod matmul_unit {
         );
     }
 
-    fn launch_double_buffering(
-        c: ComputeClient<TestRuntime>,
-        p: MatmulProblem,
-        bp: BatchMatmulBlueprint,
-    ) {
+    fn launch_double_buffering(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
         test_matmul_strategy(
             c,
             p,
@@ -30,11 +26,7 @@ mod matmul_unit {
         );
     }
 
-    fn launch_interleaved(
-        c: ComputeClient<TestRuntime>,
-        p: MatmulProblem,
-        bp: BatchMatmulBlueprint,
-    ) {
+    fn launch_interleaved(c: Client, p: MatmulProblem, bp: BatchMatmulBlueprint) {
         test_matmul_test_strategy(
             c,
             p,

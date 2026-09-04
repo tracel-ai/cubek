@@ -17,7 +17,7 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime,
+    CubeCount, CubeDim,
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
     prelude::*,
@@ -33,8 +33,12 @@ const N: Axis = Axis(1);
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
 
+/// The leaf's register block, held fixed across every kernel here.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
 /// The split contraction: a batched matmul whose batch is the split index, writing one partial
-/// per split. `mm` owns the init, so the partials buffer needs no zeroing.
+/// per split. One region per cube, contracted whole at the leaf, so `mm_with` owns the init and
+/// the partials buffer needs no zeroing.
 #[cube(launch)]
 fn split_partials<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -45,8 +49,16 @@ fn split_partials<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut partials = partials.tile(space);
-    partials.mm(&a, &b, Semiring::SUM_PROD);
+    let partials = partials.tile(space);
+    for region in Walk::over(partials.op_space(&a, &b)) {
+        let mut partials_cube = partials.at(&region);
+        partials_cube.mm_with(
+            &a.at(&region),
+            &b.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// The second pass: fold the split axis away.
@@ -58,14 +70,17 @@ fn reduce_splits<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let partials = partials.tile(comptime!(space.clone()));
-    let mut out = out.tile(space);
-    out.reduce_axis(&partials, Monoid::Sum);
+    let out = out.tile(space);
+    for region in Walk::over(out.reduce_space(&partials)) {
+        let mut out_cube = out.at(&region);
+        out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
+    }
 }
 
 /// The whole pipeline over `(m, n, k)` cut into `splits`: the partials, then the fold. Returns
 /// both, since a wrong total and a wrong partial are different bugs.
 fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostData) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     assert!(k.is_multiple_of(splits), "the test shapes divide evenly");
     let inside = k / splits;
@@ -91,17 +106,16 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let split_space = Tiling::over(&[(M, m), (N, n), (KB, splits), (KI, inside)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
                 .walk(&[(M, m), (N, n), (KI, inside)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
-    split_partials::launch::<TestRuntime>(
+    split_partials::launch(
         &client,
         split_space.cube_count(),
         split_space.cube_dim(&client),
@@ -133,15 +147,14 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Tiling::over(&mut (), &[(M, m), (N, n), (KB, splits)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let fold_space = Tiling::over(&[(M, m), (N, n), (KB, splits)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, 1)])
                 .walk(&[(N, n), (KB, splits)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    reduce_splits::launch::<TestRuntime>(
+    reduce_splits::launch(
         &client,
         fold_space.cube_count(),
         fold_space.cube_dim(&client),
@@ -247,7 +260,7 @@ fn atomic_add_probe(out: &mut Tensor<Atomic<f32>>) {
 
 #[test]
 fn the_device_folds_floats_atomically_across_cubes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -266,7 +279,7 @@ fn the_device_folds_floats_atomically_across_cubes() {
         .zeros()
         .generate_without_host_data();
 
-    atomic_add_probe::launch::<TestRuntime>(
+    atomic_add_probe::launch(
         &client,
         CubeCount::new_1d(cubes),
         CubeDim::new_single(),
@@ -287,9 +300,9 @@ fn the_device_folds_floats_atomically_across_cubes() {
 
 const K: Axis = Axis(4);
 
-/// The output is bound as an atomic buffer and drained through a folding sink. `Residence::Register`
-/// on it is not decoration: the contraction runs in registers and only the drain touches the
-/// destination, which is the one shape a write-only fold admits.
+/// The output is bound as an atomic buffer and drained through a folding sink. The register
+/// accumulator is not decoration: the contraction runs in registers and only the drain touches
+/// the destination, which is the one shape a write-only fold admits.
 #[cube(launch)]
 fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -300,14 +313,21 @@ fn atomic_split_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(space);
-    let mut acc = c.accumulate::<E, _>(&a, Monoid::Sum);
-    acc.mm(&a, &b, Semiring::SUM_PROD);
+    let mut c = out.tile(space);
+    // The accumulator mirrors the output's grid at this level: opened above the walk, one
+    // fragment per region, drained once through the sink after it.
+    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut acc_region = acc.at(&region);
+        acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
 fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
     let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -327,15 +347,14 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m), (N, n)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -349,7 +368,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         dtype,
@@ -362,7 +381,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
 /// `K` into the output and the sum is the whole.
 #[test]
 fn an_atomic_drain_folds_the_slices_back_together() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -395,7 +414,7 @@ fn an_atomic_drain_folds_the_slices_back_together() {
 /// the caller, which is what makes them interchangeable at launch.
 #[test]
 fn the_atomic_drain_agrees_with_the_workspace() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -432,7 +451,7 @@ fn the_atomic_drain_agrees_with_the_workspace() {
 /// this is the half that a blanket "lane zero writes" would silently drop.
 #[test]
 fn an_atomic_drain_with_lanes_of_their_own() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -465,17 +484,15 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(N, per_lane)])
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(plane_size), &[(N, per_lane)])
                 .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size)
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -489,7 +506,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         dtype,
@@ -517,7 +534,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
 /// about instances that cannot meet in registers, not about cubes in particular.
 #[test]
 fn an_atomic_drain_folds_across_planes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -547,15 +564,14 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
             l.distribute(planes(), &[(K, k / num_planes)])
                 .walk(&[(M, m), (N, n)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    atomic_split_matmul::launch::<TestRuntime>(
+    atomic_split_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -569,7 +585,7 @@ fn an_atomic_drain_folds_across_planes() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         dtype,
@@ -591,7 +607,7 @@ fn an_atomic_drain_folds_across_planes() {
 
 /// The output contracted *in place*, with no register accumulator at all.
 ///
-/// The verb is still `mm`, and it is still true: across all the cubes the operation is `c = a·b`.
+/// The verb is still `mm_with`, and it is still true: across all the cubes the operation is `c = a·b`.
 /// What the split moves is the *init* it owns. A cell belongs to several cubes, so none of them
 /// may seed it, and the buffer instead arrives holding the fold's identity: zeroed before the
 /// launch rather than in the kernel. Every write is then a `+=` into a cell that already holds
@@ -607,13 +623,21 @@ fn atomic_split_matmul_in_place<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = out.tile(space);
-    c.mm(&a, &b, Semiring::SUM_PROD);
+    let c = out.tile(space);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_region = c.at(&region);
+        c_region.mm_with(
+            &a.at(&region),
+            &b.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 #[test]
 fn a_folding_output_contracts_in_place() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !client
         .properties()
         .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
@@ -643,15 +667,14 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
                 .walk(&[(M, m), (N, n)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    atomic_split_matmul_in_place::launch::<TestRuntime>(
+    atomic_split_matmul_in_place::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -665,7 +688,6 @@ fn a_folding_output_contracts_in_place() {
         ),
         AccumulateArgLaunch::new(
             out.clone().binding().into_tensor_arg(),
-            // No residence stated: the contraction happens where the output already lies.
             TileSpec::direct(&[M, N]),
         ),
         space,

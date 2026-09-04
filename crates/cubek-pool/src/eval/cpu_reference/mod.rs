@@ -9,16 +9,12 @@ use crate::{
     },
     eval::cpu_reference::{
         backward::{run_adaptive_avg_pool_backward, run_avg_pool_backward, run_max_pool_backward},
-        forward::{
-            row_major_strides_vec, run_adaptive_avg_pool, run_avg_pool, run_max_pool,
-            run_max_pool_with_indices,
-        },
+        forward::{run_adaptive_avg_pool, run_avg_pool, run_max_pool, run_max_pool_with_indices},
         geometry::PoolGeometry,
     },
 };
 use cubecl::{
-    TestRuntime,
-    client::ComputeClient,
+    client::Client,
     prelude::*,
     std::tensor::TensorHandle,
     zspace::{Shape, Strides},
@@ -34,20 +30,20 @@ pub(crate) fn i32_elem_type() -> ElemType {
 }
 
 pub(crate) fn make_random_f32_host(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: Vec<usize>,
     seed: u64,
-) -> (TensorHandle<TestRuntime>, HostData) {
+) -> (TensorHandle, HostData) {
     TestInput::builder(client.clone(), shape)
         .uniform(seed, -1., 1.)
         .generate_with_f32_host_data()
 }
 
 pub(crate) fn make_zero_handle(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: Vec<usize>,
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), shape)
         .dtype(dtype)
         .zeros()
@@ -55,7 +51,7 @@ pub(crate) fn make_zero_handle(
 }
 
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: PoolProblem,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -70,7 +66,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: PoolProblem,
     seed: u64,
     progress: Option<&Progress>,
@@ -118,12 +114,7 @@ pub fn cpu_reference_pool_backward<const N: usize>(
     problem: PoolBackwardProblem<N>,
 ) -> HostData {
     let out_dims = grad_output.shape.to_vec();
-    let input_shape = Shape::from(vec![
-        problem.out_grad_shape[0],
-        problem.input_size[0],
-        problem.input_size[1],
-        problem.out_grad_shape[3],
-    ]);
+    let input_shape = problem.input_shape();
     let in_dims = input_shape.to_vec();
     let in_strides = row_major_strides_vec(&in_dims);
 
@@ -138,8 +129,13 @@ pub fn cpu_reference_pool_backward<const N: usize>(
         PoolMode::Avg(_opts) => {
             run_avg_pool_backward(grad_output, _opts, &in_dims, &out_dims, &in_strides)
         }
-        PoolMode::AdaptiveAvg(_opts) => {
-            run_adaptive_avg_pool_backward(grad_output, _opts, &in_dims, &out_dims, &in_strides)
+        PoolMode::AdaptiveAvg(opts) => {
+            assert_eq!(
+                &out_dims[1..N + 1],
+                opts.output_size.as_slice(),
+                "adaptive output-gradient shape must match options"
+            );
+            run_adaptive_avg_pool_backward::<N>(grad_output, &in_dims, &out_dims, &in_strides)
         }
     };
 
@@ -174,4 +170,17 @@ pub(crate) fn decode_index(mut index: usize, shape: &[usize], strides: &[usize])
         index %= strides[i];
     }
     coords
+}
+
+pub(crate) fn decode_index_simple(index: usize, shape: &[usize]) -> Vec<usize> {
+    let strides = row_major_strides_vec(shape);
+    decode_index(index, shape, &strides)
+}
+
+pub(crate) fn row_major_strides_vec(shape: &[usize]) -> Vec<usize> {
+    let mut strides = vec![1; shape.len()];
+    for i in (0..shape.len() - 1).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
 }

@@ -108,6 +108,25 @@ pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
         ));
     }
 
+    // Large `k`, where the selection network's `O(reduce_len * k)` shape shows.
+    // The catalogue stopped at `k = 5`, which is why the cost of large `k` went
+    // unnoticed: on a 5090 these run 0.18 ms at `k = 8` and 370 ms at `k = 256`.
+    // `k = 32` is the interesting point — it is the largest that still fits the
+    // unroll budget, and it is 5.8x faster for it. Fused only: what is being
+    // measured is the accumulator, not the launch pattern.
+    for k in [16, 32, 64, 128, 256] {
+        entries.push(CatalogEntry::new(
+            format!("topk{k}_fused_axis2_32x512x4095"),
+            format!("TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"),
+            ReduceProblem {
+                shape: shape(),
+                axis: 2,
+                config: ReduceOperationConfig::TopK(k),
+                kind: ReduceBenchKind::Fused,
+            },
+        ));
+    }
+
     // The same comparison for min and max, which reach `reduce_with_indices`
     // through their own collapsed instructions rather than the top-k one.
     for (name, label, config) in [

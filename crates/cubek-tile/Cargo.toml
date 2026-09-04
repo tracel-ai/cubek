@@ -18,12 +18,13 @@ extended = ["heavy"]
 full = ["extended"]
 
 [dependencies]
-bytemuck = { workspace = true }
 cubecl = { workspace = true, features = ["stdlib", "test-runtime"] }
 cubecl-common = { workspace = true }
+
+bytemuck = { workspace = true }
 half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-cubek-quant = { path = "./../cubek-quant/", default-features = false }
-cubek-test-utils = { path = "./../cubek-test-utils/", default-features = false }
+cubek-quant = { workspace = true }
+cubek-test-utils = { workspace = true }

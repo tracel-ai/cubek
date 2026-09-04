@@ -2,9 +2,11 @@ use super::{
     filter::{SeparableFilter, SeparableFilterFamily, SeparableWeights, TapDistance},
     space::*,
 };
+use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Phase, Semiring, Space, Tile, TileArg, affine_along, separable_product, sum_of,
+    Axis, Phase, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg, Walk, affine_along,
+    pipelined, separable_product, sum_of,
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -46,9 +48,13 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     #[comptime] col_offset: i32,
     #[comptime] col_divisor: u32,
     #[comptime] radius: usize,
-    #[comptime] space: Space,
+    #[comptime] plan: InterpolateSpace,
+    #[comptime] stage: InputStage,
+    #[comptime] padded: Option<usize>,
+    #[comptime] config: RegisterBlock,
     #[define(E)] _dtype: ElemType,
 ) {
+    let space = comptime!(plan.space());
     let input = input.tile(comptime!(space.clone()));
 
     let row = tap_distance(TAP_H, OUTPUT_H, row_scale, row_offset, row_divisor, radius);
@@ -65,6 +71,58 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         None => weights,
     };
 
-    let mut output = output.tile(space);
-    output.mm(&weights, &input, Semiring::SUM_PROD);
+    let output = output.tile(space);
+
+    // This cube's box of the output, walked over the taps and its channel blocks. Whether the
+    // input is staged into shared memory for each block is the launch's call on the window's
+    // size, stated as `stage`; the walk is the same either way.
+    let cubes = Walk::over(output.op_space(&weights, &input));
+    match comptime!(stage) {
+        InputStage::Smem => {
+            let mut ring =
+                Ring::smem_single_at(&cubes, &input, StageStorage::Strided, padded, 1usize);
+            pipelined(cubes, &mut ring, |slot, block| {
+                let output_block = output.at(block);
+                let weights_block = weights.at(block);
+                slot.consume(|input_block| {
+                    interpolate_block(&output_block, &weights_block, input_block, config);
+                });
+            });
+        }
+        InputStage::InPlace => {
+            for block in cubes {
+                interpolate_block(
+                    &output.at(&block),
+                    &weights.at(&block),
+                    &input.at(&block),
+                    config,
+                );
+            }
+        }
+    }
+}
+
+/// One block of the cube's walk: this plane's rows, then this lane's columns and channel
+/// lines, each output cell contracting its whole tap window at the leaf under `config`.
+#[cube]
+fn interpolate_block<E: Float>(
+    output: &Tile<E>,
+    weights: &Tile<E>,
+    input: &Tile<E>,
+    #[comptime] config: RegisterBlock,
+) {
+    for region in Walk::over(output.op_space(weights, input)) {
+        let output_plane = output.at(&region);
+        let weights_plane = weights.at(&region);
+        let input_plane = input.at(&region);
+        for cell in Walk::over(output_plane.op_space(&weights_plane, &input_plane)) {
+            let mut output_cell = output_plane.at(&cell);
+            output_cell.mm_with(
+                &weights_plane.at(&cell),
+                &input_plane.at(&cell),
+                config,
+                Semiring::SUM_PROD,
+            );
+        }
+    }
 }

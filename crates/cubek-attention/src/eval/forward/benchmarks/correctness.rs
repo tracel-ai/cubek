@@ -1,4 +1,4 @@
-use cubecl::{Runtime, TestRuntime, prelude::Scalar};
+use cubecl::prelude::Scalar;
 use cubek_test_utils::{HostData, Progress};
 
 use crate::eval::forward::cpu_reference::{cpu_reference_result, strategy_result};
@@ -18,8 +18,8 @@ impl cubek_test_utils::Correctness for AttentionCorrectness {
         spec: &AttentionSpec,
         seeds: &[u64],
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let dtypes = AttentionGlobalTypes::from_single_float_dtype(
             half::f16::elem_type_native(),
             AttentionGlobalTypes::mask_dtype(&client),
@@ -39,8 +39,8 @@ impl cubek_test_utils::Correctness for AttentionCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         let dtypes = AttentionGlobalTypes::from_single_float_dtype(
             half::f16::elem_type_native(),
             AttentionGlobalTypes::mask_dtype(&client),

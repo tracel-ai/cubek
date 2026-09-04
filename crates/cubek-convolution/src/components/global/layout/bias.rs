@@ -39,14 +39,14 @@ impl Layout for BiasLayout {
 }
 
 impl ViewLayoutLaunchArg for BiasLayout {
-    type RuntimeArg<R: Runtime> = ();
+    type RuntimeArg = ();
     type CompilationArg = ();
 
-    fn register<R: Runtime, B: MemoryArg>(
-        _: Self::RuntimeArg<R>,
+    fn register<B: MemoryArg>(
+        _: Self::RuntimeArg,
         buffer: &B,
         _: Type,
-        launcher: &mut KernelLauncher<R>,
+        launcher: &mut KernelLauncher,
     ) {
         let shape = buffer.len();
         <u32 as LaunchArg>::register(shape as u32, launcher);

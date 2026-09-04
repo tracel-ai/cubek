@@ -16,7 +16,7 @@ use crate::{
 use cubecl::{
     features::{Tma, TypeUsage},
     std::tensor::{MatrixBatchLayout, matrix_batch_layout},
-    {Runtime, client::ComputeClient, frontend::TensorBinding},
+    {client::Client, frontend::TensorBinding},
 };
 use cubek_std::InputBinding;
 
@@ -25,11 +25,11 @@ use cubek_std::InputBinding;
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref<R: Runtime, A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref<A: BatchMatmulRoutine<()>>(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -42,7 +42,7 @@ pub fn launch_ref<R: Runtime, A: BatchMatmulRoutine<()>>(
         rhs.data_elem_size(),
         dtypes.acc_global.size(),
     );
-    launch_inner_ref::<R, TensorArgs, A>(
+    launch_inner_ref::<TensorArgs, A>(
         client,
         lhs,
         rhs,
@@ -59,11 +59,11 @@ pub fn launch_ref<R: Runtime, A: BatchMatmulRoutine<()>>(
 /// Cmma will be used if available and enabled,
 /// otherwise it will fall back on a non-cmma implementation
 #[allow(clippy::result_large_err)]
-pub fn launch_ref_tma<R: Runtime, A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+pub fn launch_ref_tma<A: BatchMatmulRoutine<(), Blueprint = BatchMatmulBlueprint>>(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
@@ -100,7 +100,7 @@ pub fn launch_ref_tma<R: Runtime, A: BatchMatmulRoutine<(), Blueprint = BatchMat
     };
 
     let vector_sizes = AvailableVectorSizes::from_type_size_tma(client, dtypes.acc_global.size());
-    launch_inner_ref::<R, TensorMapArgs, A>(
+    launch_inner_ref::<TensorMapArgs, A>(
         client,
         lhs,
         rhs,
@@ -112,11 +112,11 @@ pub fn launch_ref_tma<R: Runtime, A: BatchMatmulRoutine<(), Blueprint = BatchMat
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-fn launch_inner_ref<R: Runtime, MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
-    client: &ComputeClient<R>,
-    lhs: InputBinding<R>,
-    rhs: InputBinding<R>,
-    out: TensorBinding<R>,
+fn launch_inner_ref<MA: MatmulArgs<Config = ()>, A: BatchMatmulRoutine<()>>(
+    client: &Client,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     blueprint_strategy: &BlueprintStrategy<(), A>,
     vector_sizes: AvailableVectorSizes,
     dtypes: &mut MatmulElems,
@@ -183,7 +183,7 @@ where
         vector_sizes.rhs = 1;
     }
 
-    launch_kernel_concrete::<MA, R, A>(
+    launch_kernel_concrete::<MA, A>(
         client,
         lhs,
         rhs,

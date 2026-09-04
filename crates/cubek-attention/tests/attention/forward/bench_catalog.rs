@@ -7,7 +7,7 @@
 
 #![cfg(feature = "benchmarks")]
 
-use cubecl::{Runtime, TestRuntime, prelude::Scalar};
+use cubecl::prelude::Scalar;
 use cubek_attention::eval::forward::benchmarks::{AttentionCorrectness, strategies};
 use cubek_attention::eval::forward::cpu_reference::attention_epsilon;
 use cubek_attention::eval::problem::{AttentionSpec, problems};
@@ -52,8 +52,8 @@ fn run_pair(strategy_id: &str, problem_id: &str) {
 /// Mirror `AttentionCorrectness::kernel_result`'s dtype setup so the epsilon
 /// matches the precision the kernel actually ran with.
 fn elems_for(spec: &AttentionSpec) -> AttentionElems {
-    let device = <TestRuntime as Runtime>::Device::default();
-    let client = <TestRuntime as Runtime>::client(&device);
+    let device = cubecl::test_device();
+    let client = device.client();
     let global_dtypes = AttentionGlobalTypes::from_single_float_dtype(
         half::f16::elem_type_native(),
         AttentionGlobalTypes::mask_dtype(&client),

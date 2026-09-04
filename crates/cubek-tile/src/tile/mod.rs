@@ -3,6 +3,7 @@
 //! quantized store carries ([`quant`]). The launch surface (specs, deliveries, builder)
 //! lives in `physical/`; a kernel's first line is [`Tile::of`] on a plain tensor.
 
+mod accumulator;
 mod atomic;
 mod base;
 mod cmma;

@@ -12,7 +12,6 @@ mod reduce;
 mod softmax;
 
 pub use attention::*;
-pub(crate) use matmul::*;
 pub use normalize::*;
 pub use softmax::*;
 // mul and reduce add `Tile` impls only; nothing to re-export.

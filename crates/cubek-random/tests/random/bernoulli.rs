@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, prelude::*, std::tensor::TensorHandle};
+use cubecl::{prelude::*, std::tensor::TensorHandle};
 use cubek_random::*;
 
 #[test]
@@ -32,7 +32,7 @@ fn wald_wolfowitz_runs_test() {
 }
 
 fn get_random_bernoulli_data(shape: &[usize], prob: f32) -> Vec<TestDType> {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let output = TensorHandle::empty(&client, shape.to_vec(), TestDType::elem_type_native());
 
     with_seed(0, || {

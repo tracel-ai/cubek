@@ -4,7 +4,7 @@ use super::super::{decompose_linear, shape_divmod};
 use crate::definition::{AvgPoolOptions, PoolError};
 use crate::kernel::forward::{Position, view4d};
 use cubecl::{
-    CubeDim, Runtime, calculate_cube_count_elemwise,
+    CubeDim, calculate_cube_count_elemwise,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
@@ -121,11 +121,11 @@ fn loop_ranges(
     (oh_start, oh_end, ow_start, ow_end)
 }
 
-pub(crate) fn avg_pool2d_backward_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    out_grad: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn avg_pool2d_backward_launch(
+    client: &Client,
+    input: TensorBinding,
+    out_grad: TensorBinding,
+    output: TensorBinding,
     options: AvgPoolOptions<2>,
     dtype: ElemType,
 ) -> Result<(), PoolError> {

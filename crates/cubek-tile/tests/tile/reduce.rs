@@ -7,7 +7,6 @@
 #![allow(non_snake_case)]
 
 use cubecl::{
-    Runtime, TestRuntime,
     prelude::*,
     zspace::{Shape, shape},
 };
@@ -23,8 +22,11 @@ const K1: Axis = Axis(3);
 const K2: Axis = Axis(4);
 const B: Axis = Axis(5);
 
-/// `c.zero(); c.mma(a, b)` over whatever space it is handed: the same body serves the one-axis
-/// and the two-axis contraction, which is the point.
+/// The leaf's register block, held fixed across every kernel here.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
+/// `c.zero(); c.mma(a, b)` region by region over whatever one-level space it is handed: the
+/// same body serves the one-axis and the two-axis contraction, which is the point.
 #[cube(launch)]
 fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -37,16 +39,54 @@ fn reduce_matmul_kernel<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
     c.zero();
-    c.mma(&a, &b, Semiring::SUM_PROD);
+    for region in Walk::over(c.op_space(&a, &b)) {
+        let mut c_region = c.at(&region);
+        c_region.mma_with(
+            &a.at(&region),
+            &b.at(&region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
-/// Seeds `output` with the identity the fold starts from, then reduces `input` into it.
-/// One body serves every monoid, which is the point: the kernels below differed only in this
-/// seed and the `Monoid` passed to `reduce_axis`.
+/// Where the reduced input is read from across the one level these kernels walk: where it lies,
+/// or a shared-memory ring `depth` slots deep.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Read {
+    InPlace,
+    Smem { depth: usize },
+}
+
+/// Seeds `output` with the identity the fold starts from, then reduces `input` into it region by
+/// region. One body serves every monoid, which is the point: the kernels below differed only in
+/// this seed and the `Monoid` passed to `reduce_axis`.
 #[cube]
-fn reduce_body<E: Numeric>(input: &Tile<E>, output: &mut Tile<E>, #[comptime] monoid: Monoid) {
+fn reduce_body<E: Numeric>(
+    input: &Tile<E>,
+    output: &mut Tile<E>,
+    #[comptime] read: Read,
+    #[comptime] monoid: Monoid,
+) {
     output.init(Monoid::identity::<E>(monoid));
-    output.reduce_axis(input, monoid);
+    let walk = Walk::over(output.reduce_space(input));
+    match comptime!(read) {
+        Read::InPlace => {
+            for region in walk {
+                let mut out_region = output.at(&region);
+                out_region.reduce_axis_accumulate(&input.at(&region), monoid);
+            }
+        }
+        Read::Smem { depth } => {
+            let mut ring = Ring::smem_single(&walk, input, StageStorage::Strided, depth);
+            pipelined(walk, &mut ring, |slot, region| {
+                let mut out_region = output.at(region);
+                slot.consume(|input_s| {
+                    out_region.reduce_axis_accumulate(input_s, monoid);
+                });
+            });
+        }
+    }
 }
 
 #[cube(launch)]
@@ -54,12 +94,13 @@ fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, monoid);
+    reduce_body(&input, &mut output, read, monoid);
 }
 
 #[cube(launch)]
@@ -67,36 +108,36 @@ fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
+    #[comptime] read: Read,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, monoid);
+    reduce_body(&input, &mut output, read, monoid);
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
-/// `stage` decides whether the recipe is evaluated at the leaf or first materialized into shared
+/// `read` decides whether the recipe is evaluated at the leaf or first materialized into shared
 /// memory; either way the source's partial-tile mask must survive, rather than folding values from
 /// the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] space: Space,
-    #[comptime] stage: StagePlan,
+    #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
-    let input = Tile::<E>::procedural_resident::<AffineCoordinate<E>>(
+    let input = Tile::<E>::procedural::<AffineCoordinate<E>>(
         comptime!(space.clone()),
         AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
             coefficient: E::new(1.0_f32),
             axis: K,
         },
-        stage,
     );
     let mut output = output.tile(space);
-    reduce_body(&input, &mut output, comptime!(Monoid::Max));
+    reduce_body(&input, &mut output, read, comptime!(Monoid::Max));
 }
 
 /// Small integers, so every product and partial sum is exact in `f32` and the two kernels can be
@@ -117,7 +158,7 @@ fn run(
     c_axes: &[Axis],
     space: Space,
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let (a_len, b_len) = (a_shape.num_elements(), b_shape.num_elements());
@@ -135,7 +176,7 @@ fn run(
         .zeros()
         .generate_without_host_data();
 
-    reduce_matmul_kernel::launch::<TestRuntime>(
+    reduce_matmul_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -160,8 +201,8 @@ fn run(
 
 /// The one-axis reference: an ordinary `{M, N, K}` matmul through the 2-D register leaf.
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K, k)]);
         })
         .build();
@@ -178,8 +219,8 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
 
 /// [`plain`] with a leading batch axis both operands span.
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let space = Tiling::over(&mut (), &[(B, b), (M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(B, b), (M, m), (N, n), (K, k)])
+        .level(|l| {
             l.walk(&[(B, 1), (M, tm), (N, tn), (K, k)]);
         })
         .build();
@@ -217,8 +258,8 @@ fn split_k_whole_reduce_at_leaf() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
+        .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)]);
         })
         .build();
@@ -242,8 +283,8 @@ fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(M, m), (N, n), (K1, k1), (K2, k2)])
+        .level(|l| {
             l.walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)]);
         })
         .build();
@@ -267,8 +308,8 @@ fn split_k_with_a_batch_axis() {
     let (b, m, n, k1, k2) = (3, 4, 8, 2, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let space = Tiling::over(&mut (), &[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
-        .instruction(Instruction::registers(16), |l, _| {
+    let space = Tiling::over(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)])
+        .level(|l| {
             l.walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)]);
         })
         .build();
@@ -301,20 +342,20 @@ fn run_reduce(
         space,
         monoid,
         1,
-        &[],
+        Read::InPlace,
     )
 }
 
-/// [`run_reduce`] with the input's per-level [`Residence`] stated, for the walks that stage it.
+/// [`run_reduce`] with the input staged through a ring `depth` deep.
 #[allow(clippy::too_many_arguments)]
-fn run_reduce_resident(
+fn run_reduce_staged(
     in_shape: Shape,
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
     space: Space,
     monoid: Monoid,
-    in_residence: &[Residence],
+    depth: usize,
 ) -> HostData {
     run_reduce_with_vw(
         in_shape,
@@ -324,28 +365,20 @@ fn run_reduce_resident(
         space,
         monoid,
         1,
-        in_residence,
+        Read::Smem { depth },
     )
 }
 
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
-fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, buffering, |l, _| {
+fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
-    // Every caller of this helper stages: the level is what the buffering coverage exercises.
-    let got = run_reduce_resident(
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        space,
-        monoid,
-        &[Residence::Smem],
-    );
+    // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
+    let got = run_reduce_staged(shape![m, k], shape![m], &[M, K], &[M], space, monoid, depth);
 
     for i in 0..m {
         let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
@@ -358,7 +391,7 @@ fn check_2d_reduce(buffering: Buffering, m: usize, k: usize, tm: usize, tk: usiz
         assert_eq!(
             got.get_f32(&[i]),
             want,
-            "{buffering:?} {monoid:?} mismatch at index {i}"
+            "depth {depth} {monoid:?} mismatch at index {i}"
         );
     }
 }
@@ -372,9 +405,9 @@ fn run_reduce_with_vw(
     space: Space,
     monoid: Monoid,
     in_vw: usize,
-    in_residence: &[Residence],
+    read: Read,
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let in_len = in_shape.num_elements();
 
@@ -392,31 +425,27 @@ fn run_reduce_with_vw(
 
     match in_vw {
         1 => {
-            reduce_kernel::launch::<TestRuntime>(
+            reduce_kernel::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
-                TileArgLaunch::new(
-                    in_binding.into_tensor_arg(),
-                    TileSpec::direct(in_axes).residence(in_residence),
-                ),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
+                read,
                 monoid,
                 f32_ty,
             );
         }
         4 => {
-            reduce_kernel_v4::launch::<TestRuntime>(
+            reduce_kernel_v4::launch(
                 &client,
                 space.cube_count(),
                 space.cube_dim(&client),
-                TileArgLaunch::new(
-                    in_binding.into_tensor_arg(),
-                    TileSpec::direct(in_axes).residence(in_residence),
-                ),
+                TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
                 space,
+                read,
                 monoid,
                 f32_ty,
             );
@@ -430,8 +459,8 @@ fn run_reduce_with_vw(
 #[test]
 fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -447,8 +476,8 @@ fn test_reduce_axis_sum_2d_to_1d() {
 #[test]
 fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -464,8 +493,8 @@ fn test_reduce_axis_sum_walked_levels() {
 #[test]
 fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -483,8 +512,8 @@ fn test_reduce_axis_max_2d_to_1d() {
 #[test]
 fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -502,8 +531,8 @@ fn test_reduce_axis_min_2d_to_1d() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
-    let space = Tiling::over(&mut (), &[(B, b), (M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(B, b), (M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(B, 1), (M, 2), (K, 4)]);
         })
         .build();
@@ -531,40 +560,40 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
 
 #[test]
 fn test_reduce_axis_sum_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Sum);
+    check_2d_reduce(1, 8, 16, 4, 8, Monoid::Sum);
 }
 
 #[test]
 fn test_reduce_axis_sum_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Sum);
+    check_2d_reduce(2, 8, 16, 4, 4, Monoid::Sum);
 }
 
 #[test]
 fn test_reduce_axis_max_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Max);
+    check_2d_reduce(1, 8, 16, 4, 8, Monoid::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_staged() {
-    check_2d_reduce(Buffering::SINGLE, 8, 16, 4, 8, Monoid::Min);
+    check_2d_reduce(1, 8, 16, 4, 8, Monoid::Min);
 }
 
 #[test]
 fn test_reduce_axis_max_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Max);
+    check_2d_reduce(2, 8, 16, 4, 4, Monoid::Max);
 }
 
 #[test]
 fn test_reduce_axis_min_double_buffered() {
-    check_2d_reduce(Buffering::DOUBLE, 8, 16, 4, 4, Monoid::Min);
+    check_2d_reduce(2, 8, 16, 4, 4, Monoid::Min);
 }
 
 /// Reduction over an outer axis while retaining the innermost axis (which lines along vector width).
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -577,7 +606,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
         space,
         Monoid::Sum,
         1,
-        &[],
+        Read::InPlace,
     );
 
     for j in 0..k {
@@ -591,8 +620,8 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -605,7 +634,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
         space,
         Monoid::Sum,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for j in 0..k {
@@ -623,8 +652,8 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -637,7 +666,7 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
         space,
         Monoid::Max,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -664,9 +693,9 @@ fn run_reduce_checked(
     out_axes: &[Axis],
     space: Space,
     monoid: Monoid,
-    in_residence: &[Residence],
+    read: Read,
 ) -> HostData {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
     let (in_handle, _) = TestInput::builder(client.clone(), in_shape)
@@ -681,18 +710,17 @@ fn run_reduce_checked(
     let in_binding = in_handle.binding();
     let out_binding = out_handle.clone().binding();
 
-    reduce_kernel::launch::<TestRuntime>(
+    reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
-            TileSpec::direct(in_axes)
-                .checked(true)
-                .residence(in_residence),
+            TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
         space,
+        read,
         monoid,
         f32_ty,
     );
@@ -700,9 +728,9 @@ fn run_reduce_checked(
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
 
-fn nondivisible_k_space(m: usize, k: usize, tk: usize, schedule: Buffering) -> Space {
-    Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, schedule, |l, _| {
+fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Space {
+    Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, m), (K, tk)]);
         })
         .build()
@@ -719,9 +747,9 @@ fn test_reduce_axis_sum_nondivisible_k() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::SINGLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Sum,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -741,43 +769,14 @@ fn test_reduce_axis_sum_nondivisible_k_staged() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::SINGLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Sum,
-        &[Residence::Smem],
+        Read::Smem { depth: 1 },
     );
 
     for i in 0..m {
         let want: f32 = data[i * k..(i + 1) * k].iter().sum();
         assert_eq!(got.get_f32(&[i]), want, "Staged sum mismatch at row {i}");
-    }
-}
-
-/// The input read where it lies, two slots deep: the ring materializes nothing, so its slots hold
-/// windows alone, read at its own region. The depth stays the level's to state, whatever the input
-/// costs.
-#[test]
-fn test_reduce_axis_sum_in_place_double_buffered() {
-    let (m, k, tk) = (4, 10, 4);
-    let data = ramp(m * k, 7);
-
-    let got = run_reduce_checked(
-        data.clone(),
-        shape![m, k],
-        shape![m],
-        &[M, K],
-        &[M],
-        nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
-        Monoid::Sum,
-        &[Residence::InPlace],
-    );
-
-    for i in 0..m {
-        let want: f32 = data[i * k..(i + 1) * k].iter().sum();
-        assert_eq!(
-            got.get_f32(&[i]),
-            want,
-            "In-place double-buffered sum mismatch at row {i}"
-        );
     }
 }
 
@@ -792,9 +791,9 @@ fn test_reduce_axis_sum_nondivisible_k_double_buffered() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::DOUBLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Sum,
-        &[Residence::Smem],
+        Read::Smem { depth: 2 },
     );
 
     for i in 0..m {
@@ -818,9 +817,9 @@ fn test_reduce_axis_max_nondivisible_k() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::SINGLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Max,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -832,19 +831,19 @@ fn test_reduce_axis_max_nondivisible_k() {
     }
 }
 
-/// Max over `k` of the axis-index recipe, with the source staged as `stage` says. The last real
+/// Max over `k` of the axis-index recipe, with the source read as `read` says. The last real
 /// `k` is 5, so a mask that leaked the padded overhang would report the tile edge instead.
-fn check_procedural_reduce(stage: StagePlan) {
+fn check_procedural_reduce(read: Read) {
     let (m, k, tk) = (4, 6, 4);
-    let space = nondivisible_k_space(m, k, tk, Buffering::SINGLE);
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let space = nondivisible_k_space(m, k, tk);
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let output = TestInput::builder(client.clone(), shape![m])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
 
-    procedural_reduce_kernel::launch::<TestRuntime>(
+    procedural_reduce_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -853,7 +852,7 @@ fn check_procedural_reduce(stage: StagePlan) {
             TileSpec::direct(&[M]),
         ),
         space,
-        stage,
+        read,
         dtype,
     );
 
@@ -865,12 +864,12 @@ fn check_procedural_reduce(stage: StagePlan) {
 
 #[test]
 fn test_procedural_max_masks_nondivisible_k() {
-    check_procedural_reduce(StagePlan::in_place());
+    check_procedural_reduce(Read::InPlace);
 }
 
 #[test]
 fn test_staged_procedural_max_masks_nondivisible_k() {
-    check_procedural_reduce(StagePlan::new(&[Residence::Smem], StageStorage::Strided, 0));
+    check_procedural_reduce(Read::Smem { depth: 1 });
 }
 
 /// `ramp`'s data is nonnegative, so a masked overhang cell falling back to zero (Sum's identity)
@@ -887,9 +886,9 @@ fn test_reduce_axis_max_nondivisible_k_negative_data() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::SINGLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Max,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -914,9 +913,9 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
         shape![m],
         &[M, K],
         &[M],
-        nondivisible_k_space(m, k, tk, Buffering::SINGLE),
+        nondivisible_k_space(m, k, tk),
         Monoid::Min,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -931,8 +930,8 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -945,7 +944,7 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
         space,
         Monoid::Max,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for j in 0..k {
@@ -963,8 +962,8 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -977,7 +976,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
         space,
         Monoid::Min,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for j in 0..k {
@@ -997,8 +996,8 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(M, tm), (K, tk)]);
         })
         .build();
@@ -1011,7 +1010,7 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
         space,
         Monoid::Sum,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for i in 0..m {
@@ -1028,8 +1027,8 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
-    let space = Tiling::over(&mut (), &[(B, b), (M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(B, b), (M, m), (K, k)])
+        .level(|l| {
             l.walk(&[(B, 1), (M, 2), (K, 8)]);
         })
         .build();
@@ -1042,7 +1041,7 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
         space,
         Monoid::Sum,
         4,
-        &[],
+        Read::InPlace,
     );
 
     for bi in 0..b {
@@ -1065,17 +1064,16 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
 /// Tests that LaneShare::Plane seeds with 0 and folds across lanes combining with accumulator.
 #[test]
 fn test_reduce_axis_sum_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Sum);
 
@@ -1091,17 +1089,16 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
 #[test]
 fn test_reduce_axis_max_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Max);
 
@@ -1119,17 +1116,16 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
 #[test]
 fn test_reduce_axis_min_spatial_unit_lanes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let space = Tiling::over(&mut (), &[(M, m), (K, k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m)]);
+    let space = Tiling::over(&[(M, m), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(plane_size), &[(K, kr)]).walk(&[(M, m)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], space, Monoid::Min);
 
@@ -1164,24 +1160,29 @@ fn resident_fold_kernel<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let out = output.tile(space);
-    let mut acc = out.accumulate::<E, _>(&input, monoid);
-    acc.reduce_axis(&input);
+    let mut out = output.tile(space);
+    let mut acc = out.block_accumulator::<E, E>(&input, REGISTER_BLOCK, monoid);
+    acc.init(Monoid::identity::<E>(monoid));
+    for region in Walk::over(acc.reduce_space(&input)) {
+        let mut acc_region = acc.at(&region);
+        acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
+    }
+    acc.drain_cast_into(&mut out);
 }
 
 #[test]
 fn resident_max_over_lane_split_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = plane_size * kr;
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l, _| {
-            l.distribute(lanes(), &[(K, kr)]).walk(&[(M, m), (N, n)]);
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(plane_size), &[(K, kr)])
+                .walk(&[(M, m), (N, n)]);
         })
-        .build()
-        .resolve_lanes(plane_size);
+        .build();
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
     let f32_ty = f32::elem_type_native();
@@ -1197,7 +1198,7 @@ fn resident_max_over_lane_split_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1207,9 +1208,7 @@ fn resident_max_over_lane_split_k() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            // The lane-split fold joins its partials in registers, so the output states that it
-            // lives there for the one level it has.
-            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         Monoid::Max,
@@ -1241,16 +1240,16 @@ fn resident_max_over_lane_split_k() {
             whether that is a cubek defect or an unsupported combination is not yet established \
             , it is not what the walk fix addresses"]
 fn resident_max_over_lane_group_k() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let plane_size = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, kr, n) = (8usize, 2usize, 2usize);
     let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
     let m = groups;
 
-    let space = Tiling::over(&mut (), &[(M, m), (N, n), (K, k)])
-        .instruction(Instruction::registers(16), |l, _| {
-            l.distribute(lanes().instances(groups), &[(M, 1)])
-                .distribute(lanes().instances(group_lanes).interleaved(), &[(K, kr)])
+    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
+        .level(|l| {
+            l.distribute(lanes(groups), &[(M, 1)])
+                .distribute(lanes(group_lanes).interleaved(), &[(K, kr)])
                 .walk(&[(N, n)]);
         })
         .build();
@@ -1266,7 +1265,7 @@ fn resident_max_over_lane_group_k() {
         .uniform(7, 1.0, 2.0)
         .generate_without_host_data();
 
-    resident_fold_kernel::launch::<TestRuntime>(
+    resident_fold_kernel::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1276,7 +1275,7 @@ fn resident_max_over_lane_group_k() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&[Residence::Register]),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         Monoid::Max,

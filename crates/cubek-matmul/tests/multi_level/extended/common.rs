@@ -1,8 +1,6 @@
 //! Shared helpers for the extended (forced-blueprint) tier.
 
-use cubecl::{
-    Runtime, TestRuntime, client::ComputeClient, frontend::Scalar, ir::AddressType, zspace::shape,
-};
+use cubecl::{client::Client, frontend::Scalar, ir::AddressType, zspace::shape};
 use cubek_matmul::multi_level::{PartitionSize, StageSize, TileSize, stage::SwizzleModes};
 use cubek_matmul::{
     definition::{MatmulElems, MatmulGlobalElems, MatmulProblem},
@@ -20,8 +18,8 @@ use cubek_std::{
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint},
 };
 
-pub(crate) fn client() -> ComputeClient<TestRuntime> {
-    TestRuntime::client(&Default::default())
+pub(crate) fn client() -> Client {
+    cubecl::test_device().client()
 }
 
 pub(crate) fn f16_elems() -> MatmulGlobalElems {
@@ -90,7 +88,7 @@ pub(crate) fn tiling_scheme(
 }
 
 pub(crate) fn plane_blueprint(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     problem: &MatmulProblem,
     tile: TileSize,
     partition: PartitionSize,
@@ -114,7 +112,7 @@ pub(crate) fn plane_blueprint(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn plane_blueprint_with(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     problem: &MatmulProblem,
     tile: TileSize,
     partition: PartitionSize,

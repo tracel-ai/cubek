@@ -199,28 +199,28 @@ impl BlockScaledLayout {
 pub type ScalesView<'a, E> = View<'a, E, Coords1d>;
 pub type ScalesViewMut<'a, E> = ViewMut<'a, E, Coords1d>;
 /// Launch type for LinearTensorView.
-pub type ScalesViewLaunch<R> = ViewArg<Coords1d, R>;
+pub type ScalesViewLaunch = ViewArg<Coords1d>;
 
 /// Create a scales view from the values and scales handle, vector size and quantization scheme.
 /// `values` should be *the quantized tensor*, and will be adjusted by `num_quants`.
-pub fn scales_view<R: Runtime>(
-    values: TensorBinding<R>,
-    scales: TensorBinding<R>,
+pub fn scales_view(
+    values: TensorBinding,
+    scales: TensorBinding,
     scales_vector_size: usize,
     quant_scheme: &QuantScheme,
-) -> ScalesViewLaunch<R> {
+) -> ScalesViewLaunch {
     let layout = scales_layout(&values, &scales, scales_vector_size, quant_scheme);
     let len = scales.shape.iter().product::<usize>();
     let buffer = unsafe { BufferArg::from_raw_parts_binding(scales.handle, len) };
     ScalesViewLaunch::new_array::<ScalesLayout>(buffer, layout)
 }
 
-pub fn scales_layout<R: Runtime>(
-    values: &TensorBinding<R>,
-    scales: &TensorBinding<R>,
+pub fn scales_layout(
+    values: &TensorBinding,
+    scales: &TensorBinding,
     scales_vector_size: usize,
     scheme: &QuantScheme,
-) -> ScalesLayoutArgs<R> {
+) -> ScalesLayoutArgs {
     let values_len = values.shape.iter().product::<usize>() * scheme.num_quants();
 
     // The innermost level's grid, which a two-level scheme lays out exactly like a one-level block
@@ -241,10 +241,7 @@ pub fn scales_layout<R: Runtime>(
     }
 }
 
-fn shape_divmod_quant<R: Runtime>(
-    shape: &[usize],
-    num_quants: usize,
-) -> SequenceArg<R, FastDivmod<usize>> {
+fn shape_divmod_quant(shape: &[usize], num_quants: usize) -> SequenceArg<FastDivmod<usize>> {
     let mut out_seq = SequenceArg::new();
     for s in &shape[..shape.len() - 1] {
         out_seq.push(*s);
@@ -254,7 +251,7 @@ fn shape_divmod_quant<R: Runtime>(
     out_seq
 }
 
-fn strides_seq<R: Runtime>(strides: &[usize]) -> SequenceArg<R, usize> {
+fn strides_seq(strides: &[usize]) -> SequenceArg<usize> {
     let mut out_seq = SequenceArg::new();
     for s in strides {
         out_seq.push(*s);

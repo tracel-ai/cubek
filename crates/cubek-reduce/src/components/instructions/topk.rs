@@ -4,6 +4,7 @@ use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::AccumulatorFormat;
+
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{Accumulator, Item, Value, ValueExpand};
@@ -362,13 +363,13 @@ fn topk_finalize_values<P: ReducePrecision, Out: Numeric>(
         topk[slot] = Out::min_value();
     }
 
-    #[unroll]
+    #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
         #[unroll]
         for j in 0..vector_size {
             let mut element = Out::cast_from(vals[i].extract(j));
 
-            #[unroll]
+            #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
             for slot in 0..k {
                 let current = topk[slot];
                 let keep = current > element;
@@ -405,14 +406,14 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
         topk_coords[slot] = u32::MAX;
     }
 
-    #[unroll]
+    #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
         #[unroll]
         for j in 0..vector_size {
             let mut value = vals[i].extract(j);
             let mut coordinate = coords[i].extract(j);
 
-            #[unroll]
+            #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
             for slot in 0..k {
                 let current_value = topk_vals[slot];
                 let current_coordinate = topk_coords[slot];

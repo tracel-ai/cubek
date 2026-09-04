@@ -5,7 +5,7 @@
 //! `launch_depthwise` actually builds — which is the one that ships, and the one whose tiling
 //! moves whenever the kernel is optimized. A tiling that is fast and wrong has to fail here.
 
-use cubecl::{Runtime, TestRuntime, prelude::*, std::tensor::TensorHandle, zspace::Shape};
+use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_convolution::{
     ConvolutionArgs, DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling,
     components::ConvSetupError, launch_depthwise,
@@ -86,7 +86,7 @@ impl Case {
         tiling: DepthwiseTiling,
         weight_gap: usize,
     ) -> Result<(), String> {
-        let client = <TestRuntime as Runtime>::client(&Default::default());
+        let client = cubecl::test_device().client();
         let dtype = f32::elem_type_native();
         let out_size = self.out_size();
 
@@ -118,13 +118,12 @@ impl Case {
         weight.shape = Shape::new(w_shape);
         // Zeroed, not empty: the kernel writes every cell it owns, so a cell left untouched by a
         // buggy walk shows up as the zero it started as rather than as whatever was there.
-        let out: TensorHandle<TestRuntime> =
-            TestInput::builder(client.clone(), Shape::new(out_shape))
-                .dtype(dtype)
-                .zeros()
-                .generate_without_host_data();
+        let out: TensorHandle = TestInput::builder(client.clone(), Shape::new(out_shape))
+            .dtype(dtype)
+            .zeros()
+            .generate_without_host_data();
 
-        launch_depthwise::<TestRuntime>(
+        launch_depthwise(
             &client,
             DepthwiseTensors {
                 input: input.binding(),
@@ -301,7 +300,7 @@ fn depthwise_3x3_end_padding() {
 /// mismatch before re-laying the binding under a larger logical shape.
 #[test]
 fn depthwise_rejects_mismatched_weight_shape() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let input_channels = 8;
 
@@ -321,7 +320,7 @@ fn depthwise_rejects_mismatched_weight_shape() {
             .dtype(dtype)
             .zeros()
             .generate_without_host_data();
-        let result = launch_depthwise::<TestRuntime>(
+        let result = launch_depthwise(
             &client,
             DepthwiseTensors {
                 input: input.clone().binding(),

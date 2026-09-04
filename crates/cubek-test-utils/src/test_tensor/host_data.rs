@@ -1,6 +1,6 @@
 use cubecl::{
-    CubeElement, TestRuntime,
-    client::ComputeClient,
+    CubeElement,
+    client::Client,
     frontend::Scalar,
     ir::{ElemType, FloatKind},
     std::tensor::TensorHandle,
@@ -123,8 +123,8 @@ impl HostDataVec {
 
 impl HostData {
     pub fn from_tensor_handle(
-        client: &ComputeClient<TestRuntime>,
-        mut tensor_handle: TensorHandle<TestRuntime>,
+        client: &Client,
+        mut tensor_handle: TensorHandle,
         host_data_type: HostDataType,
     ) -> Self {
         let shape = tensor_handle.shape().clone();

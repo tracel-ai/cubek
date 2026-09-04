@@ -290,7 +290,7 @@ impl<T: Numeric> MemData<T> {
         // next line's read. Only a spilling last task needs its guard; unknown or tiny cubes take
         // the rolled loop. `constant()` bridges the folded total back to host data; a whole smem
         // stage's shape is static, so it always folds.
-        let units = comptime!(self.access.stage.units);
+        let units = comptime!(self.access.units);
         let total_c = total.constant();
         // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
         // do the sizes. A gathered destination is always an smem stage, so its line count folds and
@@ -492,12 +492,6 @@ impl<T: Numeric> MemData<T> {
                 panic!("MemData::scan_words: a plain source has no words to unpack")
             }
         }
-    }
-
-    /// Where this operand lives at each level below, and how a materialized level lays its buffer
-    /// out; carried from the operand's [`TileSpec`].
-    pub(crate) fn stage_plan(&self) -> comptime_type!(StagePlan) {
-        comptime!(self.access.stage.clone())
     }
 
     /// How far this store's quantized form travels ([`DequantAt`]). A plain store answers
@@ -1207,13 +1201,12 @@ impl<T: Numeric> MemData<T> {
             map,
             offsets: self.offsets.clone(),
             window_start: start,
-            // The window no longer covers the buffer, so the straight-through fill is off. The
-            // plan descends with the space: this level's residence is behind us now.
+            // The window no longer covers the buffer, so the straight-through fill is off.
             access: comptime!(Access {
                 whole: false,
                 overhang: self.access.overhang,
                 write: self.access.write,
-                stage: self.access.stage.descend(),
+                units: self.access.units,
             }),
             lanes: comptime!(Lanes {
                 share: join_lane_share(self.lanes.share, space.lane_share()),

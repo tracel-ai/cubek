@@ -8,9 +8,9 @@ pub use max_pool::{run_max_pool, run_max_pool_with_indices};
 
 use super::{f32_elem_type, i32_elem_type, make_random_f32_host, make_zero_handle};
 use crate::definition::{PoolForwardProblem, PoolMode};
-use crate::eval::cpu_reference::{cpu_reference_pool, decode_index, geometry::PoolGeometry};
+use crate::eval::cpu_reference::{cpu_reference_pool, geometry::PoolGeometry};
 use crate::{pool2d, pool2d_with_indices};
-use cubecl::{TestRuntime, client::ComputeClient};
+use cubecl::client::Client;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, Progress, launch_and_capture_outcome,
 };
@@ -36,21 +36,8 @@ pub(crate) fn get_window_coords<const N: usize>(
     Some(in_coords)
 }
 
-pub(crate) fn decode_index_simple(index: usize, shape: &[usize]) -> Vec<usize> {
-    let strides = row_major_strides_vec(shape);
-    decode_index(index, shape, &strides)
-}
-
-pub(crate) fn row_major_strides_vec(shape: &[usize]) -> Vec<usize> {
-    let mut strides = vec![1; shape.len()];
-    for i in (0..shape.len() - 1).rev() {
-        strides[i] = strides[i + 1] * shape[i + 1];
-    }
-    strides
-}
-
 pub fn strategy_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: PoolForwardProblem<2>,
     seed: u64,
 ) -> Result<HostData, String> {
@@ -69,7 +56,7 @@ pub fn strategy_result(
 
             let indices_handle = make_zero_handle(&client, output_shape.to_vec(), i32_elem_type());
 
-            pool2d_with_indices::<TestRuntime>(
+            pool2d_with_indices(
                 c,
                 input_handle.clone().binding(),
                 output_handle.clone().binding(),
@@ -79,7 +66,7 @@ pub fn strategy_result(
             )
             .into()
         } else {
-            pool2d::<TestRuntime>(
+            pool2d(
                 c,
                 input_handle.clone().binding(),
                 output_handle.clone().binding(),
@@ -101,7 +88,7 @@ pub fn strategy_result(
 }
 
 pub fn cpu_reference_result(
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     problem: PoolForwardProblem<2>,
     seed: u64,
     progress: Option<&Progress>,

@@ -13,7 +13,7 @@
 //! binding whose shape counts *values* while the packing says how many sit in one stored word.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
+    bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
     std::tensor::TensorHandle, zspace::shape,
 };
 use cubecl_common::e2m1;
@@ -28,6 +28,20 @@ const KI: Axis = Axis(3);
 /// The columns, likewise, where a scale covers a block of them.
 const NB: Axis = Axis(4);
 const NI: Axis = Axis(5);
+
+/// The register block every contraction here runs under.
+const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
+
+/// Every scale level windowed to `region`.
+#[cube]
+fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
+    let mut at = Sequence::new();
+    #[unroll]
+    for k in 0..scales.len() {
+        at.push(scales.index(k).at(region));
+    }
+    at
+}
 
 /// A packed operand copied into a plain one: the words unpack at the read, and nothing in the
 /// kernel, the spec or the launch mentions a scale.
@@ -59,7 +73,17 @@ fn packed_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// [`packed_matmul`] with two scale levels: `nvfp4`'s shape.
@@ -79,7 +103,17 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// **`nvfp4`'s shape, end to end.** `e2m1` values eight to a word, a scale per sixteen of them, and
@@ -97,7 +131,7 @@ fn nvfp4_shaped_decode() {
     let depth = block * blocks;
     let factor = 32 / field.size_bits();
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -123,7 +157,7 @@ fn nvfp4_shaped_decode() {
     let g = vec![0.25f32];
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -145,14 +179,13 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    nvfp4_shaped_matmul::launch::<TestRuntime>(
+    nvfp4_shaped_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -233,7 +266,17 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&x, &w)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &x.at(&region),
+            &w.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
@@ -254,12 +297,22 @@ fn native_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    c.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    c.zero();
+    for region in Walk::over(c.op_space(&w, &x)) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &at_all(&scales, &region),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
 }
 
 /// The decode gemv, whole: one row of activations against packed weights read straight from
-/// global memory, their scales beside them, accumulating in registers. `N` spreads across cubes,
-/// which is all a gemv has to spread.
+/// global memory, their scales beside them, accumulating in a register block opened above the
+/// walk. `N` spreads across cubes, which is all a gemv has to spread.
 #[cube(launch)]
 fn packed_gemv<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
@@ -273,9 +326,20 @@ fn packed_gemv<E: Numeric, V: Size>(
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
-    acc.mm_scaled(&x, &w, &scales, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    // The accumulator lives in registers across the whole walk and drains once.
+    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&x, &w)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &x.at(&region),
+            &w.at(&region),
+            &at_all(&scales, &region),
+            Semiring::SUM_PROD,
+        );
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// Four 8-bit values per word.
@@ -286,7 +350,7 @@ fn eight_bit_fields_unpack_on_read() {
     // A packed line serves a whole word, so this is the width the tile is read at.
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -311,7 +375,7 @@ fn eight_bit_fields_unpack_on_read() {
         })
         .collect();
     // Shape and strides count values; the packing says how many share a stored word.
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -324,7 +388,7 @@ fn eight_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -361,7 +425,7 @@ fn four_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -384,7 +448,7 @@ fn four_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -397,7 +461,7 @@ fn four_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -439,7 +503,7 @@ fn fp4_codes_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -459,7 +523,7 @@ fn fp4_codes_unpack_on_read() {
                 .fold(0u32, |acc, (j, &c)| acc | (c << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -472,7 +536,7 @@ fn fp4_codes_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -509,7 +573,7 @@ fn two_bit_fields_unpack_on_read() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -532,7 +596,7 @@ fn two_bit_fields_unpack_on_read() {
                 .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
         })
         .collect();
-    let input = TensorHandle::<TestRuntime>::new_contiguous(
+    let input = TensorHandle::new_contiguous(
         vec![rows, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -545,7 +609,7 @@ fn two_bit_fields_unpack_on_read() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, rows), (N, cols)]);
-    packed_copy::launch::<TestRuntime>(
+    packed_copy::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -584,7 +648,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -612,7 +676,7 @@ fn a_packed_operand_contracts_against_its_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -631,14 +695,13 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -702,7 +765,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -729,7 +792,7 @@ fn eight_bit_fields_contract_against_their_scales() {
     let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
 
     let dtype = f32::elem_type_native();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![rows, depth],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -747,14 +810,13 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    packed_matmul::launch::<TestRuntime>(
+    packed_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -818,7 +880,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -854,7 +916,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -868,23 +930,19 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -959,7 +1017,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -994,7 +1052,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1008,23 +1066,19 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1103,7 +1157,7 @@ fn several_lines_may_share_one_scale() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1139,7 +1193,7 @@ fn several_lines_may_share_one_scale() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1153,23 +1207,19 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, rows),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, rows),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
-    packed_matmul_rhs::launch::<TestRuntime>(
+    packed_matmul_rhs::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1244,7 +1294,7 @@ fn an_i8_operand_contracts_against_its_scales() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
     let depth = block * blocks;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {
         TestOutcome::Validated(ValidationResult::Skipped(
             "backend has no native i8".to_string(),
@@ -1276,14 +1326,13 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
+        .level(|l| {
             l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    native_matmul::launch::<TestRuntime>(
+    native_matmul::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1348,7 +1397,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1384,7 +1433,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1398,17 +1447,14 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, 1),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, 1),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
             (NI, bn),
@@ -1416,14 +1462,9 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
-    // One entry per level: the accumulator opens at the outermost and lives to the leaf.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
-
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1467,8 +1508,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                     PhysicalAxisMap::of(M),
                     PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
-            ))
-            .residence(&residence),
+            )),
         ),
         space,
         dtype,
@@ -1495,7 +1535,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1530,7 +1570,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1544,17 +1584,14 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(
-        &mut (),
-        &[
-            (M, 1),
-            (NB, blocks_n),
-            (NI, bn),
-            (KB, blocks_k),
-            (KI, block_k),
-        ],
-    )
-    .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[
+        (M, 1),
+        (NB, blocks_n),
+        (NI, bn),
+        (KB, blocks_k),
+        (KI, block_k),
+    ])
+    .level(|l| {
         l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
             (M, 1),
             (NI, bn),
@@ -1562,13 +1599,9 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]);
     })
-    .build()
-    .with_instruction(Instruction::registers(16));
+    .build();
 
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
-
-    packed_gemv::launch::<TestRuntime>(
+    packed_gemv::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1612,8 +1645,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                     PhysicalAxisMap::of(M),
                     PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
                 ],
-            ))
-            .residence(&residence),
+            )),
         ),
         space,
         dtype,
@@ -1644,9 +1676,14 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let c = c.tile(space);
-    let mut acc = c.accumulate::<E, _>(&x, Monoid::Sum);
-    acc.mm(&x, &w, Semiring::SUM_PROD);
+    let mut c = c.tile(space);
+    let mut acc = c.block_accumulator::<E, E>(&x, REGISTER_BLOCK, Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&x, &w)) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
+    }
+    acc.drain_cast_into(&mut c);
 }
 
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
@@ -1663,7 +1700,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -1695,7 +1732,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .dtype(dtype)
         .custom(x.clone())
         .generate_with_f32_host_data();
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![depth, cols],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -1705,19 +1742,14 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&mut (), &[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(N, bn)])
                 .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
         })
-        .build()
-        .with_instruction(Instruction::registers(16));
+        .build();
 
-    // One entry per level: the accumulator opens at the outermost and lives to the leaf.
-    let mut residence = vec![Residence::InPlace; space.partitioner().depth()];
-    residence[0] = Residence::Register;
-
-    packed_gemv_unscaled::launch::<TestRuntime>(
+    packed_gemv_unscaled::launch(
         &client,
         space.cube_count(),
         space.cube_dim(&client),
@@ -1745,7 +1777,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]).residence(&residence),
+            TileSpec::direct(&[M, N]),
         ),
         space,
         dtype,

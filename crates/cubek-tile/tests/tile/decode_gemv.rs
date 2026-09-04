@@ -12,8 +12,7 @@
 //! built on the first.
 
 use cubecl::{
-    Runtime, TestRuntime, bytes::Bytes, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
@@ -26,14 +25,29 @@ const N: Axis = Axis(1);
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
 
-/// The partials fold through the sink's element between `K` steps.
+/// Every scale level windowed to `region`.
+#[cube]
+fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
+    let mut at = Sequence::new();
+    #[unroll]
+    for k in 0..scales.len() {
+        at.push(scales.index(k).at(region));
+    }
+    at
+}
+
+/// The partials fold through the sink's element between `K` steps. Three levels: this cube's
+/// strip of rows, this plane's group of rows, this lane's rows against its share of the
+/// contraction, the leaf running under a block of `budget` scalars.
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
+    #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
@@ -41,32 +55,79 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
-    out.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    out.zero();
+    for region in Walk::over(out.op_space(&w, &x)) {
+        let out_cube = out.at(&region);
+        let w_cube = w.at(&region);
+        let x_cube = x.at(&region);
+        let scales_cube = at_all(&scales, &region);
+        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
+            let out_plane = out_cube.at(&region);
+            let w_plane = w_cube.at(&region);
+            let x_plane = x_cube.at(&region);
+            let scales_plane = at_all(&scales_cube, &region);
+            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
+                let mut out_lane = out_plane.at(&region);
+                out_lane.mma_scaled_with(
+                    &w_plane.at(&region),
+                    &x_plane.at(&region),
+                    &at_all(&scales_plane, &region),
+                    comptime!(RegisterBlock::new(budget)),
+                    Semiring::SUM_PROD,
+                );
+            }
+        }
+    }
 }
 
-/// The same, with the partials living in registers for the whole `K` walk: `out` states
-/// `Register` at the outermost level, so the accumulator opens above the walk and drains once.
+/// The same, with the partials living in registers for the whole `K` walk: the kernel opens a
+/// register block above the walk and drains it once.
 ///
 /// The activation is read *scalar* here, and has to be: a promoted block lines its cells along
 /// the accumulator, so a rhs lined along the contraction folds a whole step into one cell and
 /// `RegisterData::mma_scaled` refuses it. Which is why the shipping shape below keeps its
 /// accumulator in memory: the two are a trade, not a ladder.
 #[cube(launch)]
+#[allow(clippy::too_many_arguments)]
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
     #[comptime] space: Space,
+    #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let out = out.tile(space);
-    let mut acc = out.accumulate::<E, _>(&w, Monoid::Sum);
-    acc.mm_scaled(&w, &x, &scales, Semiring::SUM_PROD);
+    let mut out = out.tile(space);
+    let mut acc =
+        out.block_accumulator::<E, E>(&w, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
+    acc.zero();
+    for region in Walk::over(acc.op_space(&w, &x)) {
+        let acc_cube = acc.at(&region);
+        let w_cube = w.at(&region);
+        let x_cube = x.at(&region);
+        let scales_cube = at_all(&scales, &region);
+        for region in Walk::over(acc_cube.op_space(&w_cube, &x_cube)) {
+            let acc_plane = acc_cube.at(&region);
+            let w_plane = w_cube.at(&region);
+            let x_plane = x_cube.at(&region);
+            let scales_plane = at_all(&scales_cube, &region);
+            for region in Walk::over(acc_plane.op_space(&w_plane, &x_plane)) {
+                let mut acc_lane = acc_plane.at(&region);
+                acc_lane.mma_scaled(
+                    &w_plane.at(&region),
+                    &x_plane.at(&region),
+                    &at_all(&scales_plane, &region),
+                    Semiring::SUM_PROD,
+                );
+            }
+        }
+    }
+    acc.drain_cast_into(&mut out);
 }
 
 #[test]
@@ -84,7 +145,7 @@ fn serving_geometry(promoted: bool) {
     let bits = field.size_bits();
     let factor = 32 / bits;
 
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let max = client.properties().hardware.max_vector_size;
     if factor > max {
         TestOutcome::Validated(ValidationResult::Skipped(format!(
@@ -136,24 +197,14 @@ fn serving_geometry(promoted: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let x_axes: &[Axis] = if promoted { &[KB, KI, N] } else { &[N, KB, KI] };
-    let mut ops = (
-        Operand::new(&[M, KB, KI], dtype),
-        Operand::new(x_axes, dtype),
-        Operand::new(&[M, KB], dtype),
-        Operand::new(&[M, N], dtype),
-    );
-    let space = Tiling::over(&mut ops, &[(M, d_out), (N, n), (KB, blocks), (KI, block)])
+    let space = Tiling::over(&[(M, d_out), (N, n), (KB, blocks), (KI, block)])
         // A strip of output rows per cube, walking all of `K`.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
                 .walk(&[(N, n), (KB, blocks), (KI, block)]);
-            if promoted {
-                o.3.stage(Residence::Register);
-            }
         })
         // One plane per group of rows.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+        .level(|l| {
             l.distribute(planes(), &[(M, rows_per_plane)]).walk(&[
                 (N, n),
                 (KB, blocks),
@@ -162,17 +213,16 @@ fn serving_geometry(promoted: bool) {
         })
         // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
         // stored word each along `KI`, so a step reads one contiguous span of the block.
-        .instruction(Instruction::registers(rows_per_lane * factor), |l, _| {
-            l.distribute(lanes().instances(groups), &[(M, rows_per_lane)])
-                .distribute(
-                    lanes().instances(group_lanes).interleaved(),
-                    &[(KI, factor)],
-                )
+        .level(|l| {
+            l.distribute(lanes(groups), &[(M, rows_per_lane)])
+                .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
                 .walk(&[(N, n), (KB, 1)]);
         })
         .build();
+    // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
+    let budget = rows_per_lane * factor;
 
-    let w_tensor = TensorHandle::<TestRuntime>::new_contiguous(
+    let w_tensor = TensorHandle::new_contiguous(
         vec![d_out, d_in],
         client.create(Bytes::from_elems(words)),
         u32::elem_type_native(),
@@ -205,7 +255,6 @@ fn serving_geometry(promoted: bool) {
                 PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
             ],
         ))
-        .operand(&ops.0)
         .packed(field)
         .vectorize(factor)
         .build();
@@ -229,17 +278,19 @@ fn serving_geometry(promoted: bool) {
     let x_op = launcher
         .arg(x_tensor.binding())
         .gathered(x_projection)
-        .operand(&ops.1)
         .vectorize(if promoted { 1 } else { factor })
         .build();
     // One scale per `(row, block of K)`: `KI` is carried and addressed by nothing.
-    let s_op = launcher.bind(&ops.2, s_tensor.binding()).build();
-    let out_op = launcher.bind(&ops.3, out.clone().binding()).build();
+    let s_op = launcher.arg(s_tensor.binding()).subspace(&[M, KB]).build();
+    let out_op = launcher
+        .arg(out.clone().binding())
+        .subspace(&[M, N])
+        .build();
 
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     let kernel_space = launcher.space().clone();
     if promoted {
-        decode_gemv_promoted::launch::<TestRuntime>(
+        decode_gemv_promoted::launch(
             &client,
             count,
             dim,
@@ -250,10 +301,11 @@ fn serving_geometry(promoted: bool) {
             s_op.arg(),
             out_op.arg(),
             kernel_space,
+            budget,
             [dtype, dtype],
         );
     } else {
-        decode_gemv::launch::<TestRuntime>(
+        decode_gemv::launch(
             &client,
             count,
             dim,
@@ -264,6 +316,7 @@ fn serving_geometry(promoted: bool) {
             s_op.arg(),
             out_op.arg(),
             kernel_space,
+            budget,
             [dtype, dtype],
         );
     }

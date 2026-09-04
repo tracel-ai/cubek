@@ -59,10 +59,10 @@ use crate::ReduceError;
 ///        println!("Output = {:?}", output_values); // Should print [6].
 /// }
 /// ```
-pub fn shared_sum<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub fn shared_sum(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     cube_count: u32,
     input_elem: ElemType,
 ) -> Result<(), ReduceError> {

@@ -1,6 +1,6 @@
 use cubecl::{
-    CubeCount, CubeDim, Runtime,
-    client::ComputeClient,
+    CubeCount, CubeDim,
+    client::Client,
     ir::{AddressType, DeviceProperties},
     server::LaunchError,
 };
@@ -98,21 +98,21 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         (1, 1).into()
     }
 
-    unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>, R: Runtime>(
-        client: &ComputeClient<R>,
+    unsafe fn launch_unchecked<MA: MatmulArgs<Config = ()>>(
+        client: &Client,
         cube_dim: CubeDim,
         cube_count: CubeCount,
         address_type: AddressType,
-        input: InputRuntimeArg<MA, R>,
-        output: OutputRuntimeArg<MA, R>,
-        _config: ConfigRuntimeArg<MA, R>,
-        cube_mapping: CubeMappingLaunch<R>,
+        input: InputRuntimeArg<MA>,
+        output: OutputRuntimeArg<MA>,
+        _config: ConfigRuntimeArg<MA>,
+        cube_mapping: CubeMappingLaunch,
         blueprint: VecMatUnitPerpendicularBlueprint,
         dtypes: &MatmulElems,
         vector_sizes: &MatmulVectorSizes,
     ) -> Result<(), LaunchError> {
         unsafe {
-            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize, R>(
+            matmul_entry::launch_unchecked::<MA, Lhs, LhsSize, Rhs, RhsSize, Acc, AccSize>(
                 client,
                 cube_count,
                 cube_dim,
@@ -138,8 +138,8 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         Ok(CubeDimResource::Planes(blueprint.num_planes as u32))
     }
 
-    fn validate_blueprint<R: Runtime>(
-        client: &ComputeClient<R>,
+    fn validate_blueprint(
+        client: &Client,
         blueprint: &Self::Blueprint,
         problem: &MatmulProblem,
         _dtypes: &MatmulElems,

@@ -5,20 +5,21 @@ use super::{
     geometry::TileGeometry,
     space::{self, CHANNEL},
 };
+use crate::InputStage;
 use crate::{
     InterpolateError, InterpolateStrategy,
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
-use cubecl::{Runtime, client::ComputeClient, ir::ElemType, prelude::*};
-use cubek_tile::{Geometry, Residence};
+use cubecl::{client::Client, ir::ElemType, prelude::*};
+use cubek_tile::{Geometry, Launcher};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
 /// Resolves the strategy against the device and the problem, then dispatches on the mode.
-pub(crate) fn interpolate_launch<R: Runtime>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+pub(crate) fn interpolate_launch(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     strategy: InterpolateStrategy,
@@ -32,7 +33,7 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     let blueprint = strategy.blueprint(hardware, &problem);
     blueprint.validate()?;
 
-    if blueprint.input_residence == Residence::Smem && hardware.num_cpu_cores.is_some() {
+    if blueprint.input_residence == InputStage::Smem && hardware.num_cpu_cores.is_some() {
         return Err(InterpolateError::SharedMemoryUnsupportedOnCpu);
     }
 
@@ -47,23 +48,23 @@ pub(crate) fn interpolate_launch<R: Runtime>(
     // not get one rather than to record the in-place kernel under the staged name.
     let fallback = match strategy {
         InterpolateStrategy::Forced(_) => None,
-        _ => Some(Residence::InPlace),
+        _ => Some(InputStage::InPlace),
     };
 
     let geometry =
         TileGeometry::from_blueprint(blueprint, output.shape[3], hardware.plane_size_max as usize);
     let residence = blueprint.input_residence;
     match options.mode {
-        InterpolateMode::Nearest(_) => launch::<R, NearestFilter>(
+        InterpolateMode::Nearest(_) => launch::<NearestFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Bilinear => launch::<R, BilinearFilter>(
+        InterpolateMode::Bilinear => launch::<BilinearFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Bicubic => launch::<R, BicubicFilter>(
+        InterpolateMode::Bicubic => launch::<BicubicFilter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
-        InterpolateMode::Lanczos3 => launch::<R, Lanczos3Filter>(
+        InterpolateMode::Lanczos3 => launch::<Lanczos3Filter>(
             client, input, output, options, dtype, geometry, residence, fallback,
         ),
     }
@@ -74,21 +75,21 @@ pub(crate) fn interpolate_launch<R: Runtime>(
 /// Capacity is only knowable once the space is built and its vectorization solved, so the fallback
 /// reads the refusal rather than predicting it. Nothing has been dispatched by then.
 #[allow(clippy::too_many_arguments)]
-fn launch<R: Runtime, F: SeparableFilterFamily>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+fn launch<F: SeparableFilterFamily>(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    residence: Residence,
-    fallback: Option<Residence>,
+    residence: InputStage,
+    fallback: Option<InputStage>,
 ) -> Result<(), InterpolateError> {
-    let Some(fallback) = fallback.filter(|_| residence == Residence::Smem) else {
-        return dispatch::<R, F>(client, input, output, options, dtype, geometry, residence);
+    let Some(fallback) = fallback.filter(|_| residence == InputStage::Smem) else {
+        return dispatch::<F>(client, input, output, options, dtype, geometry, residence);
     };
 
-    match dispatch::<R, F>(
+    match dispatch::<F>(
         client,
         input.clone(),
         output.clone(),
@@ -98,20 +99,20 @@ fn launch<R: Runtime, F: SeparableFilterFamily>(
         residence,
     ) {
         Err(InterpolateError::SharedMemoryLimitExceeded { .. }) => {
-            dispatch::<R, F>(client, input, output, options, dtype, geometry, fallback)
+            dispatch::<F>(client, input, output, options, dtype, geometry, fallback)
         }
         result => result,
     }
 }
 
-fn dispatch<R: Runtime, F: SeparableFilterFamily>(
-    client: &ComputeClient<R>,
-    input: TensorBinding<R>,
-    output: TensorBinding<R>,
+fn dispatch<F: SeparableFilterFamily>(
+    client: &Client,
+    input: TensorBinding,
+    output: TensorBinding,
     options: InterpolateOptions,
     dtype: ElemType,
     geometry: TileGeometry,
-    residence: Residence,
+    residence: InputStage,
 ) -> Result<(), InterpolateError> {
     let (input_h, input_w, output_h, output_w) = (
         input.shape[1],
@@ -134,19 +135,18 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
         });
     }
 
-    let (space, in_operand) = space::interpolate_space(
-        output.shape[0],
-        output_h,
-        output_w,
-        output.shape[3],
-        lanes,
-        F::mode_properties().taps,
+    let plan = space::InterpolateSpace {
+        batch: output.shape[0],
+        height: output_h,
+        width: output_w,
+        channels: output.shape[3],
+        plane_size: lanes,
+        taps: F::mode_properties().taps,
         geometry,
-        space::instruction(client),
-        dtype,
-        residence,
-    );
-    let launch = space.launcher_over(client, &[]);
+    };
+    // The kernel's own statement of the space; every axis static, so the launcher stamps
+    // nothing on.
+    let launch = Launcher::new(client, plan.space(), &[]);
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -166,7 +166,7 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
     // row start, so `vector_size` above is 1), a shared-memory stage still can: it pads the axis
     // out to whole lines, and the contraction runs `4` wide against a scalar output. Only a width
     // the device actually serves is worth asking for, and only over a stage that exists.
-    let stage_width = (residence == Residence::Smem
+    let stage_width = (residence == InputStage::Smem
         && geometry.channel_block != vector_size
         && client
             .io_optimized_vector_sizes(dtype.size())
@@ -181,7 +181,7 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
 
     // Capacity is a hard limit, so it refuses here rather than trimming the window to fit. Whether
     // that refusal ends the launch or sends it back in place is the caller's to decide.
-    if residence == Residence::Smem {
+    if residence == InputStage::Smem {
         let available = client.properties().hardware.max_shared_memory_size;
         let requested = space::stage_window_bytes(
             row,
@@ -200,23 +200,19 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
         }
     }
 
-    let mut input_arg = launch
+    let input_arg = launch
         .arg(input)
-        .operand(&in_operand)
         .gathered(space::input_projection(row, col, F::radius()))
         .checked(checked)
         .with_boundary(checked.then_some(properties.boundary))
-        .vectorize(vector_size);
-    if let Some(width) = stage_width {
-        input_arg = input_arg.stage_width(width);
-    }
-    let input_arg = input_arg.build();
+        .vectorize(vector_size)
+        .build();
     let output_arg = launch
         .arg(output)
         .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build();
-    interpolate_tile_kernel::launch::<F, R>(
+    interpolate_tile_kernel::launch::<F>(
         client,
         launch.cube_count(),
         launch.cube_dim(),
@@ -230,7 +226,10 @@ fn dispatch<R: Runtime, F: SeparableFilterFamily>(
         col.offset as i32,
         col.divisor as u32,
         F::radius(),
-        launch.space().clone(),
+        plan,
+        residence,
+        stage_width,
+        space::register_block(client),
         dtype,
     );
     Ok(())

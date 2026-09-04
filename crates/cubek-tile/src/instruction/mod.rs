@@ -2,10 +2,9 @@
 //! over data.
 //!
 //! Executed only at final tiles ([`Partitioner::Final`](crate::Partitioner::Final)). Zero
-//! awareness of global spaces, memory stages, or global tile walks, and nothing here reaches
-//! up into [`instruction`](crate::instruction::registers) or the verbs: the register loop nests that issue
-//! these repeatedly are one layer up, and the leaf dispatch that picks between a hardware leaf
-//! and a nest is the verb's, one layer above that.
+//! awareness of global spaces, memory stages, or global tile walks: the register loop nests that
+//! issue these repeatedly are one layer up, and the leaf dispatch that picks between a hardware
+//! leaf and a nest is the verb's, one layer above that.
 
 mod algebra;
 mod base;
@@ -16,5 +15,5 @@ pub mod plane;
 pub mod registers;
 
 pub use algebra::*;
-pub use base::*;
+pub(crate) use base::*;
 pub use config::*;

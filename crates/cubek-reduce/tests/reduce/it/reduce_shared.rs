@@ -1,4 +1,4 @@
-use cubecl::{TestRuntime, prelude::*};
+use cubecl::{prelude::*};
 use cubek_reduce::shared_sum;
 use cubek_test_utils::{
     ExecutionOutcome, HostData, HostDataType, HostDataVec, StridedLayout, TestInput, TestOutcome,
@@ -35,7 +35,7 @@ impl TestCase {
             return;
         }
 
-        let client = TestRuntime::client(&Default::default());
+        let client = cubecl::test_device().client();
         let input_dtype = TestDType::elem_type_native();
 
         let (input_handle, input_host) = TestInput::builder(client.clone(), self.shape.clone())

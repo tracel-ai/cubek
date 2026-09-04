@@ -3,8 +3,8 @@
 use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
-    CubeCount, CubeDim, Runtime, TestRuntime, client::ComputeClient, frontend::Scalar,
-    ir::AddressType, prelude::*, zspace::Shape, zspace::shape,
+    CubeCount, CubeDim, client::Client, frontend::Scalar, ir::AddressType, prelude::*,
+    zspace::Shape, zspace::shape,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
@@ -56,7 +56,7 @@ fn copy_logical<E: Numeric>(
 /// An operand: a physical buffer in some [`InnerLayout`], viewed in its logical
 /// `(batch, rows, cols)` space.
 struct Operand {
-    handle: TensorHandle<TestRuntime>,
+    handle: TensorHandle,
     layout: InnerLayout,
     space: Space,
     batch: usize,
@@ -67,7 +67,7 @@ struct Operand {
 impl Operand {
     /// A fresh (zeroed) operand of logical `(batch, rows, cols)` in `layout`.
     fn zeros(
-        client: &ComputeClient<TestRuntime>,
+        client: &Client,
         layout: InnerLayout,
         axes: [Axis; 3],
         batch: usize,
@@ -86,7 +86,7 @@ impl Operand {
     /// [`zeros`](Self::zeros) with poisoned contents: an output must come out
     /// `A·B` whatever its buffer held (burn launches with recycled pool memory).
     fn poisoned(
-        client: &ComputeClient<TestRuntime>,
+        client: &Client,
         layout: InnerLayout,
         axes: [Axis; 3],
         batch: usize,
@@ -104,7 +104,7 @@ impl Operand {
 
     /// Wrap an existing `handle` as an operand of the given layout/axes.
     fn wrap(
-        handle: TensorHandle<TestRuntime>,
+        handle: TensorHandle,
         layout: InnerLayout,
         axes: [Axis; 3],
         batch: usize,
@@ -124,9 +124,9 @@ impl Operand {
 
 /// Copy every logical element from `src` into `dst` through their views: moving
 /// data between two physical layouts in logical order.
-fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
+fn copy(client: &Client, src: &Operand, dst: &Operand) {
     // src and dst are built over the same logical space; it is the kernel's one space.
-    copy_logical::launch::<TestRuntime>(
+    copy_logical::launch(
         client,
         CubeCount::new_single(),
         CubeDim::new_single(),
@@ -138,7 +138,7 @@ fn copy(client: &ComputeClient<TestRuntime>, src: &Operand, dst: &Operand) {
 }
 
 /// The operand's binding with the layout's physical strides realized on its buffer.
-fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
+fn physical_binding(op: &Operand) -> TensorBinding {
     let mut binding = op.handle.clone().binding();
     binding.strides = op.layout.physical_strides(&[op.batch], op.rows, op.cols)[..].into();
     binding
@@ -146,14 +146,14 @@ fn physical_binding(op: &Operand) -> TensorBinding<TestRuntime> {
 
 /// The operand as one launch argument: its tensor arg (with the layout's physical
 /// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
-fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V, TestRuntime> {
+fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
     let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
     let axes: Vec<_> = (0..op.space.rank()).map(|i| op.space.axis_at(i)).collect();
     TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
 }
 
 /// Gather `src` (any layout) into a fresh logical row-major tensor.
-fn gather(client: &ComputeClient<TestRuntime>, src: &Operand) -> TensorHandle<TestRuntime> {
+fn gather(client: &Client, src: &Operand) -> TensorHandle {
     let logical = Operand::zeros(
         client,
         InnerLayout::RowMajor,
@@ -180,7 +180,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         tile_size: tile,
     } = dims;
     let out_batch = lhs_batch.max(rhs_batch);
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;
     }
@@ -229,7 +229,7 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
 
     // Drive the production launch path, imposing each operand's inner layout via
     // `WithLayout`: this is where tiled (higher-rank) operands flow through `launch_ref`.
-    launch_ref::<TestRuntime>(
+    launch_ref(
         &client,
         WithLayout {
             binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),

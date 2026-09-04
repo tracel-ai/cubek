@@ -26,8 +26,6 @@
 
 use std::fmt::Display;
 
-use cubecl::Runtime;
-
 use crate::{
     definition::{MatmulProblem, MatmulSetupError},
     routine::{BlueprintStrategy, DeviceSettings, Routine},
@@ -70,7 +68,7 @@ fn nearest_divisor(g: usize, target: usize) -> usize {
 }
 
 /// The `m × n × k` extent of the innermost instruction
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InstructionShape {
     pub m: usize,
     pub n: usize,
@@ -78,7 +76,7 @@ pub struct InstructionShape {
 }
 
 /// How many planes a cube's stage tile is divided into, along `m` and `n`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlaneGrid {
     pub m: usize,
     pub n: usize,
@@ -86,7 +84,7 @@ pub struct PlaneGrid {
 
 /// A fully-resolved CpuGemm plan: the leaf each plane computes ([`InstructionShape`]) and how
 /// finely a cube's stage tile is split across planes ([`PlaneGrid`]).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CpuGemmBlueprint {
     pub instruction: InstructionShape,
     pub planes: PlaneGrid,
@@ -145,10 +143,10 @@ impl Routine<()> for CpuGemmRoutine {
 impl CpuGemmRoutine {
     /// Resolve `strategy` into a validated cuboid for `problem` on this device.
     #[allow(clippy::result_large_err)]
-    pub fn blueprint<R: Runtime>(
+    pub fn blueprint(
         strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
     ) -> Result<CpuGemmBlueprint, MatmulSetupError> {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
@@ -162,10 +160,10 @@ impl CpuGemmRoutine {
 
     /// The tile-size heuristic. The leaf's accumulator block is sized to the register file
     /// ([`ACC_REG_BYTES`]), not L1; `alpha` sets `k` depth; `cores` becomes the [`PlaneGrid`].
-    fn select<R: Runtime>(
+    fn select(
         strategy: &CpuGemmStrategy,
         problem: &MatmulProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
     ) -> CpuGemmBlueprint {
         let (m, n, k) = (problem.m, problem.n, problem.k);
         let elem = problem.global_dtypes.out.size().max(1);

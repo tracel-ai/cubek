@@ -9,10 +9,10 @@
 
 use cubecl::features::Plane;
 use cubecl::std::tensor::layout::CoordsDyn;
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::*, zspace::Shape};
+use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StagePlan, TileArg, TileArgLaunch, TileSpec,
+    Axis, MaskProbe, MemData, RowState, Space, StageStorage, TileArg, TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
@@ -38,16 +38,8 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(space);
-    let mut score = MemData::<f32>::smem(
-        block_space.clone(),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let mut p = MemData::<f32>::smem(
-        block_space.clone(),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -159,7 +151,7 @@ fn run_planar(
     causal: bool,
     mask_fn: Option<fn(usize, usize) -> bool>,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let hardware = &client.properties().hardware;
     let exact = hardware.plane_size_min == hardware.plane_size_max;
     if !client.properties().features.plane.contains(Plane::Ops) || !exact {
@@ -186,7 +178,7 @@ fn run_at(
     causal: bool,
     mask_fn: Option<fn(usize, usize) -> bool>,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
 
@@ -236,7 +228,7 @@ fn run_at(
     let gmem_space = Space::new(&[(Q, rows), (S, total_cols)]);
     let block_space = Space::new(&[(Q, rows), (S, cols)]);
 
-    softmax_walk_kernel::launch::<TestRuntime>(
+    softmax_walk_kernel::launch(
         &client,
         CubeCount::new_single(),
         // Explicit x = units so UNIT_POS_X is the owner index on every
@@ -360,16 +352,8 @@ fn softmax_smem_acc_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(space);
-    let mut score = MemData::<f32>::smem(
-        block_space.clone(),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
-    let mut p = MemData::<f32>::smem(
-        block_space.clone(),
-        1usize,
-        comptime!(StagePlan::in_place()),
-    );
+    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -378,9 +362,9 @@ fn softmax_smem_acc_kernel(
     let share = comptime!(state.share);
     let rpu = comptime!(share.rows());
 
-    let mut factors = MemData::<f32>::smem(kept_space, 1usize, comptime!(StagePlan::in_place()));
+    let mut factors = MemData::<f32>::smem(kept_space, 1usize, StageStorage::Strided, units);
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, comptime!(StagePlan::in_place()));
+    let mut acc = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, units);
     acc.zero();
 
     for blk in 0..num_blocks {
@@ -480,7 +464,7 @@ fn run_smem_acc(
     bound_s: usize,
     causal: bool,
 ) {
-    let client: ComputeClient<TestRuntime> = <TestRuntime as Runtime>::client(&Default::default());
+    let client: Client = cubecl::test_device().client();
     let total_cols = cols * num_blocks;
     let scale = 0.125f32;
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
@@ -520,7 +504,7 @@ fn run_smem_acc(
     let gmem_space = Space::new(&[(Q, rows), (S, total_cols)]);
     let block_space = Space::new(&[(Q, rows), (S, cols)]);
 
-    softmax_smem_acc_kernel::launch::<TestRuntime>(
+    softmax_smem_acc_kernel::launch(
         &client,
         CubeCount::new_single(),
         CubeDim::new_2d(units as u32, 1),

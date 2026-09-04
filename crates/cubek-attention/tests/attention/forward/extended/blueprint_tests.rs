@@ -1,5 +1,5 @@
 use crate::attention::forward::{extended::utils::tiling_scheme_ops::*, launcher::test_launch};
-use cubecl::{ir::AddressType, {Runtime, TestRuntime}};
+use cubecl::ir::AddressType;
 use cubek_attention::forward::definition::{
     AccumulatorPrecision, AttentionDims, AttentionOptions, AttentionPartitionSize,
     AttentionProblem, AttentionStageSize, AttentionTilingScheme, HypercubeBlueprint,
@@ -8,7 +8,7 @@ use cubek_attention::forward::routines::DeviceSettings;
 
 #[test]
 fn one_tile_simple() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
@@ -61,7 +61,7 @@ fn one_tile_simple() {
 
 #[test]
 fn one_tile_hd_neq_vd() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let tiling_scheme = AttentionTilingScheme {
         tile_size: AttentionTileSize {
@@ -119,7 +119,7 @@ fn one_tile_hd_neq_vd() {
 
 #[test]
 fn partition_hd_neq_vd() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
@@ -172,7 +172,7 @@ fn partition_hd_neq_vd() {
 
 #[test]
 fn one_tile_several_planes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
@@ -225,7 +225,7 @@ fn one_tile_several_planes() {
 
 #[test]
 fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -276,7 +276,7 @@ fn problem_smaller_than_one_tile_seq_q_seq_kv_val_dim() {
 
 #[test]
 fn two_rows_in_array_tile() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -323,7 +323,7 @@ fn two_rows_in_array_tile() {
 
 #[test]
 fn one_tile_seqq16() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -371,7 +371,7 @@ fn one_tile_seqq16() {
 
 #[test]
 fn one_tile_seqq4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -419,7 +419,7 @@ fn one_tile_seqq4() {
 
 #[test]
 fn seqq2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -466,7 +466,7 @@ fn seqq2() {
 
 #[test]
 fn kv2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -513,7 +513,7 @@ fn kv2() {
 
 #[test]
 fn hd2_vd2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -560,7 +560,7 @@ fn hd2_vd2() {
 
 #[test]
 fn all2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -607,7 +607,7 @@ fn all2() {
 
 #[test]
 fn global_iterations_2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -655,7 +655,7 @@ fn global_iterations_2() {
 
 #[test]
 fn global_iterations_2_kv2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -703,7 +703,7 @@ fn global_iterations_2_kv2() {
 
 #[test]
 fn partition_kv1_global1_with_oob() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -751,7 +751,7 @@ fn partition_kv1_global1_with_oob() {
 
 #[test]
 fn partition_seqq2_global2_kv2_global2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -799,7 +799,7 @@ fn partition_seqq2_global2_kv2_global2() {
 
 #[test]
 fn partition_many_planes() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -846,7 +846,7 @@ fn partition_many_planes() {
 
 #[test]
 fn partition_kv1_global3_with_oob() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -894,7 +894,7 @@ fn partition_kv1_global3_with_oob() {
 
 #[test]
 fn partition_oob_in_q_with_batches() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -941,7 +941,7 @@ fn partition_oob_in_q_with_batches() {
 
 #[test]
 fn partition_kv2_with_oob() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -988,7 +988,7 @@ fn partition_kv2_with_oob() {
 
 #[test]
 fn partition_kv2_causal() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1035,7 +1035,7 @@ fn partition_kv2_causal() {
 
 #[test]
 fn partition_kv2_masked() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1082,7 +1082,7 @@ fn partition_kv2_masked() {
 
 #[test]
 fn stage2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1129,7 +1129,7 @@ fn stage2() {
 
 #[test]
 fn stage4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1176,7 +1176,7 @@ fn stage4() {
 
 #[test]
 fn stage2_problem4() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1225,7 +1225,7 @@ fn stage2_problem4() {
 
 #[test]
 fn double_row_wise() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1272,7 +1272,7 @@ fn double_row_wise() {
 
 #[test]
 fn one_tile_masked() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1319,7 +1319,7 @@ fn one_tile_masked() {
 
 #[test]
 fn one_tile_causal() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1366,7 +1366,7 @@ fn one_tile_causal() {
 
 #[test]
 fn one_tile_masked_causal() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1413,7 +1413,7 @@ fn one_tile_masked_causal() {
 
 #[test]
 fn masked_oob() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1461,7 +1461,7 @@ fn masked_oob() {
 
 #[test]
 fn masked_larger() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1509,7 +1509,7 @@ fn masked_larger() {
 
 #[test]
 fn num_heads_2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1556,7 +1556,7 @@ fn num_heads_2() {
 
 #[test]
 fn batch_2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1603,7 +1603,7 @@ fn batch_2() {
 
 #[test]
 fn batch_2_seqq2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1650,7 +1650,7 @@ fn batch_2_seqq2() {
 
 #[test]
 fn num_heads_2_batch_2() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1697,7 +1697,7 @@ fn num_heads_2_batch_2() {
 
 #[test]
 fn num_heads_2_masked() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let tiling_scheme = AttentionTilingScheme {
         tile_size: tile_size(&client, global_dtypes(&client)),
         partition_size: AttentionPartitionSize {
@@ -1744,7 +1744,7 @@ fn num_heads_2_masked() {
 
 #[test]
 fn huge_problem() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let seq_q = 128;
     let seq_kv = 128;
     let head_dim = 64;
@@ -1796,7 +1796,7 @@ fn huge_problem() {
 
 #[test]
 fn causal_several_heads() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let head_val_dim = 32;
 
     let tile_size = tile_size(&client, global_dtypes(&client));

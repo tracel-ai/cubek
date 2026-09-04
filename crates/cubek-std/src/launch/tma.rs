@@ -63,14 +63,14 @@ pub fn transpose_inner_for_tma(
 /// operand (TMA discards the last stride) and keeps the batch stride outermost.
 /// `box_shape` is the box one bulk copy moves, in logical `(rows, cols)`; it rides the
 /// same swap. Returns the arg plus whether the swap occurred.
-pub fn tma_operand<R: Runtime>(
-    binding: TensorBinding<R>,
+pub fn tma_operand(
+    binding: TensorBinding,
     batches: usize,
     layout: MatrixLayout,
     box_shape: (usize, usize),
     storage_ty: ElemType,
     swizzle: TensorMapSwizzle,
-) -> (TensorMapArg<R, Tiled>, bool) {
+) -> (TensorMapArg<Tiled>, bool) {
     let rank = binding.shape.len();
     let mut shape = shape![batches, binding.shape[rank - 2], binding.shape[rank - 1]];
     let mut strides: Strides = if rank > 2 {

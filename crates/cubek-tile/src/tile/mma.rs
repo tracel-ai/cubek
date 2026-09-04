@@ -123,6 +123,15 @@ impl<T: Numeric> MmaData<T> {
     /// rather than its store: the manual path reads each element through the quant-transparent
     /// matrix view, so a quantized stage decodes here rather than at the fill.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
+        let dequant_at = src.dequant_at();
+        let io = comptime!(self.io);
+        comptime!(assert!(
+            dequant_at == DequantAt::Load
+                || (matches!(io.lhs_load_method, LoadMethod::Manual)
+                    && matches!(io.rhs_load_method, LoadMethod::Manual)),
+            "MmaData::load_window: the ldmatrix transport copies raw lanes, so it cannot decode a \
+             quantized source as it reads; serve that operand by its load (DequantAt::Load)"
+        ));
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);

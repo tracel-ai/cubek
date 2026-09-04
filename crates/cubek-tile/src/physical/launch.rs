@@ -7,8 +7,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Operand, Set, Space, StridedOperand, StridedTileSource,
-    Unset,
+    Axis, ComputeScope, CubeAxis, Geometry, Set, Space, StridedOperand, StridedTileSource, Unset,
 };
 
 impl Space {
@@ -24,9 +23,8 @@ impl Space {
 
     /// `plane_size × plane_count`, plane length being the hardware's. `Unit` axes ride those
     /// lanes, so their instance product must be exactly `plane_size` or `1`; anything else idles
-    /// or races lanes. A deferred `PlaneLanes` count panics here: launch through
-    /// [`launcher`](Space::launcher), which stamps it.
-    pub fn cube_dim<R: Runtime>(&self, client: &ComputeClient<R>) -> CubeDim {
+    /// or races lanes.
+    pub fn cube_dim(&self, client: &Client) -> CubeDim {
         let plane_size = client.properties().hardware.plane_size_max;
         let lanes = instances_count(self, ComputeScope::Unit);
         assert!(
@@ -65,31 +63,25 @@ fn instances_count(space: &Space, scope: ComputeScope) -> u32 {
 
 /// One launch's host-side bundle: the concrete space (real extents, for geometry, overhang and
 /// divisibility math) and the kernel-form space tile arguments project from.
-pub struct Launcher<'c, R: Runtime> {
+pub struct Launcher<'c> {
     concrete: Space,
     kernel: Space,
-    client: &'c ComputeClient<R>,
+    client: &'c Client,
 }
 
 impl Space {
     /// Creates a [`Launcher`] with all kernel space axes marked dynamic, so one compiled kernel
-    /// serves arbitrary shapes, resolving `Unit` lane counts from the device `plane_size`. Use
-    /// [`launcher_over`](Self::launcher_over) to keep specific axes static.
-    pub fn launcher<R: Runtime>(self, client: &ComputeClient<R>) -> Launcher<'_, R> {
-        let plane_size = client.properties().hardware.plane_size_max as usize;
-        let concrete = self.resolve_lanes(plane_size);
-        let kernel = concrete.clone().all_dynamic();
-        Launcher::new(concrete, kernel, client)
+    /// serves arbitrary shapes. Use [`launcher_over`](Self::launcher_over) to keep specific axes
+    /// static.
+    pub fn launcher(self, client: &Client) -> Launcher<'_> {
+        let kernel = self.clone().all_dynamic();
+        Launcher::over(client, self, kernel)
     }
 
     /// Creates a [`Launcher`] where only the `dynamic` axes have dynamic extents, every other
     /// axis staying comptime. Specializes kernel loops along an axis, and serves one no operand
     /// can state the size of ([`Tile::witnesses`](crate::Tile::witnesses)); `&[]` is fully static.
-    pub fn launcher_over<'c, R: Runtime>(
-        self,
-        client: &'c ComputeClient<R>,
-        dynamic: &[Axis],
-    ) -> Launcher<'c, R> {
+    pub fn launcher_over<'c>(self, client: &'c Client, dynamic: &[Axis]) -> Launcher<'c> {
         // An axis the space does not have would be dropped by `with_dynamic`, leaving a kernel
         // specialized along the axis the caller meant to free.
         for &axis in dynamic {
@@ -98,15 +90,21 @@ impl Space {
                 "Space::launcher_over: {axis:?} is not an axis of this space"
             );
         }
-        let plane_size = client.properties().hardware.plane_size_max as usize;
-        let concrete = self.resolve_lanes(plane_size);
-        let kernel = concrete.clone().with_dynamic(dynamic);
-        Launcher::new(concrete, kernel, client)
+        let kernel = self.clone().with_dynamic(dynamic);
+        Launcher::over(client, self, kernel)
     }
 }
 
-impl<'c, R: Runtime> Launcher<'c, R> {
-    fn new(concrete: Space, kernel: Space, client: &'c ComputeClient<R>) -> Self {
+impl<'c> Launcher<'c> {
+    /// The launcher for a kernel-form `space` (the one the kernel builds, its top extents
+    /// [`Dynamic`](crate::Extent) where one kernel serves every shape) and the real `extents` of
+    /// this launch, which the concrete twin takes for geometry, overhang and the grid.
+    pub fn new(client: &'c Client, space: Space, extents: &[(Axis, usize)]) -> Self {
+        let concrete = space.clone().with_extents(extents);
+        Launcher::over(client, concrete, space)
+    }
+
+    fn over(client: &'c Client, concrete: Space, kernel: Space) -> Self {
         Launcher {
             concrete,
             kernel,
@@ -134,25 +132,14 @@ impl<'c, R: Runtime> Launcher<'c, R> {
 
     /// Starts configuring a tile operand builder ([`StridedTileSource`]) bound to this launcher's
     /// kernel space, with automatic bounds checking derived from the concrete space overhang.
-    pub fn arg(&self, binding: TensorBinding<R>) -> StridedTileSource<'_, Set, Unset, Unset, R> {
+    pub fn arg(&self, binding: TensorBinding) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedOperand::source(binding)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
-    /// [`arg`](Self::arg) driven by a sealed [`Operand`]: the subspace is the operand's axes
-    /// and the per-level residences its stages, stated once where the levels were declared, so
-    /// neither can drift from the space the way a hand-passed array can.
-    pub fn bind<'a>(
-        &'a self,
-        operand: &'a Operand,
-        binding: TensorBinding<R>,
-    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
-        self.arg(binding).subspace(operand.axes()).operand(operand)
-    }
-
-    /// [`bind`](Self::bind) over a stated geometry rather than a binding, for an operand with no
+    /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
     /// tensor: the destination a fused store writes through
     /// ([`Tile::of_sink`](crate::Tile::of_sink)) or the producer a fused read comes from
     /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is the physical extents and
@@ -163,17 +150,11 @@ impl<'c, R: Runtime> Launcher<'c, R> {
     /// [`build`](StridedTileSource::build): there is no tensor to ship, and the *settled* geometry
     /// comes back beside the spec. The two part company where a broadcast batch dim is dropped,
     /// which is why the settled one travels rather than the call site reproducing the drop.
-    pub fn bind_geometry<'a>(
-        &'a self,
-        operand: &'a Operand,
-        geometry: &Geometry,
-    ) -> StridedTileSource<'a, Set, Set, Unset, R> {
-        StridedTileSource::<Unset, Unset, Unset, R>::of_geometry(geometry)
+    pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
+        StridedTileSource::<Unset, Unset, Unset>::of_geometry(geometry)
             .space(&self.kernel)
             .concrete(&self.concrete)
             .cube_units(self.cube_dim().num_elems() as usize)
-            .subspace(operand.axes())
-            .operand(operand)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for

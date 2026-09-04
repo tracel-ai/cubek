@@ -1,58 +1,58 @@
-use crate::{definition::AdaptiveAvgPoolOptions, eval::cpu_reference::decode_index};
+use crate::eval::cpu_reference::decode_index_simple;
 use cubek_test_utils::HostData;
 
 pub fn run_adaptive_avg_pool_backward<const N: usize>(
     grad_output: &HostData,
-    _opts: &AdaptiveAvgPoolOptions<N>,
     grad_input_dims: &[usize],
     grad_output_dims: &[usize],
     grad_input_strides: &[usize],
 ) -> Vec<f32> {
     let total: usize = grad_input_dims.iter().product();
     let mut grad_input = vec![0.0; total];
+    let batch_size = grad_output_dims[0];
+    let channels = grad_output_dims[N + 1];
+    let spatial_output = &grad_output_dims[1..N + 1];
+    let total_spatial_output: usize = spatial_output.iter().product();
 
-    if N != 2 {
-        return grad_input;
-    }
+    for batch in 0..batch_size {
+        for output_linear in 0..total_spatial_output {
+            let output_coords = decode_index_simple(output_linear, spatial_output);
+            let mut starts = [0; N];
+            let mut ends = [0; N];
+            for d in 0..N {
+                starts[d] = start_index(
+                    output_coords[d],
+                    grad_output_dims[d + 1],
+                    grad_input_dims[d + 1],
+                );
+                ends[d] = end_index(
+                    output_coords[d],
+                    grad_output_dims[d + 1],
+                    grad_input_dims[d + 1],
+                );
+            }
 
-    let out_h = grad_input_dims[1];
-    let out_w = grad_input_dims[2];
-    let grad_h = grad_output_dims[1];
-    let grad_w = grad_output_dims[2];
+            let window_shape: [usize; N] = core::array::from_fn(|d| ends[d] - starts[d]);
+            let window_volume: usize = window_shape.iter().product();
 
-    for (i, grad_val) in grad_input.iter_mut().enumerate().take(total) {
-        let coords = decode_index(i, grad_input_dims, grad_input_strides);
-        let batch = coords[0];
-        let ih = coords[1];
-        let iw = coords[2];
-        let channel = coords[3];
+            for channel in 0..channels {
+                let mut grad_coords = Vec::with_capacity(N + 2);
+                grad_coords.push(batch);
+                grad_coords.extend_from_slice(&output_coords);
+                grad_coords.push(channel);
+                let contribution = grad_output.get_f32(&grad_coords) / window_volume as f32;
 
-        let oh_start = start_index(ih, out_h, grad_h);
-        let oh_end = end_index(ih, out_h, grad_h);
-        let ow_start = start_index(iw, out_w, grad_w);
-        let ow_end = end_index(iw, out_w, grad_w);
-
-        let mut grad_acc = 0.0f32;
-
-        for oh in oh_start..oh_end {
-            let ih_start = start_index(oh, grad_h, out_h);
-            let ih_end = end_index(oh, grad_h, out_h);
-
-            if ih >= ih_start && ih < ih_end {
-                for ow in ow_start..ow_end {
-                    let iw_start = start_index(ow, grad_w, out_w);
-                    let iw_end = end_index(ow, grad_w, out_w);
-
-                    if iw >= iw_start && iw < iw_end {
-                        let count = (ih_end - ih_start) * (iw_end - iw_start);
-                        let out_coords = vec![batch, oh, ow, channel];
-                        grad_acc += grad_output.get_f32(&out_coords) / count as f32;
+                for window_linear in 0..window_volume {
+                    let window_coords = decode_index_simple(window_linear, &window_shape);
+                    let mut input_offset = batch * grad_input_strides[0];
+                    for d in 0..N {
+                        input_offset += (starts[d] + window_coords[d]) * grad_input_strides[d + 1];
                     }
+                    input_offset += channel * grad_input_strides[N + 1];
+                    grad_input[input_offset] += contribution;
                 }
             }
         }
-
-        *grad_val = grad_acc;
     }
 
     grad_input

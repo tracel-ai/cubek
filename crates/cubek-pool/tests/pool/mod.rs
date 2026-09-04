@@ -4,8 +4,7 @@ pub mod bench_catalog;
 pub mod forward;
 
 use cubecl::{
-    TestRuntime,
-    client::ComputeClient,
+    client::Client,
     ir::{ElemType, IntKind},
     std::tensor::TensorHandle,
 };
@@ -16,27 +15,21 @@ use cubek_test_utils::{
 };
 
 pub fn build_output_tensor(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     output_shape: Vec<usize>,
     dtype: ElemType,
-) -> TensorHandle<TestRuntime> {
+) -> TensorHandle {
     TestInput::builder(client.clone(), output_shape)
         .dtype(dtype)
         .zeros()
         .generate_without_host_data()
 }
 
-pub fn output_host_f32(
-    client: &ComputeClient<TestRuntime>,
-    output: TensorHandle<TestRuntime>,
-) -> HostData {
+pub fn output_host_f32(client: &Client, output: TensorHandle) -> HostData {
     HostData::from_tensor_handle(client, output, HostDataType::F32)
 }
 
-pub fn output_host_i32(
-    client: &ComputeClient<TestRuntime>,
-    output: TensorHandle<TestRuntime>,
-) -> HostData {
+pub fn output_host_i32(client: &Client, output: TensorHandle) -> HostData {
     HostData::from_tensor_handle(client, output, HostDataType::I32)
 }
 

@@ -1,6 +1,6 @@
 #[test]
 fn very_small_problem_selector() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let problem = AttentionProblem {
         dims: AttentionDims {
@@ -27,7 +27,7 @@ fn very_small_problem_selector() {
 
 #[test]
 fn small_problem_selector() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let problem = AttentionProblem {
         dims: AttentionDims {
@@ -54,7 +54,7 @@ fn small_problem_selector() {
 
 #[test]
 fn hd_smaller_than_vd_problem_selector() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let problem = AttentionProblem {
         dims: AttentionDims {
@@ -81,7 +81,7 @@ fn hd_smaller_than_vd_problem_selector() {
 
 #[test]
 fn hd_larger_than_vd_problem_selector() {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
 
     let problem = AttentionProblem {
         dims: AttentionDims {

@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use cubecl::{
-    {CubeDim, Runtime},
-    {client::ComputeClient, ir::AddressType},
+    CubeDim,
+    {client::Client, ir::AddressType},
 };
 
 use crate::components::tile::TileAttentionKind;
@@ -25,9 +25,9 @@ pub trait Routine: Debug + Clone {
     type Strategy;
     type Blueprint: Clone;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError>;
 }
@@ -40,14 +40,14 @@ pub struct LaunchInfo<B> {
     pub address_type: AddressType,
 }
 
-pub struct DeviceSettings<R: Runtime> {
+pub struct DeviceSettings {
     pub plane_dim: u32,
     pub max_cube_count: (u32, u32, u32),
     pub vector_sizes: AttentionVectorSizes,
-    pub client: ComputeClient<R>,
+    pub client: Client,
 }
 
-impl<R: Runtime> core::fmt::Debug for DeviceSettings<R> {
+impl core::fmt::Debug for DeviceSettings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceSettings")
             .field("plane_dim", &self.plane_dim)
@@ -57,8 +57,8 @@ impl<R: Runtime> core::fmt::Debug for DeviceSettings<R> {
     }
 }
 
-impl<R: Runtime> DeviceSettings<R> {
-    pub fn new(client: &ComputeClient<R>, problem: &AttentionProblem) -> Self {
+impl DeviceSettings {
+    pub fn new(client: &Client, problem: &AttentionProblem) -> Self {
         DeviceSettings {
             plane_dim: client.properties().hardware.plane_size_max,
             max_cube_count: client.properties().hardware.max_cube_count,

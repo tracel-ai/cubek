@@ -1,5 +1,5 @@
 //! Host-side load/store method selection for the manual-mma form
-//! ([`Instruction::Mma`](crate::Instruction)) and execution configuration for the software
+//! (the manual-mma form) and execution configuration for the software
 //! mma instruction ([`Space::instruction`](crate::Space::instruction)).
 //!
 //! Ported from cubek-std's `MmaIOConfig`: which fragment transport each role uses is a
@@ -15,7 +15,7 @@ use cubecl::{
 };
 
 /// Hardware-capability-driven choice of load/store methods for a manual-mma tile, fixed once per
-/// `(device, operand storage types)` and carried by [`Instruction::Mma`](crate::Instruction)
+/// `(device, operand storage types)` and carried by the manual-mma form
 /// because the fragment readers/writers branch on it.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MmaIOConfig {

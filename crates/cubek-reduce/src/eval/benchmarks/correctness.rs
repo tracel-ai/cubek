@@ -1,4 +1,3 @@
-use cubecl::{Runtime, TestRuntime};
 use cubek_test_utils::{HostData, Progress};
 
 use crate::ReduceStrategy;
@@ -19,8 +18,8 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         problem: &ReduceProblem,
         seeds: &[u64],
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         // Validate the path that is actually benchmarked. The two-launch kind
         // runs the same `reduce` as `Single` for its values half, so only the
         // fused kind needs the dedicated entrypoint.
@@ -50,8 +49,8 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
         seeds: &[u64],
         progress: Option<&Progress>,
     ) -> Result<HostData, String> {
-        let device = <TestRuntime as Runtime>::Device::default();
-        let client = <TestRuntime as Runtime>::client(&device);
+        let device = cubecl::test_device();
+        let client = device.client();
         cpu_reference_result(
             client,
             problem.shape.clone(),

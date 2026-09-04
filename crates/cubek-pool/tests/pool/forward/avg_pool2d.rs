@@ -1,12 +1,12 @@
 use super::{make_problem, run_pool_test};
-use cubecl::{Runtime, TestRuntime, zspace::Shape};
+use cubecl::zspace::Shape;
 use cubek_pool::definition::AvgPoolOptions;
 
 const AVG_POOL2D_TOLERANCE: f32 = 1e-5;
 
 #[test]
 fn test_avg_pool2d_basic() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 4, 4, 2]),
         false,
@@ -17,7 +17,7 @@ fn test_avg_pool2d_basic() {
 
 #[test]
 fn test_avg_pool2d_include_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     // count_include_pad = true: divisor is always kernel_size * kernel_size
     let problem = make_problem(
         Shape::from([1, 5, 5, 3]),
@@ -29,7 +29,7 @@ fn test_avg_pool2d_include_pad() {
 
 #[test]
 fn test_avg_pool2d_exclude_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     // count_include_pad = false: divisor only counts non-padded elements
     let problem = make_problem(
         Shape::from([1, 5, 5, 3]),
@@ -41,7 +41,7 @@ fn test_avg_pool2d_exclude_pad() {
 
 #[test]
 fn test_avg_pool2d_strided_no_pad() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 6, 6, 4]),
         false,
@@ -52,7 +52,7 @@ fn test_avg_pool2d_strided_no_pad() {
 
 #[test]
 fn test_avg_pool2d_non_square_asymmetric() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 5, 7, 3]),
         false,
@@ -63,7 +63,7 @@ fn test_avg_pool2d_non_square_asymmetric() {
 
 #[test]
 fn test_avg_pool2d_ceil_mode() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([2, 5, 5, 4]),
         false,
@@ -74,7 +74,7 @@ fn test_avg_pool2d_ceil_mode() {
 
 #[test]
 fn test_avg_pool2d_large_kernel() {
-    let client = TestRuntime::client(&Default::default());
+    let client = cubecl::test_device().client();
     let problem = make_problem(
         Shape::from([1, 10, 10, 1]),
         false,

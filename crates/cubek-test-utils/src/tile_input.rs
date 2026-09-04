@@ -7,9 +7,8 @@
 
 use cubecl::prelude::{Numeric, Size};
 use cubecl::{
-    TestRuntime,
     bytes::Bytes,
-    client::ComputeClient,
+    client::Client,
     prelude::TensorArg,
     prelude::TensorBinding,
     quant::scheme::{QuantScheme, QuantValue},
@@ -23,8 +22,8 @@ use cubecl::{
     },
 };
 use cubek_tile::{
-    DequantAt, Operand, Projection, QuantTileArgLaunch, Residence, Space, StorageTiling,
-    TileArgLaunch, TileSpec as CubekTileSpec,
+    DequantAt, Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch,
+    TileSpec as CubekTileSpec,
 };
 
 use crate::{TestInput, TestInputBuilder};
@@ -33,10 +32,9 @@ use crate::{TestInput, TestInputBuilder};
 /// viewed in. The sub-tile sizes live in the buffer's trailing dims, so the view
 /// reads them from there.
 pub struct TileInput {
-    handle: TensorHandle<TestRuntime>,
+    handle: TensorHandle,
     space: Space,
     levels: usize,
-    residence: Vec<Residence>,
 }
 
 impl TileInput {
@@ -46,19 +44,18 @@ impl TileInput {
     /// recursion, or [`untiled`](TileInputBuilder::untiled) for none, then a data
     /// finalizer ([`arange`](TileInputBuilder::arange) /
     /// [`zeros`](TileInputBuilder::zeros)).
-    pub fn builder(client: &ComputeClient<TestRuntime>, space: Space) -> TileInputBuilder {
+    pub fn builder(client: &Client, space: Space) -> TileInputBuilder {
         TileInputBuilder {
             client: client.clone(),
             space,
             levels: None,
-            residence: Vec::new(),
         }
     }
 
     /// Launch arg for this tile's view: the buffer seen in its logical space.
     /// Every logical axis is tiled (`num_tiled = space.rank()`), recursively for
     /// `levels` nested tile levels.
-    pub fn view(&self) -> TiledViewLaunch<TestRuntime> {
+    pub fn view(&self) -> TiledViewLaunch {
         TiledViewLaunch::new_tensor::<TiledViewLayout>(
             self.handle.clone().binding().into_tensor_arg(),
             TileSpec {
@@ -74,7 +71,7 @@ impl TileInput {
     /// reinterpreted in line units (innermost shape ÷ `S`, every other stride
     /// ÷ `S`), so a kernel reading `Vector<E, S>` lands on contiguous lines.
     /// `vector_size == 1` is exactly [`view`](Self::view).
-    pub fn view_vectorized(&self, vector_size: usize) -> TiledViewLaunch<TestRuntime> {
+    pub fn view_vectorized(&self, vector_size: usize) -> TiledViewLaunch {
         let shape = self.handle.shape();
         let strides = self.handle.strides();
         let inner = shape.len() - 1;
@@ -88,7 +85,7 @@ impl TileInput {
             .enumerate()
             .map(|(i, &s)| if i == inner { s } else { s / vector_size })
             .collect();
-        let lined = TensorHandle::<TestRuntime>::new(
+        let lined = TensorHandle::new(
             self.handle.handle.clone(),
             new_shape,
             new_strides,
@@ -109,7 +106,7 @@ impl TileInput {
     /// axis (so a kernel reading raw `Vector<E, S>` slices lands on contiguous lines).
     /// `vector_size == 1` is the plain buffer. For `Tile::of` pass the plain buffer:
     /// the kernel's element type carries the width and the metadata stays scalar-unit.
-    pub fn tensor_arg(&self, vector_size: usize) -> TensorArg<TestRuntime> {
+    pub fn tensor_arg(&self, vector_size: usize) -> TensorArg {
         if vector_size <= 1 {
             return self.handle.clone().binding().into_tensor_arg();
         }
@@ -126,7 +123,7 @@ impl TileInput {
             .enumerate()
             .map(|(i, &s)| if i == inner { s } else { s / vector_size })
             .collect();
-        TensorHandle::<TestRuntime>::new(
+        TensorHandle::new(
             self.handle.handle.clone(),
             new_shape,
             new_strides,
@@ -138,7 +135,7 @@ impl TileInput {
 
     /// The tile as one launch argument: its scalar-unit tensor paired with its
     /// [`spec`](Self::spec). The kernel's element type carries the width.
-    pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V, TestRuntime> {
+    pub fn arg<E: Numeric, V: Size>(&self) -> TileArgLaunch<'static, E, V> {
         TileArgLaunch::new(self.tensor_arg(1), self.spec())
     }
 
@@ -150,7 +147,7 @@ impl TileInput {
             .collect();
         let levels = self.handle.shape().len() / self.space.rank() - 1;
         let tiling = StorageTiling::uniform(self.space.rank(), levels);
-        CubekTileSpec::new(Projection::tiled(&axes, tiling)).residence(&self.residence)
+        CubekTileSpec::new(Projection::tiled(&axes, tiling))
     }
 
     /// The semantic space the tile lives in.
@@ -159,7 +156,7 @@ impl TileInput {
     }
 
     /// The device handle, for reading an output back.
-    pub fn handle(&self) -> TensorHandle<TestRuntime> {
+    pub fn handle(&self) -> TensorHandle {
         self.handle.clone()
     }
 }
@@ -178,21 +175,12 @@ enum TileLevel {
 /// levels (each a [`split`](Self::split) or [`tile`](Self::tile)), and a data
 /// finalizer that fills the `[grid…, level…, finest…]` buffer.
 pub struct TileInputBuilder {
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     space: Space,
     levels: Option<Vec<TileLevel>>,
-    residence: Vec<Residence>,
 }
 
 impl TileInputBuilder {
-    /// Take the per-level residences from `operand`'s stages, stated where the levels were
-    /// declared ([`Operand::stage`](cubek_tile::Operand::stage)). Default: every level
-    /// [`Residence::InPlace`], staging nothing.
-    pub fn operand(mut self, operand: &Operand) -> Self {
-        self.residence = operand.residences();
-        self
-    }
-
     /// Divide the current tile into `counts[axis]` sub-tiles per axis: a finer
     /// level. Chain for recursion: `.split(&[4, 4]).split(&[2, 2])`.
     pub fn split(mut self, counts: &[usize]) -> Self {
@@ -254,7 +242,6 @@ impl TileInputBuilder {
             client: self.client,
             space: self.space,
             scheme: *scheme,
-            residence: self.residence,
             dequant_at,
         }
     }
@@ -313,7 +300,6 @@ impl TileInputBuilder {
             handle: fill(builder).generate_without_host_data(),
             space: self.space,
             levels: levels.len(),
-            residence: self.residence,
         }
     }
 }
@@ -323,9 +309,8 @@ impl TileInputBuilder {
 /// finalizer fills it and mints the values tile and its scales together: a quantized
 /// tensor is one thing (data, scales, scheme).
 pub struct QuantizedTileInputBuilder {
-    residence: Vec<Residence>,
     dequant_at: DequantAt,
-    client: ComputeClient<TestRuntime>,
+    client: Client,
     space: Space,
     scheme: QuantScheme,
 }
@@ -378,7 +363,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                residence: self.residence,
             },
             scales,
             scheme: self.scheme,
@@ -437,7 +421,6 @@ impl QuantizedTileInputBuilder {
                 handle: TensorHandle::new_contiguous(shape, handle, u32::elem_type_native()),
                 space: self.space,
                 levels: 0,
-                residence: self.residence,
             },
             scales,
             scheme: self.scheme,
@@ -471,11 +454,11 @@ pub struct QuantizedTileInput {
     /// How far this operand's quantized form travels, stated when it was declared quantized.
     pub dequant_at: DequantAt,
     pub tile: TileInput,
-    scales: TensorHandle<TestRuntime>,
+    scales: TensorHandle,
     scheme: QuantScheme,
     /// A lookup scheme's table, present exactly under `QuantMode::Lookup`
     /// ([`lookup_arange`](QuantizedTileInputBuilder::lookup_arange) mints it).
-    table: Option<TensorHandle<TestRuntime>>,
+    table: Option<TensorHandle>,
     /// The quant values, row-major in the logical shape. Table indices under a lookup scheme.
     pub q: Vec<i32>,
     /// One scale per block, row-major over the scheme's block grid.
@@ -486,13 +469,13 @@ pub struct QuantizedTileInput {
 
 impl QuantizedTileInput {
     /// Binding for the innermost level's scales tensor.
-    pub fn scales_binding(&self) -> TensorBinding<TestRuntime> {
+    pub fn scales_binding(&self) -> TensorBinding {
         self.scales.clone().binding()
     }
 
     /// The quantized tile as one launch argument: values, scales, spec, scheme, and how far the
     /// quantized form travels.
-    pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V, TestRuntime> {
+    pub fn arg<E: Numeric, V: Size>(&self) -> QuantTileArgLaunch<'static, E, V> {
         QuantTileArgLaunch::new(
             self.tile.tensor_arg(1),
             self.scales_binding().into_tensor_arg(),

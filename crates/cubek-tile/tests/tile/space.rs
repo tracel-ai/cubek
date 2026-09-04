@@ -1,12 +1,7 @@
 //! Unit tests for [`Space`]
 
-use cubecl::ir::{ElemType, FloatKind};
 use cubecl::prelude::*;
-use cubecl::quant::scheme::QuantScheme;
-use cubek_tile::{
-    Axis, Buffering, ByAxis, CubeAxis, Distribution, Instruction, Operand, OperandSet, Partitioner,
-    Residence, Space, Stage, Tiling, WalkOrder, cubes, lanes,
-};
+use cubek_tile::{Axis, ByAxis, CubeAxis, Distribution, Partitioner, Space, Tiling, cubes, lanes};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -102,7 +97,7 @@ fn sequential(edges: &[(Axis, usize)]) -> Partitioner {
         .iter()
         .map(|&(a, _)| (a, Distribution::Sequential))
         .collect::<Vec<_>>();
-    Partitioner::row_major(ByAxis::new(edges), ByAxis::new(&dists)).buffered(Buffering::SINGLE)
+    Partitioner::over(ByAxis::new(edges), ByAxis::new(&dists)).level()
 }
 
 #[test]
@@ -216,56 +211,25 @@ fn with_partitioner_stacks_levels_and_divide_descends() {
 
 // ---- Tiling::over -----------------------------------------------------------
 
-struct MatmulOperands {
-    a: Operand,
-    b: Operand,
-    out: Operand,
-}
-
-impl OperandSet for MatmulOperands {
-    fn each(&mut self) -> impl Iterator<Item = &mut Operand> {
-        [&mut self.a, &mut self.b, &mut self.out].into_iter()
-    }
-}
-
-fn matmul_operands() -> MatmulOperands {
-    let f32t = f32::elem_type_native();
-    MatmulOperands {
-        a: Operand::new(&[M, K], f32t),
-        b: Operand::new(&[K, N], f32t),
-        out: Operand::new(&[M, N], f32t),
-    }
-}
-
 /// Distributing work is a statement about the level's cuts, so it is available wherever cuts are
-/// collected: the operand-threaded chain says it beside the residences the same level states.
+/// collected.
 #[test]
-fn over_distributes_work_beside_the_residences() {
-    let mut ops = matmul_operands();
-    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+fn over_distributes_work() {
+    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5),
                 &[(M, 16), (N, 32), (K, 16)],
             );
-            o.out.stage(Residence::Register);
         })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
+        .level(|l| {
             l.walk(&[(M, 16), (N, 32), (K, 4)]);
-            o.b.stage(Residence::Smem);
         })
         .build();
 
     // The shares ride the cubes even though no axis does.
     assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
-    // And the operands' residences are the ones stated, level by level, untouched by the
-    // distribution.
-    let residences = |o: &Operand| o.stages().iter().map(|s| s.residence).collect::<Vec<_>>();
-    assert_eq!(
-        residences(&ops.out),
-        [Residence::Register, Residence::InPlace]
-    );
-    assert_eq!(residences(&ops.b), [Residence::InPlace, Residence::Smem]);
+    assert_eq!(space.partitioner().depth(), 2);
 }
 
 /// One region each is a box of the grid however many axes are named, so the line deals a dial per
@@ -276,14 +240,14 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
     let level = |l: &mut cubek_tile::LevelCuts| {
         l.walk(&[(M, 16), (N, 32), (K, 16)]);
     };
-    let one_line = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let one_line = Tiling::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
             level(l);
         })
         .build();
-    let a_dial_each = Tiling::over(&mut (), &[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let a_dial_each = Tiling::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
                 .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
             level(l);
@@ -302,8 +266,8 @@ fn distributing_several_axes_one_region_each_deals_a_dial_each() {
 /// inside another, so they are read as one index instead.
 #[test]
 fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5),
                 &[(M, 16), (N, 32), (K, 16)],
@@ -319,8 +283,8 @@ fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
 /// axis's own tiles across the scope, which is what a cut has always meant.
 #[test]
 fn distributing_one_axis_with_a_count_is_a_dial() {
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
                 .walk(&[(N, 32), (K, 16)]);
         })
@@ -333,8 +297,8 @@ fn distributing_one_axis_with_a_count_is_a_dial() {
 /// reads as if the line were not there.
 #[test]
 fn distributing_no_axis_states_nothing() {
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(cubes(CubeAxis::Z), &[])
                 .walk(&[(M, 16), (N, 32), (K, 16)]);
         })
@@ -348,9 +312,9 @@ fn distributing_no_axis_states_nothing() {
 #[test]
 #[should_panic = "combine in registers"]
 fn distributing_work_across_lanes_is_refused() {
-    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.distribute(lanes().instances(4), &[(M, 16), (N, 32), (K, 16)]);
+    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
+            l.distribute(lanes(4), &[(M, 16), (N, 32), (K, 16)]);
         })
         .build();
 }
@@ -360,8 +324,8 @@ fn distributing_work_across_lanes_is_refused() {
 #[test]
 #[should_panic = "instances taking turns would leave no region long enough"]
 fn distributing_work_in_turns_is_refused() {
-    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.distribute(
                 cubes(CubeAxis::X).instances(5).interleaved(),
                 &[(M, 16), (N, 32), (K, 16)],
@@ -374,8 +338,8 @@ fn distributing_work_in_turns_is_refused() {
 #[test]
 #[should_panic = "a level states each of its axes once"]
 fn an_axis_both_cut_and_distributed_is_refused() {
-    Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
+        .level(|l| {
             l.walk(&[(K, 16)]).distribute(
                 cubes(CubeAxis::X).instances(5),
                 &[(M, 16), (N, 32), (K, 16)],
@@ -384,225 +348,34 @@ fn an_axis_both_cut_and_distributed_is_refused() {
         .build();
 }
 
-/// The two builders cannot drift: an operand-threaded build partitions exactly as the plain
-/// chain does, so migrating a caller changes nothing about its space.
-#[test]
-fn over_builds_the_space_plain_tiling_would() {
-    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 32), (K, 16)]);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)]);
-        })
-        .build();
-
-    let mut ops = matmul_operands();
-    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 32), (K, 16)]);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)]);
-        })
-        .build();
-
-    assert_eq!(space.partitioner(), plain.partitioner());
-    assert_eq!(space.rank(), plain.rank());
-    assert_eq!(space.extent(M), plain.extent(M));
-    assert_eq!(space.extent(N), plain.extent(N));
-    assert_eq!(space.extent(K), plain.extent(K));
-}
-
-/// Omission is a statement: a level that says nothing leaves the operand in place at the type
-/// it already holds, so every stages is total without a default anyone has to remember.
-#[test]
-fn over_seals_stages_and_omission_is_in_place() {
-    let f32t = f32::elem_type_native();
-    let mut ops = matmul_operands();
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage(Residence::Smem);
-            o.b.stage(Residence::Smem);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)]);
-            o.out.stage(Residence::Register);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 4), (N, 4), (K, 4)]);
-        })
-        .build();
-
-    let stage = |residence, dtype| Stage { residence, dtype };
-    assert_eq!(
-        ops.a.stages(),
-        &[
-            stage(Residence::Smem, f32t),
-            stage(Residence::InPlace, f32t),
-            stage(Residence::InPlace, f32t),
-        ]
-    );
-    assert_eq!(
-        ops.out.stages(),
-        &[
-            stage(Residence::InPlace, f32t),
-            stage(Residence::Register, f32t),
-            stage(Residence::InPlace, f32t),
-        ]
-    );
-}
-
-/// The type column is the data flow: moves keep the operand's type, a conversion re-types it
-/// exactly where stated, and the padding below a conversion carries the converted type, so
-/// reading one operand's stages top to bottom is reading what its bytes are at every level.
-#[test]
-fn over_type_column_moves_then_converts() {
-    let q4 = ElemType::Float(FloatKind::E2M1x2);
-    let f32t = f32::elem_type_native();
-    let ops = MatmulOperands {
-        a: Operand::new(&[M, K], f32t),
-        b: Operand::new(&[K, N], q4).quantized(QuantScheme::default()),
-        out: Operand::new(&[M, N], f32t),
-    };
-    let mut ops = ops;
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.b.stage(Residence::Smem);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)]);
-            o.b.stage_as(Residence::Register, f32t);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 4), (N, 4), (K, 4)]);
-        })
-        .build();
-
-    let stage = |residence, dtype| Stage { residence, dtype };
-    assert_eq!(
-        ops.b.stages(),
-        &[
-            stage(Residence::Smem, q4),       // move: packed words
-            stage(Residence::Register, f32t), // the conversion, right here
-            stage(Residence::InPlace, f32t),
-        ]
-    );
-    assert_eq!(ops.b.current_dtype(), f32t);
-    assert!(ops.b.quant().is_some());
-}
-
-/// `stage_as` is total in the type: stating the type the operand already holds is the move
-/// `stage` states, so a caller whose type is computed says it once and never branches.
-#[test]
-fn over_stage_as_same_type_is_the_move() {
-    let f32t = f32::elem_type_native();
-    let mut ops = matmul_operands();
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage_as(Residence::Smem, f32t);
-            o.b.stage(Residence::Smem);
-        })
-        .build();
-
-    assert_eq!(ops.a.stages(), ops.b.stages());
-    assert_eq!(
-        ops.a.stages(),
-        &[Stage {
-            residence: Residence::Smem,
-            dtype: f32t
-        }]
-    );
-}
-
-/// One residence per operand per level: a second statement is a contradiction, not an update.
-#[test]
-#[should_panic(expected = "more than one stage")]
-fn over_double_statement_at_one_level_panics() {
-    let mut ops = matmul_operands();
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage(Residence::Smem);
-            o.a.stage(Residence::Register);
-        })
-        .build();
-}
-
-/// The stages is the format statement a launch stamps: the residence column feeds the
-/// [`TileSpec`](cubek_tile::TileSpec), and the finest register stage is what the operand is at
-/// the instruction; one stating none is a memory window, read where it lies by whichever
-/// instruction consumes it.
-#[test]
-fn over_records_where_each_operand_lives_and_the_space_names_the_instruction() {
-    let mut ops = matmul_operands();
-    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage(Residence::Smem);
-        })
-        .instruction(Instruction::Cmma, |l, o| {
-            l.walk(&[(M, 8), (N, 8), (K, 4)]);
-            o.a.stage(Residence::Register);
-        })
-        .build();
-
-    // An operand says where it lives, and nothing about what consumes it there.
-    assert_eq!(ops.a.residences(), &[Residence::Smem, Residence::Register]);
-    assert!(Instruction::stages_to_registers(&ops.a.residences()));
-    assert!(!Instruction::stages_to_registers(&ops.b.residences()));
-
-    // Which instruction those registers are for is said once, by the space.
-    assert_eq!(space.instruction(), Some(Instruction::Cmma));
-}
-
 // ---- A level that cuts nothing --------------------------------------------
 
 /// A level whose edges are the extents handed to it has one instance on every axis, so it
-/// partitions nothing. The build drops it, and the plan compares equal to the plan without it,
-/// which is what stops the two from compiling as two kernels.
+/// partitions nothing. It stays all the same: the kernel walks the levels it stated, one loop
+/// per level, so the space has to hold every one of them. A one-region walk folds away in the
+/// kernel, so keeping it costs nothing.
 #[test]
-fn a_level_that_cuts_nothing_is_dropped() {
-    let plain = Tiling::over(&mut (), &[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+fn a_level_that_cuts_nothing_is_kept() {
+    let plain = Tiling::over(&[(M, 64), (N, 64)])
+        .level(|l| {
             l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 64), (N, 64)])
+        .level(|l| {
             l.walk(&[(M, 16), (N, 32)]);
         })
-        // The same edges again: nothing left to cut.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        .build();
-
-    assert_eq!(space, plain);
-    assert_eq!(space.partitioner().depth(), 1);
-}
-
-/// A one-instance level whose pipeline is deeper than its parent's is a real stage: it buffers
-/// two regions where its parent buffers one, so it is not a no-op and stays.
-#[test]
-fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        .level(WalkOrder::RowMajor, Buffering::DOUBLE, |l, _| {
+        // The same edges again: nothing left to cut, still a level.
+        .level(|l| {
             l.walk(&[(M, 16), (N, 32)]);
         })
         .build();
 
+    assert_ne!(space, plain);
     assert_eq!(space.partitioner().depth(), 2);
-    match space.divide().partitioner() {
-        Partitioner::Level(level) => assert_eq!(level.buffering(), Buffering::DOUBLE),
-        Partitioner::Final => panic!("the deeper-buffered level was dropped"),
-    }
+    assert_eq!(space.divide().extent(M), 16);
+    assert_eq!(space.divide().divide().extent(M), 16);
+    assert!(space.divide().divide().is_final());
 }
 
 /// The only level of a space stays even when its cuts take the whole extent: a space with a
@@ -611,70 +384,12 @@ fn a_level_that_cuts_nothing_but_buffers_deeper_stays() {
 /// on (attention's split count, a plane grid of one) lands on 1.
 #[test]
 fn the_only_level_stays_even_when_it_cuts_nothing() {
-    let space = Tiling::over(&mut (), &[(M, 64), (N, 64)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
+    let space = Tiling::over(&[(M, 64), (N, 64)])
+        .level(|l| {
             l.walk(&[(M, 64), (N, 64)]);
         })
         .build();
 
     assert_eq!(space.partitioner().depth(), 1);
     assert!(space.divide().is_final());
-}
-
-/// An operand moving at a one-instance level is real staging and real traffic, so the level
-/// stays, and with it the residence column entry that names the move.
-#[test]
-fn a_level_that_cuts_nothing_but_moves_an_operand_stays() {
-    let mut ops = matmul_operands();
-    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-        })
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage(Residence::Smem);
-        })
-        .build();
-
-    assert_eq!(space.partitioner().depth(), 2);
-    assert_eq!(ops.a.residences(), &[Residence::InPlace, Residence::Smem]);
-}
-
-/// The instruction level carries the instruction, which is its whole purpose; it stays even
-/// when its cuts take nothing off its parent. Every other operand's column shortens with the
-/// levels that go, so it keeps one entry per level of the space that was built.
-#[test]
-fn the_instruction_level_stays_and_the_columns_follow_the_levels() {
-    let mut ops = matmul_operands();
-    let space = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, o| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-            o.a.stage(Residence::Smem);
-        })
-        // Dropped: same edges, nothing stated.
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-        })
-        .instruction(Instruction::Cmma, |l, _| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-        })
-        .build();
-
-    assert_eq!(space.partitioner().depth(), 2);
-    assert_eq!(space.instruction(), Some(Instruction::Cmma));
-    assert_eq!(ops.a.residences(), &[Residence::Smem, Residence::InPlace]);
-}
-
-/// The build seals its operands: a stage stated afterwards would describe a level that does
-/// not exist, silently misaligning every stage under it.
-#[test]
-#[should_panic(expected = "after the space was built")]
-fn over_staging_after_build_panics() {
-    let mut ops = matmul_operands();
-    let _ = Tiling::over(&mut ops, &[(M, 64), (N, 64), (K, 16)])
-        .level(WalkOrder::RowMajor, Buffering::SINGLE, |l, _| {
-            l.walk(&[(M, 16), (N, 16), (K, 16)]);
-        })
-        .build();
-    ops.a.stage(Residence::Smem);
 }

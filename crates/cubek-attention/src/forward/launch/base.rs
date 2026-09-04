@@ -1,4 +1,4 @@
-use cubecl::{Runtime, client::ComputeClient, prelude::TensorBinding};
+use cubecl::{client::Client, prelude::TensorBinding};
 
 use crate::forward::routines::{
     Routine, blackbox_accelerated::BlackboxAcceleratedRoutine, unit::UnitRoutine,
@@ -29,32 +29,30 @@ pub enum Strategy {
 }
 
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
-pub fn launch_ref<R: Runtime>(
+pub fn launch_ref(
     strategy: Strategy,
-    client: &ComputeClient<R>,
-    query: TensorBinding<R>,
-    key: TensorBinding<R>,
-    value: TensorBinding<R>,
-    mask: Option<TensorBinding<R>>,
-    out: TensorBinding<R>,
+    client: &Client,
+    query: TensorBinding,
+    key: TensorBinding,
+    value: TensorBinding,
+    mask: Option<TensorBinding>,
+    out: TensorBinding,
     attention_global_types: &AttentionGlobalTypes,
     attention_options: AttentionOptions,
 ) -> Result<(), AttentionSetupError> {
     match strategy {
-        Strategy::BlackboxAccelerated(strategy) => {
-            launch_attention::<R, BlackboxAcceleratedRoutine>(
-                client,
-                query,
-                key,
-                value,
-                mask,
-                out,
-                attention_global_types,
-                strategy,
-                attention_options,
-            )
-        }
-        Strategy::Unit(strategy) => launch_attention::<R, UnitRoutine>(
+        Strategy::BlackboxAccelerated(strategy) => launch_attention::<BlackboxAcceleratedRoutine>(
+            client,
+            query,
+            key,
+            value,
+            mask,
+            out,
+            attention_global_types,
+            strategy,
+            attention_options,
+        ),
+        Strategy::Unit(strategy) => launch_attention::<UnitRoutine>(
             client,
             query,
             key,
@@ -69,13 +67,13 @@ pub fn launch_ref<R: Runtime>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn launch_attention<R: Runtime, A: Routine>(
-    client: &ComputeClient<R>,
-    query: TensorBinding<R>,
-    key: TensorBinding<R>,
-    value: TensorBinding<R>,
-    mask: Option<TensorBinding<R>>,
-    out: TensorBinding<R>,
+pub fn launch_attention<A: Routine>(
+    client: &Client,
+    query: TensorBinding,
+    key: TensorBinding,
+    value: TensorBinding,
+    mask: Option<TensorBinding>,
+    out: TensorBinding,
     global_dtypes: &AttentionGlobalTypes,
     strategy: BlueprintStrategy<A>,
     attention_options: AttentionOptions,
@@ -119,7 +117,7 @@ pub fn launch_attention<R: Runtime, A: Routine>(
     )?;
 
     let result = unsafe {
-        <A as Routine>::BatchAttention::launch_unchecked::<TensorArgs, R>(
+        <A as Routine>::BatchAttention::launch_unchecked::<TensorArgs>(
             client,
             launch_info.cube_dim,
             launch_info.cube_count_plan.resolve(),

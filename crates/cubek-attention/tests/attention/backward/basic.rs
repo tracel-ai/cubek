@@ -10,7 +10,7 @@
 
 #![cfg(feature = "cpu-reference")]
 
-use cubecl::{Runtime, TestRuntime, client::ComputeClient, prelude::Scalar, zspace::Shape};
+use cubecl::{client::Client, prelude::Scalar, zspace::Shape};
 use cubek_attention::{
     backward::{
         BackwardConfig, flash_attention_backward, flash_attention_backward_dkdv,
@@ -34,18 +34,18 @@ use cubek_test_utils::{
 /// the scaffold so we don't have to thread mixed precision through every
 /// helper while the kernels are stubs.
 struct BackwardInputs {
-    q: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    q: cubecl::std::tensor::TensorHandle,
     q_data: HostData,
-    k: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    k: cubecl::std::tensor::TensorHandle,
     k_data: HostData,
-    v: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    v: cubecl::std::tensor::TensorHandle,
     v_data: HostData,
-    do_: cubecl::std::tensor::TensorHandle<TestRuntime>,
+    do_: cubecl::std::tensor::TensorHandle,
     do_data: HostData,
 }
 
 fn problem(seq_q: usize, seq_kv: usize, head_dim: usize, val_dim: usize) -> AttentionProblem {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     AttentionProblem {
         dims: AttentionDims {
             batch: 1,
@@ -79,7 +79,7 @@ fn problem_causal(
     p
 }
 
-fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) -> BackwardInputs {
+fn seed_inputs(client: &Client, problem: &AttentionProblem) -> BackwardInputs {
     let q_shape = [
         problem.dims.batch,
         problem.dims.num_heads,
@@ -135,10 +135,10 @@ fn seed_inputs(client: &ComputeClient<TestRuntime>, problem: &AttentionProblem) 
 }
 
 fn zeros_like(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: [usize; 4],
     dtype: cubecl::ir::ElemType,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .zeros()
@@ -146,10 +146,10 @@ fn zeros_like(
 }
 
 fn zeros_row(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: [usize; 3],
     dtype: cubecl::ir::ElemType,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     TestInput::builder(client.clone(), Shape::new(shape))
         .dtype(dtype)
         .zeros()
@@ -169,7 +169,7 @@ const EPS: f32 = 1e-3;
 /// Run the prepass kernel and compare its `D` output against the CPU
 /// reference. Expected to fail until the kernel lands.
 fn run_prepass(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     // We need O for the prepass: generate it by running the CPU forward.
@@ -234,7 +234,7 @@ fn o_data_to_vec(dbg: &FlashAttentionBackwardDebug) -> Vec<f32> {
 /// Run the dQ kernel with CPU-computed `lse` and `D`, compare its output
 /// against the CPU reference's dQ. Expected to fail until the kernel lands.
 fn run_dq(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -301,7 +301,7 @@ fn run_dq(problem: AttentionProblem) {
 }
 
 fn run_dkdv(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -380,7 +380,7 @@ fn run_dkdv(problem: AttentionProblem) {
 }
 
 fn run_end_to_end(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(
@@ -481,10 +481,10 @@ fn run_end_to_end(problem: AttentionProblem) {
 }
 
 fn upload_row(
-    client: &ComputeClient<TestRuntime>,
+    client: &Client,
     shape: [usize; 3],
     data: &HostData,
-) -> cubecl::std::tensor::TensorHandle<TestRuntime> {
+) -> cubecl::std::tensor::TensorHandle {
     let values: Vec<f32> = match &data.data {
         cubek_test_utils::HostDataVec::F32(v) => v.clone(),
         _ => unreachable!("reference produces fp32 rowwise tensors"),
@@ -500,7 +500,7 @@ fn upload_row(
 /// kernels land it'll start checking. Tolerance is generous because finite
 /// differences in fp32 are noisy; bf16 will need looser bounds again.
 fn run_gradcheck(problem: AttentionProblem) {
-    let client = <TestRuntime as Runtime>::client(&Default::default());
+    let client = cubecl::test_device().client();
     let inputs = seed_inputs(&client, &problem);
 
     let dbg = flash_attention_backward_reference_debug(

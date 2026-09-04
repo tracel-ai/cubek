@@ -1,4 +1,4 @@
-use cubecl::{CubeDim, Runtime};
+use cubecl::CubeDim;
 use cubek_matmul::multi_level::{
     CubeDimResource,
     components::{global::PartitionedStageFamily, stage::StridedStageFamily},
@@ -38,9 +38,9 @@ impl Routine for UnitRoutine {
     type Strategy = ();
     type Blueprint = AttentionBlueprint;
 
-    fn prepare<R: Runtime>(
+    fn prepare(
         problem: &AttentionProblem,
-        device_settings: &DeviceSettings<R>,
+        device_settings: &DeviceSettings,
         strategy: BlueprintStrategy<Self>,
     ) -> Result<LaunchInfo<Self::Blueprint>, AttentionSetupError> {
         // The unit routine relies on plane-level parallelism;
@@ -86,9 +86,9 @@ impl Routine for UnitRoutine {
     }
 }
 
-fn blueprint<R: Runtime>(
+fn blueprint(
     problem: &AttentionProblem,
-    launch_settings: &DeviceSettings<R>,
+    launch_settings: &DeviceSettings,
     strategy: BlueprintStrategy<UnitRoutine>,
 ) -> Result<AttentionBlueprint, AttentionSetupError> {
     match strategy {
