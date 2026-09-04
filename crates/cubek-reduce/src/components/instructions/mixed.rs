@@ -3,7 +3,7 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK, TopKKey,
+    Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, SharedAccumulatorKind, TopK,
 };
 use crate::{
     ReduceDtypes,
@@ -172,14 +172,14 @@ impl ReduceFamily for ReduceOperation {
 pub struct DynamicSharedAccumulator<P: ReducePrecision> {
     pub elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
     pub args: SharedAccumulatorKind<Vector<u32, P::SI>>,
-    pub keys: SharedAccumulatorKind<Vector<TopKKey, P::SI>>,
+    pub keys: SharedAccumulatorKind<Vector<OrderKey, P::SI>>,
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
-    pub keys: Value<Vector<TopKKey, P::SI>>,
+    pub keys: Value<Vector<OrderKey, P::SI>>,
 }
 
 #[cube]

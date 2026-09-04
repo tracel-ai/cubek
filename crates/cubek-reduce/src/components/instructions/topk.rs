@@ -8,8 +8,8 @@ use crate::components::instructions::AccumulatorFormat;
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{
-    Accumulator, Item, TopKKey, Value, ValueExpand, empty_topk_key, pack_topk_key, packs_into_key,
-    plane_topk_key_insert, plane_topk_key_merge, topk_key_coordinate, topk_key_value,
+    Accumulator, Item, OrderKey, Value, ValueExpand, empty_order_key, order_key_coordinate,
+    order_key_value, pack_order_key, packs_into_key, plane_topk_key_insert, plane_topk_key_merge,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -109,8 +109,8 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
 /// comparison, and one selected pair swaps both halves of a slot.
 #[cube]
 pub(crate) fn topk_key_insert<S: Size>(
-    keys: &mut Array<Vector<TopKKey, S>>,
-    insert_key: Vector<TopKKey, S>,
+    keys: &mut Array<Vector<OrderKey, S>>,
+    insert_key: Vector<OrderKey, S>,
     #[comptime] k: usize,
 ) {
     let mut insert_key = insert_key;
@@ -132,7 +132,7 @@ pub struct TopKSharedAccumulator<P: ReducePrecision> {
     /// (see `read`/`write`).
     args: Sequence<Shared<[Vector<u32, P::SI>]>>,
     /// Empty unless the instruction packs its coordinates into its values.
-    keys: Sequence<Shared<[Vector<TopKKey, P::SI>]>>,
+    keys: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -289,7 +289,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_keys::<P>(this);
 
         if comptime!(packed) {
-            let empty = empty_topk_key::<P::EA, P::SI>();
+            let empty = empty_order_key::<P::EA, P::SI>();
 
             let mut keys = Array::new(comptime!(this.k));
             #[unroll]
@@ -338,7 +338,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
 
         if comptime!(packed) {
             let key =
-                pack_topk_key::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
+                pack_order_key::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
             let keys = accumulator.keys.multiple_mut();
 
             match reduce_step {
@@ -429,9 +429,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             let mut out_indices = Array::new(this.k);
             #[unroll]
             for i in 0..this.k {
-                let key = Vector::<TopKKey, P::SI>::new(keys[i]);
-                out_values[i] = Out::cast_from(topk_key_value::<P::EA, P::SI>(key).extract(0usize));
-                out_indices[i] = Idx::cast_from(topk_key_coordinate::<P::SI>(key).extract(0usize));
+                let key = Vector::<OrderKey, P::SI>::new(keys[i]);
+                out_values[i] =
+                    Out::cast_from(order_key_value::<P::EA, P::SI>(key).extract(0usize));
+                out_indices[i] = Idx::cast_from(order_key_coordinate::<P::SI>(key).extract(0usize));
             }
 
             (
@@ -479,8 +480,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             let mut out_indices = Array::new(this.k);
             #[unroll]
             for i in 0..this.k {
-                out_values[i] = Vector::cast_from(topk_key_value::<P::EA, P::SI>(keys[i]));
-                out_indices[i] = Vector::cast_from(topk_key_coordinate::<P::SI>(keys[i]));
+                out_values[i] = Vector::cast_from(order_key_value::<P::EA, P::SI>(keys[i]));
+                out_indices[i] = Vector::cast_from(order_key_coordinate::<P::SI>(keys[i]));
             }
 
             (
@@ -610,12 +611,12 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
 /// [`topk_finalize_with_coords`] over packed keys, for the parallel layout.
 #[cube]
 fn topk_finalize_keys<P: ReducePrecision>(
-    keys: &Array<Vector<TopKKey, P::SI>>,
+    keys: &Array<Vector<OrderKey, P::SI>>,
     #[comptime] k: usize,
-) -> Array<TopKKey> {
+) -> Array<OrderKey> {
     let vector_size = keys[0].vector_size().comptime();
 
-    let empty = empty_topk_key::<P::EA, P::SI>().extract(0usize);
+    let empty = empty_order_key::<P::EA, P::SI>().extract(0usize);
 
     let mut topk = Array::new(k);
     #[unroll]

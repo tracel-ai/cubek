@@ -1,5 +1,5 @@
 use crate::components::{
-    instructions::{TopKKey, empty_topk_key, lowest_coordinate_matching},
+    instructions::{OrderKey, empty_order_key, lowest_coordinate_matching},
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -59,7 +59,7 @@ pub struct ReduceRequirements {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Multiple(usize),
-    /// Slots holding a [`TopKKey`](super::TopKKey) each, so the values and the
+    /// Slots holding a [`OrderKey`](super::OrderKey) each, so the values and the
     /// coordinates share one storage rather than two.
     Keys(usize),
     Single,
@@ -282,8 +282,8 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
 /// lanes cannot hold the same key, since the coordinate is part of it.
 #[cube]
 pub fn plane_topk_key_insert<N: Numeric, S: Size>(
-    keys: &mut Array<Vector<TopKKey, S>>,
-    item: Vector<TopKKey, S>,
+    keys: &mut Array<Vector<OrderKey, S>>,
+    item: Vector<OrderKey, S>,
     #[comptime] k: usize,
 ) {
     let mut local_best = item;
@@ -302,14 +302,14 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
         }
 
         let is_winner = local_best.equal(&winning);
-        local_best = select_many(is_winner, empty_topk_key::<N, S>(), local_best);
+        local_best = select_many(is_winner, empty_order_key::<N, S>(), local_best);
     }
 }
 
 /// Plane-cooperative merge of per-lane packed-key accumulators.
 #[cube]
 pub fn plane_topk_key_merge<N: Numeric, S: Size>(
-    keys: &mut Array<Vector<TopKKey, S>>,
+    keys: &mut Array<Vector<OrderKey, S>>,
     #[comptime] k: usize,
 ) {
     let mut final_keys = Array::new(k);
@@ -318,7 +318,7 @@ pub fn plane_topk_key_merge<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local = empty_topk_key::<N, S>();
+        let mut local = empty_order_key::<N, S>();
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
@@ -563,9 +563,9 @@ pub struct Item<P: ReducePrecision> {
 pub struct Accumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
-    /// Top-k's packed keys, which replace `elements` and `args` rather than
+    /// The packed keys, which replace `elements` and `args` rather than
     /// joining them: exactly one of the two spellings is ever populated.
-    pub keys: Value<Vector<TopKKey, P::SI>>,
+    pub keys: Value<Vector<OrderKey, P::SI>>,
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
