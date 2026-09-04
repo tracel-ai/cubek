@@ -38,7 +38,7 @@ impl ReduceBenchPrecision {
 
     /// The suffix its rows' ids carry. An f32 row carries none: the catalogue
     /// tests and `CUBEK_BENCH_PROBLEMS` name those ids verbatim.
-    fn suffix(self) -> &'static str {
+    pub fn suffix(self) -> &'static str {
         match self {
             ReduceBenchPrecision::F32 => "",
             ReduceBenchPrecision::F16 => "_f16",
