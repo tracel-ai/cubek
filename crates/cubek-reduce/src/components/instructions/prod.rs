@@ -40,6 +40,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
         Accumulator::<P> {
             elements: Value::new_single(Vector::empty().fill(P::EA::from_int(1))),
             args: Value::new_None(),
+            keys: Value::new_None(),
         }
     }
 

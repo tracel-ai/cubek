@@ -41,8 +41,12 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
         ParallelWriter::<'a, Out> {
             output: output.view_mut(layout),
             buffer: match accumulator_format {
-                AccumulatorFormat::Single => Value::new_single(Vector::empty()),
-                AccumulatorFormat::Multiple(length) => Value::new_Multiple(Array::new(length)),
+                AccumulatorFormat::Single | AccumulatorFormat::SingleKey => {
+                    Value::new_single(Vector::empty())
+                }
+                AccumulatorFormat::Multiple(length) | AccumulatorFormat::Keys(length) => {
+                    Value::new_Multiple(Array::new(length))
+                }
             },
             axis_size: input.shape(reduce_axis),
             write_index,

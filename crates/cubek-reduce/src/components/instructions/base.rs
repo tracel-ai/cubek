@@ -1,4 +1,7 @@
-use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
+use crate::components::{
+    instructions::{OrderKey, ValueOrder, empty_order_key, lowest_coordinate_matching},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -56,14 +59,19 @@ pub struct ReduceRequirements {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Multiple(usize),
+    /// Slots holding an [`OrderKey`](super::OrderKey) each, so the values and the
+    /// coordinates share one storage rather than two.
+    Keys(usize),
+    /// One [`OrderKey`](super::OrderKey), for the extrema that keep a single slot.
+    SingleKey,
     Single,
 }
 
 impl AccumulatorFormat {
     pub fn len(&self) -> usize {
         match self {
-            AccumulatorFormat::Multiple(k) => *k,
-            AccumulatorFormat::Single => 1,
+            AccumulatorFormat::Multiple(k) | AccumulatorFormat::Keys(k) => *k,
+            AccumulatorFormat::Single | AccumulatorFormat::SingleKey => 1,
         }
     }
 
@@ -266,6 +274,76 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
         // Winner masking logic
         let is_winner = lane_id.equal(&winning_lane);
         local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+    }
+}
+
+/// Plane-cooperative insertion of one packed-key candidate per lane.
+///
+/// A key already carries the tie-break, so the plane's winner is a plain
+/// [`plane_max`] and the lane holding it is the lane whose key equals it: two
+/// lanes cannot hold the same key, since the coordinate is part of it.
+#[cube]
+pub fn plane_topk_key_insert<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<OrderKey, S>>,
+    item: Vector<OrderKey, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best = item;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning = plane_max(local_best);
+        let mut insert = winning;
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let to_keep = keys[j].greater_than(&insert);
+            let next = select_many(to_keep, insert, keys[j]);
+            keys[j] = select_many(to_keep, keys[j], insert);
+            insert = next;
+        }
+
+        let is_winner = local_best.equal(&winning);
+        local_best = select_many(
+            is_winner,
+            empty_order_key::<N, S>(ValueOrder::Descending),
+            local_best,
+        );
+    }
+}
+
+/// Plane-cooperative merge of per-lane packed-key accumulators.
+#[cube]
+pub fn plane_topk_key_merge<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<OrderKey, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_keys = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local = empty_order_key::<N, S>(ValueOrder::Descending);
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local = select_many(is_pointed, keys[j], local);
+        }
+
+        let winning = plane_max(local);
+        final_keys[i] = winning;
+
+        let is_cand = local.equal(&winning);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        keys[i] = final_keys[i];
     }
 }
 
@@ -491,6 +569,9 @@ pub struct Item<P: ReducePrecision> {
 pub struct Accumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
+    /// The packed keys, which replace `elements` and `args` rather than
+    /// joining them: exactly one of the two spellings is ever populated.
+    pub keys: Value<Vector<OrderKey, P::SI>>,
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
@@ -517,6 +598,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
         Accumulator::<P> {
             elements: Value::new_single(accumulator[index]),
             args: Value::new_None(),
+            keys: Value::new_None(),
         }
     }
 
@@ -525,13 +607,18 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 }
 
-/// A pair of shared memory used for [`Max`](super::Max) and [`Min`](super::Min).
+/// The shared memory used by [`Max`](super::Max) and [`Min`](super::Min), in
+/// whichever of the two spellings the instruction accumulates in.
 #[derive(CubeType)]
 pub struct ArgAccumulator<P: ReducePrecision> {
-    pub elements: Shared<[Vector<P::EA, P::SI>]>,
-    /// Empty unless the instruction tracks coordinates; its length is the single
-    /// source of truth for whether coordinates are staged (see `read`/`write`).
+    /// Empty when the accumulator is packed into `keys`.
+    pub elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
+    /// Empty unless the instruction stages coordinates beside the values; its
+    /// length is the single source of truth for whether they are (see
+    /// `read`/`write`).
     pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
+    /// Empty unless the instruction packs its coordinate into its value.
+    pub keys: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -545,39 +632,68 @@ pub enum ReduceStep {
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, _inst: &I) -> Self {
+    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, inst: &I) -> Self {
+        let format = I::accumulator_format(inst);
+        let packed = comptime!(matches!(format, AccumulatorFormat::SingleKey));
+
+        let mut elements = Sequence::new();
         let mut args = Sequence::new();
-        if coordinate {
-            args.push(Shared::new_slice(length));
+        let mut keys = Sequence::new();
+
+        if comptime!(packed) {
+            keys.push(Shared::new_slice(length));
+        } else {
+            elements.push(Shared::new_slice(length));
+            if coordinate {
+                args.push(Shared::new_slice(length));
+            }
         }
 
         ArgAccumulator::<P> {
-            elements: Shared::new_slice(length),
+            elements,
             args,
+            keys,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
-            Value::new_single(accumulator.args[0][index])
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                keys: Value::new_single(accumulator.keys[0][index]),
+            }
         } else {
-            Value::new_None()
-        };
+            let num_args = comptime!(accumulator.args.len());
+            let args = if comptime!(num_args != 0) {
+                Value::new_single(accumulator.args[0][index])
+            } else {
+                Value::new_None()
+            };
 
-        Accumulator::<P> {
-            elements: Value::new_single(accumulator.elements[index]),
-            args,
+            Accumulator::<P> {
+                elements: Value::new_single(accumulator.elements[0][index]),
+                args,
+                keys: Value::new_None(),
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator.elements[index] = item.elements.item();
+        let num_keys = comptime!(accumulator.keys.len());
+        if comptime!(num_keys != 0) {
+            let shared_keys = &mut accumulator.keys[0];
+            shared_keys[index] = item.keys.item();
+        } else {
+            let shared_elements = &mut accumulator.elements[0];
+            shared_elements[index] = item.elements.item();
 
-        let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
-            let shared_args = &mut accumulator.args[0];
-            shared_args[index] = item.args.item();
+            let num_args = comptime!(accumulator.args.len());
+            if comptime!(num_args != 0) {
+                let shared_args = &mut accumulator.args[0];
+                shared_args[index] = item.args.item();
+            }
         }
     }
 }

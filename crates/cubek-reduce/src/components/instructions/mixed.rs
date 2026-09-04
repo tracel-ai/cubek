@@ -3,7 +3,7 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, ReduceOutputMode, SharedAccumulatorKind, TopK,
+    Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, SharedAccumulatorKind, TopK,
 };
 use crate::{
     ReduceDtypes,
@@ -53,7 +53,8 @@ impl ReduceOperationConfig {
     /// slot count). `acc_elem_size` is the accumulation element size (`P::EA`),
     /// `vector_size` the input vectorization. Mirrors each instruction's
     /// `SharedAccumulator` layout: one value slice, plus a `u32` index slice for
-    /// `Arg*`, scaled by `k` for top-k.
+    /// `Arg*`, scaled by `k` for top-k. A packed key slice replaces that pair and
+    /// is exactly as wide, so the count holds whichever spelling is emitted.
     pub fn shared_memory_bytes_per_accumulator(
         &self,
         acc_elem_size: usize,
@@ -172,12 +173,14 @@ impl ReduceFamily for ReduceOperation {
 pub struct DynamicSharedAccumulator<P: ReducePrecision> {
     pub elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
     pub args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    pub keys: SharedAccumulatorKind<Vector<OrderKey, P::SI>>,
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
+    pub keys: Value<Vector<OrderKey, P::SI>>,
 }
 
 #[cube]
@@ -199,6 +202,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                 DynamicSharedAccumulator::<P> {
                     elements: SharedAccumulatorKind::new_Single(elements),
                     args,
+                    keys: SharedAccumulatorKind::new_None(),
                 }
             }
             AccumulatorFormat::Multiple(len) => {
@@ -212,6 +216,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),
                         args: SharedAccumulatorKind::new_None(),
+                        keys: SharedAccumulatorKind::new_None(),
                     }
                 } else {
                     let mut args = Sequence::new();
@@ -222,7 +227,26 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     DynamicSharedAccumulator::<P> {
                         elements: SharedAccumulatorKind::new_Multiple(elements),
                         args: SharedAccumulatorKind::new_Multiple(args),
+                        keys: SharedAccumulatorKind::new_None(),
                     }
+                }
+            }
+            AccumulatorFormat::SingleKey => DynamicSharedAccumulator::<P> {
+                elements: SharedAccumulatorKind::new_None(),
+                args: SharedAccumulatorKind::new_None(),
+                keys: SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
+            },
+            AccumulatorFormat::Keys(len) => {
+                let mut keys = Sequence::new();
+                #[unroll]
+                for _ in 0..len {
+                    keys.push(Shared::new_slice(length));
+                }
+
+                DynamicSharedAccumulator::<P> {
+                    elements: SharedAccumulatorKind::new_None(),
+                    args: SharedAccumulatorKind::new_None(),
+                    keys: SharedAccumulatorKind::new_Multiple(keys),
                 }
             }
         }
@@ -231,13 +255,19 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
         let elements = accumulator.elements.get(index);
         let args = accumulator.args.get(index);
+        let keys = accumulator.keys.get(index);
 
-        Accumulator::<P> { elements, args }
+        Accumulator::<P> {
+            elements,
+            args,
+            keys,
+        }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         accumulator.elements.set(index, item.elements);
         accumulator.args.set(index, item.args);
+        accumulator.keys.set(index, item.keys);
     }
 }
 
