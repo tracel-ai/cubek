@@ -1,7 +1,7 @@
 //! CPU reference and seeded "produce a HostData" primitives for reduce.
 //!
 //! Both [`strategy_result`] and [`cpu_reference_result`] build the same input
-//! bits from `(seed, shape, axis, config)` so the two `HostData`s they return
+//! bits from `(input, shape, axis, config)` so the two `HostData`s they return
 //! are directly comparable for the same `axis`/`config`.
 
 mod all;
@@ -45,24 +45,101 @@ use crate::{
     components::instructions::ReduceOperationConfig, reduce, reduce_with_indices,
 };
 
-/// Run `strategy` on a seeded reduce problem at `input_dtype` and return its
-/// output as a [`HostData`].
+/// The bits a comparison runs on: the kernel launch and the CPU reference each
+/// build their input from this alone, so the two see the same values.
+#[derive(Clone, Copy)]
+pub struct ReduceInput {
+    pub dtype: ElemType,
+    pub values: ReduceValues,
+}
+
+/// Where a comparison's input values come from.
+#[derive(Clone, Copy)]
+pub enum ReduceValues {
+    /// Uniform over `[-1, 1]`, drawn from this seed.
+    Uniform(u64),
+    /// An evenly spaced ramp over `[-1, 1)`, dealt out by an odd stride so no
+    /// run of the tensor is sorted. Every value stays distinct down to f16, so
+    /// a top-k has a single right answer and no tie can decide the comparison.
+    Ramp,
+}
+
+/// Ramp steps f16 still resolves apart: the ramp spans 2.0 and f16 separates
+/// neighbours by 2^-11 just below 1.0.
+pub const RAMP_MAX_ELEMS: usize = 2048;
+
+/// Odd, so it visits every slot of a power-of-two length.
+const RAMP_STRIDE: usize = 1103;
+
+impl ReduceInput {
+    /// Uniform values at `dtype`, the input every seeded comparison over a
+    /// catalogue-sized shape uses.
+    pub fn uniform(dtype: ElemType, seed: u64) -> Self {
+        Self {
+            dtype,
+            values: ReduceValues::Uniform(seed),
+        }
+    }
+
+    fn tensor(&self, client: Client, shape: Vec<usize>) -> TestInput {
+        let builder = TestInput::builder(client, shape.clone()).dtype(self.dtype);
+        match self.values {
+            ReduceValues::Uniform(seed) => builder.uniform(seed, -1., 1.),
+            ReduceValues::Ramp => builder.custom(ramp(shape.iter().product())),
+        }
+    }
+}
+
+fn ramp(elems: usize) -> Vec<f32> {
+    assert!(
+        elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
+        "a ramp of {elems} values is not a permutation, or is finer than f16 resolves"
+    );
+    (0..elems)
+        .map(|i| (i * RAMP_STRIDE % elems) as f32 / elems as f32 * 2.0 - 1.0)
+        .collect()
+}
+
+/// How far a kernel's output may sit from the reference before it is wrong.
+///
+/// A selection instruction returns a value taken out of the input, or its
+/// coordinate, so any slack at all leaves the comparison unable to fail. Only
+/// the accumulating ones round, and over tens of millions of f32 elements some
+/// kernels accumulate noticeable noise; tightening those belongs in the
+/// per-routine integration tests.
+pub fn comparison_epsilon(config: ReduceOperationConfig) -> f32 {
+    match config {
+        ReduceOperationConfig::Sum | ReduceOperationConfig::Mean | ReduceOperationConfig::Prod => {
+            1.0
+        }
+        ReduceOperationConfig::Max
+        | ReduceOperationConfig::Min
+        | ReduceOperationConfig::MaxAbs
+        | ReduceOperationConfig::ArgMax
+        | ReduceOperationConfig::ArgMin
+        | ReduceOperationConfig::TopK(_)
+        | ReduceOperationConfig::ArgTopK(_)
+        | ReduceOperationConfig::Any
+        | ReduceOperationConfig::All => 0.0,
+    }
+}
+
+/// Run `strategy` on `input` and return its output as a [`HostData`].
 pub fn strategy_result(
     client: Client,
     shape: Vec<usize>,
     axis: usize,
     strategy: ReduceStrategy,
     config: ReduceOperationConfig,
-    input_dtype: ElemType,
-    seed: u64,
+    input: ReduceInput,
 ) -> Result<HostData, String> {
+    let input_dtype = input.dtype;
     let output_dtype = output_dtype_for(&config, input_dtype);
     let accumulation_dtype = f32::elem_type_native();
 
-    let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
-        .dtype(input_dtype)
-        .uniform(seed, -1., 1.)
-        .generate_with_f32_host_data();
+    let input_handle = input
+        .tensor(client.clone(), shape.clone())
+        .generate_without_host_data();
 
     let out_shape = output_shape_for(&shape, axis, &config);
     let output_handle = TestInput::builder(client.clone(), out_shape)
@@ -111,16 +188,15 @@ pub fn strategy_result_with_indices(
     axis: usize,
     strategy: ReduceStrategy,
     config: ReduceOperationConfig,
-    input_dtype: ElemType,
-    seed: u64,
+    input: ReduceInput,
 ) -> Result<HostData, String> {
+    let input_dtype = input.dtype;
     let index_dtype = u32::elem_type_native();
     let accumulation_dtype = f32::elem_type_native();
 
-    let (input_handle, _input_host) = TestInput::builder(client.clone(), shape.clone())
-        .dtype(input_dtype)
-        .uniform(seed, -1., 1.)
-        .generate_with_f32_host_data();
+    let input_handle = input
+        .tensor(client.clone(), shape.clone())
+        .generate_without_host_data();
 
     let out_shape = output_shape_for(&shape, axis, &config);
     let values_handle = TestInput::builder(client.clone(), out_shape.clone())
@@ -175,8 +251,7 @@ pub fn cpu_reference_result(
     shape: Vec<usize>,
     axis: usize,
     config: ReduceOperationConfig,
-    input_dtype: ElemType,
-    seed: u64,
+    input: ReduceInput,
     progress: Option<&Progress>,
 ) -> Result<HostData, String> {
     if let Some(p) = progress {
@@ -187,10 +262,7 @@ pub fn cpu_reference_result(
 
     // A narrow dtype rounds on the way in, so the reference folds what the
     // tensor ended up holding rather than what the generator was handed.
-    let (_input_handle, input_host) = TestInput::builder(client.clone(), shape)
-        .dtype(input_dtype)
-        .uniform(seed, -1., 1.)
-        .generate_with_f32_host_data();
+    let (_input_handle, input_host) = input.tensor(client, shape).generate_with_f32_host_data();
 
     Ok(reference_for_config(&input_host, axis, config, progress))
 }

@@ -11,6 +11,7 @@ use cubek_test_utils::{RunSamples, TestInput};
 
 use crate::ReduceStrategy;
 use crate::components::instructions::ReduceOperationConfig;
+use crate::eval::benchmarks::correctness::ReduceCorrectness;
 use crate::eval::benchmarks::problem::{ReduceBenchKind, ReduceProblem};
 
 pub fn bench(
@@ -18,6 +19,8 @@ pub fn bench(
     problem: &ReduceProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
+    ReduceCorrectness::verify(strategy, problem)?;
+
     let device = cubecl::test_device();
     let client = device.client();
 

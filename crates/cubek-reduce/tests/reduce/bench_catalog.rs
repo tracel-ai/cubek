@@ -4,14 +4,10 @@
 
 use cubek_reduce::ReduceStrategy;
 use cubek_reduce::eval::benchmarks::{ReduceBenchPrecision, ReduceCorrectness, ReduceProblem};
+use cubek_reduce::eval::cpu_reference::comparison_epsilon;
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
-
-/// f32 reductions over ~tens of millions of elements; some kernels accumulate
-/// noticeable noise. Tightened tolerances belong in the existing per-routine
-/// integration tests.
-const REDUCE_EPS: f32 = 1.0;
 
 fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
     entries
@@ -35,7 +31,7 @@ fn run(strategy_id: &str, problem_id: &str) {
         .reference_result(&problem, &SEEDS, None)
         .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
 
-    assert_equals_approx(&actual, &expected, REDUCE_EPS)
+    assert_equals_approx(&actual, &expected, comparison_epsilon(problem.config))
         .as_test_outcome()
         .enforce();
 }
