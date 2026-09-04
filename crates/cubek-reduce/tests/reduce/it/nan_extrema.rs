@@ -38,6 +38,11 @@ fn run_nan_extrema(case: TestCase) {
     run_extrema(case, data);
 }
 
+fn run_mixed_nan_extrema(case: TestCase) {
+    let data = mixed_nan_extrema_data(&case.shape, case.axis.unwrap());
+    run_extrema(case, data);
+}
+
 fn strategy(routine: RoutineStrategy, parallel_output_vectorization: bool) -> ReduceStrategy {
     ReduceStrategy {
         autotune_level: AutotuneLevel::Full,
@@ -89,6 +94,25 @@ fn plane_parallel_f32() {
         return;
     }
     run_nan_extrema(plane_case(
+        Shape::new([9, 64]),
+        Strides::new(&[64, 1]),
+        1,
+        false,
+        true,
+    ));
+}
+
+#[test]
+fn unit_parallel_mixed_nan_f32() {
+    run_mixed_nan_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
+}
+
+#[test]
+fn plane_parallel_mixed_nan_f32() {
+    if !supports_plane() {
+        return;
+    }
+    run_mixed_nan_extrema(plane_case(
         Shape::new([9, 64]),
         Strides::new(&[64, 1]),
         1,
@@ -246,6 +270,23 @@ fn nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
                 7 if axis_coordinate == axis_len / 2 => f32::NAN,
                 _ => base,
             }
+        })
+        .collect()
+}
+
+/// The NaN layout of [`nan_extrema_data`] with every NaN given its own payload and
+/// sign, so that nothing but the coordinate can separate two of them.
+fn mixed_nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
+    nan_extrema_data(shape, axis)
+        .into_iter()
+        .enumerate()
+        .map(|(linear, value)| {
+            if !value.is_nan() {
+                return value;
+            }
+            let payload = 0x7FC0_0000 | ((linear as u32 % 0x3F_FFFF) + 1);
+            let sign = if linear % 2 == 0 { 0 } else { 0x8000_0000 };
+            f32::from_bits(payload | sign)
         })
         .collect()
 }

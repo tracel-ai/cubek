@@ -7,7 +7,7 @@ use cubecl::{
 // `E: Numeric` can't call the float-only `IsNan` trait even after a comptime type check, so emit
 // the same Cube IR operation directly. Callers keep this inside float-only comptime branches.
 #[cube]
-fn numeric_is_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<bool, N> {
+pub(super) fn numeric_is_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<bool, N> {
     intrinsic!(|scope| {
         let item = item.read_value(scope);
         let out_item = Type::Scalar(ElemType::Bool).with_vector_size(item.vector_size(scope.ctx()));

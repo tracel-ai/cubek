@@ -1,6 +1,8 @@
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 
+use super::extrema::numeric_is_nan;
+
 /// A candidate's value and coordinate folded into one unsigned integer whose
 /// unsigned order is the pair's order: the value in the key's [`ValueOrder`],
 /// and the lower coordinate where two values are equal.
@@ -101,8 +103,10 @@ pub(crate) fn order_key_coordinate<S: Size>(key: Vector<OrderKey, S>) -> Vector<
 /// A float's sign bit orders backwards and its magnitude bits invert under it,
 /// hence the flip. `-0.0` is mapped onto `+0.0`, since the two compare equal and
 /// a key that told them apart would break the tie towards the wrong coordinate.
-/// Both arms compare the float against zero rather than testing its sign bit, so
-/// that a NaN of either sign fails and lands above every number.
+/// Every NaN takes the top key whatever its payload or sign, so NaNs outrank
+/// every number and tie among themselves, leaving the coordinate to decide as
+/// the instructions' policy states. A winning NaN therefore reads back as a
+/// canonical NaN, not as its input bits.
 #[cube]
 fn order_bits<N: Numeric, S: Size>(
     value: Vector<N, S>,
@@ -116,7 +120,7 @@ fn order_bits<N: Numeric, S: Size>(
         ElemType::Float(_) => {
             let zero = Vector::new(N::from_int(0));
 
-            match comptime!(order) {
+            let ordered = match comptime!(order) {
                 ValueOrder::Descending => select_many(
                     value.less_than(&zero),
                     Vector::new(u32::MAX) - bits,
@@ -125,7 +129,9 @@ fn order_bits<N: Numeric, S: Size>(
                 ValueOrder::Ascending => {
                     select_many(value.greater_than(&zero), sign - bits, bits | sign)
                 }
-            }
+            };
+
+            select_many(numeric_is_nan(value), Vector::new(u32::MAX), ordered)
         }
         ElemType::Int(_) => reversed_if_ascending::<S>(bits ^ sign, order),
         ElemType::UInt(_) => reversed_if_ascending::<S>(bits, order),
