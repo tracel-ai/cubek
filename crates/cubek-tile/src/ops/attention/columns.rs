@@ -4,8 +4,7 @@
 //! is one team spanning every unit. The hardware twin, where the worker is a plane and the visit
 //! a fragment, is [`fragments`](super::fragments).
 //!
-//! Reached through [`score`](crate::Tile::score) and [`mix`](crate::Tile::mix), which read the
-//! instruction off the accumulator's space. Trailing-two-axes convention
+//! Called by name from the kernel, which picks the arm. Trailing-two-axes convention
 //! (matmul's): leading degenerate axes ride the flat index.
 
 use cubecl::prelude::*;
@@ -14,7 +13,7 @@ use crate::{instruction::registers::horizontal, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// [`score`](Tile::score) under the software instruction. Each unit streams whole `k` rows
+    /// The score matmul under the software instruction. Each unit streams whole `k` rows
     /// for its owned columns, so a gmem `k` is read once per team; `q` is read `cols` times over
     /// and belongs in shared memory.
     pub fn score_columns<EI: Numeric>(
@@ -84,7 +83,7 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`mix`](Tile::mix) under the software instruction. A unit owns one `(row chunk, value
+    /// The value matmul under the software instruction. A unit owns one `(row chunk, value
     /// line)` pair at a time, cyclically: the line is the inner digit, so adjacent units read
     /// adjacent lines of `val` and a gmem `val` is read once per team, coalesced. The rows are the
     /// other digit because a leaf spread over the value lines alone would sit entirely on the axis
@@ -95,7 +94,6 @@ impl<EA: Float> Tile<EA> {
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
-        factors: &Tile<EA>,
         cols_bound: usize,
         #[comptime] config: RegisterBlock,
     ) {
@@ -120,12 +118,8 @@ impl<EA: Float> Tile<EA> {
         let size!(WP) = wp;
         let size!(WV) = wv;
 
-        let wf = factors.vector_size();
-        comptime!(assert!(wf == 1, "mix_columns: a scalar factors tile"));
-        let size!(WF) = wf;
         let pf = p.flat::<WP>();
         let vf = val.flat::<WV>();
-        let ff = factors.flat::<WF>();
         let mut out = self.flat_mut::<W>();
 
         let bound = min(cols_bound, cols);
@@ -153,12 +147,11 @@ impl<EA: Float> Tile<EA> {
             }
             #[unroll]
             for i in 0..height {
-                let f = ff.read(base + i).extract(0usize);
                 #[unroll]
                 for j in 0..wv {
                     let idx = (base + i) * val_dim + li * wv + j;
                     let cur = out.read(idx).extract(0usize);
-                    out.write(idx, Vector::cast_from(cur * f + acc[i].extract(j)));
+                    out.write(idx, Vector::cast_from(cur + acc[i].extract(j)));
                 }
             }
             visit += workers;

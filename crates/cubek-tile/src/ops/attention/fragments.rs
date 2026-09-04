@@ -1,8 +1,7 @@
 //! Attention's matmul leaves at fragment ownership: the plane is the worker, and each plane
-//! contracts every `planes`-th fragment of the output through the hardware instruction the space
-//! states. The [`columns`](super::columns) twin runs the same two matmuls at unit ownership under
-//! the software instruction; which one a call reaches is the space's
-//! [`instruction`](crate::Space::instruction) and nothing else.
+//! contracts every `planes`-th fragment of the output through the hardware instruction. The
+//! [`columns`](super::columns) twin runs the same two matmuls at unit ownership under the
+//! software instruction; the kernel picks which one it calls.
 //!
 //! Trailing-two-axes convention (the matmul's, and [`columns`](super::columns)'s): the two axes a
 //! matmul contracts are each tile's *last* two, and an axis above them is one the caller's walk has
@@ -25,7 +24,7 @@ use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// [`score`](Tile::score) under a hardware instruction: `self[r, c] = dot(q[r, :], k[c, :])`,
+    /// The score matmul under a hardware instruction: `self[r, c] = dot(q[r, :], k[c, :])`,
     /// one fragment per visit.
     ///
     /// `k` is read through a col-major operand fragment, so the score contracts `k`'s trailing
@@ -44,57 +43,125 @@ impl<EA: Float> Tile<EA> {
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
         let cols = comptime!(trailing(&self.space).1);
         let head_dim = comptime!(trailing(&q.space).1);
-        let out = self.retiled(comptime!(tiled(&self.space, m, n)));
-        let q = q.retiled(comptime!(tiled(&q.space, m, kc)));
-        let k = k.retiled(comptime!(tiled(&k.space, n, kc)));
-
-        let grid = comptime!(cols / n);
         let steps = comptime!(head_dim / kc);
-        let visits = comptime!((trailing(&self.space).0 / m) * grid);
-        // Each plane takes every `planes`-th fragment, from wherever the launch put it in the
-        // cube. The stride is never zero: a cube narrower than a plane cannot run a plane
-        // instruction at all, and a zero step would hang rather than refuse.
-        let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
-        let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
-        while visit < visits {
-            let row = visit / grid;
-            let col = visit % grid;
-            if col * n < cols_bound {
-                let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
-                acc.zero();
-                for step in 0..steps {
-                    let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
-                    let window = Region::trailing(comptime!(q.space.clone()), row, step);
-                    lhs.copy_from(&q.at(&window));
-                    let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
-                    let window = Region::trailing(comptime!(k.space.clone()), col, step);
-                    rhs.copy_from(&k.at(&window));
-                    acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
+
+        let q = q.retiled(comptime!(tiled(&q.space, m, kc)));
+
+        match comptime!(plane_slice(&self.space)) {
+            // The space states each plane's slice of the score: `{rows, cols / planes}`, a run
+            // of key positions. The plane holds its slice's fragments across the head dim, so
+            // each Q fragment is loaded once per step and reused across the slice's columns.
+            Some(slice) => {
+                let planes = comptime!(cols / trailing(&slice).1);
+                let plane = UNIT_POS as usize / PLANE_DIM as usize;
+                let mine = self.at(&Region::trailing(
+                    comptime!(self.space.clone()),
+                    0usize,
+                    plane,
+                ));
+                let out = mine.retiled(comptime!(tiled(&mine.space, m, n)));
+                // The keys this slice scores: its own positions, every head-dim step. The
+                // positions are the window's *leading* axis, unlike the values' trailing one.
+                let k = k.retiled(comptime!(tiled(&k.space, cols / planes, head_dim)));
+                let k = k.at(&Region::trailing(comptime!(k.space.clone()), plane, 0usize));
+                let k = k.retiled(comptime!(tiled(&k.space, n, kc)));
+
+                let rm = comptime!(trailing(&slice).0 / m);
+                let cn = comptime!(trailing(&slice).1 / n);
+                let mut accs = Sequence::<Tile<EA>>::new();
+                #[unroll]
+                for _ in 0..comptime!(rm * cn) {
+                    let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
+                    acc.zero();
+                    accs.push(acc);
                 }
-                let window = Region::trailing(comptime!(out.space.clone()), row, col);
-                let mut cell = out.at(&window);
-                cell.copy_from(&acc);
+                #[unroll]
+                for step in 0..steps {
+                    #[unroll]
+                    for r in 0..rm {
+                        let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
+                        lhs.copy_from(&q.at(&Region::trailing(
+                            comptime!(q.space.clone()),
+                            r,
+                            step,
+                        )));
+                        #[unroll]
+                        for c in 0..cn {
+                            // Every fragment of the slice, the bound included: the block is
+                            // readable to its edge by contract, and a stale key past the
+                            // prefix — NaN included — lands on a cell the mask probe
+                            // overwrites with `select`, which never reads what it discards.
+                            // A compare here would sit inside the unrolled walk, between
+                            // every load and the mma that consumes it.
+                            let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                            rhs.copy_from(&k.at(&Region::trailing(
+                                comptime!(k.space.clone()),
+                                c,
+                                step,
+                            )));
+                            accs.index_mut(comptime!(r * cn + c)).mma(
+                                &lhs,
+                                &rhs,
+                                comptime!(Semiring::SUM_PROD),
+                            );
+                        }
+                    }
+                }
+                #[unroll]
+                for i in 0..comptime!(rm * cn) {
+                    let (r, c) = comptime!((i / cn, i % cn));
+                    let mut cell = out.at(&Region::trailing(comptime!(out.space.clone()), r, c));
+                    cell.copy_from(accs.index(i));
+                }
             }
-            visit += planes;
+            // No slice stated: every `planes`-th fragment of the whole grid, one at a time.
+            None => {
+                let out = self.retiled(comptime!(tiled(&self.space, m, n)));
+                let k = k.retiled(comptime!(tiled(&k.space, n, kc)));
+                let grid = comptime!(cols / n);
+                let visits = comptime!((trailing(&self.space).0 / m) * grid);
+                // Each plane takes every `planes`-th fragment, from wherever the launch put it in
+                // the cube. The stride is never zero: a cube narrower than a plane cannot run a
+                // plane instruction at all, and a zero step would hang rather than refuse.
+                let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
+                let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
+                while visit < visits {
+                    let row = visit / grid;
+                    let col = visit % grid;
+                    if col * n < cols_bound {
+                        let mut acc =
+                            fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
+                        acc.zero();
+                        for step in 0..steps {
+                            let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
+                            let window = Region::trailing(comptime!(q.space.clone()), row, step);
+                            lhs.copy_from(&q.at(&window));
+                            let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                            let window = Region::trailing(comptime!(k.space.clone()), col, step);
+                            rhs.copy_from(&k.at(&window));
+                            acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
+                        }
+                        let window = Region::trailing(comptime!(out.space.clone()), row, col);
+                        let mut cell = out.at(&window);
+                        cell.copy_from(&acc);
+                    }
+                    visit += planes;
+                }
+            }
         }
     }
 
-    /// [`mix`](Tile::mix) under a hardware instruction:
-    /// `self[r, :] = self[r, :] · factors[r] + Σ_{c < cols_bound} p[r, c] · val[c, :]`.
-    ///
-    /// The rescale runs where the running total lies, cube-wide, before any fragment is loaded:
-    /// no elementwise math touches a fragment, so the accumulator is scaled in shared memory and
-    /// read back as an accumulator fragment, which is the one sync this leaf owns. The caller
-    /// syncs on both sides.
+    /// The value matmul under a hardware instruction:
+    /// `self[r, :] += Σ_{c < cols_bound} p[r, c] · val[c, :]`.
     ///
     /// Contraction steps at or past `cols_bound` are skipped: stale cache beyond the attended
     /// prefix (possibly NaN) must not ride a zero probability. A step straddling the bound is
-    /// contracted whole, so the block must be readable to its edge.
+    /// contracted whole, so the block must be readable to its edge. No fragment survives a
+    /// barrier and no elementwise math touches one.
     pub fn mix_fragments<EP: Numeric, EI: Numeric>(
         &mut self,
         p: &Tile<EP>,
         val: &Tile<EI>,
-        factors: &Tile<EA>,
         cols_bound: usize,
     ) {
         let mma = comptime!(Contraction::of(
@@ -106,40 +173,109 @@ impl<EA: Float> Tile<EA> {
         let (m, n, kc) = comptime!((mma.m, mma.n, mma.k));
         let val_dim = comptime!(trailing(&self.space).1);
         let cols = comptime!(trailing(&p.space).1);
-
-        self.scale_rows(factors);
-        sync_cube();
-
-        let out = self.retiled(comptime!(tiled(&self.space, m, n)));
-        let p = p.retiled(comptime!(tiled(&p.space, m, kc)));
-        let val = val.retiled(comptime!(tiled(&val.space, kc, n)));
-
-        let grid = comptime!(val_dim / n);
         let steps = comptime!(cols / kc);
-        let visits = comptime!((trailing(&self.space).0 / m) * grid);
-        // Every `planes`-th fragment, as in `score_fragments`.
-        let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
-        let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
-        while visit < visits {
-            let row = visit / grid;
-            let col = visit % grid;
-            let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
-            let window = Region::trailing(comptime!(out.space.clone()), row, col);
-            let mut cell = out.at(&window);
-            acc.copy_from(&cell);
-            for step in 0..steps {
-                if step * kc < cols_bound {
-                    let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
-                    let window = Region::trailing(comptime!(p.space.clone()), row, step);
-                    lhs.copy_from(&p.at(&window));
-                    let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
-                    let window = Region::trailing(comptime!(val.space.clone()), step, col);
-                    rhs.copy_from(&val.at(&window));
-                    acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
+
+        let p = p.retiled(comptime!(tiled(&p.space, m, kc)));
+
+        match comptime!(plane_slice(&self.space)) {
+            // The space states each plane's slice of the output: `{rows, val_dim / planes}`.
+            // A plane holds every fragment of its slice across the whole contraction, so each
+            // P fragment is loaded once and reused across the slice, and the accumulators cross
+            // shared memory once per block rather than once per fragment.
+            Some(slice) => {
+                let planes = comptime!(val_dim / trailing(&slice).1);
+                let plane = UNIT_POS as usize / PLANE_DIM as usize;
+                let mine = self.at(&Region::trailing(
+                    comptime!(self.space.clone()),
+                    0usize,
+                    plane,
+                ));
+                let out = mine.retiled(comptime!(tiled(&mine.space, m, n)));
+                // The values this slice contracts: its own columns of every k step.
+                let val = val.retiled(comptime!(tiled(&val.space, cols, val_dim / planes)));
+                let val = val.at(&Region::trailing(
+                    comptime!(val.space.clone()),
+                    0usize,
+                    plane,
+                ));
+                let val = val.retiled(comptime!(tiled(&val.space, kc, n)));
+
+                let rm = comptime!(trailing(&slice).0 / m);
+                let cn = comptime!(trailing(&slice).1 / n);
+                let mut accs = Sequence::<Tile<EA>>::new();
+                #[unroll]
+                for i in 0..comptime!(rm * cn) {
+                    let (r, c) = comptime!((i / cn, i % cn));
+                    let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
+                    acc.copy_from(&out.at(&Region::trailing(comptime!(out.space.clone()), r, c)));
+                    accs.push(acc);
+                }
+                #[unroll]
+                for step in 0..steps {
+                    if step * kc < cols_bound {
+                        #[unroll]
+                        for r in 0..rm {
+                            let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
+                            lhs.copy_from(&p.at(&Region::trailing(
+                                comptime!(p.space.clone()),
+                                r,
+                                step,
+                            )));
+                            #[unroll]
+                            for c in 0..cn {
+                                let mut rhs =
+                                    fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                                rhs.copy_from(&val.at(&Region::trailing(
+                                    comptime!(val.space.clone()),
+                                    step,
+                                    c,
+                                )));
+                                accs.index_mut(comptime!(r * cn + c)).mma(
+                                    &lhs,
+                                    &rhs,
+                                    comptime!(Semiring::SUM_PROD),
+                                );
+                            }
+                        }
+                    }
+                }
+                #[unroll]
+                for i in 0..comptime!(rm * cn) {
+                    let (r, c) = comptime!((i / cn, i % cn));
+                    let mut cell = out.at(&Region::trailing(comptime!(out.space.clone()), r, c));
+                    cell.copy_from(accs.index(i));
                 }
             }
-            cell.copy_from(&acc);
-            visit += planes;
+            // No slice stated: every `planes`-th fragment of the whole grid, one at a time.
+            None => {
+                let out = self.retiled(comptime!(tiled(&self.space, m, n)));
+                let val = val.retiled(comptime!(tiled(&val.space, kc, n)));
+                let grid = comptime!(val_dim / n);
+                let visits = comptime!((trailing(&self.space).0 / m) * grid);
+                let planes = max(CUBE_DIM as usize / PLANE_DIM as usize, 1usize);
+                let mut visit = UNIT_POS as usize / PLANE_DIM as usize;
+                while visit < visits {
+                    let row = visit / grid;
+                    let col = visit % grid;
+                    let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
+                    let window = Region::trailing(comptime!(out.space.clone()), row, col);
+                    let mut cell = out.at(&window);
+                    acc.copy_from(&cell);
+                    for step in 0..steps {
+                        if step * kc < cols_bound {
+                            let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
+                            let window = Region::trailing(comptime!(p.space.clone()), row, step);
+                            lhs.copy_from(&p.at(&window));
+                            let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
+                            let window = Region::trailing(comptime!(val.space.clone()), step, col);
+                            rhs.copy_from(&val.at(&window));
+                            acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
+                        }
+                    }
+                    cell.copy_from(&acc);
+                    visit += planes;
+                }
+            }
         }
     }
 }
@@ -216,9 +352,9 @@ impl Contraction {
         }
         let (rows, cols) = trailing(out);
         let contracted = trailing(lhs).1;
-        // A visit covers the box the level the instruction sits on cuts, or the whole tile where
-        // that level cut nothing.
-        let (acc_box, lhs_box) = (out.sub_tile_space(), lhs.sub_tile_space());
+        // A visit covers the finest tile the space states. A level above it (a plane's slice of
+        // the grid) is not the fragment, so the box is read all the way down.
+        let (acc_box, lhs_box) = (out.final_space(), lhs.final_space());
         let (m, n) = trailing(&acc_box);
         let (lhs_rows, k) = trailing(&lhs_box);
         let stored = match layout {
@@ -320,6 +456,26 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Space {
             l.walk(&cuts);
         })
         .build()
+}
+
+/// The slice one plane owns, when the space states one: a level above the instruction, cut
+/// `{rows, cols / planes}`. `None` where the instruction's level is the top, which is a grid
+/// every plane walks cyclically.
+fn plane_slice(space: &Space) -> Option<Space> {
+    if space.is_final() || space.divide().is_final() {
+        return None;
+    }
+    let slice = space.divide();
+    assert!(
+        slice.divide().is_final(),
+        "a fragment leaf takes at most one level above its instruction (the plane's slice); \
+         {space:?} states more"
+    );
+    assert!(
+        trailing(&slice).0 == trailing(space).0,
+        "a plane's slice cuts the columns, never the rows: {space:?}"
+    );
+    Some(slice)
 }
 
 /// The extents of `space`'s trailing two axes — the two a matmul contracts.
