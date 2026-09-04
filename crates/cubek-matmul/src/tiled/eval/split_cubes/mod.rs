@@ -554,7 +554,7 @@ pub fn bench(
 
     let bound = Bound::new(&client, mapping, *problem).samples(num_samples);
     let durations = bound
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
     Ok(RunSamples::new(durations))
@@ -631,7 +631,7 @@ impl cubek_test_utils::Category for Category {
 
     /// Latency-bound shapes, so the launch is timed on the device rather than around a submit.
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
 
     fn problems(&self) -> Vec<CatalogEntry<Problem>> {

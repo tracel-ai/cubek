@@ -41,7 +41,7 @@ pub fn bench(
     // host-side noise that identical kernels varied by over 10x between runs,
     // which made fused-vs-two-launch comparisons meaningless.
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 

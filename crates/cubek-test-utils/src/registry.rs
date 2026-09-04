@@ -20,6 +20,18 @@ use cubecl::throughput::{
 
 use crate::{HostData, Progress};
 
+/// The timing method a category measures with, overridden for a whole run by
+/// `CUBEK_BENCH_TIMING`. Device timestamps leave the launch out, so a row that
+/// beats its ceiling is checked by measuring it again on the wall clock.
+pub fn timing_method(default: TimingMethod) -> TimingMethod {
+    match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
+        Ok("device") => TimingMethod::Device,
+        Ok("system") => TimingMethod::System,
+        Ok(other) => panic!("CUBEK_BENCH_TIMING takes 'device' or 'system', not {other:?}"),
+        Err(_) => default,
+    }
+}
+
 /// Times one launch on the device, failing the row when the launch itself failed.
 ///
 /// Categories override [`Benchmark::profile`](cubecl::benchmark::Benchmark::profile) only to
@@ -406,7 +418,7 @@ pub trait Category: Sync {
     /// running on the device timing method (unary/contiguous/memcpy_async)
     /// override this.
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::System
+        crate::timing_method(TimingMethod::System)
     }
 
     /// Override to expose seeded `kernel_result` / `reference_result`. Decoupled

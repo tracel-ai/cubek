@@ -51,7 +51,7 @@ fn bench_with<MP: MatmulPrecision>(
     };
 
     let durations = bench
-        .run(TimingMethod::System)
+        .run(cubek_test_utils::timing_method(TimingMethod::System))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 

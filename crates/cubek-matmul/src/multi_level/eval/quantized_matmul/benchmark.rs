@@ -45,7 +45,9 @@ pub fn bench(
 
     // Some combos still trigger panics inside kernel expansion; catch them so a
     // single bad entry doesn't kill the whole run.
-    let durations = match catch_unwind(AssertUnwindSafe(|| bench.run(TimingMethod::System))) {
+    let durations = match catch_unwind(AssertUnwindSafe(|| {
+        bench.run(cubek_test_utils::timing_method(TimingMethod::System))
+    })) {
         Ok(res) => res.map_err(|e| format!("benchmark failed: {e}"))?.durations,
         Err(payload) => {
             let msg = payload

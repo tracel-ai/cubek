@@ -99,7 +99,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
     // The mma contracts in f32; the packed u32 is how the RHS is stored, not what the

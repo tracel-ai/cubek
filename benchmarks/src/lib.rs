@@ -82,6 +82,10 @@ fn selects(filter: &[String], id: &str) -> bool {
 /// `CUBEK_BENCH_PROBLEMS` and `CUBEK_BENCH_STRATEGIES` take a comma-separated
 /// list of substrings and run only the ids that contain one. `gemm` alone is
 /// 184 problems against 27 strategies.
+///
+/// `CUBEK_BENCH_TIMING` takes `device` or `system` and overrides what every
+/// category measures with. A device timestamp leaves the launch out, so the two
+/// disagreeing by more than that overhead says the timer misses part of the work.
 pub fn run_category(category: &dyn BenchmarkCategory) {
     use cubecl::benchmark::BenchmarkDurations;
 
