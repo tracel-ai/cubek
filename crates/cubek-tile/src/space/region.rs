@@ -9,6 +9,9 @@ use cubecl::prelude::*;
 #[derive(CubeType)]
 pub struct Region {
     coords: Coords<u32>,
+    /// The runtime sizes of `space`'s dynamic axes, positional: what a loop below this region
+    /// walks its child space with.
+    sizes: Sequence<usize>,
     #[cube(comptime)]
     pub(crate) space: Space,
     #[cube(comptime)]
@@ -17,12 +20,24 @@ pub struct Region {
 
 #[cube]
 impl Region {
-    pub fn new(coords: Coords<u32>, #[comptime] space: Space, #[comptime] level: Level) -> Region {
+    pub fn new(
+        coords: Coords<u32>,
+        #[comptime] space: Space,
+        sizes: Sequence<usize>,
+        #[comptime] level: Level,
+    ) -> Region {
         Region {
             coords,
+            sizes,
             space,
             level,
         }
+    }
+
+    /// The box this region covers, as the runtime space a loop below it walks: the level's
+    /// child of the space, an axis left whole keeping the parent's size.
+    pub(crate) fn child(&self) -> Space {
+        Space::with_sizes(comptime!(self.level.child(&self.space)), self.sizes.clone())
     }
 
     /// The region at trailing-two coordinates `(c0, c1)` under `level`, `0` elsewhere. The
@@ -51,7 +66,7 @@ impl Region {
             };
             coords.push(c);
         }
-        Region::new(coords, comptime!(space.clone()), level)
+        Region::new(coords, comptime!(space.clone()), Sequence::new(), level)
     }
 
     /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:

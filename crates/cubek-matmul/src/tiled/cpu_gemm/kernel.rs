@@ -23,8 +23,8 @@ pub fn cpu_gemm_axes(batch: &[Axis]) -> Vec<Axis> {
 /// whole, then the plane split (the parallel worker threads) stepping `K` in the leaf's depth.
 /// `k` is stated because the cube walks it whole in one region, which is an edge and so
 /// comptime: the kernel is compiled per contraction depth, as it always was.
-pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis], k: usize) -> Vec<Level> {
-    vec![bp.cube_level(batch, k), bp.plane_level(batch)]
+pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
+    vec![bp.cubes(batch), bp.planes(batch), bp.steps(batch)]
 }
 
 /// The routine's space in kernel form.
@@ -38,7 +38,7 @@ impl CpuGemmBlueprint {
     }
 
     /// The cube grid, `K` whole.
-    pub fn cube_level(&self, batch: &[Axis], k: usize) -> Level {
+    pub fn cubes(&self, batch: &[Axis]) -> Level {
         let leaf = self.instruction;
         let cube_m = self.planes.m * leaf.m;
         let cube_n = self.planes.n * leaf.n;
@@ -46,18 +46,26 @@ impl CpuGemmBlueprint {
             l.distribute(cubes(CubeAxis::Z), &Self::batch_tiles(batch))
                 .distribute(cubes(CubeAxis::X), &[(M, cube_m)])
                 .distribute(cubes(CubeAxis::Y), &[(N, cube_n)])
-                .walk(&[(K, k)]);
+                .whole(&[K]);
         })
     }
 
-    /// One register block per plane, stepped through `K` in the leaf's depth.
-    pub fn plane_level(&self, batch: &[Axis]) -> Level {
+    /// One register block per plane, `K` whole.
+    pub fn planes(&self, batch: &[Axis]) -> Level {
         let leaf = self.instruction;
         Level::new(&cpu_gemm_axes(batch), |l| {
             l.distribute(planes(), &[(M, leaf.m)])
                 .distribute(planes(), &[(N, leaf.n)])
-                .walk(&Self::batch_tiles(batch))
-                .walk(&[(K, leaf.k)]);
+                .whole(batch)
+                .whole(&[K]);
+        })
+    }
+
+    /// The plane's block stepped through `K` in the leaf's depth.
+    pub fn steps(&self, batch: &[Axis]) -> Level {
+        let leaf = self.instruction;
+        Level::new(&cpu_gemm_axes(batch), |l| {
+            l.whole(batch).whole(&[M, N]).walk(&[(K, leaf.k)]);
         })
     }
 }
@@ -90,7 +98,6 @@ pub fn cpu_gemm_kernel<
     c: &TileArg<'_, E, VC>,
     #[comptime] bp: CpuGemmBlueprint,
     #[comptime] batch: Vec<Axis>,
-    #[comptime] k: usize,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
     #[define(E)] _acc_dtype: ElemType,
@@ -114,21 +121,18 @@ pub fn cpu_gemm_kernel<
     let mut acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
 
-    // This cube's box, K whole: one region.
-    for region in c
-        .op_space(&a, &b)
-        .level(comptime!(bp.cube_level(&batch, k)))
-    {
-        let acc_cube = acc.at(&region);
-        let a_cube = a.at(&region);
-        let b_cube = b.at(&region);
-        // This plane's block, stepped through K in the instruction's depth.
-        for step in acc_cube
-            .op_space(&a_cube, &b_cube)
-            .level(comptime!(bp.plane_level(&batch)))
-        {
-            let mut acc_step = acc_cube.at(&step);
-            acc_step.mma(&a_cube.at(&step), &b_cube.at(&step), Semiring::SUM_PROD);
+    for cube in c.op_space(&a, &b).cubes(comptime!(bp.cubes(&batch))) {
+        let acc_cube = acc.at(&cube);
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
+        for plane in cube.planes(comptime!(bp.planes(&batch))) {
+            let acc_plane = acc_cube.at(&plane);
+            let a_plane = a_cube.at(&plane);
+            let b_plane = b_cube.at(&plane);
+            for step in plane.walk(comptime!(bp.steps(&batch))) {
+                let mut acc_step = acc_plane.at(&step);
+                acc_step.mma(&a_plane.at(&step), &b_plane.at(&step), Semiring::SUM_PROD);
+            }
         }
     }
     acc.drain_cast_into(&mut c);

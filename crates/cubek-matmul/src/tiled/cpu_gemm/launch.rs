@@ -181,7 +181,7 @@ pub fn launch_ref(
         client,
         &Nest::new(
             Space::new(&extents),
-            cpu_gemm_levels(&blueprint, &batch_axes, k),
+            cpu_gemm_levels(&blueprint, &batch_axes),
         ),
         KernelForm::Dynamic,
     );
@@ -237,7 +237,6 @@ pub fn launch_ref(
         c.arg(),
         blueprint.clone(),
         batch_axes,
-        k,
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

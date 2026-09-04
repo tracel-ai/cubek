@@ -12,11 +12,20 @@
 use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
+/// What a level does to one axis: cuts it into tiles of `edge`, or leaves it whole. Whole is
+/// what a level says of an axis it hands down untouched, which is the only way to leave a
+/// [`Dynamic`](Extent::Dynamic) axis alone, since its extent is no number a cut could name.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Edge {
+    Cut(usize),
+    Whole,
+}
+
 /// One decomposition level of a space: every axis's sub-tile edge and distribution, in the
 /// space's canonical axis order, plus the axes it distributes as one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
-    edges: ByAxis<usize>,
+    edges: ByAxis<Edge>,
     dists: ByAxis<Distribution>,
     scope: LevelScope,
     work: Option<Work>,
@@ -60,7 +69,7 @@ impl Level {
     }
 
     pub(crate) fn from_parts(
-        edges: ByAxis<usize>,
+        edges: ByAxis<Edge>,
         dists: ByAxis<Distribution>,
         work: Option<Work>,
     ) -> Level {
@@ -76,8 +85,29 @@ impl Level {
         }
     }
 
+    /// The tile edge this level cuts `axis` to. An axis left whole has no edge of its own:
+    /// [`edge_in`](Level::edge_in) answers with the space's extent.
     pub fn edge(&self, axis: Axis) -> usize {
+        match self.edges.get(axis) {
+            Edge::Cut(edge) => edge,
+            Edge::Whole => panic!(
+                "Level::edge: {axis:?} is left whole at this level; its extent is the space's \
+                 (`edge_in`)"
+            ),
+        }
+    }
+
+    pub fn edge_kind(&self, axis: Axis) -> Edge {
         self.edges.get(axis)
+    }
+
+    /// The extent one region of this level covers along `axis` of `space`: the cut edge, or the
+    /// space's own extent (static or not) where the axis is left whole.
+    pub(crate) fn edge_in(&self, space: &Space, axis: Axis) -> Extent {
+        match self.edges.get(axis) {
+            Edge::Cut(edge) => Extent::Static(edge),
+            Edge::Whole => space.extent_raw(axis),
+        }
     }
 
     pub fn distribution(&self, axis: Axis) -> Distribution {
@@ -109,13 +139,13 @@ impl Level {
         self.work.as_ref()
     }
 
-    /// The space one region of this level covers: every axis of `space` cut to its edge, static
-    /// whatever the parent was (an edge is comptime). Position-free; the positions are the walk.
+    /// The space one region of this level covers: every axis of `space` cut to its edge (static,
+    /// an edge is comptime) or handed down whole. Position-free; the positions are the walk.
     pub fn child(&self, space: &Space) -> Space {
-        Space::new(
+        Space::from_extents(
             &space
                 .axes()
-                .map(|axis| (axis, self.edge(axis)))
+                .map(|axis| (axis, self.edge_in(space, axis)))
                 .collect::<Vec<_>>(),
         )
     }
@@ -123,13 +153,34 @@ impl Level {
     /// Whether this level's edge on `axis` fails to divide the extent `space` hands it, leaving a
     /// partial tile that needs masking. Host-side, static extents.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
-        !space.extent(axis).is_multiple_of(self.edge(axis))
+        match self.edge_kind(axis) {
+            Edge::Cut(edge) => !space.extent(axis).is_multiple_of(edge),
+            Edge::Whole => false,
+        }
     }
 
     /// Tiles along `axis` of `space`: `ceil(extent / edge)`, so an indivisible axis gets a
     /// trailing partial tile (its overhang is masked at read/write). Host-side, static extents.
     pub(crate) fn count(&self, space: &Space, axis: Axis) -> usize {
-        space.extent(axis).div_ceil(self.edge(axis))
+        match self.edge_kind(axis) {
+            Edge::Cut(edge) => space.extent(axis).div_ceil(edge),
+            Edge::Whole => 1,
+        }
+    }
+
+    /// Whether a loop over this level under `space` visits only what the hardware dealt out: no
+    /// undealt axis is stepped. What the distribute verbs (`cubes`, `planes`, `lanes`) require,
+    /// so a header that says "each cube" does not also step through a walk it never named. An
+    /// instance's share of a dealt axis may still be several tiles; that is the verb's loop.
+    pub(crate) fn walks_nothing(&self, space: &Space) -> bool {
+        space.axes().all(|axis| match self.distribution(axis) {
+            Distribution::Sequential => match (self.edge_kind(axis), space.extent_raw(axis)) {
+                (Edge::Whole, _) => true,
+                (Edge::Cut(edge), Extent::Static(extent)) => extent <= edge,
+                (Edge::Cut(_), Extent::Dynamic) => false,
+            },
+            Distribution::Spatial { .. } => true,
+        })
     }
 
     /// Whether `axis` is `Spatial` `TilesEach(1)`: its walk count is comptime `1`, so a step
@@ -142,12 +193,18 @@ impl Level {
     /// walk coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis has no comptime
     /// count and is never statically single.
     pub(crate) fn single_static_tile(&self, space: &Space, axis: Axis) -> bool {
-        !space.is_dynamic(axis) && self.count(space, axis) == 1
+        match self.edge_kind(axis) {
+            Edge::Cut(_) => !space.is_dynamic(axis) && self.count(space, axis) == 1,
+            Edge::Whole => true,
+        }
     }
 
     /// The per-instance tile count of `axis`, `None` when it is runtime.
     pub(crate) fn per_instance_tiles(&self, space: &Space, axis: Axis) -> Option<usize> {
-        let edge = self.edge(axis);
+        let edge = match self.edge_kind(axis) {
+            Edge::Cut(edge) => edge,
+            Edge::Whole => return Some(1),
+        };
         match self.distribution(axis) {
             Distribution::Sequential => match space.extent_raw(axis) {
                 Extent::Static(e) => Some(e.div_ceil(edge)),
@@ -367,7 +424,17 @@ impl LevelCuts {
     pub fn walk(&mut self, axes: &[(Axis, usize)]) -> &mut Self {
         self.cuts.extend(
             axes.iter()
-                .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+                .map(|&(axis, edge)| (axis, Cut::sequential(Edge::Cut(edge)))),
+        );
+        self
+    }
+
+    /// Leave these axes as they are: one region covers each of them whole. What a level says of
+    /// the axes it does not touch, and the only thing it can say of a dynamic one.
+    pub fn whole(&mut self, axes: &[Axis]) -> &mut Self {
+        self.cuts.extend(
+            axes.iter()
+                .map(|&axis| (axis, Cut::sequential(Edge::Whole))),
         );
         self
     }
@@ -395,7 +462,7 @@ impl LevelCuts {
                 (
                     axis,
                     Cut {
-                        edge,
+                        edge: Edge::Cut(edge),
                         dist: dist.into(),
                     },
                 )
@@ -425,7 +492,7 @@ impl LevelCuts {
                 );
                 self.cuts.extend(
                     axes.iter()
-                        .map(|&(axis, edge)| (axis, Cut::sequential(edge))),
+                        .map(|&(axis, edge)| (axis, Cut::sequential(Edge::Cut(edge)))),
                 );
                 self.work = Some(Work::new(
                     axes.iter().map(|&(axis, _)| axis).collect(),
@@ -506,6 +573,16 @@ impl LevelScope {
         }
     }
 
+    /// The loop verb that states a level of this scope.
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            LevelScope::Sequential => "walk",
+            LevelScope::Cubes => "cubes",
+            LevelScope::Planes => "planes",
+            LevelScope::Lanes => "lanes",
+        }
+    }
+
     /// The coarse reading, for consumers that only ask whether the level spreads at all.
     pub(crate) fn role(self) -> LevelRole {
         match self {
@@ -528,12 +605,12 @@ pub(crate) enum LevelRole {
 /// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
 #[derive(Clone, Copy, Debug)]
 struct Cut {
-    edge: usize,
+    edge: Edge,
     dist: Distribution,
 }
 
 impl Cut {
-    fn sequential(edge: usize) -> Self {
+    fn sequential(edge: Edge) -> Self {
         Cut {
             edge,
             dist: Distribution::Sequential,

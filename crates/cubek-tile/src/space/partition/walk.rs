@@ -16,12 +16,12 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Coords, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand, instance_count,
-    tiles_per_instance,
+    Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand,
+    instance_count, tiles_per_instance,
 };
 
 use super::walk_order::walk_index;
-use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
+use super::{ComputeScope, CubeAxis, Distribution, LevelScope, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -40,6 +40,9 @@ pub struct Walk {
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
     steps: usize,
+    /// The runtime sizes of the space's dynamic axes, positional, handed to every region so a
+    /// loop below it can walk the region's child space.
+    sizes: Sequence<usize>,
     /// The space the regions are cut from, which is also what a ring sizes its slots to
     /// ([`Ring::smem`](crate::Ring::smem)).
     #[cube(comptime)]
@@ -56,25 +59,104 @@ pub struct Walk {
     order: WalkOrder,
 }
 
+/// The loops a kernel writes over a space or a region, one verb per statement. A distribute verb
+/// (`cubes`, `planes`, `lanes`) hands each instance of that scope its region and iterates that:
+/// once when each instance takes one tile, its share otherwise. `walk` steps every region. The
+/// verb checks the level it is handed: `for plane in stage.planes(level)` refuses a level that
+/// deals to cubes or steps an axis, so the header cannot say one thing while the value does
+/// another. A kernel generic over its levels, which cannot know the verb, says
+/// [`level`](Space::level).
 #[cube]
 impl Space {
-    /// The walk of `level` over this space's tiles: the statement a kernel's loop makes, and the
-    /// only way a level is stated. Comptime for `Static` axes, runtime for `Dynamic`.
+    /// The regions of `level` over this space, whatever verb the level is: what a kernel handed
+    /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
     pub fn level(self, #[comptime] level: Level) -> Walk {
         Walk::of(self, level)
+    }
+
+    /// Each cube's box of this space under `level`, which deals to the cube grid and steps
+    /// nothing.
+    pub fn cubes(self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self, level, comptime!(LevelScope::Cubes))
+    }
+
+    /// Each plane's box of this space under `level`, which deals to the cube's planes and steps
+    /// nothing.
+    pub fn planes(self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self, level, comptime!(LevelScope::Planes))
+    }
+
+    /// Each lane's box of this space under `level`, which deals to the plane's lanes and steps
+    /// nothing.
+    pub fn lanes(self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self, level, comptime!(LevelScope::Lanes))
+    }
+
+    /// Every region of this space under `level`, which deals to nobody: the loop steps them all.
+    pub fn walk(self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self, level, comptime!(LevelScope::Sequential))
+    }
+}
+
+#[cube]
+impl Region {
+    /// [`Space::cubes`] over this region's own box.
+    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self.child(), level, comptime!(LevelScope::Cubes))
+    }
+
+    /// [`Space::planes`] over this region's own box.
+    pub fn planes(&self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self.child(), level, comptime!(LevelScope::Planes))
+    }
+
+    /// [`Space::lanes`] over this region's own box.
+    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self.child(), level, comptime!(LevelScope::Lanes))
+    }
+
+    /// [`Space::walk`] over this region's own box.
+    pub fn walk(&self, #[comptime] level: Level) -> Walk {
+        Walk::stated(self.child(), level, comptime!(LevelScope::Sequential))
+    }
+
+    /// [`Space::level`] over this region's own box.
+    pub fn level(&self, #[comptime] level: Level) -> Walk {
+        Walk::of(self.child(), level)
     }
 }
 
 #[cube]
 impl Walk {
+    /// [`of`](Walk::of) under a verb: the level must deal to exactly `scope` and, unless the verb
+    /// is the walk, step nothing.
+    fn stated(space: Space, #[comptime] level: Level, #[comptime] verb: LevelScope) -> Walk {
+        comptime!({
+            let stated = level.scope();
+            assert!(
+                stated == verb,
+                "{}: the level deals to {stated:?}, which is not what this loop says",
+                verb.verb()
+            );
+            assert!(
+                verb == LevelScope::Sequential || level.walks_nothing(&space.clone()),
+                "{}: the level steps an axis, which is a walk; state it as one below this loop",
+                verb.verb()
+            );
+        });
+        Walk::of(space, level)
+    }
+
     fn of(space: Space, #[comptime] level: Level) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
-            let edge = comptime!(level.edge(space.axis_at(p)));
-            counts.push(space.extents.count(p, edge));
+            match comptime!(level.edge_kind(space.axis_at(p))) {
+                Edge::Cut(edge) => counts.push(space.extents.count(p, edge)),
+                Edge::Whole => counts.push(1usize),
+            }
         }
-        Walk::from_counts(comptime!(space.clone()), level, counts)
+        Walk::from_counts(comptime!(space.clone()), level, counts, space.extents.sizes)
     }
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
@@ -83,6 +165,7 @@ impl Walk {
         #[comptime] space: Space,
         #[comptime] level: Level,
         grid: Coords<usize>,
+        sizes: Sequence<usize>,
     ) -> Walk {
         let rank = comptime!(space.rank());
         let mut counts = Coords::<usize>::new();
@@ -152,6 +235,7 @@ impl Walk {
             scales,
             base: 0usize,
             steps,
+            sizes,
             order: comptime!(WalkOrder::RowMajor),
             space,
             level,
@@ -167,6 +251,7 @@ impl Walk {
             scales: self.scales,
             base: self.base,
             steps: self.steps,
+            sizes: self.sizes,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
@@ -189,6 +274,7 @@ impl Walk {
             scales: self.scales,
             base: self.base,
             steps: self.steps,
+            sizes: self.sizes,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(unroll),
@@ -214,6 +300,7 @@ impl Walk {
             scales: self.scales,
             base,
             steps,
+            sizes: self.sizes,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
@@ -234,6 +321,7 @@ impl Walk {
         Region::new(
             self.resolve(idx),
             comptime!(self.space.clone()),
+            self.sizes.clone(),
             comptime!(self.level.clone()),
         )
     }

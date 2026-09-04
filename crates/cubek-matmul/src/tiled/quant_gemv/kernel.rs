@@ -38,32 +38,23 @@ const AXES: [Axis; 4] = [M, N, KB, KI];
 
 /// The routine's three levels, outermost first, each a method on the blueprint.
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
-    vec![
-        bp.cube_level(problem),
-        bp.plane_level(problem),
-        bp.lane_level(problem),
-    ]
+    vec![bp.cubes(problem), bp.planes(problem), bp.lanes(problem)]
 }
 
 impl QuantGemvBlueprint {
-    /// A strip of output rows per cube, all of `K` walked.
-    pub fn cube_level(&self, problem: &QuantGemvProblem) -> Level {
-        let (block, blocks) = (problem.block, problem.blocks());
+    /// A strip of output rows per cube, `K` whole.
+    pub fn cubes(&self, _problem: &QuantGemvProblem) -> Level {
         Level::new(&AXES, |l| {
             l.distribute(cubes(CubeAxis::X), &[(M, self.rows_per_cube)])
-                .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
+                .whole(&[N, KB, KI]);
         })
     }
 
-    /// One plane per group of rows.
-    pub fn plane_level(&self, problem: &QuantGemvProblem) -> Level {
-        let (block, blocks) = (problem.block, problem.blocks());
+    /// One plane per group of rows, `K` whole.
+    pub fn planes(&self, _problem: &QuantGemvProblem) -> Level {
         Level::new(&AXES, |l| {
-            l.distribute(planes(), &[(M, self.rows_per_plane)]).walk(&[
-                (N, problem.rows),
-                (KB, blocks),
-                (KI, block),
-            ]);
+            l.distribute(planes(), &[(M, self.rows_per_plane)])
+                .whole(&[N, KB, KI]);
         })
     }
 
@@ -71,13 +62,13 @@ impl QuantGemvBlueprint {
     /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
     /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
     /// plane width: their product with the row groups is exactly it.
-    pub fn lane_level(&self, problem: &QuantGemvProblem) -> Level {
+    pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
         let factor = problem.factor();
         Level::new(&AXES, |l| {
             l.distribute(lanes(self.groups()), &[(M, self.rows_per_lane)])
                 .distribute(lanes(self.block_lanes).interleaved(), &[(KB, 1)])
                 .distribute(lanes(self.inside_lanes).interleaved(), &[(KI, factor)])
-                .walk(&[(N, problem.rows)]);
+                .whole(&[N]);
         })
     }
 }
@@ -129,56 +120,35 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
         scale_tiles.push(scales.index(k).tile(comptime!(space.clone())));
     }
     let out = out.tile(space);
-    // The output folds every step into what it holds, so each lane zeroes the window it owns:
-    // the three levels over `out`'s own space (no K) hand every lane its one window.
-    for region in out
-        .runtime_space()
-        .level(comptime!(bp.cube_level(&problem)))
-    {
-        let out_cube = out.at(&region);
-        for region in out_cube
-            .runtime_space()
-            .level(comptime!(bp.plane_level(&problem)))
-        {
-            let out_plane = out_cube.at(&region);
-            for region in out_plane
-                .runtime_space()
-                .level(comptime!(bp.lane_level(&problem)))
-            {
-                let mut out_lane = out_plane.at(&region);
+    // Each lane zeroes the window it owns: the output folds every step into what it holds.
+    for cube in out.runtime_space().cubes(comptime!(bp.cubes(&problem))) {
+        let out_cube = out.at(&cube);
+        for plane in cube.planes(comptime!(bp.planes(&problem))) {
+            let out_plane = out_cube.at(&plane);
+            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+                let mut out_lane = out_plane.at(&lane);
                 out_lane.zero();
             }
         }
     }
 
-    // This cube's strip of rows.
-    for region in out
-        .op_space(&w, &x)
-        .level(comptime!(bp.cube_level(&problem)))
-    {
-        let out_cube = out.at(&region);
-        let w_cube = w.at(&region);
-        let x_cube = x.at(&region);
-        let scales_cube = at_all(&scale_tiles, &region);
-        // This plane's group of rows.
-        for region in out_cube
-            .op_space(&w_cube, &x_cube)
-            .level(comptime!(bp.plane_level(&problem)))
-        {
-            let out_plane = out_cube.at(&region);
-            let w_plane = w_cube.at(&region);
-            let x_plane = x_cube.at(&region);
-            let scales_plane = at_all(&scales_cube, &region);
-            // This lane's rows against its share of the contraction.
-            for region in out_plane
-                .op_space(&w_plane, &x_plane)
-                .level(comptime!(bp.lane_level(&problem)))
-            {
-                let mut out_lane = out_plane.at(&region);
-                let scales_lane = at_all(&scales_plane, &region);
+    for cube in out.op_space(&w, &x).cubes(comptime!(bp.cubes(&problem))) {
+        let out_cube = out.at(&cube);
+        let w_cube = w.at(&cube);
+        let x_cube = x.at(&cube);
+        let scales_cube = at_all(&scale_tiles, &cube);
+        for plane in cube.planes(comptime!(bp.planes(&problem))) {
+            let out_plane = out_cube.at(&plane);
+            let w_plane = w_cube.at(&plane);
+            let x_plane = x_cube.at(&plane);
+            let scales_plane = at_all(&scales_cube, &plane);
+            // The lane's share of the blocks, one stored word a step.
+            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+                let mut out_lane = out_plane.at(&lane);
+                let scales_lane = at_all(&scales_plane, &lane);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&region),
-                    &x_plane.at(&region),
+                    &w_plane.at(&lane),
+                    &x_plane.at(&lane),
                     &scales_lane,
                     config,
                     Semiring::SUM_PROD,

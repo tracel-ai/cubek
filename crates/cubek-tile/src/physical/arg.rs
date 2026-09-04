@@ -342,9 +342,10 @@ pub(crate) fn validate_scheme(
 
     // Every window is some level's cut, so the leaf (which carries no cut) has nothing left to
     // check: its extents are the last level's edges.
+    let mut space = space.clone();
     for level in levels {
         for (p, axis) in space.axes().enumerate() {
-            let (edge, block) = (level.edge(axis), block[p]);
+            let (edge, block) = (level.edge_in(&space, axis).get(), block[p]);
             assert!(
                 edge.is_multiple_of(block) || block.is_multiple_of(edge),
                 "StridedTileSource::quantized: {axis:?} is cut into {edge}-element tiles, \
@@ -352,6 +353,7 @@ pub(crate) fn validate_scheme(
                  or sit inside one"
             );
         }
+        space = level.child(&space);
     }
 }
 

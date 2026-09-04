@@ -41,7 +41,7 @@ impl Extent {
 pub struct Extents {
     #[cube(comptime)]
     kinds: ByAxis<Extent>,
-    sizes: Sequence<usize>,
+    pub(crate) sizes: Sequence<usize>,
 }
 
 impl Extents {
@@ -109,7 +109,7 @@ impl std::hash::Hash for Space {
 /// [`witnessed_space`](crate::witnessed_space) builds from an op's operands, needs these;
 /// everything else calls the host methods directly.
 impl SpaceExpand {
-    fn comptime(&self) -> Space {
+    pub(crate) fn comptime(&self) -> Space {
         Space {
             extents: Extents::fixed(self.extents.kinds.clone()),
         }
