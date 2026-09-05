@@ -32,7 +32,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -40,7 +40,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -66,12 +66,13 @@ enum Read {
 fn reduce_body<E: Numeric>(
     input: &Tile<E>,
     output: &mut Tile<E>,
+    space: &Space,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
 ) {
     output.init(Monoid::identity::<E>(monoid));
-    let walk = output.reduce_space(input).level(level);
+    let walk = space.level(level);
     match comptime!(read) {
         Read::InPlace => {
             for region in walk {
@@ -95,7 +96,7 @@ fn reduce_body<E: Numeric>(
 fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
@@ -103,14 +104,21 @@ fn reduce_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(comptime!(space.clone()));
-    reduce_body(&input, &mut output, comptime!(level.clone()), read, monoid);
+    reduce_body(
+        &input,
+        &mut output,
+        &space,
+        comptime!(level.clone()),
+        read,
+        monoid,
+    );
 }
 
 #[cube(launch)]
 fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
@@ -118,7 +126,14 @@ fn reduce_kernel_v4<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let mut output = output.tile(comptime!(space.clone()));
-    reduce_body(&input, &mut output, comptime!(level.clone()), read, monoid);
+    reduce_body(
+        &input,
+        &mut output,
+        &space,
+        comptime!(level.clone()),
+        read,
+        monoid,
+    );
 }
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
@@ -128,7 +143,7 @@ fn reduce_kernel_v4<E: Numeric>(
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
@@ -145,6 +160,7 @@ fn procedural_reduce_kernel<E: Float>(
     reduce_body(
         &input,
         &mut output,
+        &space,
         comptime!(level.clone()),
         read,
         comptime!(Monoid::Max),
@@ -203,7 +219,7 @@ fn run(
             c_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(c_axes),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         f32_ty,
     );
@@ -435,7 +451,7 @@ fn run_reduce_with_vw(
                 nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.space.clone(),
+                nest.space_arg(),
                 nest.at(0),
                 read,
                 monoid,
@@ -449,7 +465,7 @@ fn run_reduce_with_vw(
                 nest.cube_dim(&client),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.space.clone(),
+                nest.space_arg(),
                 nest.at(0),
                 read,
                 monoid,
@@ -709,7 +725,7 @@ fn run_reduce_checked(
             TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         read,
         monoid,
@@ -840,7 +856,7 @@ fn check_procedural_reduce(read: Read) {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         read,
         dtype,
@@ -1131,7 +1147,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
@@ -1149,7 +1165,7 @@ fn resident_fold_kernel<E: Numeric>(
         monoid,
     );
     acc.init(Monoid::identity::<E>(monoid));
-    for region in acc.reduce_space(&input).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
@@ -1194,7 +1210,7 @@ fn resident_max_over_lane_split_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         Monoid::Max,
         f32_ty,
@@ -1260,7 +1276,7 @@ fn resident_max_over_lane_group_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         Monoid::Max,
         f32_ty,

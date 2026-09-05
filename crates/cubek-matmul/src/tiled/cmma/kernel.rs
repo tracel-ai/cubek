@@ -1,9 +1,10 @@
-//! The Cmma kernel: the space it runs over and the walk written out, level by level.
+//! The Cmma kernel: its levels, one method of the blueprint each, and the walk written out,
+//! level by level.
 //!
-//! [`cmma_space`] is the one statement of the space, called by the launch for the grid and by
-//! the kernel for its walk, so the two cannot drift. Each level of it is a loop here, each
-//! stage a ring the kernel allocates, and the accumulator a bracket the kernel opens before the
-//! `K` walk and drains after it. One body serves both delivery families (strided cooperative
+//! The launch lists the level methods for the grid and hands the kernel its space; each loop
+//! here names the level it walks, so the two cannot drift. Each stage is a ring the kernel
+//! allocates, and the accumulator a bracket the kernel opens before the `K` walk and drains
+//! after it. One body serves both delivery families (strided cooperative
 //! copy or TMA bulk copy; the output is always strided): the ring's pipeline is deduced from
 //! what the operands are.
 
@@ -33,11 +34,6 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
         bp.steps(batch),
         bp.cells(batch),
     ]
-}
-
-/// The routine's space in kernel form, its top extents resolved from the tensors.
-pub fn cmma_space(batch: &[Axis]) -> Space {
-    Space::dynamic(&cmma_axes(batch))
 }
 
 impl CmmaBlueprint {
@@ -116,6 +112,7 @@ pub fn cmma_kernel<
     a: &D::Arg<EL, VA>,
     b: &D::Arg<ER, VB>,
     c: &TileArg<'_, E, VC>,
+    space: Space,
     #[comptime] bp: CmmaBlueprint,
     #[comptime] batch: Vec<Axis>,
     #[define(EL)] _lhs_dtype: ElemType,
@@ -123,7 +120,6 @@ pub fn cmma_kernel<
     #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
-    let space = comptime!(cmma_space(&batch));
     let depth = comptime!(bp.buffering);
     let (i, c_grid) = comptime!((bp.instruction, bp.partition));
     // This plane's fragments: the partition's grid of the instruction's tile.
@@ -144,9 +140,9 @@ pub fn cmma_kernel<
     );
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
-    let c = c.tile(space);
+    let c = c.tile(comptime!(space.clone()));
 
-    for cube in c.op_space(&a, &b).cubes(comptime!(bp.cubes(&batch))) {
+    for cube in space.cubes(comptime!(bp.cubes(&batch))) {
         let a = a.at(&cube);
         let b = b.at(&cube);
         let mut c = c.at(&cube);

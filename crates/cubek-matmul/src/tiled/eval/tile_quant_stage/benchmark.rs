@@ -30,7 +30,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     a: &TileArg<'_, E, VA>,
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(I)] _b_dtype: ElemType,
@@ -39,12 +39,12 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let cubes = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let cubes = space.level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&cubes, &a, &b, StageStorage::Strided, 1usize);
     pipelined(cubes, &mut ring, |slot, region| {
         let c_cube = c.at(region);
         slot.consume(|a_s, b_s| {
-            for region in c_cube.op_space(a_s, b_s).level(comptime!(inner.clone())) {
+            for region in region.level(comptime!(inner.clone())) {
                 let mut c_lane = c_cube.at(&region);
                 c_lane.mma_with(
                     &a_s.at(&region),
@@ -206,7 +206,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.space().clone(),
+            launcher.space_arg(),
             launcher.concrete().at(0),
             launcher.concrete().at(1),
             u32::elem_type_native(),

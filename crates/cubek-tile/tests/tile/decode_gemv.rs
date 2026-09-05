@@ -46,7 +46,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] cube: Level,
     #[comptime] plane: Level,
     #[comptime] lane: Level,
@@ -64,23 +64,17 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         let mut out_w = out.at(&region);
         out_w.zero();
     }
-    for region in out.op_space(&w, &x).level(comptime!(cube.clone())) {
+    for region in space.level(comptime!(cube.clone())) {
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in out_cube
-            .op_space(&w_cube, &x_cube)
-            .level(comptime!(plane.clone()))
-        {
+        for region in region.level(comptime!(plane.clone())) {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in out_plane
-                .op_space(&w_plane, &x_plane)
-                .level(comptime!(lane.clone()))
-            {
+            for region in region.level(comptime!(lane.clone())) {
                 let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&region),
@@ -108,7 +102,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] cube: Level,
     #[comptime] plane: Level,
     #[comptime] lane: Level,
@@ -131,23 +125,17 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc.op_space(&w, &x).level(comptime!(cube.clone())) {
+    for region in space.level(comptime!(cube.clone())) {
         let acc_cube = acc.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = at_all(&scales, &region);
-        for region in acc_cube
-            .op_space(&w_cube, &x_cube)
-            .level(comptime!(plane.clone()))
-        {
+        for region in region.level(comptime!(plane.clone())) {
             let acc_plane = acc_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = at_all(&scales_cube, &region);
-            for region in acc_plane
-                .op_space(&w_plane, &x_plane)
-                .level(comptime!(lane.clone()))
-            {
+            for region in region.level(comptime!(lane.clone())) {
                 let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
                     &w_plane.at(&region),
@@ -329,7 +317,7 @@ fn serving_geometry(promoted: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            launcher.space().clone(),
+            launcher.space_arg(),
             launcher.concrete().at(0),
             launcher.concrete().at(1),
             launcher.concrete().at(2),
@@ -347,7 +335,7 @@ fn serving_geometry(promoted: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            launcher.space().clone(),
+            launcher.space_arg(),
             launcher.concrete().at(0),
             launcher.concrete().at(1),
             launcher.concrete().at(2),

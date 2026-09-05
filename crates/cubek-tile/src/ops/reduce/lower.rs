@@ -29,22 +29,6 @@ impl<Acc: Numeric> Tile<Acc> {
     ) {
         reduce_leaf(self, input, monoid)
     }
-
-    /// The level's operation space for a reduction: the input's space, sized by whichever
-    /// operand witnesses each dynamic axis. What a kernel walks at a level ([`Space::level`]),
-    /// [`op_space`](Tile::op_space)'s twin for one operand.
-    pub fn reduce_space<In: Numeric>(&self, input: &Tile<In>) -> Space {
-        let merged = comptime!({
-            let merged = input.space.clone();
-            assert!(
-                self.space.axes().all(|axis| merged.contains(axis)),
-                "Tile::reduce_axis: the output spans an axis the input does not, \
-                 so the walk would never step it and every region would write the same slice"
-            );
-            merged
-        });
-        witnessed_space(merged, self, input, input)
-    }
 }
 
 /// Dispatches to the register nest by the accumulator's form.

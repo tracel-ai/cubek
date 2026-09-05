@@ -24,13 +24,6 @@ impl<T: Numeric> Tile<T> {
         self.mul_from(a, b)
     }
 
-    /// The space a product walks: this tile's, with every [`Dynamic`](crate::Extent) axis sized
-    /// by whichever operand [`witnesses`](Tile::witnesses) it. The destination is asked first, as
-    /// [`copy`](Tile::copy) asks its own: an axis it spans is one it writes.
-    pub fn mul_space<A: Numeric, B: Numeric>(&self, a: &Tile<A>, b: &Tile<B>) -> Space {
-        witnessed_space(comptime!(self.space.clone()), self, a, b)
-    }
-
     /// The transport: every unit of the cube strides the destination's groups, reading `b` once
     /// per group and taking a lane of it per fold.
     ///

@@ -62,8 +62,8 @@ pub struct Partition {
 /// A fully-resolved plan: the tensor-core [`InstructionShape`], each plane's fragment
 /// [`Partition`], how many planes tile the cube's stage along `m`/`n` ([`PlaneGrid`]), how
 /// deep each smem stage runs along `K` (`stage_k`) and how many stages are in flight
-/// (`buffering`). The kernel's comptime argument: [`cmma_space`](super::kernel::cmma_space)
-/// builds the space off it on both sides of the launch.
+/// (`buffering`). The kernel's comptime argument, whose level methods both the launch and the
+/// kernel's loops read.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CmmaBlueprint {
     pub instruction: InstructionShape,

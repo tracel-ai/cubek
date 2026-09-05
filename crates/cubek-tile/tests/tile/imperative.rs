@@ -23,7 +23,7 @@ fn ring_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] block: Level,
     #[comptime] cell: Level,
     #[comptime] depth: usize,
@@ -35,13 +35,13 @@ fn ring_matmul<E: Numeric>(
     c.zero();
 
     // The cube's walk: one block of K per region, both operands staged for it.
-    let walk = c.op_space(&a, &b).level(comptime!(block.clone()));
+    let walk = space.level(comptime!(block.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
             // The block's own grid of final tiles, each contracted by the leaf.
-            for cell in c_block.op_space(a_s, b_s).level(comptime!(cell.clone())) {
+            for cell in region.level(comptime!(cell.clone())) {
                 let mut c_cell = c_block.at(&cell);
                 c_cell.mma_with(
                     &a_s.at(&cell),
@@ -83,7 +83,7 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         depth,

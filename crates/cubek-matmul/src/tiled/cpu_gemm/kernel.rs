@@ -27,11 +27,6 @@ pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![bp.cubes(batch), bp.planes(batch), bp.steps(batch)]
 }
 
-/// The routine's space in kernel form.
-pub fn cpu_gemm_space(batch: &[Axis]) -> Space {
-    Space::dynamic(&cpu_gemm_axes(batch))
-}
-
 impl CpuGemmBlueprint {
     fn batch_tiles(batch: &[Axis]) -> Vec<(Axis, usize)> {
         batch.iter().map(|&a| (a, 1)).collect()
@@ -96,6 +91,7 @@ pub fn cpu_gemm_kernel<
     a: &TileArg<'_, EL, VA>,
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
+    space: Space,
     #[comptime] bp: CpuGemmBlueprint,
     #[comptime] batch: Vec<Axis>,
     #[define(EL)] _lhs_dtype: ElemType,
@@ -103,10 +99,9 @@ pub fn cpu_gemm_kernel<
     #[define(E)] _acc_dtype: ElemType,
     #[define(EA)] _acc_register_dtype: ElemType,
 ) {
-    let space = comptime!(cpu_gemm_space(&batch));
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
 
     // The accumulator spans the cube's whole contraction: opened here, drained after it. One
     // block per plane, the instruction's shape.
@@ -121,7 +116,7 @@ pub fn cpu_gemm_kernel<
     let mut acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
 
-    for cube in c.op_space(&a, &b).cubes(comptime!(bp.cubes(&batch))) {
+    for cube in space.cubes(comptime!(bp.cubes(&batch))) {
         let acc_cube = acc.at(&cube);
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);

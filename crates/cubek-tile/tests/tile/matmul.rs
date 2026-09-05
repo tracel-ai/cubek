@@ -144,7 +144,7 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     a: &TileArg<'_, E, AV>,
     b: &TileArg<'_, E, BV>,
     c: &TileArg<'_, E, CV>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -159,7 +159,7 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
         let mut c_w = c.at(&region);
         c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
     }
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_with(&a.at(&region), &b.at(&region), config, semiring);
     }
@@ -172,7 +172,7 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -186,7 +186,7 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
         let mut c_w = c.at(&region);
         c_w.zero();
     }
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -202,7 +202,7 @@ fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -211,10 +211,7 @@ fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c
-        .op_space(&a, &b)
-        .level(comptime!(level.clone()))
-        .reversed();
+    let walk = space.level(comptime!(level.clone())).reversed();
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -231,7 +228,7 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -239,7 +236,7 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -255,7 +252,7 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -264,7 +261,7 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem_single(&walk, &a, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -282,7 +279,7 @@ fn matmul_padded_rhs_stage<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] width: usize,
     #[define(E)] _dtype: ElemType,
@@ -296,7 +293,7 @@ fn matmul_padded_rhs_stage<E: Numeric>(
         let mut c_w = c.at(&region);
         c_w.zero();
     }
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem_single_at(
         &walk,
         &b,
@@ -320,7 +317,7 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] width: usize,
@@ -335,11 +332,11 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
         let mut c_w = c.at(&region);
         c_w.zero();
     }
-    for outer in c.op_space(&a, &b).level(comptime!(outer.clone())) {
+    for outer in space.level(comptime!(outer.clone())) {
         let c_o = c.at(&outer);
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
-        let walk = c_o.op_space(&a_o, &b_o).level(comptime!(inner.clone()));
+        let walk = outer.level(comptime!(inner.clone()));
         let mut ring = Ring::smem_single_at(
             &walk,
             &a_o,
@@ -364,7 +361,7 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
@@ -375,12 +372,12 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let walk = space.level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
-            for cell in c_o.op_space(a_s, b_s).level(comptime!(inner.clone())) {
+            for cell in region.level(comptime!(inner.clone())) {
                 let mut c_r = c_o.at(&cell);
                 c_r.mma_with(
                     &a_s.at(&cell),
@@ -399,7 +396,7 @@ fn matmul_two_levels_smem_then_in_place_reversed<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
@@ -410,16 +407,12 @@ fn matmul_two_levels_smem_then_in_place_reversed<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let walk = space.level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
-            for cell in c_o
-                .op_space(a_s, b_s)
-                .level(comptime!(inner.clone()))
-                .reversed()
-            {
+            for cell in region.level(comptime!(inner.clone())).reversed() {
                 let mut c_r = c_o.at(&cell);
                 c_r.mma_with(
                     &a_s.at(&cell),
@@ -438,7 +431,7 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] storage: StageStorage,
@@ -455,12 +448,12 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
         let mut c_w = c.at(&region);
         c_w.zero();
     }
-    let walk = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let walk = space.level(comptime!(outer.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer);
     pipelined(walk, &mut ring, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
-            let cells = c_o.op_space(a_s, b_s).level(comptime!(inner.clone()));
+            let cells = region.level(comptime!(inner.clone()));
             let mut inner_ring =
                 Ring::smem(&cells, a_s, b_s, comptime!(storage.clone()), depth_inner);
             pipelined(cells, &mut inner_ring, |slot, cell| {
@@ -481,7 +474,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     a: &TileArg<'_, E, AV>,
     b: &TileArg<'_, E, BV>,
     c: &TileArg<'_, E, CV>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -502,7 +495,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
         comptime!(semiring.add()),
     );
     acc.init(Monoid::identity::<EA>(comptime!(semiring.add())));
-    for region in acc.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region), semiring);
     }
@@ -516,7 +509,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] config: RegisterBlock,
@@ -526,7 +519,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for outer in c.op_space(&a, &b).level(comptime!(outer.clone())) {
+    for outer in space.level(comptime!(outer.clone())) {
         let mut c_o = c.at(&outer);
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
@@ -541,7 +534,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
             Monoid::Sum,
         );
         acc.zero();
-        for region in acc.op_space(&a_o, &b_o).level(comptime!(inner.clone())) {
+        for region in outer.level(comptime!(inner.clone())) {
             let mut acc_r = acc.at(&region);
             acc_r.mma(&a_o.at(&region), &b_o.at(&region), Semiring::SUM_PROD);
         }
@@ -557,7 +550,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
@@ -576,14 +569,11 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for outer in acc.op_space(&a, &b).level(comptime!(outer.clone())) {
+    for outer in space.level(comptime!(outer.clone())) {
         let acc_o = acc.at(&outer);
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
-        let walk = acc_o
-            .op_space(&a_o, &b_o)
-            .level(comptime!(inner.clone()))
-            .unrolled();
+        let walk = outer.level(comptime!(inner.clone())).unrolled();
         let mut ring = Ring::smem(&walk, &a_o, &b_o, StageStorage::Strided, 1usize);
         pipelined(walk, &mut ring, |slot, cell| {
             let mut acc_r = acc_o.at(cell);
@@ -605,7 +595,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] storage: StageStorage,
     #[comptime] depth: usize,
@@ -624,7 +614,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_r = acc.at(region);
@@ -642,7 +632,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     a: &QuantTileArg<'_, I, V>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] depth: usize,
     #[define(I)] _idtype: ElemType,
@@ -661,7 +651,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(
         &walk,
         &a,
@@ -689,7 +679,7 @@ fn mma_matmul_k_walk<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] io: MmaIOConfig,
     #[define(E)] _dtype: ElemType,
@@ -708,7 +698,7 @@ fn mma_matmul_k_walk<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_r = acc.at(region);
@@ -726,7 +716,7 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] io: MmaIOConfig,
     #[define(I)] _idtype: ElemType,
@@ -746,7 +736,7 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_r = acc.at(region);
@@ -765,7 +755,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] depth: usize,
@@ -784,7 +774,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(outer.clone()));
+    let walk = space.level(comptime!(outer.clone()));
     let mut ring = Ring::smem(
         &walk,
         &a,
@@ -799,7 +789,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for region in acc_o.op_space(a_s, b_s).level(comptime!(inner.clone())) {
+            for region in region.level(comptime!(inner.clone())) {
                 let mut acc_p = acc_o.at(&region);
                 acc_p.mma(&a_s.at(&region), &b_s.at(&region), Semiring::SUM_PROD);
             }
@@ -816,7 +806,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] stage: Level,
     #[comptime] plane: Level,
     #[comptime] fragment: Level,
@@ -836,7 +826,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(stage.clone()));
+    let walk = space.level(comptime!(stage.clone()));
     let mut ring = Ring::smem(
         &walk,
         &a,
@@ -851,15 +841,11 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for region in acc_o.op_space(a_s, b_s).level(comptime!(plane.clone())) {
+            for region in region.level(comptime!(plane.clone())) {
                 let acc_p = acc_o.at(&region);
                 let a_p = a_s.at(&region);
                 let b_p = b_s.at(&region);
-                for frag in acc_p
-                    .op_space(&a_p, &b_p)
-                    .level(comptime!(fragment.clone()))
-                    .unrolled()
-                {
+                for frag in region.level(comptime!(fragment.clone())).unrolled() {
                     let mut acc_f = acc_p.at(&frag);
                     acc_f.mma(&a_p.at(&frag), &b_p.at(&frag), Semiring::SUM_PROD);
                 }
@@ -878,7 +864,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] stage: Level,
     #[comptime] plane: Level,
     #[comptime] step: Level,
@@ -906,7 +892,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    let walk = acc.op_space(&a, &b).level(comptime!(stage.clone()));
+    let walk = space.level(comptime!(stage.clone()));
     let mut ring = Ring::smem(
         &walk,
         &a,
@@ -927,27 +913,19 @@ fn cmma_matmul_five_levels<E: Numeric>(
     pipelined(walk, &mut ring, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
-            for region in acc_o.op_space(a_s, b_s).level(comptime!(plane.clone())) {
+            for region in region.level(comptime!(plane.clone())) {
                 let acc_p = acc_o.at(&region);
                 let a_p = a_s.at(&region);
                 let b_p = b_s.at(&region);
-                for step in acc_p.op_space(&a_p, &b_p).level(comptime!(step.clone())) {
+                for step in region.level(comptime!(step.clone())) {
                     let acc_k = acc_p.at(&step);
                     let a_k = a_p.at(&step);
                     let b_k = b_p.at(&step);
-                    for col in acc_k
-                        .op_space(&a_k, &b_k)
-                        .level(comptime!(col.clone()))
-                        .unrolled()
-                    {
+                    for col in step.level(comptime!(col.clone())).unrolled() {
                         let acc_n = acc_k.at(&col);
                         let a_n = PlanePartition::cmma_fragments(&a_k.at(&col), &acc_n);
                         let b_n = PlanePartition::cmma_fragments(&b_k.at(&col), &acc_n);
-                        for row in acc_n
-                            .op_space(&a_n, &b_n)
-                            .level(comptime!(row.clone()))
-                            .unrolled()
-                        {
+                        for row in col.level(comptime!(row.clone())).unrolled() {
                             let mut acc_m = acc_n.at(&row);
                             acc_m.mma(&a_n.at(&row), &b_n.at(&row), Semiring::SUM_PROD);
                         }
@@ -969,7 +947,7 @@ fn matmul_quant_lhs_smem_ring<I: Numeric, E: Numeric>(
     a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[define(I)] _a_dtype: ElemType,
@@ -979,7 +957,7 @@ fn matmul_quant_lhs_smem_ring<I: Numeric, E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -996,7 +974,7 @@ fn matmul_quant_lhs_in_place<I: Numeric, E: Numeric, BV: Size>(
     a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, BV>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[define(I)] _a_dtype: ElemType,
@@ -1006,7 +984,7 @@ fn matmul_quant_lhs_in_place<I: Numeric, E: Numeric, BV: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_with(&a.at(&region), &b.at(&region), config, Semiring::SUM_PROD);
     }
@@ -1018,7 +996,7 @@ fn matmul_quant_rhs_smem_ring<I: Numeric, E: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &QuantTileArg<'_, I, Const<1>>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[define(I)] _b_dtype: ElemType,
@@ -1028,7 +1006,7 @@ fn matmul_quant_rhs_smem_ring<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    let walk = c.op_space(&a, &b).level(comptime!(level.clone()));
+    let walk = space.level(comptime!(level.clone()));
     let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut c_r = c.at(region);
@@ -1044,7 +1022,7 @@ fn matmul_quant_rhs_in_place<I: Numeric, E: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &QuantTileArg<'_, I, Const<1>>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[define(I)] _b_dtype: ElemType,
@@ -1054,7 +1032,7 @@ fn matmul_quant_rhs_in_place<I: Numeric, E: Numeric, V: Size>(
     let b = b.tile::<E>(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_with(&a.at(&region), &b.at(&region), config, Semiring::SUM_PROD);
     }
@@ -1067,7 +1045,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
     a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] config: RegisterBlock,
     #[define(I)] _a_dtype: ElemType,
@@ -1088,7 +1066,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -1102,7 +1080,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
 fn cmma_roundtrip<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = input.tile(comptime!(space.clone()));
@@ -1146,7 +1124,7 @@ fn cmma_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -1221,7 +1199,7 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -1296,7 +1274,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     a: &QuantTileArg<'_, I, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(I)] _idtype: ElemType,
     #[define(E)] _edtype: ElemType,
 ) {
@@ -1422,7 +1400,7 @@ fn matmul_reversed_walk_single_cube() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         1,
         f32::elem_type_native(),
@@ -1512,7 +1490,7 @@ fn check_matmul(m: usize, n: usize, k: usize, level: Level, depth: usize) {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         depth,
         f32::elem_type_native(),
@@ -1550,7 +1528,7 @@ fn mma_folds_onto_what_c_holds() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         1,
         f32::elem_type_native(),
@@ -1627,7 +1605,7 @@ fn check_matmul_batched(
         a.arg(),
         rhs.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         1,
         f32::elem_type_native(),
@@ -1749,7 +1727,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             lhs.arg(),
             rhs.arg(),
             acc.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             1,
             dtype,
@@ -1761,7 +1739,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             lhs.arg(),
             rhs.arg(),
             acc.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             StageStorage::Strided,
@@ -1848,7 +1826,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, level: Level) {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -1891,7 +1869,10 @@ fn matmul_cpu_dynamic_k() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone().with_dynamic(&[K]),
+        nest.space
+            .clone()
+            .with_dynamic(&[K])
+            .launch_arg(&nest.space),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -1939,7 +1920,7 @@ fn register_matmul_unit_spread_n() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2001,7 +1982,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         a_op.arg(),
         b_op.arg(),
         c_op.arg(),
-        launcher.space().clone(),
+        launcher.space_arg(),
         launcher.concrete().at(0),
         4,
         f32::elem_type_native(),
@@ -2052,7 +2033,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
         a_op.arg(),
         b_op.arg(),
         c_op.arg(),
-        launcher.space().clone(),
+        launcher.space_arg(),
         launcher.concrete().at(0),
         launcher.concrete().at(1),
         4,
@@ -2099,7 +2080,7 @@ fn matmul_multilevel_staged_then_direct() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         StageStorage::Strided,
@@ -2199,7 +2180,7 @@ fn check_matmul_multilevel(
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             storage,
@@ -2213,7 +2194,7 @@ fn check_matmul_multilevel(
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             storage,
@@ -2256,7 +2237,7 @@ fn matmul_staged_invariant_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         StageStorage::Strided,
@@ -2307,7 +2288,7 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         StageStorage::Strided,
@@ -2356,7 +2337,7 @@ fn matmul_direct_vectorized() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2450,7 +2431,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         2,
         f32::elem_type_native(),
@@ -2493,7 +2474,7 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             depth,
             dtype,
@@ -2506,7 +2487,7 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             depth,
             dtype,
@@ -2553,7 +2534,7 @@ fn register_matmul_promoted_accumulator() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2596,7 +2577,7 @@ fn tropical_matmul_in_place() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::MIN_SUM,
@@ -2654,7 +2635,7 @@ fn tropical_matmul_promoted() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::MAX_SUM,
@@ -2724,7 +2705,7 @@ fn register_matmul_promoted_cube_plane() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         REGISTER_BLOCK,
@@ -2776,7 +2757,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         f32::elem_type_native(),
@@ -2824,7 +2805,7 @@ fn register_matmul_lined_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2864,7 +2845,7 @@ fn register_matmul_promoted_lined_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2913,7 +2894,7 @@ fn check_folded_step(nest: Nest, (m, n, k): (usize, usize, usize), budget: usize
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(budget),
         Semiring::SUM_PROD,
@@ -2973,7 +2954,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
@@ -3058,7 +3039,7 @@ fn run_folded_step_quant(
         ),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(64),
         u32::elem_type_native(),
@@ -3136,7 +3117,7 @@ fn register_matmul_lane_group_fold() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
@@ -3181,7 +3162,7 @@ fn register_matmul_promoted_lane_group_fold() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
@@ -3249,7 +3230,7 @@ fn register_matmul_promoted_accumulator_quant() {
         ),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         RegisterBlock::new(64),
         u32::elem_type_native(),
@@ -3303,7 +3284,7 @@ fn cmma_fragment_roundtrip() {
         CubeDim::new_3d(32, 1, 1),
         input.arg(),
         output.arg(),
-        space.clone(),
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -3343,7 +3324,7 @@ fn cmma_matmul_8x8x8() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space.clone(),
+        space.launch_arg(&space),
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), 8, 8, 8);
@@ -3379,7 +3360,7 @@ fn cmma_matmul_transposed_rhs_8x8x8() {
         a.arg(),
         b.arg(),
         c.arg(),
-        space.clone(),
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -3440,7 +3421,7 @@ fn check_cmma_matmul_quant_8x8x8(
         ),
         b.arg(),
         c.arg(),
-        space.clone(),
+        space.launch_arg(&space),
         a_dtype,
         f32::elem_type_native(),
     );
@@ -3573,7 +3554,7 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         storage,
         depth,
@@ -3618,7 +3599,7 @@ fn mma_matmul_8x8x8() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         MmaIOConfig::manual(),
         f32::elem_type_native(),
@@ -3668,7 +3649,7 @@ fn cmma_matmul_plane_partitioned_stage() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         2,
@@ -3724,7 +3705,7 @@ fn cmma_matmul_multi_fragment_partition() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         nest.at(2),
@@ -3790,7 +3771,7 @@ fn cmma_matmul_staged_n_walk_partition() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         nest.at(1),
         nest.at(2),
@@ -3923,7 +3904,7 @@ fn check_cmma_matmul_quant_walk(
         ),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         depth,
         a_dtype,
@@ -4008,7 +3989,7 @@ fn mma_matmul_quant_until_read() {
         ),
         b.arg(),
         c.arg(),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         MmaIOConfig::manual(),
         a_dtype,
@@ -4207,7 +4188,7 @@ fn run_register_matmul_quant(
             ),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             REGISTER_BLOCK,
             a_dtype,
@@ -4229,7 +4210,7 @@ fn run_register_matmul_quant(
             ),
             b.arg(),
             c.arg(),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             REGISTER_BLOCK,
             a_dtype,
@@ -4525,7 +4506,7 @@ fn run_register_matmul_quant_rhs(
             a_op.arg(),
             b_op.arg(),
             c_op.arg(),
-            launcher.space().clone(),
+            launcher.space_arg(),
             launcher.concrete().at(0),
             REGISTER_BLOCK,
             b_dtype,
@@ -4539,7 +4520,7 @@ fn run_register_matmul_quant_rhs(
             a_op.arg(),
             b_op.arg(),
             c_op.arg(),
-            launcher.space().clone(),
+            launcher.space_arg(),
             launcher.concrete().at(0),
             REGISTER_BLOCK,
             b_dtype,

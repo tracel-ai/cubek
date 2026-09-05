@@ -46,7 +46,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -56,7 +56,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -76,7 +76,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -96,7 +96,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -116,7 +116,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     blocks: &TileArg<'_, S, Const<1>>,
     global: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -129,7 +129,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -228,7 +228,7 @@ fn two_levels_fold_in_order() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -323,7 +323,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -416,7 +416,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -512,7 +512,7 @@ fn a_scale_over_no_axis_covers_everything() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -606,7 +606,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -703,7 +703,7 @@ fn f16_scales_are_read_as_f16() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, scale_dtype],
     );
@@ -798,7 +798,7 @@ fn scales_over_the_columns_scale_the_rhs() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -891,7 +891,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -984,7 +984,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -1079,7 +1079,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -1107,7 +1107,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -1127,7 +1127,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -1223,7 +1223,7 @@ fn rhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );
@@ -1252,7 +1252,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -1262,7 +1262,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -1351,7 +1351,7 @@ fn lhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, dtype],
     );

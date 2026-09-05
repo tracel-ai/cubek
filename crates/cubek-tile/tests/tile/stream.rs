@@ -37,7 +37,7 @@ const REGIONS: usize = (ROWS / TILE_ROWS) * (COLS / TILE_COLS);
 fn copy_run<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] cubes: usize,
     #[define(E)] _dtype: ElemType,
@@ -64,7 +64,7 @@ fn copy_one_run<E: Numeric>(
     dst: &TileArg<'_, E, Const<1>>,
     #[comptime] start: usize,
     #[comptime] steps: usize,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -147,7 +147,7 @@ fn runs_cover_the_grid(cubes: usize) {
         h.nest.cube_dim(&h.client),
         src_arg,
         dst_arg,
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         cubes,
         h.dtype,
@@ -198,7 +198,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
         dst_arg,
         start,
         steps,
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -288,7 +288,7 @@ fn stream_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] instances: usize,
@@ -298,7 +298,7 @@ fn stream_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let regions = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let regions = space.level(comptime!(outer.clone()));
     let share = share(&regions, instances, stride);
     let walk = regions.window(share.first, share.touched);
     for step in 0..share.touched {
@@ -318,11 +318,7 @@ fn stream_matmul<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        for cell in acc
-            .op_space(&a_region, &b_region)
-            .level(comptime!(inner.clone()))
-            .window(from, steps)
-        {
+        for cell in region.level(comptime!(inner.clone())).window(from, steps) {
             let mut acc_cell = acc.at(&cell);
             acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
         }
@@ -338,7 +334,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[comptime] instances: usize,
@@ -348,7 +344,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let regions = c.op_space(&a, &b).level(comptime!(outer.clone()));
+    let regions = space.level(comptime!(outer.clone()));
     let share = share(&regions, instances, stride);
     let walk = regions.window(share.first, share.touched);
     for step in 0..share.touched {
@@ -368,10 +364,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        let cells = acc
-            .op_space(&a_region, &b_region)
-            .level(comptime!(inner.clone()))
-            .window(from, steps);
+        let cells = region.level(comptime!(inner.clone())).window(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         pipelined(cells, &mut ring, |slot, cell| {
             let mut acc_cell = acc.at(cell);
@@ -451,7 +444,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             runs,
@@ -474,7 +467,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             runs,
@@ -662,7 +655,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             runs,

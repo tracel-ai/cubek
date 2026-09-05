@@ -235,6 +235,7 @@ pub fn launch_ref(
         a.arg(),
         b.arg(),
         c.arg(),
+        launch.space_arg(),
         blueprint.clone(),
         batch_axes,
         dtypes.lhs_global,

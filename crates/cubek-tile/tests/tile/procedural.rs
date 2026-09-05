@@ -38,7 +38,7 @@ impl<T: Float> Recipe<T> for AxisValue {
 fn materialize<E: Numeric>(
     source: &Tile<E>,
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: &Space,
     #[comptime] level: Level,
 ) {
     let output = output.tile(comptime!(space.clone()));
@@ -73,7 +73,7 @@ fn along_col<E: Float>(#[comptime] offset: ComptimeFloat<f32>) -> AffineCoordina
 #[cube(launch)]
 fn product_kernel_in_place<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -84,7 +84,7 @@ fn product_kernel_in_place<E: Float>(
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 /// The same recipe materialized into shared memory first: a ring of one slot fills each region's
@@ -92,7 +92,7 @@ fn product_kernel_in_place<E: Float>(
 #[cube(launch)]
 fn product_kernel_staged<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -144,7 +144,7 @@ fn affine_plus_phase<E: Float>(
 #[cube(launch)]
 fn phase_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] launch_ratio: bool,
     #[define(E)] _dtype: ElemType,
@@ -159,13 +159,13 @@ fn phase_kernel<E: Float>(
     } else {
         affine_plus_phase::<E>(comptime!(space.clone()), SCALE, OFFSET, DIVISOR)
     };
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn rebase_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -194,7 +194,7 @@ fn rebase_kernel<E: Float>(
 #[cube(launch)]
 fn constant_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -204,13 +204,13 @@ fn constant_kernel<E: Float>(
             value: runtime_scalar::<E>(E::new(-1.25_f32)),
         },
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn affine_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
@@ -219,13 +219,13 @@ fn affine_kernel<E: Float>(
         comptime!(space.clone()),
         along_col::<E>(offset),
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn linear_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
@@ -238,13 +238,13 @@ fn linear_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
         ),
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn cubic_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] a: Ratio,
@@ -259,13 +259,13 @@ fn cubic_kernel<E: Float>(
             a,
         ),
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 #[cube(launch)]
 fn lanczos_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[comptime] offset: ComptimeFloat<f32>,
     #[comptime] lobes: u8,
@@ -280,7 +280,7 @@ fn lanczos_kernel<E: Float>(
             lobes,
         ),
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 /// A filter over a recipe that is not an [`AffineCoordinate`], which is what the filters being
@@ -288,7 +288,7 @@ fn lanczos_kernel<E: Float>(
 #[cube(launch)]
 fn linear_over_axis_value_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -301,7 +301,7 @@ fn linear_over_axis_value_kernel<E: Float>(
             },
         },
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 /// A procedural tile over an integer element type: [`Recipe`] is defined over `Numeric`, so
@@ -309,7 +309,7 @@ fn linear_over_axis_value_kernel<E: Float>(
 #[cube(launch)]
 fn integer_kernel<E: Int>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -319,14 +319,14 @@ fn integer_kernel<E: Int>(
             value: runtime_scalar::<E>(E::new(7)),
         },
     );
-    materialize(&source, output, space, level.clone());
+    materialize(&source, output, &space, level.clone());
 }
 
 /// A direct procedural read must use the masked view path on trailing partial tiles.
 #[cube(launch)]
 fn direct_copy_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(E)] _dtype: ElemType,
 ) {
     let source = Tile::<E>::procedural::<Constant<E>>(
@@ -343,7 +343,7 @@ fn direct_copy_kernel<E: Float>(
 #[cube(launch)]
 fn divided_direct_copy_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -442,7 +442,7 @@ fn user_recipe_evaluates_in_place() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -458,7 +458,7 @@ fn user_recipe_materializes_through_a_staged_walk() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -474,7 +474,7 @@ fn selecting_a_region_rebases_the_recipe_origin() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -491,7 +491,7 @@ fn check_phase(launch_ratio: bool) {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         launch_ratio,
         h.dtype,
@@ -521,7 +521,7 @@ fn constant_evaluates_its_value_everywhere() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -537,7 +537,7 @@ fn affine_coordinates_evaluate_absolute_positions() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         offset(-2.5),
         h.dtype,
@@ -556,7 +556,7 @@ fn linear_is_a_triangle_with_unit_support() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         offset(-2.5),
         h.dtype,
@@ -582,7 +582,7 @@ fn a_procedural_tile_works_over_an_integer_element_type() {
         nest.cube_count(),
         nest.cube_dim(&client),
         output_arg!(output),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -603,7 +603,7 @@ fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
         h.nest.cube_count(),
         h.nest.cube_dim(&h.client),
         output_arg!(output),
-        h.nest.space.clone(),
+        h.nest.space_arg(),
         h.nest.at(0),
         h.dtype,
     );
@@ -626,7 +626,7 @@ fn cubic_matches_the_keys_convolution() {
             h.nest.cube_count(),
             h.nest.cube_dim(&h.client),
             output_arg!(output),
-            h.nest.space.clone(),
+            h.nest.space_arg(),
             h.nest.at(0),
             offset(-2.5),
             ratio,
@@ -658,7 +658,7 @@ fn lanczos_matches_the_windowed_sinc() {
             h.nest.cube_count(),
             h.nest.cube_dim(&h.client),
             output_arg!(output),
-            h.nest.space.clone(),
+            h.nest.space_arg(),
             h.nest.at(0),
             offset(start),
             lobes,
@@ -693,7 +693,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
         nest.cube_count(),
         nest.cube_dim(&client),
         output_arg!(output),
-        nest.space.clone(),
+        nest.space_arg(),
         dtype,
     );
 
@@ -724,7 +724,7 @@ fn divided_direct_copy_preserves_the_parent_bound() {
         concrete.cube_count(),
         concrete.cube_dim(&client),
         output_arg!(output),
-        space.space.clone(),
+        space.space.launch_arg(&concrete.space),
         space.at(0),
         dtype,
     );

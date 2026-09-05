@@ -70,30 +70,30 @@ pub struct Walk {
 impl Space {
     /// The regions of `level` over this space, whatever verb the level is: what a kernel handed
     /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
-    pub fn level(self, #[comptime] level: Level) -> Walk {
+    pub fn level(&self, #[comptime] level: Level) -> Walk {
         Walk::of(self, level)
     }
 
     /// Each cube's box of this space under `level`, which deals to the cube grid and steps
     /// nothing.
-    pub fn cubes(self, #[comptime] level: Level) -> Walk {
+    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
         Walk::stated(self, level, comptime!(LevelScope::Cubes))
     }
 
     /// Each plane's box of this space under `level`, which deals to the cube's planes and steps
     /// nothing.
-    pub fn planes(self, #[comptime] level: Level) -> Walk {
+    pub fn planes(&self, #[comptime] level: Level) -> Walk {
         Walk::stated(self, level, comptime!(LevelScope::Planes))
     }
 
     /// Each lane's box of this space under `level`, which deals to the plane's lanes and steps
     /// nothing.
-    pub fn lanes(self, #[comptime] level: Level) -> Walk {
+    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
         Walk::stated(self, level, comptime!(LevelScope::Lanes))
     }
 
     /// Every region of this space under `level`, which deals to nobody: the loop steps them all.
-    pub fn walk(self, #[comptime] level: Level) -> Walk {
+    pub fn walk(&self, #[comptime] level: Level) -> Walk {
         Walk::stated(self, level, comptime!(LevelScope::Sequential))
     }
 }
@@ -102,27 +102,27 @@ impl Space {
 impl Region {
     /// [`Space::cubes`] over this region's own box.
     pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self.child(), level, comptime!(LevelScope::Cubes))
+        Walk::stated(&self.child(), level, comptime!(LevelScope::Cubes))
     }
 
     /// [`Space::planes`] over this region's own box.
     pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self.child(), level, comptime!(LevelScope::Planes))
+        Walk::stated(&self.child(), level, comptime!(LevelScope::Planes))
     }
 
     /// [`Space::lanes`] over this region's own box.
     pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self.child(), level, comptime!(LevelScope::Lanes))
+        Walk::stated(&self.child(), level, comptime!(LevelScope::Lanes))
     }
 
     /// [`Space::walk`] over this region's own box.
     pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self.child(), level, comptime!(LevelScope::Sequential))
+        Walk::stated(&self.child(), level, comptime!(LevelScope::Sequential))
     }
 
     /// [`Space::level`] over this region's own box.
     pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(self.child(), level)
+        Walk::of(&self.child(), level)
     }
 }
 
@@ -130,7 +130,7 @@ impl Region {
 impl Walk {
     /// [`of`](Walk::of) under a verb: the level must deal to exactly `scope` and, unless the verb
     /// is the walk, step nothing.
-    fn stated(space: Space, #[comptime] level: Level, #[comptime] verb: LevelScope) -> Walk {
+    fn stated(space: &Space, #[comptime] level: Level, #[comptime] verb: LevelScope) -> Walk {
         comptime!({
             let stated = level.scope();
             assert!(
@@ -147,7 +147,7 @@ impl Walk {
         Walk::of(space, level)
     }
 
-    fn of(space: Space, #[comptime] level: Level) -> Walk {
+    fn of(space: &Space, #[comptime] level: Level) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
@@ -156,7 +156,12 @@ impl Walk {
                 Edge::Whole => counts.push(1usize),
             }
         }
-        Walk::from_counts(comptime!(space.clone()), level, counts, space.extents.sizes)
+        Walk::from_counts(
+            comptime!(space.clone()),
+            level,
+            counts,
+            space.extents.sizes.clone(),
+        )
     }
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each

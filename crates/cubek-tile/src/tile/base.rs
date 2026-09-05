@@ -556,10 +556,10 @@ impl<T: Numeric> Tile<T> {
         comptime!(if p == last { w } else { 1usize }) * raw
     }
 
-    /// The runtime space to walk this tile *alone*: [`witnessed_space`] with no other operand to
-    /// ask, so every `Dynamic` axis must be one this tile itself
-    /// [`witnesses`](Tile::witnesses). An operation over several operands sizes its space from all
-    /// of them instead, which is what lets a gathered operand ride an axis it cannot answer for.
+    /// This tile's own box, as the runtime space a loop walks: its axes alone, a dynamic one
+    /// sized off its buffer. What a loop over one operand's windows walks (each lane's rows of
+    /// an output, whatever the operation's other axes do), where the kernel's space would step
+    /// the axes the operand does not span.
     pub fn runtime_space(&self) -> Space {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
@@ -817,7 +817,7 @@ impl<T: Numeric> TileExpand<T> {
 /// runtime one [`Space::level`] walks. A fully-`Static` space short-circuits to no
 /// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
 #[cube]
-pub fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
+pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
     #[comptime] space: Space,
     a: &Tile<A>,
     b: &Tile<B>,

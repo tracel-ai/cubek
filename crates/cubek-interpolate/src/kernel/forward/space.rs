@@ -60,10 +60,6 @@ impl InterpolateSpace {
         Nest::new(Space::new(&self.extents()), self.levels())
     }
 
-    pub fn space(&self) -> Space {
-        Space::new(&self.extents())
-    }
-
     /// This cube's box of the output, walked over the taps and its channel blocks.
     pub fn cube_level(&self) -> Level {
         let (taps, geometry) = (self.taps, self.geometry);

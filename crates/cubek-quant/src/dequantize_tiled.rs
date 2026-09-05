@@ -56,7 +56,7 @@ pub fn launch_ref(
     let launch = Launcher::new(
         client,
         &Nest::new(space.clone(), vec![]),
-        KernelForm::Static,
+        KernelForm::Dynamic,
     );
     let cube_count = launch.cube_count();
     let cube_dim = launch.cube_dim();
@@ -82,7 +82,7 @@ pub fn launch_ref(
         cube_dim,
         input_op.arg(),
         output_op.arg(),
-        space.all_dynamic(),
+        launch.space_arg(),
         input_dtype,
         output_dtype,
     );
@@ -118,11 +118,11 @@ fn check_i8_supported(client: &Client, scheme: &QuantScheme) {
 pub fn dequantize<I: Numeric, O: Numeric>(
     input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {
     let input = input.tile::<O>(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }

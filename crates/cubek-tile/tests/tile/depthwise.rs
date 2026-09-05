@@ -46,7 +46,7 @@ fn depthwise_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
@@ -54,17 +54,11 @@ fn depthwise_kernel<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in out
-        .op_space(&input, &weight)
-        .level(comptime!(outer.clone()))
-    {
+    for region in space.level(comptime!(outer.clone())) {
         let out_cube = out.at(&region);
         let input_cube = input.at(&region);
         let weight_cube = weight.at(&region);
-        for region in out_cube
-            .op_space(&input_cube, &weight_cube)
-            .level(comptime!(inner.clone()))
-        {
+        for region in region.level(comptime!(inner.clone())) {
             let mut out_plane = out_cube.at(&region);
             out_plane.mm_with(
                 &input_cube.at(&region),
@@ -243,7 +237,7 @@ impl Depthwise {
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             f32_ty,

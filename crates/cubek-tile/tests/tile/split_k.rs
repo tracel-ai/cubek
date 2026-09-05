@@ -44,14 +44,14 @@ fn split_partials<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     partials: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let partials = partials.tile(comptime!(space.clone()));
-    for region in partials.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut partials_cube = partials.at(&region);
         partials_cube.mm_with(
             &a.at(&region),
@@ -67,13 +67,13 @@ fn split_partials<E: Numeric>(
 fn reduce_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let partials = partials.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in out.reduce_space(&partials).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -147,7 +147,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             partials.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[KB, M, N]),
         ),
-        split_space.space.clone(),
+        split_space.space_arg(),
         split_space.at(0),
         dtype,
     );
@@ -169,7 +169,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        fold_space.space.clone(),
+        fold_space.space_arg(),
         fold_space.at(0),
         dtype,
     );
@@ -312,7 +312,7 @@ fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -332,7 +332,7 @@ fn atomic_split_matmul<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -382,7 +382,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -519,7 +519,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -597,7 +597,7 @@ fn an_atomic_drain_folds_across_planes() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -629,14 +629,14 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mm_with(
             &a.at(&region),
@@ -700,7 +700,7 @@ fn a_folding_output_contracts_in_place() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );

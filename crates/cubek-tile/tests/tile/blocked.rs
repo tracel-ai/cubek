@@ -35,7 +35,7 @@ fn matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -43,7 +43,7 @@ fn matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(&a.at(&region), &b.at(&region), BLOCK, Semiring::SUM_PROD);
     }
@@ -56,7 +56,7 @@ fn scaled_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -65,7 +65,7 @@ fn scaled_matmul<E: Numeric>(
     let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut scales = Sequence::new();
         scales.push(scale.at(&region));
         let mut c_region = c.at(&region);
@@ -117,7 +117,7 @@ fn one_contracted_axis_is_the_reference() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -196,7 +196,7 @@ fn a_partitioned_axis_contracts_the_same() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -291,7 +291,7 @@ fn scales_omit_the_axis_inside_the_block() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -376,7 +376,7 @@ fn a_split_output_axis_contracts_the_same() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -469,7 +469,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -497,7 +497,7 @@ fn wide_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -505,7 +505,7 @@ fn wide_matmul<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(&a.at(&region), &b.at(&region), BLOCK, Semiring::SUM_PROD);
     }
@@ -568,7 +568,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -593,7 +593,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -602,7 +602,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut scales = Sequence::new();
         scales.push(scale.at(&region));
         let mut c_region = c.at(&region);
@@ -689,7 +689,7 @@ fn scales_are_served_several_at_a_time() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -717,7 +717,7 @@ fn promoted_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -735,11 +735,7 @@ fn promoted_matmul<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc
-        .op_space(&a, &b)
-        .level(comptime!(level.clone()))
-        .unrolled()
-    {
+    for region in space.level(comptime!(level.clone())).unrolled() {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
@@ -802,7 +798,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -829,7 +825,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -848,11 +844,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in acc
-        .op_space(&a, &b)
-        .level(comptime!(level.clone()))
-        .unrolled()
-    {
+    for region in space.level(comptime!(level.clone())).unrolled() {
         let mut scales = Sequence::new();
         scales.push(scale.at(&region));
         let mut acc_region = acc.at(&region);
@@ -928,7 +920,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
@@ -955,7 +947,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -964,7 +956,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut scales = Sequence::new();
         scales.push(scale.at(&region));
         let mut c_region = c.at(&region);
@@ -1049,7 +1041,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
                 ],
             )),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         [dtype, scale_dtype],
     );

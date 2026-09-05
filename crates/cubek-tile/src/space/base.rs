@@ -37,7 +37,7 @@ impl Extent {
 /// the sizes are the runtime half a `Dynamic` axis needs, which a comptime `Extent` can't hold. Only
 /// the top operation space carries any sizes (filled from the operands); `divide` yields `Static`
 /// children, so the whole interior has none.
-#[derive(CubeType, Clone, Debug)]
+#[derive(CubeType, CubeLaunch, Clone, Debug)]
 pub struct Extents {
     #[cube(comptime)]
     kinds: ByAxis<Extent>,
@@ -86,7 +86,7 @@ impl Extents {
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
-#[derive(CubeType, Clone, Debug)]
+#[derive(CubeType, CubeLaunch, Clone, Debug)]
 pub struct Space {
     pub(crate) extents: Extents,
 }
@@ -104,10 +104,8 @@ impl std::hash::Hash for Space {
     }
 }
 
-/// Comptime extents read off a runtime `Space`'s `#[cube(comptime)]` data. Tiles carry a comptime
-/// `Space`, so only [`Space::level`], which takes the runtime operation space
-/// [`witnessed_space`](crate::witnessed_space) builds from an op's operands, needs these;
-/// everything else calls the host methods directly.
+/// The comptime extents of a runtime `Space`, read as the host reads a `Space`: what
+/// `comptime!(space.rank())` and the like resolve to on the space a kernel is handed.
 impl SpaceExpand {
     pub(crate) fn comptime(&self) -> Space {
         Space {
@@ -127,6 +125,34 @@ impl SpaceExpand {
     pub fn axis_at(&self, i: usize) -> Axis {
         self.extents.kinds.axis_at(i)
     }
+
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.comptime().extent(axis)
+    }
+
+    pub fn extent_at(&self, i: usize) -> usize {
+        self.comptime().extent_at(i)
+    }
+
+    pub fn is_dynamic(&self, axis: Axis) -> bool {
+        self.comptime().is_dynamic(axis)
+    }
+
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.extents.kinds.contains(axis)
+    }
+
+    pub fn position(&self, axis: Axis) -> usize {
+        self.extents.kinds.position(axis)
+    }
+
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        self.comptime().project(axes)
+    }
+
+    pub fn axes(&self) -> Vec<Axis> {
+        self.comptime().axes().collect()
+    }
 }
 
 #[cube]
@@ -145,6 +171,19 @@ impl Space {
 }
 
 impl Space {
+    /// This space as a kernel argument: the comptime extents, and for a
+    /// [`Dynamic`](Extent::Dynamic) axis its size read off `concrete`, the same space with every
+    /// extent real. What a [`Launcher`](crate::Launcher) hands a kernel taking `space: Space`.
+    pub fn launch_arg(&self, concrete: &Space) -> SpaceLaunch {
+        let mut sizes = SequenceArg::new();
+        if !self.is_static() {
+            for axis in self.axes() {
+                sizes.push(concrete.extent(axis));
+            }
+        }
+        SpaceLaunch::new(ExtentsLaunch::new(self.extents.kinds.clone(), sizes))
+    }
+
     pub fn new(extents: &[(Axis, usize)]) -> Self {
         let extents: Vec<_> = extents
             .iter()

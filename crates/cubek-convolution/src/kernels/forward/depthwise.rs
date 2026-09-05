@@ -157,25 +157,19 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, V>,
     input: &TileArg<'_, E, V>,
     out: &TileArg<'_, E, V>,
+    space: Space,
     #[comptime] plan: DepthwiseSpace,
     #[define(E)] _dtype: ElemType,
 ) {
-    let space = comptime!(plan.space());
     let weight = weight.tile(comptime!(space.clone()));
     let input = input.tile(comptime!(space.clone()));
-    let out = out.tile(space);
+    let out = out.tile(comptime!(space.clone()));
 
-    for region in out
-        .op_space(&weight, &input)
-        .level(comptime!(plan.cube_level()))
-    {
+    for region in space.level(comptime!(plan.cube_level())) {
         let out_cube = out.at(&region);
         let weight_cube = weight.at(&region);
         let input_cube = input.at(&region);
-        for cell in out_cube
-            .op_space(&weight_cube, &input_cube)
-            .level(comptime!(plan.lane_level()))
-        {
+        for cell in region.level(comptime!(plan.lane_level())) {
             let mut out_cell = out_cube.at(&cell);
             out_cell.mm_with(
                 &weight_cube.at(&cell),
@@ -454,6 +448,7 @@ pub fn launch_depthwise(
         TileArgLaunch::new(weight.into_tensor_arg(), w_spec),
         TileArgLaunch::new(input.into_tensor_arg(), in_spec),
         TileArgLaunch::new(out.into_tensor_arg(), out_spec),
+        launch.space_arg(),
         plan,
         dtype,
     );

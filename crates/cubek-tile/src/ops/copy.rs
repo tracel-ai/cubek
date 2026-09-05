@@ -14,12 +14,4 @@ impl<T: Numeric> Tile<T> {
     pub fn copy(&mut self, src: &Tile<T>) {
         self.copy_from(src)
     }
-
-    /// The space a copy walks: this tile's, with every [`Dynamic`](crate::Extent) axis sized by
-    /// whichever operand [`witnesses`](Tile::witnesses) it. The destination is asked first,
-    /// like [`mma`](Tile::mma) asks its accumulator: an axis it spans is one it writes, so its
-    /// bound is the extent the walk must cover.
-    pub fn copy_space(&self, src: &Tile<T>) -> Space {
-        witnessed_space(comptime!(self.space.clone()), self, src, src)
-    }
 }

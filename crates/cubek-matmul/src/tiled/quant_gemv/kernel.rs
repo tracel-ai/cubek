@@ -103,6 +103,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     x: &TileArg<'_, EX, VX>,
     scales: &Sequence<TileArg<'_, ES, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
+    space: Space,
     #[comptime] bp: QuantGemvBlueprint,
     #[comptime] problem: QuantGemvProblem,
     #[define(EC)] _served_dtype: ElemType,
@@ -110,7 +111,6 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     #[define(ES)] _scale_dtype: ElemType,
     #[define(EO)] _out_dtype: ElemType,
 ) {
-    let space = comptime!(quant_gemv_space(&problem));
     let config = comptime!(register_block(&bp, &problem));
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
@@ -119,7 +119,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     for k in 0..scales.len() {
         scale_tiles.push(scales.index(k).tile(comptime!(space.clone())));
     }
-    let out = out.tile(space);
+    let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
     for cube in out.runtime_space().cubes(comptime!(bp.cubes(&problem))) {
         let out_cube = out.at(&cube);
@@ -132,7 +132,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
         }
     }
 
-    for cube in out.op_space(&w, &x).cubes(comptime!(bp.cubes(&problem))) {
+    for cube in space.cubes(comptime!(bp.cubes(&problem))) {
         let out_cube = out.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);

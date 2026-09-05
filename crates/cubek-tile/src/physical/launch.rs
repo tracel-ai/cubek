@@ -7,8 +7,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Level, LevelCuts, Set, Space, StridedOperand,
-    StridedTileSource, Unset,
+    Axis, ComputeScope, CubeAxis, Geometry, Level, LevelCuts, Set, Space, SpaceLaunch,
+    StridedOperand, StridedTileSource, Unset,
 };
 
 /// A space and the levels a kernel walks it with, outermost first: what a launch sizes its grid
@@ -32,6 +32,11 @@ impl Nest {
         let axes: Vec<Axis> = self.space.axes().collect();
         self.levels.push(Level::new(&axes, f));
         self
+    }
+
+    /// The kernel's `space` argument for a launch over this nest's own extents.
+    pub fn space_arg(&self) -> SpaceLaunch {
+        self.space.launch_arg(&self.space)
     }
 
     /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
@@ -151,6 +156,11 @@ impl<'c> Launcher<'c> {
     /// The kernel-form space tile arguments project from.
     pub fn space(&self) -> &Space {
         &self.kernel
+    }
+
+    /// The kernel's `space` argument: the kernel form, its dynamic extents sized by this launch.
+    pub fn space_arg(&self) -> SpaceLaunch {
+        self.kernel.launch_arg(&self.concrete.space)
     }
 
     /// The concrete nest, for overhang and divisibility decisions.

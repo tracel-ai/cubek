@@ -67,14 +67,14 @@ fn split_k_matmul_one_level<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         c_cube.mma_with(
             &a.at(&region),
@@ -92,7 +92,7 @@ fn split_k_matmul_two_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
@@ -100,14 +100,11 @@ fn split_k_matmul_two_levels<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in c.op_space(&a, &b).level(comptime!(outer.clone())) {
+    for region in space.level(comptime!(outer.clone())) {
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        for region in c_cube
-            .op_space(&a_cube, &b_cube)
-            .level(comptime!(inner.clone()))
-        {
+        for region in region.level(comptime!(inner.clone())) {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
                 &a_cube.at(&region),
@@ -298,7 +295,7 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             dtype,
         ),
@@ -309,7 +306,7 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            nest.space.clone(),
+            nest.space_arg(),
             nest.at(0),
             nest.at(1),
             dtype,
@@ -352,7 +349,7 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.nest.space.clone(),
+                self.nest.space_arg(),
                 self.nest.at(0),
                 dtype,
             ),
@@ -363,7 +360,7 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.nest.space.clone(),
+                self.nest.space_arg(),
                 self.nest.at(0),
                 self.nest.at(1),
                 dtype,

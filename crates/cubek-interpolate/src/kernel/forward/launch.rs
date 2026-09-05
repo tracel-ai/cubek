@@ -219,6 +219,7 @@ fn dispatch<F: SeparableFilterFamily>(
         vector_size,
         input_arg.arg(),
         output_arg.arg(),
+        launch.space_arg(),
         row.scale as u32,
         row.offset as i32,
         row.divisor as u32,

@@ -39,7 +39,7 @@ fn coarse_lhs_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -47,7 +47,7 @@ fn coarse_lhs_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in c.op_space(&a, &b).level(comptime!(level.clone())) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -113,7 +113,7 @@ fn run(nest: Nest) -> HostData {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space.clone(),
+        nest.space_arg(),
         nest.at(0),
         dtype,
     );
