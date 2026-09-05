@@ -88,6 +88,54 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
     }
 }
 
+/// [`memory`] over the regions of `walk`, which step the contraction: the block is seeded once,
+/// contracts every region, and commits once. The 2-D nest only — a region's operands are read as
+/// one matrix each — and every region is shaped like the first.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn memory_steps<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    walk: Walk,
+    #[comptime] space: Space,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let first = lhs.at(&walk.region(0));
+    let first_rhs = rhs.at(&walk.region(0));
+    let lhs_gathered = first.gathered();
+    let rhs_gathered = first_rhs.gathered();
+    let lhs_procedural = first.is_procedural();
+    let rhs_procedural = first_rhs.is_procedural();
+    comptime!(assert!(
+        !lhs_gathered && !rhs_gathered && !lhs_procedural && !rhs_procedural,
+        "memory_steps: a stepped leaf reads each region's operands as one matrix; a gathered or \
+         procedural operand has none"
+    ));
+    let lw = first.vector_size();
+    let rw = first_rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    let contracted_per_step = comptime!(step_contracted_per_step(
+        &first.space,
+        &first_rhs.space,
+        &space,
+        lw,
+        rw,
+        aw
+    ));
+    direct::contract_steps::<E, EL, ER, EM>(
+        acc,
+        lhs,
+        rhs,
+        walk,
+        space,
+        contracted_per_step,
+        config,
+        semiring,
+    );
+}
+
 /// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
 /// rhs twin, whichever [`scale_side`] reads off the scales' axes.
 ///

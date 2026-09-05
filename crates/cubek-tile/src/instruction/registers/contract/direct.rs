@@ -66,6 +66,144 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
     }
 }
 
+/// [`contract`] over the regions of `walk`, which step the contraction: one block per batch
+/// matrix spans every region and commits once. Shaped from the first region, which every region
+/// repeats.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn contract_steps<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    walk: Walk,
+    #[comptime] space: Space,
+    #[comptime] contracted_per_step: usize,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let first = lhs.at(&walk.region(0));
+    let first_rhs = rhs.at(&walk.region(0));
+    let lw = first.vector_size();
+    let rw = first_rhs.vector_size();
+    let aw = comptime!(acc.store.vector_size);
+    comptime!(assert!(
+        rw == aw || contracted_per_step > 1,
+        "contract steps: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
+    ));
+    let shape = comptime!(ContractShape::new(
+        &first.space,
+        &first_rhs.space,
+        space,
+        contracted_per_step,
+        lw,
+        rw,
+        aw,
+    ));
+    comptime!(assert!(
+        shape.matrix_axes(&first.space, &first_rhs.space).is_some(),
+        "contract steps: the 2-D nest reads each operand as one matrix, and no grouping of these \
+         axes gives one"
+    ));
+    if comptime!(contracted_per_step > 1) {
+        let size!(W) = contracted_per_step;
+        let size!(A) = 1usize;
+        nest_steps::<E, EL, W, ER, W, A, EM>(acc, lhs, rhs, walk, shape, config, semiring);
+    } else {
+        let size!(W) = lw;
+        let size!(A) = aw;
+        nest_steps::<E, EL, W, ER, A, A, EM>(acc, lhs, rhs, walk, shape, config, semiring);
+    }
+}
+
+/// [`nest`] over the regions of `walk`: seed, contract every region, commit. The edge
+/// specialization is not taken — every region reads through the same checks, settled once from
+/// the first.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn nest_steps<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, EM: Numeric>(
+    acc: &mut MemData<EM>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    walk: Walk,
+    #[comptime] shape: ContractShape,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    let mr = comptime!(shape.mr);
+    let nr = comptime!(shape.nr);
+    let cols = comptime!(shape.cols);
+    let kc = comptime!(shape.kc);
+    let contracted_per_step = comptime!(shape.contracted_per_step);
+    let lw = comptime!(shape.lw);
+    let aw = comptime!(shape.aw);
+    let matrices = comptime!(shape.matrices());
+    let lane_fanout = comptime!(config.lane_fanout);
+    let eligible = comptime!(shape.scalars() <= config.budget);
+
+    let first = lhs.at(&walk.region(0));
+    let first_rhs = rhs.at(&walk.region(0));
+    let lhs_axes = comptime!(shape.lhs_axes(&first.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&first_rhs.space));
+    // The checks are the operands', settled on the first region: every region reads through
+    // the same window.
+    let lhs_first = first.matrix_packed::<L>(lhs_axes, 0usize);
+    let rhs_first = first_rhs.matrix_packed::<V>(rhs_axes, 0usize);
+    let lhs_check = comptime!(lhs_first.check);
+    let rhs_check = comptime!(rhs_first.check);
+
+    for mat in 0..matrices {
+        let mut acc_view = acc.matrix_accumulate::<E, A>(
+            mat,
+            comptime!(shape.acc_axes),
+            comptime!(shape.space.clone()),
+            comptime!(semiring.add()),
+        );
+        let acc_check = acc_view.check();
+        let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
+        let mut c = block::seed::<E, V, A>(
+            &mut acc_view,
+            contracted_per_step,
+            1usize,
+            aw,
+            mr,
+            nr,
+            cols,
+            unroll,
+        );
+        for i in 0..walk.total() {
+            let region = walk.region(i);
+            let lhs_step = lhs.at(&region);
+            let rhs_step = rhs.at(&region);
+            let lhs_mat = lhs_step.matrix_packed::<L>(lhs_axes, mat);
+            let rhs_mat = rhs_step.matrix_packed::<V>(rhs_axes, mat);
+            block::contract::<E, EL, L, ER, V, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
+                &lhs_mat,
+                &rhs_mat,
+                &mut c,
+                lw,
+                contracted_per_step,
+                mr,
+                nr,
+                kc,
+                unroll,
+                lane_fanout,
+                semiring,
+            );
+        }
+        block::commit::<E, V, A>(
+            &mut acc_view,
+            c,
+            contracted_per_step,
+            1usize,
+            aw,
+            mr,
+            nr,
+            cols,
+            unroll,
+        );
+    }
+}
+
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
 #[cube]

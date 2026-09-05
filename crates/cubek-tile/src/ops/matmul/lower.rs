@@ -141,6 +141,70 @@ impl<Acc: Numeric> Tile<Acc> {
         self.request_init_from(comptime!(InitFrom::Cell));
     }
 
+    /// `c = a · b` over this tile's last level, whose regions step the contraction: one register
+    /// block seeded once spans the walk and commits once, so the sum crosses the steps without
+    /// touching the cells, and the lanes fold once. The sum is carried in `EA`.
+    ///
+    /// What a layout that deals a lane interleaved chunks of `K` needs. A leaf per chunk
+    /// ([`mma_with_acc`](Self::mma_with_acc) on each region) folds across the lanes and writes
+    /// the cell per chunk, and a half-precision cell rounds at every one of them.
+    ///
+    /// The level may distribute an accumulator axis — each lane its own rows — but not step
+    /// one: a walked accumulator axis would move the cells under the block, and a distributed
+    /// one handing an instance several tiles would too.
+    pub fn mm_steps_with_acc<EA: Numeric, Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        comptime!(assert!(
+            !self.space.is_final(),
+            "Tile::mm_steps_with_acc: the tile has no level left to step; a final tile contracts \
+             through mm_with"
+        ));
+        comptime!({
+            for p in 0..self.space.rank() {
+                let axis = self.space.axis_at(p);
+                let tiles = self.space.count(axis);
+                let per_instance = match self.space.partitioner().distribution(axis) {
+                    Distribution::Sequential => tiles,
+                    Distribution::Spatial { coverage, .. } => match coverage {
+                        Coverage::Instances(n) => tiles / n.max(1),
+                        Coverage::TilesEach(t) => t,
+                    },
+                };
+                assert!(
+                    per_instance == 1,
+                    "Tile::mm_steps_with_acc: the level steps the accumulator's {axis:?} axis, so \
+                     its regions do not share their cells; only a contracted axis may be stepped"
+                );
+            }
+        });
+        let walk = Walk::over(self.op_space(lhs, rhs));
+        // Every step shares the cells of the first: the level moves the contraction alone.
+        let mut cells = self.at(&walk.region(0));
+        let init_from = cells.request_init_from(comptime!(InitFrom::Identity));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => cells.init_identity(comptime!(semiring.add())),
+        }
+        let space = comptime!(cells.space.clone());
+        match &mut cells.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_steps::<EA, Lhs, Rhs, Acc>(
+                g, lhs, rhs, walk, space, config, semiring,
+            ),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => panic!(
+                "Tile::mm_steps_with_acc: the software instruction contracts into a memory \
+                 accumulator; a register accumulator carries its own block (Tile::block_accumulator)"
+            ),
+        }
+    }
+
     /// `c += a · b` at a final memory tile through the software instruction run under `config`.
     pub fn mma_with<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
