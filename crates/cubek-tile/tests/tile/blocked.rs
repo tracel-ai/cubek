@@ -103,9 +103,10 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(Space::new(&[(M, rows), (N, cols), (K, depth)]), vec![]).level(|l| {
-        l.walk(&[(M, rows), (N, cols), (K, block)]);
-    });
+    let nest = Nest::new(
+        Space::new(&[(M, rows), (N, cols), (K, depth)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
+    );
 
     matmul::launch(
         &client,
@@ -162,11 +163,8 @@ fn a_partitioned_axis_contracts_the_same() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+    );
 
     matmul::launch(
         &client,
@@ -248,11 +246,8 @@ fn scales_omit_the_axis_inside_the_block() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+    );
 
     scaled_matmul::launch(
         &client,
@@ -345,11 +340,13 @@ fn a_split_output_axis_contracts_the_same() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     matmul::launch(
         &client,
@@ -432,11 +429,13 @@ fn scales_omit_the_axis_inside_the_column_block() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     scaled_matmul::launch(
         &client,
@@ -536,11 +535,13 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     wide_matmul::launch(
         &client,
@@ -651,11 +652,13 @@ fn scales_are_served_several_at_a_time() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     wide_scaled_matmul::launch(
         &client,
@@ -770,11 +773,13 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     promoted_matmul::launch(
         &client,
@@ -890,11 +895,13 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     wide_scaled_promoted::launch(
         &client,
@@ -1011,11 +1018,13 @@ fn scales_keep_their_own_element_when_served_as_lines() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks),
+            (NI, inside),
+            (K, depth),
+        ])],
+    );
 
     wide_typed_scaled_matmul::launch(
         &client,

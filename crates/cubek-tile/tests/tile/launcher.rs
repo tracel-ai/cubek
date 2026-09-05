@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, Boundary, CubeAxis, DequantAt, Divisor, Geometry, KernelForm, Launcher, Nest, Offset,
-    PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec, cubes, planes,
+    Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Nest, Offset,
+    PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec,
 };
 
 const M: Axis = Axis(0);
@@ -105,23 +105,14 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 /// A cpu_gemm-shaped scheme: two batch axes riding one-per-cube on Z, 16×32 cube tiles on
 /// X/Y, 8×8 plane leaves with `leaf_k = 4`.
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> Nest {
-    let batches = [(B0, 1), (B1, 1)];
     Nest::new(
         Space::new(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)]),
-        vec![],
+        vec![
+            Level::cubes(&[(M, 16), (N, 32)]).batches(&[B0, B1]),
+            Level::planes(&[(M, 8), (N, 8)]),
+            Level::walk(&[(K, 4)]),
+        ],
     )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::Z), &batches)
-            .distribute(cubes(CubeAxis::X), &[(M, 16)])
-            .distribute(cubes(CubeAxis::Y), &[(N, 32)])
-            .walk(&[(K, k)]);
-    })
-    .level(|l| {
-        l.distribute(planes(), &[(M, 8)])
-            .distribute(planes(), &[(N, 8)])
-            .walk(&batches)
-            .walk(&[(K, 4)]);
-    })
 }
 
 #[test]
@@ -602,11 +593,10 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = cubecl::test_device().client();
     let staged = Launcher::new(
         &client,
-        &Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
-                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
-                .walk(&[(K, 16)]);
-        }),
+        &Nest::new(
+            Space::new(&[(M, 64), (N, 64), (K, 16)]),
+            vec![Level::cubes(&[(M, 16), (N, 32)])],
+        ),
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -630,11 +620,10 @@ fn arg_gathered_rational_stages() {
     let client = cubecl::test_device().client();
     let staged = Launcher::new(
         &client,
-        &Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
-                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
-                .walk(&[(K, 16)]);
-        }),
+        &Nest::new(
+            Space::new(&[(M, 64), (N, 64), (K, 16)]),
+            vec![Level::cubes(&[(M, 16), (N, 32)])],
+        ),
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -656,11 +645,10 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = cubecl::test_device().client();
     let staged = Launcher::new(
         &client,
-        &Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
-                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
-                .walk(&[(K, 16)]);
-        }),
+        &Nest::new(
+            Space::new(&[(M, 64), (N, 64), (K, 16)]),
+            vec![Level::cubes(&[(M, 16), (N, 32)])],
+        ),
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -682,11 +670,10 @@ fn arg_gathered_cancelling_divisor_stages() {
     let client = cubecl::test_device().client();
     let staged = Launcher::new(
         &client,
-        &Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 16)])
-                .distribute(cubes(CubeAxis::Y), &[(N, 32)])
-                .walk(&[(K, 16)]);
-        }),
+        &Nest::new(
+            Space::new(&[(M, 64), (N, 64), (K, 16)]),
+            vec![Level::cubes(&[(M, 16), (N, 32)])],
+        ),
         KernelForm::DynamicAlong(&[N]),
     );
     let projection = Projection::new(

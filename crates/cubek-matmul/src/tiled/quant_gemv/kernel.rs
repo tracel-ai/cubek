@@ -1,10 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{
-    Axis, CubeAxis, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg, cubes, lanes,
-    planes,
-};
+use cubek_tile::{Deal, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -34,28 +31,20 @@ pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
     ])
 }
 
-const AXES: [Axis; 4] = [M, N, KB, KI];
-
 /// The routine's three levels, outermost first, each a method on the blueprint.
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
-    vec![bp.cubes(problem), bp.planes(problem), bp.lanes(problem)]
+    vec![bp.cubes(), bp.planes(), bp.lanes(problem)]
 }
 
 impl QuantGemvBlueprint {
     /// A strip of output rows per cube, `K` whole.
-    pub fn cubes(&self, _problem: &QuantGemvProblem) -> Level {
-        Level::new(&AXES, |l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, self.rows_per_cube)])
-                .whole(&[N, KB, KI]);
-        })
+    pub fn cubes(&self) -> Level {
+        Level::cubes(&[(M, self.rows_per_cube)])
     }
 
     /// One plane per group of rows, `K` whole.
-    pub fn planes(&self, _problem: &QuantGemvProblem) -> Level {
-        Level::new(&AXES, |l| {
-            l.distribute(planes(), &[(M, self.rows_per_plane)])
-                .whole(&[N, KB, KI]);
-        })
+    pub fn planes(&self) -> Level {
+        Level::planes(&[(M, self.rows_per_plane)])
     }
 
     /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
@@ -63,13 +52,13 @@ impl QuantGemvBlueprint {
     /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
     /// plane width: their product with the row groups is exactly it.
     pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
-        let factor = problem.factor();
-        Level::new(&AXES, |l| {
-            l.distribute(lanes(self.groups()), &[(M, self.rows_per_lane)])
-                .distribute(lanes(self.block_lanes).interleaved(), &[(KB, 1)])
-                .distribute(lanes(self.inside_lanes).interleaved(), &[(KI, factor)])
-                .whole(&[N]);
-        })
+        Level::lanes(&[
+            Deal::new(M, self.rows_per_lane).across(self.groups()),
+            Deal::new(KB, 1).across(self.block_lanes).interleaved(),
+            Deal::new(KI, problem.factor())
+                .across(self.inside_lanes)
+                .interleaved(),
+        ])
     }
 }
 
@@ -121,9 +110,9 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     }
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
-    for cube in out.cubes(comptime!(bp.cubes(&problem))) {
+    for cube in out.cubes(comptime!(bp.cubes())) {
         let out_cube = out.at(&cube);
-        for plane in cube.planes(comptime!(bp.planes(&problem))) {
+        for plane in cube.planes(comptime!(bp.planes())) {
             let out_plane = out_cube.at(&plane);
             for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
                 let mut out_lane = out_plane.at(&lane);
@@ -132,12 +121,12 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
         }
     }
 
-    for cube in space.cubes(comptime!(bp.cubes(&problem))) {
+    for cube in space.cubes(comptime!(bp.cubes())) {
         let out_cube = out.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);
         let scales_cube = at_all(&scale_tiles, &cube);
-        for plane in cube.planes(comptime!(bp.planes(&problem))) {
+        for plane in cube.planes(comptime!(bp.planes())) {
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);

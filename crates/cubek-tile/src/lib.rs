@@ -1,9 +1,10 @@
 //! The axis-agnostic tile DSL engine.
 //!
 //! A [`Space`] is geometry only: the axes and their extents. A [`Level`] is one decomposition
-//! of it, stating which hardware scope owns which axes ([`LevelCuts::distribute`]) and which
-//! axes are stepped through ([`LevelCuts::walk`]); it lives on the loop that states it
-//! ([`Space::level`]), and the [`Region`] that loop hands out carries it down to `at`. So the
+//! of it, naming the axes a loop cuts and who takes the tiles ([`Level::cubes`],
+//! [`Level::planes`], [`Level::lanes`], [`Level::walk`]); it lives on the loop that states it
+//! under the same verb ([`Space::cubes`] and the rest), and the [`Region`] that loop hands out
+//! carries it down to `at`. So the
 //! kernel is the one source of its partitioning: it cannot walk a level it does not state,
 //! and what it states is what it walks. Everything else is the kernel's to write, level by
 //! level: where an operand is materialized ([`Ring::smem`] and [`pipelined`], which also own

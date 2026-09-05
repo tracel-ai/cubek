@@ -378,9 +378,10 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
-                level.walk(&[(ROW, 2), (COL, 3)]);
-            }),
+            nest: Nest::new(
+                Space::new(&[(ROW, ROWS), (COL, COLS)]),
+                vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+            ),
         }
     }
 
@@ -682,9 +683,10 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let nest = Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
-        level.walk(&[(ROW, 2), (COL, 4)]);
-    });
+    let nest = Nest::new(
+        Space::new(&[(ROW, ROWS), (COL, COLS)]),
+        vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+    );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -709,9 +711,10 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let concrete = Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
-        level.walk(&[(ROW, 2), (COL, 4)]);
-    });
+    let concrete = Nest::new(
+        Space::new(&[(ROW, ROWS), (COL, COLS)]),
+        vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+    );
     let space = Nest::new(
         concrete.space.clone().with_dynamic(&[ROW]),
         concrete.levels.clone(),

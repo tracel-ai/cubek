@@ -1162,14 +1162,17 @@ impl<T: Numeric> MemData<T> {
                      scale grid is addressed unsigned"
                 ));
                 // A quantized operand is direct (asserted at construction), so the child window's
-                // extent per axis is this level's cut edge.
+                // extent per axis is this level's cut edge; an axis left whole keeps its extent.
                 ComptimeOption::new_Some(info.window(
                     &origin_u32,
                     rank,
                     comptime!(self.store.vector_size),
                     comptime!(
                         (0..rank)
-                            .map(|p| step.level.edge_in(&space, space.axis_at(p)).get())
+                            .map(|p| match step.level.edge_in(&space, space.axis_at(p)) {
+                                Extent::Static(edge) => edge,
+                                Extent::Dynamic => info.extent[p],
+                            })
                             .collect::<Vec<_>>()
                     ),
                 ))

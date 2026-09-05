@@ -169,8 +169,7 @@ impl Region {
 
 #[cube]
 impl Walk {
-    /// [`of`](Walk::of) under a verb: the level must deal to exactly `scope` and, unless the verb
-    /// is the walk, step nothing.
+    /// [`of`](Walk::of) under a verb: the level must have been built under the same one.
     pub(crate) fn stated(
         space: &Space,
         #[comptime] level: Level,
@@ -178,16 +177,12 @@ impl Walk {
         #[comptime] verb: LevelScope,
     ) -> Walk {
         comptime!({
-            let stated = level.scope();
+            let built = level.scope();
             assert!(
-                stated == verb,
-                "{}: the level deals to {stated:?}, which is not what this loop says",
-                verb.verb()
-            );
-            assert!(
-                verb == LevelScope::Sequential || level.walks_nothing(&space.clone()),
-                "{}: the level steps an axis, which is a walk; state it as one below this loop",
-                verb.verb()
+                built == verb,
+                "{}: this level was built by `Level::{}`, which is not what this loop says",
+                verb.verb(),
+                built.verb()
             );
         });
         Walk::of(space, level, parent)

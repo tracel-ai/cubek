@@ -191,10 +191,7 @@ fn run(
             (R, 1),
             (C, 1),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[
+        vec![Level::walk(&[
             (G, g),
             (QP, qp),
             (S, block),
@@ -202,8 +199,8 @@ fn run(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ]);
-    });
+        ])],
+    );
 
     attention_fold_kernel::launch(
         &client,
@@ -587,10 +584,7 @@ fn run_cmma<E: Float + CubeElement>(
             (R, 1),
             (C, 1),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[
+        vec![Level::walk(&[
             (G, 1),
             (QP, rows),
             (S, block),
@@ -598,8 +592,8 @@ fn run_cmma<E: Float + CubeElement>(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ]);
-    });
+        ])],
+    );
     // The axis is on the operand only where its binding has a dim for it: a spec naming one it
     // does not is a different operand, not the same one spanned.
     let (k_axes, v_axes): (&[Axis], &[Axis]) = if spanned {
@@ -1002,22 +996,15 @@ fn attention_fold_split_kernel<W: Size>(
     // This team's windows: one slice of rows per team, the levels stated here on the
     // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
-    let team_scores = comptime!(Level::new(&[R, C], |l| {
-        l.walk(&[(R, rows), (C, block)]);
-    }));
+    let team_scores = comptime!(Level::walk(&[(R, rows), (C, block)]));
     let tw = score_all.level(team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
-    let row_axes = comptime!(row_extents.map(|(axis, _)| axis));
-    let team_rows = comptime!(Level::new(&row_axes, |l| {
-        l.walk(&[(T, 1), (R, rows)]);
-    }));
+    let team_rows = comptime!(Level::walk(&[(T, 1), (R, rows)]));
     let rw = factors_all.level(team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let team_acc = comptime!(Level::new(&[R, V], |l| {
-        l.walk(&[(R, rows), (V, val_dim)]);
-    }));
+    let team_acc = comptime!(Level::walk(&[(R, rows), (V, val_dim)]));
     let aw = acc_all.level(team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 
@@ -1181,10 +1168,7 @@ fn run_split_at(
             (R, 1),
             (C, 1),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[
+        vec![Level::walk(&[
             (G, g),
             (QP, qp),
             (S, block),
@@ -1192,8 +1176,8 @@ fn run_split_at(
             (V, val_dim),
             (R, 1),
             (C, 1),
-        ]);
-    });
+        ])],
+    );
 
     attention_fold_split_kernel::launch(
         &client,
@@ -1388,11 +1372,14 @@ fn run_stream(
     // The one attention space: q/k/v/out project their axes out of it.
     let nest = Nest::new(
         Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)]);
-    });
+        vec![Level::walk(&[
+            (G, g),
+            (QP, 1),
+            (S, block),
+            (D, d),
+            (V, val_dim),
+        ])],
+    );
 
     attention_stream_test_kernel::launch(
         &client,

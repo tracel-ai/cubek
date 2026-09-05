@@ -1,20 +1,19 @@
-//! One decomposition [`Level`]: how each axis of a space is cut and dealt out, and the axes dealt
-//! as one. The value a kernel's loop states, under the verb that says who takes the regions
-//! ([`Space::cubes`](crate::Space::cubes), [`Space::walk`](crate::Space::walk), and the rest),
-//! the value a [`Region`](crate::Region) carries down to `at`, and the value a launch sizes its
-//! grid from ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one method per
-//! level, so the grid and the loops cannot disagree.
+//! One decomposition [`Level`]: which axes of a space a loop cuts, to what tile edge, and who
+//! takes the tiles. The value a kernel's loop states, under the verb that says who takes the
+//! regions ([`Space::cubes`](crate::Space::cubes), [`Space::walk`](crate::Space::walk), and the
+//! rest), the value a [`Region`](crate::Region) carries down to `at`, and the value a launch
+//! sizes its grid from ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one
+//! method per level, so the grid and the loops cannot disagree.
 //!
-//! Built by [`Level::new`]: two verbs on a [`LevelCuts`] collector,
-//! [`distribute`](LevelCuts::distribute) for axes a hardware scope's workers take and
-//! [`walk`](LevelCuts::walk) for axes every one of them steps through. Between them they name
-//! each of the space's axes exactly once.
+//! One constructor per verb: [`Level::cubes`], [`Level::planes`], [`Level::lanes`] deal tiles
+//! to a hardware scope's workers, [`Level::walk`] steps through them. A level names only the
+//! axes it touches; every other axis is handed down whole.
 
-use super::{ComputeScope, Coverage, Distribution, Handout, Spatial, Spread};
+use super::{ComputeScope, Coverage, CubeAxis, Distribution, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
 /// What a level does to one axis: cuts it into tiles of `edge`, or leaves it whole. Whole is
-/// what a level says of an axis it hands down untouched, which is the only way to leave a
+/// what a level says of an axis it does not name, which is the only way to leave a
 /// [`Dynamic`](Extent::Dynamic) axis alone, since its extent is no number a cut could name.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Edge {
@@ -22,8 +21,65 @@ pub enum Edge {
     Whole,
 }
 
-/// One decomposition level of a space: every axis's sub-tile edge and distribution, in the
-/// space's canonical axis order, plus the axes it distributes as one.
+/// One axis's tiles dealt to a scope's workers: the tile edge, how many workers take them and
+/// which ones each takes. The entry of [`Level::cubes`], [`Level::planes`] and
+/// [`Level::lanes`]; a plain `(axis, edge)` converts to one tile per worker, in runs.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Deal {
+    axis: Axis,
+    edge: usize,
+    spread: Spread,
+    coverage: Coverage,
+}
+
+impl Deal {
+    /// `axis` cut to `edge`, one tile per worker.
+    pub fn new(axis: Axis, edge: usize) -> Self {
+        Deal {
+            axis,
+            edge,
+            spread: Spread::Contiguous,
+            coverage: Coverage::TilesEach(1),
+        }
+    }
+
+    /// `n` workers take the tiles, each a run of `grid / n`. Replaces whatever count stood:
+    /// `workers · tiles_each = grid`, so stating either states the other.
+    pub fn across(mut self, n: usize) -> Self {
+        self.coverage = Coverage::Instances(n);
+        self
+    }
+
+    /// Each worker takes `t` tiles; `grid / t` workers run. The twin of [`across`](Self::across).
+    pub fn each(mut self, t: usize) -> Self {
+        self.coverage = Coverage::TilesEach(t);
+        self
+    }
+
+    /// Workers take turns rather than each taking a run, so neighbouring workers touch
+    /// neighbouring tiles. What a read wants whenever those tiles are neighbouring words.
+    pub fn interleaved(mut self) -> Self {
+        self.spread = Spread::Interleaved;
+        self
+    }
+
+    fn distribution(&self, scope: ComputeScope) -> Distribution {
+        Distribution::Spatial {
+            scope,
+            spread: self.spread,
+            coverage: self.coverage,
+        }
+    }
+}
+
+impl From<(Axis, usize)> for Deal {
+    fn from((axis, edge): (Axis, usize)) -> Deal {
+        Deal::new(axis, edge)
+    }
+}
+
+/// One decomposition level of a space: the axes it names, each with its tile edge and who takes
+/// the tiles, plus the axes it deals as one. An axis it does not name is handed down whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     edges: ByAxis<Edge>,
@@ -33,86 +89,214 @@ pub struct Level {
 }
 
 impl Level {
-    /// The level `f` states over `axes`, which fix the canonical order (the last one is the
-    /// fastest of a walk). The cuts may come in any order and are realigned to it; every axis
-    /// must be named exactly once, by `walk` or `distribute`.
-    pub fn new(axes: &[Axis], f: impl FnOnce(&mut LevelCuts)) -> Level {
-        let mut cuts = LevelCuts::new();
-        f(&mut cuts);
-        // Per axis first: it names the one that is wrong, where the count only says the total
-        // is off.
-        for &axis in axes {
-            let stated = cuts.cuts.iter().filter(|&&(a, _)| a == axis).count();
-            assert!(stated > 0, "Level::new: axis {axis:?} has no cut");
-            assert!(
-                stated == 1,
-                "Level::new: axis {axis:?} is cut {stated} times; a level states each of its \
-                 axes once, by `walk` or `distribute`"
-            );
-        }
-        assert_eq!(
-            cuts.cuts.len(),
-            axes.len(),
-            "Level::new: {} cuts but {} axes",
-            cuts.cuts.len(),
-            axes.len()
-        );
-        let cut = |axis: Axis| {
-            cuts.cuts
-                .iter()
-                .find(|&&(a, _)| a == axis)
-                .expect("checked above")
-                .1
-        };
-        let edges: Vec<_> = axes.iter().map(|&a| (a, cut(a).edge)).collect();
-        let dists: Vec<_> = axes.iter().map(|&a| (a, cut(a).dist)).collect();
-        Level::from_parts(ByAxis::new(&edges), ByAxis::new(&dists), cuts.work)
+    /// Every worker steps through `steps`' tiles, one at a time; `(axis, edge)` each. The
+    /// contraction of a matmul is the everyday one. Stated under [`walk`](crate::Space::walk).
+    pub fn walk(steps: &[(Axis, usize)]) -> Level {
+        let dists: Vec<_> = steps
+            .iter()
+            .map(|&(axis, _)| (axis, Distribution::Sequential))
+            .collect();
+        Level::build(steps, &dists, LevelScope::Sequential, None)
     }
 
-    pub(crate) fn from_parts(
-        edges: ByAxis<Edge>,
-        dists: ByAxis<Distribution>,
+    /// The tiles of each entry ride a cube dimension of the launch grid, in order: the first
+    /// entry's cubes are `X`, the second's `Y`, the third's `Z`. One tile per cube unless the
+    /// entry says otherwise ([`Deal`]). Batch axes go on `Z` too ([`batches`](Self::batches)).
+    /// Stated under [`cubes`](crate::Space::cubes); every entry is one box of the grid.
+    pub fn cubes<D: Into<Deal> + Clone>(deals: &[D]) -> Level {
+        assert!(
+            deals.len() <= 3,
+            "Level::cubes: {} entries, but a launch grid has three dimensions",
+            deals.len()
+        );
+        let scopes = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
+        Level::dealt(deals, |i| ComputeScope::Cube(scopes[i]), LevelScope::Cubes)
+    }
+
+    /// The tiles of each entry ride the cube's planes, one tile per plane unless the entry says
+    /// otherwise ([`Deal`]). Several entries make a box per plane. Stated under
+    /// [`planes`](crate::Space::planes).
+    pub fn planes<D: Into<Deal> + Clone>(deals: &[D]) -> Level {
+        Level::dealt(deals, |_| ComputeScope::Plane, LevelScope::Planes)
+    }
+
+    /// The tiles of each entry ride some of the plane's lanes; every entry states how many
+    /// ([`Deal::across`]), since the plane is carved between the entries and their counts must
+    /// multiply to its width. Stated under [`lanes`](crate::Space::lanes).
+    pub fn lanes(deals: &[Deal]) -> Level {
+        for deal in deals {
+            assert!(
+                matches!(deal.coverage, Coverage::Instances(_)),
+                "Level::lanes: {:?} states no lane count; say how many lanes take it \
+                 (`Deal::new(axis, edge).across(n)`)",
+                deal.axis
+            );
+        }
+        Level::dealt(deals, |_| ComputeScope::Unit, LevelScope::Lanes)
+    }
+
+    /// One tile of each of `axes` per cube, on the grid's `Z` dimension: the batch axes of a
+    /// [`cubes`](Self::cubes) level.
+    pub fn batches(mut self, axes: &[Axis]) -> Level {
+        assert!(
+            self.scope == LevelScope::Cubes,
+            "Level::batches: batches ride cubes; this level deals to {:?}",
+            self.scope
+        );
+        for &axis in axes {
+            self.push(
+                axis,
+                Edge::Cut(1),
+                Deal::new(axis, 1).distribution(ComputeScope::Cube(CubeAxis::Z)),
+            );
+        }
+        self
+    }
+
+    /// The tiles of every entry read as one index, of which each of `n` workers takes a share:
+    /// a run of the whole rather than a box of it, which is what balances a grid its shape
+    /// cannot divide. The index runs over this level's tiles and one region of the level
+    /// below, so a share can end part way through a region's own work
+    /// ([`Walk::window`](crate::Walk::window) is how a kernel takes its share).
+    ///
+    /// The plain entries' boxes go: the workers ride the scope as one, on its first dimension.
+    /// Not for lanes: they combine in registers, which needs them in lockstep, and lanes holding
+    /// different shares never are.
+    pub fn shared_by(mut self, n: usize) -> Level {
+        let scope = match self.scope {
+            LevelScope::Cubes => ComputeScope::Cube(CubeAxis::X),
+            LevelScope::Planes => ComputeScope::Plane,
+            LevelScope::Lanes => panic!(
+                "Level::shared_by: the plane's lanes combine in registers, which needs them in \
+                 lockstep, and lanes holding different shares never are"
+            ),
+            LevelScope::Sequential => {
+                panic!("Level::shared_by: a walk has no workers to share its tiles")
+            }
+        };
+        assert!(
+            self.work.is_none(),
+            "Level::shared_by: this level already deals its tiles as one"
+        );
+        let axes = self.axes();
+        for &axis in &axes {
+            let plain = matches!(
+                self.dists.get(axis),
+                Distribution::Spatial {
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                    ..
+                }
+            );
+            assert!(
+                plain,
+                "Level::shared_by: {axis:?} states a count or a spread of its own, which a share \
+                 of the whole has no use for"
+            );
+        }
+        self.dists = self.dists.map(|_, _| Distribution::Sequential);
+        self.work = Some(Work::new(axes, scope, n));
+        self
+    }
+
+    fn dealt<D: Into<Deal> + Clone>(
+        deals: &[D],
+        scope_of: impl Fn(usize) -> ComputeScope,
+        kind: LevelScope,
+    ) -> Level {
+        let deals: Vec<Deal> = deals.iter().cloned().map(Into::into).collect();
+        let cuts: Vec<_> = deals.iter().map(|d| (d.axis, d.edge)).collect();
+        let dists: Vec<_> = deals
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.axis, d.distribution(scope_of(i))))
+            .collect();
+        Level::build(&cuts, &dists, kind, None)
+    }
+
+    fn build(
+        cuts: &[(Axis, usize)],
+        dists: &[(Axis, Distribution)],
+        scope: LevelScope,
         work: Option<Work>,
     ) -> Level {
-        // The finest scope any axis rides; `Sequential` when none spreads at all.
-        let scope = dists.values().fold(LevelScope::Sequential, |scope, dist| {
-            scope.max(LevelScope::of(dist))
-        });
+        for (i, &(axis, _)) in cuts.iter().enumerate() {
+            assert!(
+                !cuts[..i].iter().any(|&(a, _)| a == axis),
+                "Level: {axis:?} is named twice; a level states each of its axes once"
+            );
+        }
+        let edges: Vec<_> = cuts
+            .iter()
+            .map(|&(axis, edge)| (axis, Edge::Cut(edge)))
+            .collect();
         Level {
-            edges,
-            dists,
+            edges: ByAxis::new(&edges),
+            dists: ByAxis::new(dists),
             scope,
             work,
         }
     }
 
-    /// The tile edge this level cuts `axis` to. An axis left whole has no edge of its own; its
-    /// extent is the space's.
+    fn push(&mut self, axis: Axis, edge: Edge, dist: Distribution) {
+        assert!(
+            !self.edges.contains(axis),
+            "Level: {axis:?} is named twice; a level states each of its axes once"
+        );
+        let mut edges: Vec<_> = self
+            .axes()
+            .into_iter()
+            .map(|a| (a, self.edges.get(a)))
+            .collect();
+        let mut dists: Vec<_> = self
+            .axes()
+            .into_iter()
+            .map(|a| (a, self.dists.get(a)))
+            .collect();
+        edges.push((axis, edge));
+        dists.push((axis, dist));
+        self.edges = ByAxis::new(&edges);
+        self.dists = ByAxis::new(&dists);
+    }
+
+    /// The tile edge this level cuts `axis` to. An axis the level does not name has no edge of
+    /// its own; its extent is the space's.
     pub fn edge(&self, axis: Axis) -> usize {
-        match self.edges.get(axis) {
+        match self.edge_kind(axis) {
             Edge::Cut(edge) => edge,
             Edge::Whole => panic!(
-                "Level::edge: {axis:?} is left whole at this level; its extent is the space's \
-                 (`edge_in`)"
+                "Level::edge: {axis:?} is not named at this level, so it is handed down whole; \
+                 its extent is the space's"
             ),
         }
     }
 
+    /// The cut of `axis`: its edge where the level names it, [`Whole`](Edge::Whole) where not.
     pub fn edge_kind(&self, axis: Axis) -> Edge {
-        self.edges.get(axis)
+        if self.edges.contains(axis) {
+            self.edges.get(axis)
+        } else {
+            Edge::Whole
+        }
     }
 
     /// The extent one region of this level covers along `axis` of `space`: the cut edge, or the
-    /// space's own extent (static or not) where the axis is left whole.
+    /// space's own extent (static or not) where the axis is handed down whole.
     pub(crate) fn edge_in(&self, space: &Space, axis: Axis) -> Extent {
-        match self.edges.get(axis) {
+        match self.edge_kind(axis) {
             Edge::Cut(edge) => Extent::Static(edge),
             Edge::Whole => space.extent_raw(axis),
         }
     }
 
+    /// Who takes `axis`'s tiles: [`Sequential`](Distribution::Sequential) where the level walks
+    /// it or does not name it.
     pub fn distribution(&self, axis: Axis) -> Distribution {
-        self.dists.get(axis)
+        if self.dists.contains(axis) {
+            self.dists.get(axis)
+        } else {
+            Distribution::Sequential
+        }
     }
 
     pub(crate) fn scope(&self) -> LevelScope {
@@ -123,16 +307,11 @@ impl Level {
         self.scope.role()
     }
 
-    /// The axes this level cuts, in canonical order. A level keeps every axis of the operation,
-    /// so an operand's projection (`{M, N}`) still finds its contraction here.
+    /// The axes this level names, in the order it named them.
     pub(crate) fn axes(&self) -> Vec<Axis> {
         (0..self.dists.len())
             .map(|i| self.dists.axis_at(i))
             .collect()
-    }
-
-    pub(crate) fn contains(&self, axis: Axis) -> bool {
-        self.dists.contains(axis)
     }
 
     /// The axes this level distributes as one, if any.
@@ -167,21 +346,6 @@ impl Level {
             Edge::Cut(edge) => space.extent(axis).div_ceil(edge),
             Edge::Whole => 1,
         }
-    }
-
-    /// Whether a loop over this level under `space` visits only what the hardware dealt out: no
-    /// undealt axis is stepped. What the distribute verbs (`cubes`, `planes`, `lanes`) require,
-    /// so a header that says "each cube" does not also step through a walk it never named. An
-    /// instance's share of a dealt axis may still be several tiles; that is the verb's loop.
-    pub(crate) fn walks_nothing(&self, space: &Space) -> bool {
-        space.axes().all(|axis| match self.distribution(axis) {
-            Distribution::Sequential => match (self.edge_kind(axis), space.extent_raw(axis)) {
-                (Edge::Whole, _) => true,
-                (Edge::Cut(edge), Extent::Static(extent)) => extent <= edge,
-                (Edge::Cut(_), Extent::Dynamic) => false,
-            },
-            Distribution::Spatial { .. } => true,
-        })
     }
 
     /// Whether `axis` is `Spatial` `TilesEach(1)`: its walk count is comptime `1`, so a step
@@ -401,110 +565,6 @@ impl Level {
     }
 }
 
-/// Collects what one level says, in two verbs: [`distribute`](Self::distribute) hands some axes'
-/// regions to a hardware scope's workers, [`walk`](Self::walk) leaves the rest to every one of
-/// them. Between them they name each of the space's axes exactly once.
-pub struct LevelCuts {
-    cuts: Vec<(Axis, Cut)>,
-    work: Option<Work>,
-}
-
-impl LevelCuts {
-    fn new() -> Self {
-        LevelCuts {
-            cuts: Vec::new(),
-            work: None,
-        }
-    }
-
-    /// Nobody owns these axes: every worker on this level covers all of their tiles, walking them
-    /// one at a time. `axes` pairs each axis with its tile edge.
-    ///
-    /// The contraction of a matmul is the everyday one. So is any axis a level leaves alone,
-    /// which is most of them at most levels.
-    pub fn walk(&mut self, axes: &[(Axis, usize)]) -> &mut Self {
-        self.cuts.extend(
-            axes.iter()
-                .map(|&(axis, edge)| (axis, Cut::sequential(Edge::Cut(edge)))),
-        );
-        self
-    }
-
-    /// Leave these axes as they are: one region covers each of them whole. What a level says of
-    /// the axes it does not touch, and the only thing it can say of a dynamic one.
-    pub fn whole(&mut self, axes: &[Axis]) -> &mut Self {
-        self.cuts.extend(
-            axes.iter()
-                .map(|&axis| (axis, Cut::sequential(Edge::Whole))),
-        );
-        self
-    }
-
-    /// Hand these axes' regions to `dist`'s workers, in order: as many workers as regions means
-    /// one each, fewer means each takes a run. `axes` pairs each axis with its tile edge, and
-    /// `dist` says who runs the tiles and how many of them there are ([`cubes`](crate::cubes),
-    /// [`planes`](crate::planes), [`lanes`](crate::lanes) and their knobs).
-    ///
-    /// One axis, or one region each, is a box of the grid, so every axis gets a dial of its own
-    /// and two lines make a two-dimensional box. Several axes sharing a stated count are read as a
-    /// single index instead, so a worker takes a share of the whole rather than a box of it: a
-    /// dial per axis always yields a box, and a share that begins inside one region and ends
-    /// inside another is not one.
-    ///
-    /// That index runs over these axes' tiles at this level and one region of the level below, so
-    /// a share can end part way through a region's own work ([`Walk::window`](crate::Walk::window)
-    /// is how a kernel takes its share).
-    ///
-    /// An axis named here is not named by [`walk`](Self::walk): a level states each of its axes
-    /// once.
-    pub fn distribute(&mut self, dist: Spatial, axes: &[(Axis, usize)]) -> &mut Self {
-        match dist.handout(axes.len()) {
-            Handout::Dial => self.cuts.extend(axes.iter().map(|&(axis, edge)| {
-                (
-                    axis,
-                    Cut {
-                        edge: Edge::Cut(edge),
-                        dist: dist.into(),
-                    },
-                )
-            })),
-            Handout::OneIndex => {
-                assert!(
-                    self.work.is_none(),
-                    "LevelCuts::distribute: this level already distributes work; state it once"
-                );
-                // A share is a range of one index, and lanes that reduce in registers have to
-                // reach their reduction together. Ranges put them on different regions, so they
-                // never would.
-                assert!(
-                    dist.scope() != ComputeScope::Unit,
-                    "LevelCuts::distribute: the plane's lanes combine in registers, which needs \
-                     them in lockstep, and lanes holding different shares never are. Distribute \
-                     one axis at a time across them instead."
-                );
-                // A share is walked as a nest: consecutive steps of one region under one
-                // accumulator, then the next region. Turns would put a different region under it
-                // at every step.
-                assert!(
-                    dist.spread() == Spread::Contiguous,
-                    "LevelCuts::distribute: a share is a run of the index, so its steps are \
-                     consecutive; instances taking turns would leave no region long enough to \
-                     accumulate in. Distribute one interleaved axis instead."
-                );
-                self.cuts.extend(
-                    axes.iter()
-                        .map(|&(axis, edge)| (axis, Cut::sequential(Edge::Cut(edge)))),
-                );
-                self.work = Some(Work::new(
-                    axes.iter().map(|&(axis, _)| axis).collect(),
-                    dist,
-                ));
-            }
-        }
-        self
-    }
-}
-
 /// Several axes' work distributed as one.
 ///
 /// Dealing each axis on its own gives an instance the product of its per-axis runs, which is a
@@ -514,12 +574,17 @@ impl LevelCuts {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Work {
     axes: Vec<Axis>,
-    dist: Spatial,
+    scope: ComputeScope,
+    instances: usize,
 }
 
 impl Work {
-    pub(crate) fn new(axes: Vec<Axis>, dist: Spatial) -> Self {
-        Work { axes, dist }
+    pub(crate) fn new(axes: Vec<Axis>, scope: ComputeScope, instances: usize) -> Self {
+        Work {
+            axes,
+            scope,
+            instances,
+        }
     }
 
     /// The axes read as one index.
@@ -528,29 +593,18 @@ impl Work {
     }
 
     pub(crate) fn scope(&self) -> ComputeScope {
-        self.dist.scope()
+        self.scope
     }
 
     /// How many instances share the work. Pinned, not derived: the index's length is the whole
     /// level's grid and can be runtime, so nothing here could divide it.
     pub(crate) fn instances(&self) -> usize {
-        match self.dist.coverage() {
-            Coverage::Instances(n) => n,
-            Coverage::TilesEach(_) => panic!(
-                "Level::new: state how many instances share the work (`.instances(n)`); a \
-                 share of the whole cannot be derived from a grid whose length is only known at \
-                 launch"
-            ),
-        }
+        self.instances
     }
 }
 
-/// How finely a level separates its tiles: the smallest hardware scope any of its axes rides.
-/// Decided once, when the level is built, so no consumer re-folds the per-axis distributions.
-///
-/// The finest scope wins. A level with an axis on a cube dim and another on planes reaches
-/// inside a cube, and what a level separates inside a cube the cube's own cooperative
-/// transports already spread.
+/// Who takes a level's tiles: the verb it was built under, and the loop verb that must state
+/// it. Set once, by the constructor, so no consumer re-folds the per-axis distributions.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub(crate) enum LevelScope {
     /// Every axis `Sequential`: one instance walks the whole grid.
@@ -565,15 +619,6 @@ pub(crate) enum LevelScope {
 }
 
 impl LevelScope {
-    fn of(dist: Distribution) -> Self {
-        match dist.scope() {
-            None => LevelScope::Sequential,
-            Some(ComputeScope::Cube(_)) => LevelScope::Cubes,
-            Some(ComputeScope::Plane) => LevelScope::Planes,
-            Some(ComputeScope::Unit) => LevelScope::Lanes,
-        }
-    }
-
     /// The loop verb that states a level of this scope.
     pub(crate) fn verb(self) -> &'static str {
         match self {

@@ -35,9 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, CubeAxis, Fragments, Level, Monoid, Nest,
+    AccumulateArg, AccumulateArgLaunch, Axis, Deal, Fragments, Level, Monoid, Nest,
     PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
-    cubes, lanes,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -121,7 +120,7 @@ fn atomic_matmul_lanes<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
     for region in space.level(comptime!(outer.clone())) {
-        let mut c_cube = c.at(&region);
+        let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E>(
@@ -129,7 +128,7 @@ fn atomic_matmul_lanes<E: Numeric>(
             comptime!(Fragments::new(
                 &c_cube.space,
                 &a_cube.space,
-                &[inner.clone()]
+                std::slice::from_ref(&inner)
             )),
             REGISTER_BLOCK,
             Monoid::Sum,
@@ -219,46 +218,34 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => {
-                Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                        .walk(&[(M, m)]);
-                })
-            }
+            Mapping::DataParallel | Mapping::Atomic { .. } => Nest::new(
+                Space::new(&[(M, m), (N, n), (K, k)]),
+                vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
+            ),
             Mapping::Workspace { .. } => Nest::new(
                 Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
-                vec![],
-            )
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                    .distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                    .walk(&[(M, m), (KI, k / splits)]);
-            }),
+                vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
+            ),
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
-                .level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, COLS)])
-                        .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                        .walk(&[(M, m)]);
-                })
-                .level(|l| {
-                    l.distribute(lanes(plane_size), &[(K, k / splits / plane_size)])
-                        .walk(&[(M, m), (N, COLS)]);
-                }),
+            Mapping::AtomicLanes { .. } => Nest::new(
+                Space::new(&[(M, m), (N, n), (K, k)]),
+                vec![
+                    Level::cubes(&[(N, COLS), (K, k / splits)]),
+                    Level::lanes(&[Deal::new(K, k / splits / plane_size).across(plane_size)]),
+                ],
+            ),
         }
     }
 
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, problem: Problem) -> Nest {
         let Problem { m, n, .. } = problem;
-        Nest::new(Space::new(&[(M, m), (N, n), (KB, self.splits())]), vec![]).level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 1)])
-                .distribute(cubes(CubeAxis::Y), &[(N, FOLD_COLS)])
-                .walk(&[(KB, self.splits())]);
-        })
+        Nest::new(
+            Space::new(&[(M, m), (N, n), (KB, self.splits())]),
+            vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
+        )
     }
 
     /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.

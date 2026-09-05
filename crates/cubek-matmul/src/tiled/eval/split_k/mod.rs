@@ -46,10 +46,7 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{
-    Axis, CubeAxis, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, cubes,
-    lanes,
-};
+use cubek_tile::{Axis, Deal, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch};
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
@@ -168,29 +165,27 @@ impl Mapping {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
-                l.distribute(cubes(CubeAxis::X), &[(N, 1)])
-                    .walk(&[(M, m), (K, k)]);
-            }),
+            Mapping::SeqK => Nest::new(
+                Space::new(&[(M, m), (N, n), (K, k)]),
+                vec![Level::cubes(&[(N, 1)])],
+            ),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![])
-                .level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, plane_size * cols)])
-                        .walk(&[(M, m), (K, k)]);
-                })
-                .level(|l| {
-                    l.distribute(lanes(plane_size), &[(N, cols)])
-                        .walk(&[(M, m), (K, k)]);
-                }),
+            Mapping::NSpread { cols } => Nest::new(
+                Space::new(&[(M, m), (N, n), (K, k)]),
+                vec![
+                    Level::cubes(&[(N, plane_size * cols)]),
+                    Level::lanes(&[Deal::new(N, cols).across(plane_size)]),
+                ],
+            ),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
-            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
-                Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
-                    l.distribute(cubes(CubeAxis::X), &[(N, cols)])
-                        .distribute(lanes(plane_size), &[(K, k / plane_size)])
-                        .walk(&[(M, m)]);
-                })
-            }
+            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Nest::new(
+                Space::new(&[(M, m), (N, n), (K, k)]),
+                vec![
+                    Level::cubes(&[(N, cols)]),
+                    Level::lanes(&[Deal::new(K, k / plane_size).across(plane_size)]),
+                ],
+            ),
         }
     }
 

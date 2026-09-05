@@ -91,9 +91,10 @@ macro_rules! output_arg {
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space() -> Nest {
-    Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
-        level.walk(&[(ROW, 2), (COL, 3)]);
-    })
+    Nest::new(
+        Space::new(&[(ROW, ROWS), (COL, COLS)]),
+        vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+    )
 }
 
 fn run(sink: bool) -> HostData {
@@ -397,9 +398,10 @@ enum Backed {
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Nest {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![]).level(|l| {
-        l.walk(&[(M, edge), (N, edge), (K, edge)]);
-    })
+    Nest::new(
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+    )
 }
 
 fn run_matmul(backed: Backed) -> HostData {
@@ -528,9 +530,10 @@ const MASKED_ROWS: usize = 5;
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space() -> Nest {
-    Nest::new(Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]), vec![]).level(|level| {
-        level.walk(&[(ROW, 2), (COL, 2)]);
-    })
+    Nest::new(
+        Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
+        vec![Level::walk(&[(ROW, 2), (COL, 2)])],
+    )
 }
 
 /// [`buffer_kernel`] at a served width of two.

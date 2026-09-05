@@ -552,9 +552,7 @@ fn tiled(space: &Space, e0: usize, e1: usize) -> Level {
             _ => (axis, space.extent(axis)),
         })
         .collect();
-    Level::new(&axes, |l| {
-        l.walk(&cuts);
-    })
+    Level::walk(&cuts)
 }
 
 /// The extents of `space`'s trailing two axes: the two a matmul contracts.

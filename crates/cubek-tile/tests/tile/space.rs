@@ -1,7 +1,7 @@
 //! Unit tests for [`Space`]
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, CubeAxis, Level, Nest, Space, cubes, lanes};
+use cubek_tile::{Axis, Deal, Level, Nest, Space};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -93,10 +93,7 @@ fn merge_conflicting_extent_panics() {
 // ---- Level::child (the tiling scheme) --------------------------------------
 
 fn sequential(edges: &[(Axis, usize)]) -> Level {
-    let axes: Vec<Axis> = edges.iter().map(|&(a, _)| a).collect();
-    Level::new(&axes, |l| {
-        l.walk(edges);
-    })
+    Level::walk(edges)
 }
 
 #[test]
@@ -193,134 +190,118 @@ fn overhangs_dynamic_axis_panics() {
     let _ = hangs(&nest, M);
 }
 
-// ---- Nest::level -------------------------------------------------------------
+// ---- Level constructors ----------------------------------------------------------
 
-/// Distributing work is a statement about the level's cuts, so it is available wherever cuts are
-/// collected.
+/// The tiles of several axes dealt as one index: the shares ride the cubes even though no axis
+/// does, so the launch grid is their count.
 #[test]
-fn over_distributes_work() {
-    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![])
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(5),
-                &[(M, 16), (N, 32), (K, 16)],
-            );
-        })
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32), (K, 4)]);
-        });
-
-    // The shares ride the cubes even though no axis does.
+fn shared_tiles_launch_their_instances() {
+    let nest = Nest::new(
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes(&[(M, 16), (N, 32), (K, 16)]).shared_by(5),
+            Level::walk(&[(M, 16), (N, 32), (K, 4)]),
+        ],
+    );
+    assert!(nest.at(0).work().is_some());
+    // Five cubes, not `4 * 2 * 1`.
     assert!(matches!(nest.cube_count(), CubeCount::Static(5, 1, 1)));
     assert_eq!(nest.levels.len(), 2);
 }
 
-/// One region each is a box of the grid however many axes are named, so the line deals a dial per
-/// axis and states no work. What lets a whole group of batch axes be one `distribute` line
-/// without turning the level into a share.
+/// Batch axes ride `Z` one tile each, however many there are and however they are listed: a
+/// box of the grid, not a share.
 #[test]
-fn distributing_several_axes_one_region_each_deals_a_dial_each() {
-    let level = |l: &mut cubek_tile::LevelCuts| {
-        l.walk(&[(M, 16), (N, 32), (K, 16)]);
-    };
+fn batches_are_a_dial_each() {
     let one_line = Nest::new(
         Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
-        vec![],
-    )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
-        level(l);
-    });
+        vec![Level::cubes(&[(M, 16), (N, 32)]).batches(&[B0, B1])],
+    );
     let a_dial_each = Nest::new(
         Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
-        vec![],
-    )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
-            .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
-        level(l);
-    });
+        vec![
+            Level::cubes(&[(M, 16), (N, 32)])
+                .batches(&[B0])
+                .batches(&[B1]),
+        ],
+    );
 
     assert_eq!(one_line, a_dial_each);
-    // No work: the walk under it is the one an undistributed level has, and the lowering that
-    // reads this is the one that picks the per-region accumulator nest.
+    // No work: the lowering that reads this is the one that picks the per-region accumulator
+    // nest.
     assert!(one_line.at(0).work().is_none());
-    // Both axes still ride Z, one cube per (B0, B1) pair.
-    assert!(matches!(one_line.cube_count(), CubeCount::Static(1, 1, 6)));
+    // Both axes ride Z, one cube per (B0, B1) pair, behind the `4 x 2` grid on X and Y.
+    assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
 
-/// The same axes with a count stated cannot be a box: a share begins inside one region and ends
-/// inside another, so they are read as one index instead.
+/// One axis is a box whatever the count, so `across` on it sizes the axis's own tiles over the
+/// scope, which is what a cut has always meant: no work is stated.
 #[test]
-fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
-    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.distribute(
-            cubes(CubeAxis::X).instances(5),
-            &[(M, 16), (N, 32), (K, 16)],
-        );
-    });
-    assert!(nest.at(0).work().is_some());
-    // The shares ride the cubes, and no axis of them does: five cubes, not `4 * 2 * 1`.
-    assert!(matches!(nest.cube_count(), CubeCount::Static(5, 1, 1)));
-}
-
-/// One axis is a box whatever the count, so it is dealt a dial: `instances` there sizes the
-/// axis's own tiles across the scope, which is what a cut has always meant.
-#[test]
-fn distributing_one_axis_with_a_count_is_a_dial() {
-    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
-            .walk(&[(N, 32), (K, 16)]);
-    });
+fn one_axis_across_a_count_is_a_dial() {
+    let nest = Nest::new(
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes(&[Deal::new(M, 16).across(4)]),
+            Level::walk(&[(N, 32)]),
+        ],
+    );
     assert!(nest.at(0).work().is_none());
     assert!(matches!(nest.cube_count(), CubeCount::Static(4, 1, 1)));
 }
 
-/// Nothing named is nothing said: a matmul with no batch axis passes an empty list and the level
-/// reads as if the line were not there.
+/// Nothing named is nothing said: a level that names no axis deals every cube the whole space.
 #[test]
-fn distributing_no_axis_states_nothing() {
-    let nest = Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.distribute(cubes(CubeAxis::Z), &[])
-            .walk(&[(M, 16), (N, 32), (K, 16)]);
-    });
+fn a_level_naming_no_axis_deals_everything_to_one_cube() {
+    let nest = Nest::new(
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes::<Deal>(&[]),
+            Level::walk(&[(M, 16), (N, 32), (K, 16)]),
+        ],
+    );
     assert!(nest.at(0).work().is_none());
     assert!(matches!(nest.cube_count(), CubeCount::Static(1, 1, 1)));
+    assert_eq!(nest.at(0).child(&nest.space), nest.space);
 }
 
 /// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
 /// shares are on different regions, so they never reach a reduction together.
 #[test]
 #[should_panic = "combine in registers"]
-fn distributing_work_across_lanes_is_refused() {
-    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.distribute(lanes(4), &[(M, 16), (N, 32), (K, 16)]);
-    });
+fn sharing_tiles_across_lanes_is_refused() {
+    let _ = Level::lanes(&[
+        Deal::new(M, 16).across(4),
+        Deal::new(N, 32).across(4),
+        Deal::new(K, 16).across(4),
+    ])
+    .shared_by(4);
 }
 
-/// A share is walked as a nest, one region at a time, so its steps have to be consecutive.
-/// Instances taking turns would put a different region under the accumulator at every step.
+/// A share is a run of one index, so its entries say nothing of their own: a count or a spread on
+/// one of them would size a box a share has no use for.
 #[test]
-#[should_panic = "instances taking turns would leave no region long enough"]
-fn distributing_work_in_turns_is_refused() {
-    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.distribute(
-            cubes(CubeAxis::X).instances(5).interleaved(),
-            &[(M, 16), (N, 32), (K, 16)],
-        );
-    });
+#[should_panic = "states a count or a spread of its own"]
+fn sharing_tiles_with_a_knob_on_an_entry_is_refused() {
+    let _ = Level::cubes(&[
+        Deal::new(M, 16).interleaved(),
+        Deal::new(N, 32),
+        Deal::new(K, 16),
+    ])
+    .shared_by(5);
 }
 
 /// A level states each of its axes once, whichever way it states them.
 #[test]
 #[should_panic = "a level states each of its axes once"]
-fn an_axis_both_cut_and_distributed_is_refused() {
-    Nest::new(Space::new(&[(M, 64), (N, 64), (K, 16)]), vec![]).level(|l| {
-        l.walk(&[(K, 16)]).distribute(
-            cubes(CubeAxis::X).instances(5),
-            &[(M, 16), (N, 32), (K, 16)],
-        );
-    });
+fn an_axis_named_twice_is_refused() {
+    let _ = Level::cubes(&[(M, 16), (M, 32)]);
+}
+
+/// Lanes carve one plane between them, so every entry says how many it takes.
+#[test]
+#[should_panic = "states no lane count"]
+fn lanes_without_a_count_are_refused() {
+    let _ = Level::lanes(&[Deal::new(M, 16)]);
 }
 
 // ---- A level that cuts nothing --------------------------------------------
@@ -331,17 +312,18 @@ fn an_axis_both_cut_and_distributed_is_refused() {
 /// kernel, so keeping it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
-    let plain = Nest::new(Space::new(&[(M, 64), (N, 64)]), vec![]).level(|l| {
-        l.walk(&[(M, 16), (N, 32)]);
-    });
-    let nest = Nest::new(Space::new(&[(M, 64), (N, 64)]), vec![])
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        // The same edges again: nothing left to cut, still a level.
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32)]);
-        });
+    let plain = Nest::new(
+        Space::new(&[(M, 64), (N, 64)]),
+        vec![Level::walk(&[(M, 16), (N, 32)])],
+    );
+    let nest = Nest::new(
+        Space::new(&[(M, 64), (N, 64)]),
+        vec![
+            Level::walk(&[(M, 16), (N, 32)]),
+            // The same edges again: nothing left to cut, still a level.
+            Level::walk(&[(M, 16), (N, 32)]),
+        ],
+    );
 
     assert_ne!(nest, plain);
     assert_eq!(nest.levels.len(), 2);

@@ -438,7 +438,5 @@ fn fragment_level(window: &Space, m_tiles: usize, n_tiles: usize) -> Level {
             (axis, extent / tiles)
         })
         .collect();
-    Level::new(&axes, |l| {
-        l.walk(&cuts);
-    })
+    Level::walk(&cuts)
 }

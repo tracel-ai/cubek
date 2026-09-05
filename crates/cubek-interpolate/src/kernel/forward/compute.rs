@@ -73,39 +73,41 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
 
     let output = output.tile(comptime!(space.clone()));
 
-    // This cube's box of the output, walked over the taps and its channel blocks. Whether the
-    // input is staged into shared memory for each block is the launch's call on the window's
-    // size, stated as `stage`; the walk is the same either way.
-    let cubes = space.level(comptime!(plan.cube_level()));
-    match comptime!(stage) {
-        InputStage::Smem => {
-            let mut ring =
-                Ring::smem_single_at(&cubes, &input, StageStorage::Strided, padded, 1usize);
-            pipelined(cubes, &mut ring, |slot, block| {
-                let output_block = output.at(block);
-                let weights_block = weights.at(block);
-                slot.consume(|input_block| {
+    // This cube's box of the output, walked one channel block at a time. Whether the input is
+    // staged into shared memory for each block is the launch's call on the window's size, stated
+    // as `stage`; the walk is the same either way.
+    for cube in space.cubes(comptime!(plan.cubes())) {
+        let blocks = cube.walk(comptime!(plan.channel_blocks()));
+        match comptime!(stage) {
+            InputStage::Smem => {
+                let mut ring =
+                    Ring::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
+                pipelined(blocks, &mut ring, |slot, block| {
+                    let output_block = output.at(block);
+                    let weights_block = weights.at(block);
+                    slot.consume(|input_block| {
+                        interpolate_block(
+                            block,
+                            &output_block,
+                            &weights_block,
+                            input_block,
+                            plan,
+                            config,
+                        );
+                    });
+                });
+            }
+            InputStage::InPlace => {
+                for block in blocks {
                     interpolate_block(
-                        block,
-                        &output_block,
-                        &weights_block,
-                        input_block,
+                        &block,
+                        &output.at(&block),
+                        &weights.at(&block),
+                        &input.at(&block),
                         plan,
                         config,
                     );
-                });
-            });
-        }
-        InputStage::InPlace => {
-            for block in cubes {
-                interpolate_block(
-                    &block,
-                    &output.at(&block),
-                    &weights.at(&block),
-                    &input.at(&block),
-                    plan,
-                    config,
-                );
+                }
             }
         }
     }
@@ -122,11 +124,11 @@ fn interpolate_block<E: Float>(
     #[comptime] plan: InterpolateSpace,
     #[comptime] config: RegisterBlock,
 ) {
-    for region in block.level(comptime!(plan.plane_level())) {
-        let output_plane = output.at(&region);
-        let weights_plane = weights.at(&region);
-        let input_plane = input.at(&region);
-        for cell in region.level(comptime!(plan.lane_level())) {
+    for plane in block.planes(comptime!(plan.planes())) {
+        let output_plane = output.at(&plane);
+        let weights_plane = weights.at(&plane);
+        let input_plane = input.at(&plane);
+        for cell in plane.lanes(comptime!(plan.lanes())) {
             let mut output_cell = output_plane.at(&cell);
             output_cell.mm_with(
                 &weights_plane.at(&cell),

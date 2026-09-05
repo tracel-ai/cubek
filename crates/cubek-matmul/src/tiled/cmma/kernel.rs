@@ -10,82 +10,53 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, CubeAxis, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring,
-    Space, StageStorage, TileArg, cubes, pipelined, planes,
+    Axis, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring, Space,
+    StageStorage, TileArg, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 
-/// The axes of the routine's space: `batch` (the surviving, extent > 1, output batch axes) then
-/// `M`, `N`, `K`, the canonical order every level is stated in.
-pub fn cmma_axes(batch: &[Axis]) -> Vec<Axis> {
-    batch.iter().copied().chain([M, N, K]).collect()
-}
-
-/// The routine's four levels, each a method on the blueprint, outermost first: the cube grid
-/// walking `K` in stages, one partition per plane, the instruction's `K` steps through the
-/// partition, and the fragment grid each step contracts. The kernel's loops state them one by
-/// one and the launch lists them here, so the two cannot drift on a value.
+/// The routine's five levels, each a method on the blueprint, outermost first: the cube grid,
+/// the stages of `K` a cube walks, one partition per plane, the instruction's `K` steps through
+/// the partition, and the fragment grid each step contracts. The kernel's loops state them one
+/// by one and the launch lists them here, so the two cannot drift on a value.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![
         bp.cubes(batch),
-        bp.stages(batch),
-        bp.planes(batch),
-        bp.steps(batch),
-        bp.cells(batch),
+        bp.k_stages(),
+        bp.planes(),
+        bp.k_steps(),
+        bp.fragments(),
     ]
 }
 
 impl CmmaBlueprint {
-    /// One tile of every batch axis, which is what each level states of them.
-    fn batch_tiles(batch: &[Axis]) -> Vec<(Axis, usize)> {
-        batch.iter().map(|&a| (a, 1)).collect()
-    }
-
-    /// The cube grid: a box of the output per cube, `K` whole.
+    /// The cube grid: a box of the output per cube, one of every batch axis.
     pub fn cubes(&self, batch: &[Axis]) -> Level {
         let (stage_m, stage_n) = self.stage();
-        Level::new(&cmma_axes(batch), |l| {
-            l.distribute(cubes(CubeAxis::Z), &Self::batch_tiles(batch))
-                .distribute(cubes(CubeAxis::X), &[(M, stage_m)])
-                .distribute(cubes(CubeAxis::Y), &[(N, stage_n)])
-                .whole(&[K]);
-        })
+        Level::cubes(&[(M, stage_m), (N, stage_n)]).batches(batch)
     }
 
-    /// The cube's box walked along `K` one stage at a time.
-    pub fn stages(&self, batch: &[Axis]) -> Level {
-        let stage_k = self.stage_k;
-        Level::new(&cmma_axes(batch), |l| {
-            l.whole(batch).whole(&[M, N]).walk(&[(K, stage_k)]);
-        })
+    /// The cube's box walked through `K` one stage at a time.
+    pub fn k_stages(&self) -> Level {
+        Level::walk(&[(K, self.stage_k)])
     }
 
-    /// One partition per plane, the stage's `K` whole.
-    pub fn planes(&self, batch: &[Axis]) -> Level {
-        let (i, c) = (self.instruction, self.partition);
-        Level::new(&cmma_axes(batch), |l| {
-            l.distribute(planes(), &[(M, c.m * i.m)])
-                .distribute(planes(), &[(N, c.n * i.n)])
-                .whole(batch)
-                .whole(&[K]);
-        })
+    /// The stage split one partition per plane.
+    pub fn planes(&self) -> Level {
+        let (c, i) = (self.partition, self.instruction);
+        Level::planes(&[(M, c.m * i.m), (N, c.n * i.n)])
     }
 
-    /// The instruction's `K` steps through the partition.
-    pub fn steps(&self, batch: &[Axis]) -> Level {
+    /// The partition stepped through the stage's `K` in the instruction's depth.
+    pub fn k_steps(&self) -> Level {
+        Level::walk(&[(K, self.instruction.k)])
+    }
+
+    /// The partition's grid of fragments, one instruction each.
+    pub fn fragments(&self) -> Level {
         let i = self.instruction;
-        Level::new(&cmma_axes(batch), |l| {
-            l.whole(batch).whole(&[M, N]).walk(&[(K, i.k)]);
-        })
-    }
-
-    /// The fragment grid each step contracts.
-    pub fn cells(&self, batch: &[Axis]) -> Level {
-        let i = self.instruction;
-        Level::new(&cmma_axes(batch), |l| {
-            l.whole(batch).whole(&[K]).walk(&[(M, i.m), (N, i.n)]);
-        })
+        Level::walk(&[(M, i.m), (N, i.n)])
     }
 }
 
@@ -151,7 +122,7 @@ pub fn cmma_kernel<
         acc.zero();
 
         // One stage of K per region, both inputs staged for it.
-        let stages = cube.walk(comptime!(bp.stages(&batch)));
+        let stages = cube.walk(comptime!(bp.k_stages()));
         let mut ring = Ring::smem(
             &stages,
             &a,
@@ -164,18 +135,18 @@ pub fn cmma_kernel<
         pipelined(stages, &mut ring, |slot, stage| {
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
-                for plane in stage.planes(comptime!(bp.planes(&batch))) {
+                for plane in stage.planes(comptime!(bp.planes())) {
                     // The plane's window of each stage, taken once: the slot's origin is a
                     // runtime value, so a window per step would pay its load and add per step.
                     let acc_plane = acc_stage.at(&plane);
                     let a_p = a_s.at(&plane);
                     let b_p = b_s.at(&plane);
                     // The operands are loaded into fragments one K step at a time.
-                    for step in plane.walk(comptime!(bp.steps(&batch))).unrolled() {
+                    for step in plane.walk(comptime!(bp.k_steps())).unrolled() {
                         let acc_step = acc_plane.at(&step);
                         let a_f = PlanePartition::<EL>::cmma_fragments(&a_p.at(&step), &acc_step);
                         let b_f = PlanePartition::<ER>::cmma_fragments(&b_p.at(&step), &acc_step);
-                        for cell in step.walk(comptime!(bp.cells(&batch))).unrolled() {
+                        for cell in step.walk(comptime!(bp.fragments())).unrolled() {
                             let mut acc_cell = acc_step.at(&cell);
                             acc_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
                         }
@@ -184,8 +155,8 @@ pub fn cmma_kernel<
             });
         });
         // Each fragment to its window of the output, cast down to its type.
-        for plane in cube.planes(comptime!(bp.planes(&batch))) {
-            for cell in plane.walk(comptime!(bp.cells(&batch))).unrolled() {
+        for plane in cube.planes(comptime!(bp.planes())) {
+            for cell in plane.walk(comptime!(bp.fragments())).unrolled() {
                 let mut c_cell = c.at(&cell);
                 c_cell.copy_cast_from(&acc.at(&cell));
             }

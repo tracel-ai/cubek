@@ -90,9 +90,10 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::new(Space::new(&[(ROW, ROWS), (COL, COLS)]), vec![]).level(|level| {
-                level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
-            }),
+            nest: Nest::new(
+                Space::new(&[(ROW, ROWS), (COL, COLS)]),
+                vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+            ),
         }
     }
 
@@ -417,19 +418,13 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(Space::new(&[(MM, m), (NN, n), (KK, k)]), vec![])
-        // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
-        // region of this level is one output tile and the index reaches through the level below.
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(runs),
-                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-            );
-        })
-        // One tile's contraction, which is what a run counts in.
-        .level(|l| {
-            l.walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]);
-        });
+    let nest = Nest::new(
+        Space::new(&[(MM, m), (NN, n), (KK, k)]),
+        vec![
+            Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+            Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
+        ],
+    );
 
     // One region of the distribution costs a share every `K` block of its contraction.
     let stride = k / BLOCK_K;
@@ -630,17 +625,13 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let nest = Nest::new(Space::new(&[(MM, m), (NN, n), (KK, k)]), vec![])
-            .level(|l| {
-                l.distribute(
-                    cubes(CubeAxis::X).instances(runs),
-                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-                );
-            })
-            .level(|l| {
-                l.distribute(lanes(plane_size), &[(KK, 1)])
-                    .walk(&[(MM, TILE_M), (NN, TILE_N)]);
-            });
+        let nest = Nest::new(
+            Space::new(&[(MM, m), (NN, n), (KK, k)]),
+            vec![
+                Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+                Level::lanes(&[Deal::new(KK, 1).across(plane_size)]),
+            ],
+        );
 
         // The lanes cover `K` between them, one step each together: a region costs the share
         // `k / plane_size` steps, not `k`.

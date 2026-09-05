@@ -561,10 +561,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::new(&[M, N, K], |l| {
-            l.distribute(cubes(CubeAxis::Y), &[(K, 4)])
-                .walk(&[(M, 4), (N, 4)]);
-        });
+        let level = Level::cubes(&[(K, 4)]);
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -582,9 +579,7 @@ mod contraction_tests {
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::new(&[M, N, K], |l| {
-            l.distribute(planes(), &[(K, 4)]).walk(&[(M, 4), (N, 4)]);
-        });
+        let level = Level::planes(&[(K, 4)]);
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -597,9 +592,7 @@ mod contraction_tests {
     #[test]
     fn distributed_work_is_partial_to_the_output() {
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-        let level = Level::new(&[M, N, K], |l| {
-            l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
-        });
+        let level = Level::cubes(&[(M, 4), (N, 4), (K, 8)]).shared_by(3);
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -615,12 +608,8 @@ mod contraction_tests {
         use cubecl::CubeCount;
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
         let levels = [
-            Level::new(&[M, N, K], |l| {
-                l.distribute(cubes(CubeAxis::X).instances(3), &[(M, 4), (N, 4), (K, 8)]);
-            }),
-            Level::new(&[M, N, K], |l| {
-                l.walk(&[(M, 4), (N, 4), (K, 4)]);
-            }),
+            Level::cubes(&[(M, 4), (N, 4), (K, 8)]).shared_by(3),
+            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
         ];
         assert!(matches!(
             Nest::new(space, levels.to_vec()).cube_count(),
@@ -635,11 +624,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::new(&[M, N, K], |l| {
-            l.distribute(cubes(CubeAxis::X), &[(N, 1)])
-                .distribute(cubes(CubeAxis::Z), &[(K, 8)])
-                .walk(&[(M, 4)]);
-        });
+        let level = Level::cubes(&[(N, 1), (K, 8)]);
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Whole
@@ -651,10 +636,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 4)]);
-        let level = Level::new(&[M, N, K], |l| {
-            l.distribute(cubes(CubeAxis::X), &[(N, 4)])
-                .walk(&[(M, 4), (K, 4)]);
-        });
+        let level = Level::cubes(&[(N, 4)]);
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Whole

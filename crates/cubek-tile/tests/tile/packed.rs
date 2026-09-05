@@ -180,11 +180,8 @@ fn nvfp4_shaped_decode() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+    );
 
     nvfp4_shaped_matmul::launch(
         &client,
@@ -324,7 +321,8 @@ fn packed_gemv<E: Numeric, V: Size>(
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
     space: Space,
-    #[comptime] level: Level,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
@@ -332,30 +330,36 @@ fn packed_gemv<E: Numeric, V: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    // The accumulator lives in registers across the whole walk and drains once.
-    let mut acc = c.block_accumulator::<E, E>(
-        &x,
-        comptime!(Fragments::new(
-            &c.space,
-            &x.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
-    acc.zero();
-    for region in space.level(comptime!(level.clone())) {
-        let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(
-            &x.at(&region),
-            &w.at(&region),
-            &at_all(&scales, &region),
-            Semiring::SUM_PROD,
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let x = x.at(&cube);
+        let w = w.at(&cube);
+        let scales = at_all(&scales, &cube);
+        let c = c.at(&cube);
+        // The accumulator lives in registers across the whole walk and drains once.
+        let mut acc = c.block_accumulator::<E, E>(
+            &x,
+            comptime!(Fragments::new(
+                &c.space,
+                &x.space,
+                std::slice::from_ref(&steps)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
         );
-    }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
+        acc.zero();
+        for step in cube.walk(comptime!(steps.clone())) {
+            let mut acc_s = acc.at(&step);
+            acc_s.mma_scaled(
+                &x.at(&step),
+                &w.at(&step),
+                &at_all(&scales, &step),
+                Semiring::SUM_PROD,
+            );
+        }
+        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+            let mut c_w = c.at(&r0);
+            c_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -714,11 +718,8 @@ fn a_packed_operand_contracts_against_its_scales() {
     // A region sits inside one block, and the packed line is one word of it.
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+    );
 
     packed_matmul::launch(
         &client,
@@ -832,11 +833,8 @@ fn eight_bit_fields_contract_against_their_scales() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+    );
 
     packed_matmul::launch(
         &client,
@@ -961,11 +959,14 @@ fn a_packed_rhs_contracts_against_its_scales() {
             (KB, blocks_k),
             (KI, block_k),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+    );
 
     packed_matmul_rhs::launch(
         &client,
@@ -1100,11 +1101,14 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
             (KB, blocks_k),
             (KI, block_k),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+    );
 
     packed_matmul_rhs::launch(
         &client,
@@ -1244,11 +1248,14 @@ fn several_lines_may_share_one_scale() {
             (KB, blocks_k),
             (KI, block_k),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    });
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+    );
 
     packed_matmul_rhs::launch(
         &client,
@@ -1360,11 +1367,8 @@ fn an_i8_operand_contracts_against_its_scales() {
 
     let nest = Nest::new(
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-    });
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+    );
 
     native_matmul::launch(
         &client,
@@ -1490,16 +1494,8 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
             (KB, blocks_k),
             (KI, block_k),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
-            (M, 1),
-            (NI, bn),
-            (KB, 1),
-            (KI, block_k),
-        ]);
-    });
+        vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+    );
 
     packed_gemv::launch(
         &client,
@@ -1549,6 +1545,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         ),
         nest.space_arg(),
         nest.at(0),
+        nest.at(1),
         dtype,
     );
 
@@ -1630,16 +1627,8 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
             (KB, blocks_k),
             (KI, block_k),
         ]),
-        vec![],
-    )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
-            (M, 1),
-            (NI, bn),
-            (KB, 1),
-            (KI, block_k),
-        ]);
-    });
+        vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+    );
 
     packed_gemv::launch(
         &client,
@@ -1689,6 +1678,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         ),
         nest.space_arg(),
         nest.at(0),
+        nest.at(1),
         dtype,
     );
 
@@ -1713,30 +1703,36 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     c: &TileArg<'_, E, V>,
     space: Space,
-    #[comptime] level: Level,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E>(
-        &x,
-        comptime!(Fragments::new(
-            &c.space,
-            &x.space,
-            std::slice::from_ref(&level)
-        )),
-        REGISTER_BLOCK,
-        Monoid::Sum,
-    );
-    acc.zero();
-    for region in space.level(comptime!(level.clone())) {
-        let mut acc_r = acc.at(&region);
-        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
-    }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
-        let mut c_w = c.at(&r0);
-        c_w.copy_cast_from(&acc.at(&r0));
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let x = x.at(&cube);
+        let w = w.at(&cube);
+        let c = c.at(&cube);
+        let mut acc = c.block_accumulator::<E, E>(
+            &x,
+            comptime!(Fragments::new(
+                &c.space,
+                &x.space,
+                std::slice::from_ref(&steps)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
+        acc.zero();
+        for step in cube.walk(comptime!(steps.clone())) {
+            let mut acc_s = acc.at(&step);
+            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+        }
+        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+            let mut c_w = c.at(&r0);
+            c_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -1798,12 +1794,8 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
 
     let nest = Nest::new(
         Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
-        vec![],
-    )
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(N, bn)])
-            .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
-    });
+        vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],
+    );
 
     packed_gemv_unscaled::launch(
         &client,
@@ -1837,6 +1829,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         ),
         nest.space_arg(),
         nest.at(0),
+        nest.at(1),
         dtype,
     );
 

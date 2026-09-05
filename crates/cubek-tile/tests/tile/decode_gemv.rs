@@ -225,25 +225,16 @@ fn serving_geometry(promoted: bool) {
     let dtype = f32::elem_type_native();
     let nest = Nest::new(
         Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
-        vec![],
-    )
-    // A strip of output rows per cube, walking all of `K`.
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(M, rows_per_cube)])
-            .walk(&[(N, n), (KB, blocks), (KI, block)]);
-    })
-    // One plane per group of rows.
-    .level(|l| {
-        l.distribute(planes(), &[(M, rows_per_plane)])
-            .walk(&[(N, n), (KB, blocks), (KI, block)]);
-    })
-    // The fold: `rows_per_lane` rows per lane group, the group's lanes interleaving one
-    // stored word each along `KI`, so a step reads one contiguous span of the block.
-    .level(|l| {
-        l.distribute(lanes(groups), &[(M, rows_per_lane)])
-            .distribute(lanes(group_lanes).interleaved(), &[(KI, factor)])
-            .walk(&[(N, n), (KB, 1)]);
-    });
+        vec![
+            Level::cubes(&[(M, rows_per_cube)]),
+            Level::planes(&[(M, rows_per_plane)]),
+            Level::lanes(&[
+                Deal::new(M, rows_per_lane).across(groups),
+                Deal::new(KI, factor).across(group_lanes).interleaved(),
+            ]),
+            Level::walk(&[(KB, 1)]),
+        ],
+    );
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
     let budget = rows_per_lane * factor;
 

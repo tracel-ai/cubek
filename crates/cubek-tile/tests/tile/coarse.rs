@@ -70,9 +70,10 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Nest {
-    Nest::new(Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]), vec![]).level(|l| {
-        l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
-    })
+    Nest::new(
+        Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
+        vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+    )
 }
 
 /// Distinct per `(m, block)` and not integers, so an off-by-one block index cannot pass.

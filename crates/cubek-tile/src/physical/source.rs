@@ -303,9 +303,9 @@ impl Quantization {
     /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
     /// operand's cuts and served width. Where the [`DequantAt`] can be honoured is the fragment
     /// load's to say, at the kernel's own call.
-    pub(crate) fn validate(&self, space: &Space, levels: Option<&[Level]>, vector_size: usize) {
+    pub(crate) fn validate(&self, space: &Space, levels: &[Level], vector_size: usize) {
         cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
-        validate_scheme(space, levels.unwrap_or(&[]), vector_size, self.scheme);
+        validate_scheme(space, levels, vector_size, self.scheme);
         cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
     }
 }
@@ -502,11 +502,13 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
                 "StridedTileSource::quantized: a gathered operand cannot be quantized; its scale \
                  grid is shaped over its logical axes, which its buffer's dims no longer match"
             );
-            quant.validate(
-                &space.project(spec.axes()),
-                concrete.map(|c| c.levels.as_slice()),
-                v,
-            );
+            // Against the concrete extents where the launch has them: a level leaves an axis it
+            // does not name whole, and a whole dynamic axis has no window edge to check.
+            let (checked, levels) = match concrete {
+                Some(concrete) => (&concrete.space, concrete.levels.as_slice()),
+                None => (space, &[][..]),
+            };
+            quant.validate(&checked.project(spec.axes()), levels, v);
         }
         Realized {
             tensor: binding.map(|mut binding| {

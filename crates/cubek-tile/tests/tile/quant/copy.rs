@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, CubeAxis, DequantAt, KernelForm, Launcher, Nest, QuantTileArg, QuantTileArgLaunch, Space,
-    TileArg, TileArgLaunch, TileSpec, cubes, planes,
+    Axis, DequantAt, KernelForm, Launcher, Level, Nest, QuantTileArg, QuantTileArgLaunch, Space,
+    TileArg, TileArgLaunch, TileSpec,
 };
 
 const M: Axis = Axis(0);
@@ -54,14 +54,10 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
     let client = cubecl::test_device().client();
     let launch = Launcher::new(
         &client,
-        &Nest::new(Space::new(&[(M, m), (N, n)]), vec![])
-            .level(|l| {
-                l.distribute(cubes(CubeAxis::Y), &[(M, 1)])
-                    .distribute(cubes(CubeAxis::X), &[(N, 128)]);
-            })
-            .level(|l| {
-                l.distribute(planes(), &[(N, 32)]).walk(&[(M, 1)]);
-            }),
+        &Nest::new(
+            Space::new(&[(M, m), (N, n)]),
+            vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
+        ),
         KernelForm::Static,
     );
     let space = launch.space().clone();
@@ -734,9 +730,10 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A nest that tiles into `bm×bn` blocks, one cube walking them.
-    let nest = Nest::new(Space::new(&[(M, m), (N, n)]), vec![]).level(|l| {
-        l.walk(&[(M, bm), (N, bn)]);
-    });
+    let nest = Nest::new(
+        Space::new(&[(M, m), (N, n)]),
+        vec![Level::walk(&[(M, bm), (N, bn)])],
+    );
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.
     let check = !m.is_multiple_of(bm) || !n.is_multiple_of(bn);
     let output = TileInput::builder(&client, nest.space.clone())

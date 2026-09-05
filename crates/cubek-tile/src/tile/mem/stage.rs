@@ -700,16 +700,11 @@ mod tests {
     /// `16 -> 8 -> 4` on both axes, so the space, its first child and its leaf are three
     /// distinct block shapes to nest.
     fn space() -> (Space, Vec<Level>) {
-        let axes = [M, N];
         (
             Space::new(&[(M, 16), (N, 16)]),
             vec![
-                Level::new(&axes, |l| {
-                    l.walk(&[(M, 8), (N, 8)]);
-                }),
-                Level::new(&axes, |l| {
-                    l.walk(&[(M, 4), (N, 4)]);
-                }),
+                Level::walk(&[(M, 8), (N, 8)]),
+                Level::walk(&[(M, 4), (N, 4)]),
             ],
         )
     }

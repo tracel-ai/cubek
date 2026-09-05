@@ -31,30 +31,36 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
     space: Space,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
+    #[comptime] lanes: Level,
     #[define(I)] _b_dtype: ElemType,
     #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let cubes = space.level(comptime!(outer.clone()));
-    let mut ring = Ring::smem(&cubes, &a, &b, StageStorage::Strided, 1usize);
-    pipelined(cubes, &mut ring, |slot, region| {
-        let c_cube = c.at(region);
-        slot.consume(|a_s, b_s| {
-            for region in region.level(comptime!(inner.clone())) {
-                let mut c_lane = c_cube.at(&region);
-                c_lane.mma_with(
-                    &a_s.at(&region),
-                    &b_s.at(&region),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
-            }
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let a = a.at(&cube);
+        let b = b.at(&cube);
+        let c = c.at(&cube);
+        let steps = cube.walk(comptime!(steps.clone()));
+        let mut ring = Ring::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
+        pipelined(steps, &mut ring, |slot, step| {
+            let c_step = c.at(step);
+            slot.consume(|a_s, b_s| {
+                for lane in step.lanes(comptime!(lanes.clone())) {
+                    let mut c_lane = c_step.at(&lane);
+                    c_lane.mma_with(
+                        &a_s.at(&lane),
+                        &b_s.at(&lane),
+                        REGISTER_BLOCK,
+                        Semiring::SUM_PROD,
+                    );
+                }
+            });
         });
-    });
+    }
 }
 
 /// The packed-weight scheme this bench quantizes `B` under: `Q8S`, block size `1 × bn`
@@ -131,22 +137,16 @@ impl TileQuantStageBench {
         vec![(M, self.m), (N, self.n), (K, self.k)]
     }
 
-    /// Two levels: a strip of `tn` columns per cube, `K` in `tk` steps; then `un` columns per
+    /// Three levels: a strip of `tn` columns per cube, `K` in `tk` steps, then `un` columns per
     /// lane.
     fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
         let tn = plane_size * un;
-        let axes = [M, N, K];
         vec![
-            Level::new(&axes, |l| {
-                l.distribute(cubes(CubeAxis::X), &[(N, tn)])
-                    .walk(&[(M, self.m), (K, self.tk)]);
-            }),
-            Level::new(&axes, |l| {
-                l.distribute(lanes(plane_size), &[(N, un)])
-                    .walk(&[(M, self.m), (K, self.tk)]);
-            }),
+            Level::cubes(&[(N, tn)]),
+            Level::walk(&[(K, self.tk)]),
+            Level::lanes(&[Deal::new(N, un).across(plane_size)]),
         ]
     }
 
@@ -209,6 +209,7 @@ impl Benchmark for TileQuantStageBench {
             launcher.space_arg(),
             launcher.concrete().at(0),
             launcher.concrete().at(1),
+            launcher.concrete().at(2),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

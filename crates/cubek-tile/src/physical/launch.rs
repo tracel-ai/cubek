@@ -7,8 +7,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Level, LevelCuts, Set, Space, SpaceLaunch,
-    StridedOperand, StridedTileSource, Unset,
+    Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, SpaceLaunch, StridedOperand,
+    StridedTileSource, Unset,
 };
 
 /// A space and the levels a kernel walks it with, outermost first: what a launch sizes its grid
@@ -25,13 +25,6 @@ impl Nest {
     /// `space` walked with `levels`, outermost first.
     pub fn new(space: Space, levels: Vec<Level>) -> Self {
         Nest { space, levels }
-    }
-
-    /// Add a level below the ones stated so far ([`Level::new`] over the space's axes).
-    pub fn level(mut self, f: impl FnOnce(&mut LevelCuts)) -> Self {
-        let axes: Vec<Axis> = self.space.axes().collect();
-        self.levels.push(Level::new(&axes, f));
-        self
     }
 
     /// The kernel's `space` argument for a launch over this nest's own extents.

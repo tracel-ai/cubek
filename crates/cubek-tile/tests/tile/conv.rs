@@ -407,11 +407,13 @@ impl Conv1d {
     ) {
         let nest = Nest::new(
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![],
-        )
-        .level(|l| {
-            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-        });
+            vec![Level::walk(&[
+                (OH, tile_oh),
+                (CO, tile_co),
+                (RH, self.rh),
+                (CI, self.ci),
+            ])],
+        );
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
         // `dilation`.
@@ -551,11 +553,8 @@ fn conv1d_padded_underflow_masks_to_zero() {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -629,11 +628,8 @@ fn conv1d_padded_underflow_clamps_to_edge() {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -703,11 +699,8 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -874,11 +867,13 @@ impl Conv1d {
 
         let nest = Nest::new(
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![],
-        )
-        .level(|l| {
-            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-        });
+            vec![Level::walk(&[
+                (OH, tile_oh),
+                (CO, tile_co),
+                (RH, self.rh),
+                (CI, self.ci),
+            ])],
+        );
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
         // output position's last tap still lands on the final row.
@@ -1128,11 +1123,13 @@ impl Conv1d {
 
         let nest = Nest::new(
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![],
-        )
-        .level(|l| {
-            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-        });
+            vec![Level::walk(&[
+                (OH, tile_oh),
+                (CO, tile_co),
+                (RH, self.rh),
+                (CI, self.ci),
+            ])],
+        );
 
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
@@ -1401,11 +1398,13 @@ impl Conv1d {
 
         let nest = Nest::new(
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![],
-        )
-        .level(|l| {
-            l.walk(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)]);
-        });
+            vec![Level::walk(&[
+                (OH, tile_oh),
+                (CO, tile_co),
+                (RH, self.rh),
+                (CI, self.ci),
+            ])],
+        );
 
         let gathered = if dynamic_scales {
             PhysicalAxisMap::scaled_with_offset(
@@ -1647,18 +1646,15 @@ impl Conv2d {
                 (RW, self.rw),
                 (CI, self.ci),
             ]),
-            vec![],
-        )
-        .level(|l| {
-            l.walk(&[
+            vec![Level::walk(&[
                 (OH, tile_oh),
                 (OW, tile_ow),
                 (CO, tile_co),
                 (RH, self.rh),
                 (RW, self.rw),
                 (CI, self.ci),
-            ]);
-        });
+            ])],
+        );
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
         let in_spec = TileSpec::new(Projection::new(
@@ -2161,11 +2157,14 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]);
-    });
+        vec![Level::walk(&[
+            (OH, oh),
+            (OW, ow),
+            (RH, rh),
+            (RW, rw),
+            (CI, ci),
+        ])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, OW, RH, RW, CI],
@@ -2409,11 +2408,8 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2530,9 +2526,12 @@ impl Resize1d {
             vec![],
         );
         for &edge in oh_edges {
-            tiling = tiling.level(|l| {
-                l.walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
-            });
+            tiling.levels.push(Level::walk(&[
+                (OH, edge),
+                (CO, self.co),
+                (RH, self.rh),
+                (CI, self.ci),
+            ]));
         }
         tiling
     }
@@ -2966,11 +2965,8 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -3042,11 +3038,8 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
 
     let nest = Nest::new(
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![],
-    )
-    .level(|l| {
-        l.walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)]);
-    });
+        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+    );
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],

@@ -69,11 +69,8 @@ fn a_packed_tensor_decodes_against_its_scales() {
     // that one of their values covers a block of columns.
     let nest = Nest::new(
         Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
-        vec![],
-    )
-    .level(|level| {
-        level.walk(&[(ROW, rows), (CB, blocks), (CI, inside)]);
-    });
+        vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
+    );
 
     // Shape and strides count values; the packing says how many share a stored word.
     let w_tensor = TensorHandle::new_contiguous(

@@ -64,8 +64,6 @@ pub struct DepthwiseSpace {
     plane_size: usize,
 }
 
-const AXES: [Axis; 6] = [B, OH, OW, C, RH, RW];
-
 impl DepthwiseSpace {
     /// The space's axes and their extents, every one static.
     pub fn extents(&self) -> Vec<(Axis, usize)> {
@@ -79,14 +77,14 @@ impl DepthwiseSpace {
         ]
     }
 
-    /// Two levels, outermost first. The first separates the output across the launch grid: an
+    /// Three levels, outermost first. The first separates the output across the launch grid: an
     /// all-`sequential` level would put the whole convolution in one instance, which is a
-    /// correct kernel and a useless one. The second separates what one cube took across the
-    /// cube's own threads: rows go to planes, channels to lanes. The taps stay `sequential`
+    /// correct kernel and a useless one. The next two separate what one cube took across the
+    /// cube's own threads: rows go to planes, channels to lanes. The taps stay whole
     /// throughout: they are the contraction, and every tap of one output position accumulates
     /// into the same register.
     pub fn levels(&self) -> Vec<Level> {
-        vec![self.cube_level(), self.lane_level()]
+        vec![self.cubes(), self.planes(), self.lanes()]
     }
 
     /// The extents and the levels together: what the launch sizes its grid from.
@@ -100,43 +98,26 @@ impl DepthwiseSpace {
 
     /// This cube's box of the output with the taps whole. The channel axis takes X so that the
     /// fastest-moving cube index is the one memory is contiguous along.
-    pub fn cube_level(&self) -> Level {
+    pub fn cubes(&self) -> Level {
         let Self {
-            rh,
-            rw,
-            rows,
-            cols,
-            tile_c,
-            ..
+            rows, cols, tile_c, ..
         } = *self;
-        Level::new(&AXES, |l| {
-            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                .distribute(cubes(CubeAxis::Y), &[(OW, cols)])
-                .distribute(cubes(CubeAxis::Z), &[(OH, rows)])
-                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                .walk(&[(RH, rh), (RW, rw)]);
-        })
+        Level::cubes(&[(C, tile_c), (OW, cols), (OH, rows)]).batches(&[B])
     }
 
-    /// Rows across the cube's planes, channels across each plane's lanes. Columns stay
-    /// sequential: they are the register block, not a split. Round-robin, so a lane holding
-    /// several channel lines takes every `plane_size`-th rather than a contiguous run: a
-    /// contiguous run puts a stride between what neighbouring lanes read and breaks the
-    /// coalescing the whole NHWC layout is for.
-    pub fn lane_level(&self) -> Level {
-        let Self {
-            rh,
-            rw,
-            cols,
-            width,
-            plane_size,
-            ..
-        } = *self;
-        Level::new(&AXES, |l| {
-            l.distribute(lanes(plane_size).interleaved(), &[(C, width)])
-                .distribute(planes(), &[(OH, 1)])
-                .walk(&[(OW, cols), (B, 1), (RH, rh), (RW, rw)]);
-        })
+    /// One row per plane.
+    pub fn planes(&self) -> Level {
+        Level::planes(&[(OH, 1)])
+    }
+
+    /// Channels across the plane's lanes. Columns stay whole: they are the register block, not a
+    /// split. Round-robin, so a lane holding several channel lines takes every `plane_size`-th
+    /// rather than a contiguous run: a contiguous run puts a stride between what neighbouring
+    /// lanes read and breaks the coalescing the whole NHWC layout is for.
+    pub fn lanes(&self) -> Level {
+        Level::lanes(&[Deal::new(C, self.width)
+            .across(self.plane_size)
+            .interleaved()])
     }
 }
 
@@ -150,8 +131,9 @@ impl DepthwiseSpace {
 /// it there (one filter value per channel of the cell), which is what a batched contraction
 /// needs and what `V > 1` is.
 ///
-/// Two levels: this cube's box of the output with the taps whole, then this lane's channel lines
-/// of this plane's row, whose column block the leaf walks with the whole tap window at each cell.
+/// Three levels: this cube's box of the output with the taps whole, this plane's row of it, then
+/// this lane's channel lines, whose column block the leaf walks with the whole tap window at
+/// each cell.
 #[cube(launch)]
 fn depthwise_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, V>,
@@ -165,18 +147,20 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for region in space.level(comptime!(plan.cube_level())) {
-        let out_cube = out.at(&region);
-        let weight_cube = weight.at(&region);
-        let input_cube = input.at(&region);
-        for cell in region.level(comptime!(plan.lane_level())) {
-            let mut out_cell = out_cube.at(&cell);
-            out_cell.mm_with(
-                &weight_cube.at(&cell),
-                &input_cube.at(&cell),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+    for cube in space.cubes(comptime!(plan.cubes())) {
+        let out = out.at(&cube);
+        let weight = weight.at(&cube);
+        let input = input.at(&cube);
+        for plane in cube.planes(comptime!(plan.planes())) {
+            for lane in plane.lanes(comptime!(plan.lanes())) {
+                let mut out = out.at(&lane);
+                out.mm_with(
+                    &weight.at(&lane),
+                    &input.at(&lane),
+                    REGISTER_BLOCK,
+                    Semiring::SUM_PROD,
+                );
+            }
         }
     }
 }

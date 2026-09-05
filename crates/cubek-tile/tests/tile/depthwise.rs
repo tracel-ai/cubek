@@ -47,25 +47,28 @@ fn depthwise_kernel<E: Numeric>(
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     space: Space,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
+    #[comptime] cubes: Level,
+    #[comptime] planes: Level,
+    #[comptime] cells: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(outer.clone())) {
-        let out_cube = out.at(&region);
-        let input_cube = input.at(&region);
-        let weight_cube = weight.at(&region);
-        for region in region.level(comptime!(inner.clone())) {
-            let mut out_plane = out_cube.at(&region);
-            out_plane.mm_with(
-                &input_cube.at(&region),
-                &weight_cube.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let out = out.at(&cube);
+        let input = input.at(&cube);
+        let weight = weight.at(&cube);
+        for plane in cube.planes(comptime!(planes.clone())) {
+            for cell in plane.walk(comptime!(cells.clone())) {
+                let mut out = out.at(&cell);
+                out.mm_with(
+                    &input.at(&cell),
+                    &weight.at(&cell),
+                    REGISTER_BLOCK,
+                    Semiring::SUM_PROD,
+                );
+            }
         }
     }
 }
@@ -140,30 +143,12 @@ impl Depthwise {
                 (RH, self.rh),
                 (RW, self.rw),
             ]),
-            vec![],
-        )
-        // Two levels, not one. A single all-`sequential` level puts the whole
-        // convolution in one instance; the grid has to separate the output before
-        // anything else about the kernel matters.
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                .distribute(cubes(CubeAxis::Y), &[(OW, tile_ow)])
-                .distribute(cubes(CubeAxis::Z), &[(OH, tile_oh)])
-                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                .walk(&[(RH, self.rh), (RW, self.rw)]);
-        })
-        // Channels across the cube's planes; the leaf spreads each plane's tile over its
-        // own lanes, so consecutive lanes still read consecutive channels of one pixel,
-        // which is the whole reason to keep NHWC here.
-        .level(|l| {
-            l.distribute(planes(), &[(C, 1)]).walk(&[
-                (OW, 1),
-                (OH, 1),
-                (B, 1),
-                (RH, self.rh),
-                (RW, self.rw),
-            ]);
-        });
+            vec![
+                Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
+                Level::planes(&[(C, 1)]),
+                Level::walk(&[(OW, 1), (OH, 1)]),
+            ],
+        );
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case: it is only the weight and accumulator that change.
@@ -240,6 +225,7 @@ impl Depthwise {
             nest.space_arg(),
             nest.at(0),
             nest.at(1),
+            nest.at(2),
             f32_ty,
         );
 
