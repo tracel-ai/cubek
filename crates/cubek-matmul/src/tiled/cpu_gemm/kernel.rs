@@ -101,7 +101,7 @@ pub fn cpu_gemm_kernel<
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
 
     // The accumulator spans the cube's whole contraction: opened here, drained after it. One
     // block per plane, the instruction's shape.
@@ -130,5 +130,11 @@ pub fn cpu_gemm_kernel<
             }
         }
     }
-    acc.drain_cast_into(&mut c);
+    // Each plane's block to its window of the output, cast down to its type.
+    for cube in space.cubes(comptime!(bp.cubes(&batch))) {
+        for plane in cube.planes(comptime!(bp.planes(&batch))) {
+            let mut c_plane = c.at(&plane);
+            c_plane.copy_cast_from(&acc.at(&plane));
+        }
+    }
 }

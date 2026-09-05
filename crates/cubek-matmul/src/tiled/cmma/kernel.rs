@@ -145,7 +145,7 @@ pub fn cmma_kernel<
     for cube in space.cubes(comptime!(bp.cubes(&batch))) {
         let a = a.at(&cube);
         let b = b.at(&cube);
-        let mut c = c.at(&cube);
+        let c = c.at(&cube);
         // The accumulator spans the whole K walk: opened here, drained after it.
         let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
         acc.zero();
@@ -181,6 +181,12 @@ pub fn cmma_kernel<
                 }
             });
         });
-        acc.drain_cast_into(&mut c);
+        // Each fragment to its window of the output, cast down to its type.
+        for plane in cube.planes(comptime!(bp.planes(&batch))) {
+            for cell in plane.walk(comptime!(bp.cells(&batch))).unrolled() {
+                let mut c_cell = c.at(&cell);
+                c_cell.copy_cast_from(&acc.at(&cell));
+            }
+        }
     }
 }

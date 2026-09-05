@@ -90,6 +90,7 @@ impl<EA: Float> Tile<EA> {
                 let planes = comptime!(cols / slice_cols);
                 let plane = UNIT_POS as usize / PLANE_DIM as usize;
                 let out = self.at(&Region::trailing(
+                    comptime!(self.depth),
                     comptime!(self.space.clone()),
                     comptime!(tiled(&self.space, rows, slice_cols)),
                     0usize,
@@ -99,6 +100,7 @@ impl<EA: Float> Tile<EA> {
                 // The keys this slice scores: its own positions, every head-dim step. The
                 // positions are the window's *leading* axis, unlike the values' trailing one.
                 let k = k.at(&Region::trailing(
+                    comptime!(k.depth),
                     comptime!(k.space.clone()),
                     comptime!(tiled(&k.space, cols / planes, head_dim)),
                     plane,
@@ -121,6 +123,7 @@ impl<EA: Float> Tile<EA> {
                     for r in 0..rm {
                         let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
                         lhs.copy_from(&q.at(&Region::trailing(
+                            comptime!(q.depth),
                             comptime!(q.space.clone()),
                             comptime!(q_cut.clone()),
                             r,
@@ -136,6 +139,7 @@ impl<EA: Float> Tile<EA> {
                             // every load and the mma that consumes it.
                             let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
                             rhs.copy_from(&k.at(&Region::trailing(
+                                comptime!(k.depth),
                                 comptime!(k.space.clone()),
                                 comptime!(k_cut.clone()),
                                 c,
@@ -153,6 +157,7 @@ impl<EA: Float> Tile<EA> {
                 for i in 0..comptime!(rm * cn) {
                     let (r, c) = comptime!((i / cn, i % cn));
                     let mut cell = out.at(&Region::trailing(
+                        comptime!(out.depth),
                         comptime!(out.space.clone()),
                         comptime!(out_cut.clone()),
                         r,
@@ -182,6 +187,7 @@ impl<EA: Float> Tile<EA> {
                         for step in 0..steps {
                             let mut lhs = fragment::<EI>(MatrixIdent::A, comptime!(mma.clone()));
                             let window = Region::trailing(
+                                comptime!(q.depth),
                                 comptime!(q.space.clone()),
                                 comptime!(q_cut.clone()),
                                 row,
@@ -190,6 +196,7 @@ impl<EA: Float> Tile<EA> {
                             lhs.copy_from(&q.at(&window));
                             let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
                             let window = Region::trailing(
+                                comptime!(k.depth),
                                 comptime!(k.space.clone()),
                                 comptime!(k_cut.clone()),
                                 col,
@@ -199,6 +206,7 @@ impl<EA: Float> Tile<EA> {
                             acc.mma(&lhs, &rhs, comptime!(Semiring::SUM_PROD));
                         }
                         let window = Region::trailing(
+                            comptime!(self.depth),
                             comptime!(self.space.clone()),
                             comptime!(out_cut.clone()),
                             row,
@@ -250,6 +258,7 @@ impl<EA: Float> Tile<EA> {
                 let planes = comptime!(val_dim / slice_cols);
                 let plane = UNIT_POS as usize / PLANE_DIM as usize;
                 let out = self.at(&Region::trailing(
+                    comptime!(self.depth),
                     comptime!(self.space.clone()),
                     comptime!(tiled(&self.space, rows, slice_cols)),
                     0usize,
@@ -258,6 +267,7 @@ impl<EA: Float> Tile<EA> {
                 let out_cut = comptime!(tiled(&out.space, m, n));
                 // The values this slice contracts: its own columns of every k step.
                 let val = val.at(&Region::trailing(
+                    comptime!(val.depth),
                     comptime!(val.space.clone()),
                     comptime!(tiled(&val.space, cols, val_dim / planes)),
                     0usize,
@@ -273,6 +283,7 @@ impl<EA: Float> Tile<EA> {
                     let (r, c) = comptime!((i / cn, i % cn));
                     let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
                     acc.copy_from(&out.at(&Region::trailing(
+                        comptime!(out.depth),
                         comptime!(out.space.clone()),
                         comptime!(out_cut.clone()),
                         r,
@@ -287,6 +298,7 @@ impl<EA: Float> Tile<EA> {
                         for r in 0..rm {
                             let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
                             lhs.copy_from(&p.at(&Region::trailing(
+                                comptime!(p.depth),
                                 comptime!(p.space.clone()),
                                 comptime!(p_cut.clone()),
                                 r,
@@ -297,6 +309,7 @@ impl<EA: Float> Tile<EA> {
                                 let mut rhs =
                                     fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
                                 rhs.copy_from(&val.at(&Region::trailing(
+                                    comptime!(val.depth),
                                     comptime!(val.space.clone()),
                                     comptime!(val_cut.clone()),
                                     step,
@@ -315,6 +328,7 @@ impl<EA: Float> Tile<EA> {
                 for i in 0..comptime!(rm * cn) {
                     let (r, c) = comptime!((i / cn, i % cn));
                     let mut cell = out.at(&Region::trailing(
+                        comptime!(out.depth),
                         comptime!(out.space.clone()),
                         comptime!(out_cut.clone()),
                         r,
@@ -336,6 +350,7 @@ impl<EA: Float> Tile<EA> {
                     let col = visit % grid;
                     let mut acc = fragment::<EA>(MatrixIdent::Accumulator, comptime!(mma.clone()));
                     let window = Region::trailing(
+                        comptime!(self.depth),
                         comptime!(self.space.clone()),
                         comptime!(out_cut.clone()),
                         row,
@@ -347,6 +362,7 @@ impl<EA: Float> Tile<EA> {
                         if step * kc < cols_bound {
                             let mut lhs = fragment::<EP>(MatrixIdent::A, comptime!(mma.clone()));
                             let window = Region::trailing(
+                                comptime!(p.depth),
                                 comptime!(p.space.clone()),
                                 comptime!(p_cut.clone()),
                                 row,
@@ -355,6 +371,7 @@ impl<EA: Float> Tile<EA> {
                             lhs.copy_from(&p.at(&window));
                             let mut rhs = fragment::<EI>(MatrixIdent::B, comptime!(mma.clone()));
                             let window = Region::trailing(
+                                comptime!(val.depth),
                                 comptime!(val.space.clone()),
                                 comptime!(val_cut.clone()),
                                 step,

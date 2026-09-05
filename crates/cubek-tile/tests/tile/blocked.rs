@@ -723,7 +723,7 @@ fn promoted_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -739,7 +739,10 @@ fn promoted_matmul<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 #[test]
@@ -832,7 +835,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -850,7 +853,10 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
         let mut acc_region = acc.at(&region);
         acc_region.mma_scaled(&a.at(&region), &b.at(&region), &scales, Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// **The shape a decode gemv runs.** Scales read as a line against a register accumulator.

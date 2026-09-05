@@ -318,7 +318,7 @@ fn atomic_split_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = out.tile(comptime!(space.clone()));
+    let c = out.tile(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
     let mut acc = c.block_accumulator::<E, E>(
@@ -336,7 +336,10 @@ fn atomic_split_matmul<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.

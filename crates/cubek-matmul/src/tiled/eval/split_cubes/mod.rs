@@ -101,7 +101,7 @@ fn atomic_matmul<E: Numeric>(
             Monoid::Sum,
         );
         acc.mm(&a_cube, &b.at(&region), Semiring::SUM_PROD);
-        acc.drain_cast_into(&mut c_cube);
+        c_cube.copy_cast_from(&acc);
     }
 }
 
@@ -139,7 +139,10 @@ fn atomic_matmul_lanes<E: Numeric>(
             let mut acc_lane = acc.at(&region);
             acc_lane.mma(&a_cube.at(&region), &b_cube.at(&region), Semiring::SUM_PROD);
         }
-        acc.drain_cast_into(&mut c_cube);
+        for r0 in c_cube.level(comptime!(inner.clone())).unrolled() {
+            let mut c_cube_w = c_cube.at(&r0);
+            c_cube_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 

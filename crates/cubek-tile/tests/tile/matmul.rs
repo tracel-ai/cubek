@@ -155,7 +155,7 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     let c = c.tile(comptime!(space.clone()));
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
-    for region in c.runtime_space().level(comptime!(level.clone())) {
+    for region in c.level(comptime!(level.clone())) {
         let mut c_w = c.at(&region);
         c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
     }
@@ -182,7 +182,7 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     let c = c.tile(comptime!(space.clone()));
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
-    for region in c.runtime_space().level(comptime!(level.clone())) {
+    for region in c.level(comptime!(level.clone())) {
         let mut c_w = c.at(&region);
         c_w.zero();
     }
@@ -289,7 +289,7 @@ fn matmul_padded_rhs_stage<E: Numeric>(
     let c = c.tile(comptime!(space.clone()));
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
-    for region in c.runtime_space().level(comptime!(level.clone())) {
+    for region in c.level(comptime!(level.clone())) {
         let mut c_w = c.at(&region);
         c_w.zero();
     }
@@ -328,7 +328,7 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
     let c = c.tile(comptime!(space.clone()));
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
-    for region in c.runtime_space().level(comptime!(outer.clone())) {
+    for region in c.level(comptime!(outer.clone())) {
         let mut c_w = c.at(&region);
         c_w.zero();
     }
@@ -444,7 +444,7 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
     let c = c.tile(comptime!(space.clone()));
     // This instance's windows of `c`, each initialized once: the level projected
     // onto `c`'s own axes walks nothing it does not span.
-    for region in c.runtime_space().level(comptime!(outer.clone())) {
+    for region in c.level(comptime!(outer.clone())) {
         let mut c_w = c.at(&region);
         c_w.zero();
     }
@@ -483,7 +483,7 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
         comptime!(Fragments::new(
@@ -499,7 +499,10 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region), semiring);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`promoted_matmul_in_place`] over the two-level cube/plane nest a real gemm composes: the
@@ -520,7 +523,7 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for outer in space.level(comptime!(outer.clone())) {
-        let mut c_o = c.at(&outer);
+        let c_o = c.at(&outer);
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
         let mut acc = c_o.block_accumulator::<EA, E>(
@@ -538,7 +541,10 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
             let mut acc_r = acc.at(&region);
             acc_r.mma(&a_o.at(&region), &b_o.at(&region), Semiring::SUM_PROD);
         }
-        acc.drain_cast_into(&mut c_o);
+        for r0 in c_o.level(comptime!(inner.clone())).unrolled() {
+            let mut c_o_w = c_o.at(&r0);
+            c_o_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -557,7 +563,7 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -582,7 +588,12 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
             });
         });
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(outer.clone())).unrolled() {
+        for r1 in r0.level(comptime!(inner.clone())).unrolled() {
+            let mut c_w = c.at(&r1);
+            c_w.copy_cast_from(&acc.at(&r1));
+        }
+    }
 }
 
 // ---- the tensor-core kernels ------------------------------------------------------
@@ -603,7 +614,7 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -622,7 +633,10 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`cmma_matmul_k_walk`] with a quantized lhs: each region's stage decodes it (or keeps it stored
@@ -640,7 +654,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -669,7 +683,10 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`cmma_matmul_k_walk`] through the manual-mma instruction, whose fragment transports are
@@ -686,7 +703,7 @@ fn mma_matmul_k_walk<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -706,7 +723,10 @@ fn mma_matmul_k_walk<E: Numeric>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`mma_matmul_k_walk`] with a quantized lhs kept in its stored form by the stage, the manual
@@ -724,7 +744,7 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -744,7 +764,10 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// The multi-plane cmma stage: the outer K walk fills a shared stage cooperatively (`depth` in
@@ -763,7 +786,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -795,7 +818,12 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
             }
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(outer.clone())).unrolled() {
+        for r1 in r0.level(comptime!(inner.clone())).unrolled() {
+            let mut c_w = c.at(&r1);
+            c_w.copy_cast_from(&acc.at(&r1));
+        }
+    }
 }
 
 /// The multi-fragment partition: each plane owns a grid of fragments, resident across the outer
@@ -815,7 +843,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -852,7 +880,14 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
             }
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(stage.clone())).unrolled() {
+        for r1 in r0.level(comptime!(plane.clone())).unrolled() {
+            for r2 in r1.level(comptime!(fragment.clone())).unrolled() {
+                let mut c_w = c.at(&r2);
+                c_w.copy_cast_from(&acc.at(&r2));
+            }
+        }
+    }
 }
 
 /// The legacy register budget as a level structure: the K stage walk (staged, `depth` in
@@ -875,7 +910,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -934,7 +969,18 @@ fn cmma_matmul_five_levels<E: Numeric>(
             }
         });
     });
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(stage.clone())).unrolled() {
+        for r1 in r0.level(comptime!(plane.clone())).unrolled() {
+            for r2 in r1.level(comptime!(step.clone())).unrolled() {
+                for r3 in r2.level(comptime!(col.clone())).unrolled() {
+                    for r4 in r3.level(comptime!(row.clone())).unrolled() {
+                        let mut c_w = c.at(&r4);
+                        c_w.copy_cast_from(&acc.at(&r4));
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---- quantized operands through the register leaf --------------------------------
@@ -1054,7 +1100,7 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
 ) {
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
         comptime!(Fragments::new(
@@ -1070,7 +1116,10 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
         let mut acc_r = acc.at(&region);
         acc_r.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 // ---- cmma fragment transit, by hand -------------------------------------------------

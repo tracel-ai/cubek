@@ -121,7 +121,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     }
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
-    for cube in out.runtime_space().cubes(comptime!(bp.cubes(&problem))) {
+    for cube in out.cubes(comptime!(bp.cubes(&problem))) {
         let out_cube = out.at(&cube);
         for plane in cube.planes(comptime!(bp.planes(&problem))) {
             let out_plane = out_cube.at(&plane);

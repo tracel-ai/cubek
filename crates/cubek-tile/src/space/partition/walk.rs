@@ -40,9 +40,8 @@ pub struct Walk {
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
     steps: usize,
-    /// The runtime sizes of the space's dynamic axes, positional, handed to every region so a
-    /// loop below it can walk the region's child space.
-    sizes: Sequence<usize>,
+    /// The path above this walk: what every region it hands out is one level below.
+    parent: Region,
     /// The space the regions are cut from, which is also what a ring sizes its slots to
     /// ([`Ring::smem`](crate::Ring::smem)).
     #[cube(comptime)]
@@ -71,58 +70,94 @@ impl Space {
     /// The regions of `level` over this space, whatever verb the level is: what a kernel handed
     /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
     pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(self, level)
+        Walk::of(self, level, self.root())
     }
 
     /// Each cube's box of this space under `level`, which deals to the cube grid and steps
     /// nothing.
     pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, comptime!(LevelScope::Cubes))
+        Walk::stated(self, level, self.root(), comptime!(LevelScope::Cubes))
     }
 
     /// Each plane's box of this space under `level`, which deals to the cube's planes and steps
     /// nothing.
     pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, comptime!(LevelScope::Planes))
+        Walk::stated(self, level, self.root(), comptime!(LevelScope::Planes))
     }
 
     /// Each lane's box of this space under `level`, which deals to the plane's lanes and steps
     /// nothing.
     pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, comptime!(LevelScope::Lanes))
+        Walk::stated(self, level, self.root(), comptime!(LevelScope::Lanes))
     }
 
     /// Every region of this space under `level`, which deals to nobody: the loop steps them all.
     pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, comptime!(LevelScope::Sequential))
+        Walk::stated(self, level, self.root(), comptime!(LevelScope::Sequential))
+    }
+
+    /// The empty path a loop over this space starts from, at depth `0`.
+    pub(crate) fn root(&self) -> Region {
+        self.root_at(0usize)
+    }
+
+    /// The empty path a loop over this space starts from, the space itself sitting at `depth`.
+    pub(crate) fn root_at(&self, #[comptime] depth: usize) -> Region {
+        Region::new(
+            Sequence::new(),
+            self.extents.sizes.clone(),
+            depth,
+            comptime!(self.clone()),
+            comptime!(Vec::new()),
+        )
     }
 }
 
 #[cube]
 impl Region {
-    /// [`Space::cubes`] over this region's own box.
+    /// [`Space::cubes`] over this region's own box, one level further down the path.
     pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(&self.child(), level, comptime!(LevelScope::Cubes))
+        Walk::stated(
+            &self.child(),
+            level,
+            self.clone(),
+            comptime!(LevelScope::Cubes),
+        )
     }
 
-    /// [`Space::planes`] over this region's own box.
+    /// [`Space::planes`] over this region's own box, one level further down the path.
     pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(&self.child(), level, comptime!(LevelScope::Planes))
+        Walk::stated(
+            &self.child(),
+            level,
+            self.clone(),
+            comptime!(LevelScope::Planes),
+        )
     }
 
-    /// [`Space::lanes`] over this region's own box.
+    /// [`Space::lanes`] over this region's own box, one level further down the path.
     pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(&self.child(), level, comptime!(LevelScope::Lanes))
+        Walk::stated(
+            &self.child(),
+            level,
+            self.clone(),
+            comptime!(LevelScope::Lanes),
+        )
     }
 
-    /// [`Space::walk`] over this region's own box.
+    /// [`Space::walk`] over this region's own box, one level further down the path.
     pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(&self.child(), level, comptime!(LevelScope::Sequential))
+        Walk::stated(
+            &self.child(),
+            level,
+            self.clone(),
+            comptime!(LevelScope::Sequential),
+        )
     }
 
-    /// [`Space::level`] over this region's own box.
+    /// [`Space::level`] over this region's own box, one level further down the path.
     pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(&self.child(), level)
+        Walk::of(&self.child(), level, self.clone())
     }
 }
 
@@ -130,7 +165,12 @@ impl Region {
 impl Walk {
     /// [`of`](Walk::of) under a verb: the level must deal to exactly `scope` and, unless the verb
     /// is the walk, step nothing.
-    fn stated(space: &Space, #[comptime] level: Level, #[comptime] verb: LevelScope) -> Walk {
+    pub(crate) fn stated(
+        space: &Space,
+        #[comptime] level: Level,
+        parent: Region,
+        #[comptime] verb: LevelScope,
+    ) -> Walk {
         comptime!({
             let stated = level.scope();
             assert!(
@@ -144,10 +184,10 @@ impl Walk {
                 verb.verb()
             );
         });
-        Walk::of(space, level)
+        Walk::of(space, level, parent)
     }
 
-    fn of(space: &Space, #[comptime] level: Level) -> Walk {
+    pub(crate) fn of(space: &Space, #[comptime] level: Level, parent: Region) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
@@ -156,12 +196,7 @@ impl Walk {
                 Edge::Whole => counts.push(1usize),
             }
         }
-        Walk::from_counts(
-            comptime!(space.clone()),
-            level,
-            counts,
-            space.extents.sizes.clone(),
-        )
+        Walk::from_counts(comptime!(space.clone()), level, counts, parent)
     }
 
     /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
@@ -170,7 +205,7 @@ impl Walk {
         #[comptime] space: Space,
         #[comptime] level: Level,
         grid: Coords<usize>,
-        sizes: Sequence<usize>,
+        parent: Region,
     ) -> Walk {
         let rank = comptime!(space.rank());
         let mut counts = Coords::<usize>::new();
@@ -240,7 +275,7 @@ impl Walk {
             scales,
             base: 0usize,
             steps,
-            sizes,
+            parent,
             order: comptime!(WalkOrder::RowMajor),
             space,
             level,
@@ -256,7 +291,7 @@ impl Walk {
             scales: self.scales,
             base: self.base,
             steps: self.steps,
-            sizes: self.sizes,
+            parent: self.parent,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
@@ -279,7 +314,7 @@ impl Walk {
             scales: self.scales,
             base: self.base,
             steps: self.steps,
-            sizes: self.sizes,
+            parent: self.parent,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(unroll),
@@ -305,7 +340,7 @@ impl Walk {
             scales: self.scales,
             base,
             steps,
-            sizes: self.sizes,
+            parent: self.parent,
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
@@ -323,12 +358,8 @@ impl Walk {
         let idx = self
             .base
             .fadd(walk_index(i, self.steps, comptime!(self.order)));
-        Region::new(
-            self.resolve(idx),
-            comptime!(self.space.clone()),
-            self.sizes.clone(),
-            comptime!(self.level.clone()),
-        )
+        self.parent
+            .below(self.resolve(idx), comptime!(self.level.clone()))
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates: each axis's odometer
@@ -457,5 +488,18 @@ pub fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
         // double-count a sibling Plane axis's digit. The plane's `plane_size` lanes ride
         // the X dim already, so a Unit axis divides them (instances == plane_size).
         ComputeScope::Unit => UNIT_POS_X as usize,
+    }
+}
+
+impl Walk {
+    /// The depth of the regions this walk hands out: one below its path.
+    pub(crate) fn depth(&self) -> usize {
+        self.parent.depth() + 1
+    }
+}
+
+impl WalkExpand {
+    pub(crate) fn depth(&self) -> usize {
+        self.parent.depth() + 1
     }
 }

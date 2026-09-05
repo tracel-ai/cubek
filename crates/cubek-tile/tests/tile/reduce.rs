@@ -1153,7 +1153,7 @@ fn resident_fold_kernel<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
-    let mut out = output.tile(comptime!(space.clone()));
+    let out = output.tile(comptime!(space.clone()));
     let mut acc = out.block_accumulator::<E, E>(
         &input,
         comptime!(Fragments::new(
@@ -1169,7 +1169,10 @@ fn resident_fold_kernel<E: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
-    acc.drain_cast_into(&mut out);
+    for r0 in out.level(comptime!(level.clone())).unrolled() {
+        let mut out_w = out.at(&r0);
+        out_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 #[test]

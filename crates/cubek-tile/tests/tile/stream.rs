@@ -44,7 +44,7 @@ fn copy_run<E: Numeric>(
 ) {
     let src = src.tile(comptime!(space.clone()));
     let dst = dst.tile(comptime!(space.clone()));
-    let walk = dst.runtime_space().level(comptime!(level.clone()));
+    let walk = dst.level(comptime!(level.clone()));
     let total = walk.total();
     let pos = CUBE_POS_X as usize;
 
@@ -70,7 +70,7 @@ fn copy_one_run<E: Numeric>(
 ) {
     let src = src.tile(comptime!(space.clone()));
     let dst = dst.tile(comptime!(space.clone()));
-    let walk = dst.runtime_space().level(comptime!(level.clone()));
+    let walk = dst.level(comptime!(level.clone()));
 
     // Stated at launch but taken as runtime values: a window whose bounds fold to constants
     // would prove the decode only for the case the compiler could have unrolled.
@@ -304,7 +304,7 @@ fn stream_matmul<E: Numeric>(
     for step in 0..share.touched {
         let region = walk.region(step);
         let (from, steps) = own_steps(&share, step, stride);
-        let mut c_region = c.at(&region);
+        let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E>(
@@ -322,7 +322,10 @@ fn stream_matmul<E: Numeric>(
             let mut acc_cell = acc.at(&cell);
             acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
         }
-        acc.drain_cast_into(&mut c_region);
+        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+            let mut c_region_w = c_region.at(&r0);
+            c_region_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -350,7 +353,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     for step in 0..share.touched {
         let region = walk.region(step);
         let (from, steps) = own_steps(&share, step, stride);
-        let mut c_region = c.at(&region);
+        let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E>(
@@ -373,7 +376,10 @@ fn stream_matmul_staged_rhs<E: Numeric>(
                 acc_cell.mma(&a_cell, b_s, Semiring::SUM_PROD);
             });
         });
-        acc.drain_cast_into(&mut c_region);
+        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+            let mut c_region_w = c_region.at(&r0);
+            c_region_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 

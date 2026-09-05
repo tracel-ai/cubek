@@ -124,6 +124,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
                 stage_smem(
                     lhs,
                     comptime!(walk.level.clone()),
+                    comptime!(walk.depth()),
                     comptime!(storage.clone()),
                     comptime!(None),
                 )
@@ -134,6 +135,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
                 stage_smem(
                     rhs,
                     comptime!(walk.level.clone()),
+                    comptime!(walk.depth()),
                     comptime!(storage.clone()),
                     comptime!(None),
                 )
@@ -298,6 +300,7 @@ impl<T: Numeric> Ring<Tile<T>> {
                 stage_smem(
                     input,
                     comptime!(walk.level.clone()),
+                    comptime!(walk.depth()),
                     comptime!(storage.clone()),
                     width,
                 )
@@ -407,10 +410,11 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
 fn stage_smem<T: Numeric>(
     input: &Tile<T>,
     #[comptime] level: Level,
+    #[comptime] depth: usize,
     #[comptime] storage: StageStorage,
     #[comptime] width: Option<usize>,
 ) -> Tile<T> {
-    MemData::stage(input, level, storage, width)
+    MemData::stage(input, level, storage, width).at_depth(depth)
 }
 
 #[cfg(test)]

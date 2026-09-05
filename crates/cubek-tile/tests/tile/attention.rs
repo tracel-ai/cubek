@@ -78,7 +78,7 @@ fn attention_fold_kernel<W: Size>(
     sync_cube();
 
     // The fold: one S block per region.
-    for region in k.runtime_space().level(comptime!(blocks.clone())) {
+    for region in k.level(comptime!(blocks.clone())) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -379,7 +379,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for region in k.runtime_space().level(comptime!(blocks.clone())) {
+    for region in k.level(comptime!(blocks.clone())) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -1005,20 +1005,20 @@ fn attention_fold_split_kernel<W: Size>(
     let team_scores = comptime!(Level::new(&[R, C], |l| {
         l.walk(&[(R, rows), (C, block)]);
     }));
-    let tw = score_all.runtime_space().level(team_scores);
+    let tw = score_all.level(team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
     let row_axes = comptime!(row_extents.map(|(axis, _)| axis));
     let team_rows = comptime!(Level::new(&row_axes, |l| {
         l.walk(&[(T, 1), (R, rows)]);
     }));
-    let rw = factors_all.runtime_space().level(team_rows);
+    let rw = factors_all.level(team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
     let team_acc = comptime!(Level::new(&[R, V], |l| {
         l.walk(&[(R, rows), (V, val_dim)]);
     }));
-    let aw = acc_all.runtime_space().level(team_acc);
+    let aw = acc_all.level(team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 
     let kept = comptime!(Space::new(&[(R, rows)]));
@@ -1030,7 +1030,7 @@ fn attention_fold_split_kernel<W: Size>(
     // Interleaved split walk: team t folds blocks t, t + splits, …; every
     // team runs every round (the barriers must stay uniform), an out-of-range
     // block just skips its compute.
-    let k_walk = k.runtime_space().level(comptime!(blocks.clone()));
+    let k_walk = k.level(comptime!(blocks.clone()));
     let blocks = bound_s.div_ceil(block);
     let rounds = blocks.div_ceil(splits);
     for round in 0..rounds {
@@ -1332,7 +1332,7 @@ fn attention_stream_test_kernel<W: Size>(
     // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
-    let k_walk = k.runtime_space().level(comptime!(blocks.clone()));
+    let k_walk = k.level(comptime!(blocks.clone()));
     let blocks = bound_s.div_ceil(block);
     let per_team = blocks.div_ceil(splits);
     let start_b = t * per_team;

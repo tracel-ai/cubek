@@ -2341,7 +2341,7 @@ fn conv_mma_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let mut out = out.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
     let mut acc = out.mma_accumulator::<E, E>(
         &input,
         comptime!(Fragments::new(
@@ -2362,7 +2362,10 @@ fn conv_mma_kernel<E: Numeric>(
             acc_region.mma(input, weight, Semiring::SUM_PROD);
         });
     });
-    acc.drain_cast_into(&mut out);
+    for r0 in out.level(comptime!(level.clone())).unrolled() {
+        let mut out_w = out.at(&r0);
+        out_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 #[test]

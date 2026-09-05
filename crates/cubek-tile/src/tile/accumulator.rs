@@ -1,12 +1,14 @@
-//! The plane-resident accumulators a kernel opens before the walk it spans and drains after
-//! ([`drain_cast_into`](Tile::drain_cast_into)): a partition of fragments mirroring the
-//! output tile's grid, in the form the leaf contracts through.
+//! The plane-resident accumulator an output opens: a partition of fragments mirroring the output's
+//! grid, contracted into under the levels below the open, and stored back one fragment per cell
+//! by the loop the kernel writes over them ([`Tile::copy_cast_from`]).
 //!
 //! ```ignore
-//! let mut acc = c.cmma_accumulator::<EA, _>(&a, Monoid::Sum);
+//! let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
 //! acc.zero();
-//! for region in walk { acc.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD); }
-//! c.drain_cast_into(&acc);
+//! for step in plane.walk(steps) { /* acc.at(&cell).mma(..) */ }
+//! for cell in plane.walk(cells).unrolled() {
+//!     c.at(&cell).copy_cast_from(&acc.at(&cell));
+//! }
 //! ```
 
 use cubecl::prelude::*;
@@ -51,8 +53,8 @@ impl Fragments {
 impl<Acc: Numeric> Tile<Acc> {
     /// The plane-resident accumulator this output contracts in through the tensor-core
     /// instruction: a partition of cmma fragments mirroring this tile's grid, uninitialized. The
-    /// kernel opens it before the walk it spans and drains it after
-    /// ([`drain_cast_into`](Tile::drain_cast_into)). `lhs` sizes the contraction depth.
+    /// kernel opens it before the walk it spans and stores it after, one fragment per cell
+    /// ([`copy_cast_from`](Tile::copy_cast_from)). `lhs` sizes the contraction depth.
     pub fn cmma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -108,6 +110,7 @@ impl<Acc: Numeric> Tile<Acc> {
             comptime!(fragments),
             vector_size,
             monoid,
+            comptime!(self.depth),
         )
     }
 }

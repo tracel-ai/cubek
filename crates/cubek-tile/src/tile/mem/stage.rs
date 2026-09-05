@@ -367,7 +367,7 @@ impl<T: Numeric> MemData<T> {
                 source_window: source,
             }),
             space: comptime!(meta.space),
-            descent: comptime!(Descent::default()),
+            depth: comptime!(0usize),
         }
     }
 

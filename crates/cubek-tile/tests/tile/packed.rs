@@ -331,7 +331,7 @@ fn packed_gemv<E: Numeric, V: Size>(
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     // The accumulator lives in registers across the whole walk and drains once.
     let mut acc = c.block_accumulator::<E, E>(
         &x,
@@ -353,7 +353,10 @@ fn packed_gemv<E: Numeric, V: Size>(
             Semiring::SUM_PROD,
         );
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// Four 8-bit values per word.
@@ -1715,7 +1718,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &x,
         comptime!(Fragments::new(
@@ -1731,7 +1734,10 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let mut acc_r = acc.at(&region);
         acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.

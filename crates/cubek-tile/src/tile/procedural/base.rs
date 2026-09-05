@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, DivGuard, Edge, Fold, FoldExpand, Region, Space, TapMask};
+use crate::{Axis, Coords, DivGuard, Edge, Fold, FoldExpand, Space, Step, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -72,15 +72,15 @@ impl<T: Numeric> ProceduralData<T> {
         }
     }
 
-    pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> Self {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Self {
         let mut origin = Coords::<u32>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = comptime!(space.axis_at(p));
-            match comptime!(region.level.edge_kind(axis)) {
+            match comptime!(step.level.edge_kind(axis)) {
                 Edge::Cut(edge) => {
                     let edge = comptime!(edge as u32);
-                    origin.push(self.origin.at(p) + region.coord(axis).fcast::<u32>() * edge);
+                    origin.push(self.origin.at(p) + step.coord(axis).fcast::<u32>() * edge);
                 }
                 Edge::Whole => origin.push(self.origin.at(p)),
             }
@@ -91,7 +91,7 @@ impl<T: Numeric> ProceduralData<T> {
             let mut axes = self.bounded_axes.clone();
             for axis in space.axes() {
                 if !space.is_dynamic(axis)
-                    && region.level.overhangs(&space, axis)
+                    && step.level.overhangs(&space, axis)
                     && !axes.contains(&axis)
                 {
                     axes.push(axis);
@@ -106,7 +106,7 @@ impl<T: Numeric> ProceduralData<T> {
             bounded_axes,
             normalization: comptime!(self.normalization.clone()),
             recipe: self.recipe.clone(),
-            space: comptime!(region.level.child(&space)),
+            space: comptime!(step.level.child(&space)),
             _marker: PhantomData,
         }
     }

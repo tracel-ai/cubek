@@ -56,7 +56,7 @@ impl<T: Numeric> CmmaData<T> {
                 layout,
             })),
             space: comptime!(space),
-            descent: comptime!(Descent::default()),
+            depth: comptime!(0usize),
         }
     }
 

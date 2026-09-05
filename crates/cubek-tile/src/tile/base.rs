@@ -41,10 +41,10 @@ pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
-    /// The levels this tile has been descended with, shared with every tile of the same
-    /// descent; what a drain replays to find each fragment's window.
+    /// How many levels down its nest this tile sits: what `at` skips of a region's path, so a
+    /// region names the same box from the root tile and from any window of it.
     #[cube(comptime)]
-    pub(crate) descent: Descent,
+    pub(crate) depth: usize,
 }
 
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
@@ -402,7 +402,7 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// The same cells under another `space`: same axes, same extents, a fresh descent. What lets a
+    /// The same cells under another `space`: same axes, same extents, the same depth. What lets a
     /// leaf window an operand whose cut is not the operand's own statement: the rhs of a
     /// contraction is cut by the grid the contraction implies, and arrives whole.
     ///
@@ -419,28 +419,65 @@ impl<T: Numeric> Tile<T> {
         Tile::<T> {
             tile_kind: self.tile_kind.clone(),
             space,
-            descent: comptime!(Descent::default()),
+            depth: comptime!(self.depth),
         }
     }
 
-    /// Window this tile down to `region`, no copy. Each tile projects `region` onto its own axes, so
-    /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by hand.
+    /// This tile at `depth` in its nest: what a stage allocated for a walk's regions sits at.
+    pub(crate) fn at_depth(self, #[comptime] depth: usize) -> Tile<T> {
+        Tile::<T> {
+            tile_kind: self.tile_kind,
+            space: comptime!(self.space.clone()),
+            depth,
+        }
+    }
+
+    /// Window this tile down to `region`, no copy: the steps of the region's path below this
+    /// tile's depth, applied in turn. Each tile projects a step onto its own axes, so
+    /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by
+    /// hand, and the root tile and a window of it read one region alike.
     pub fn at(&self, region: &Region) -> Tile<T> {
+        let skip = comptime!({
+            assert!(
+                region.base <= self.depth && self.depth < region.base + region.levels.len(),
+                "Tile::at: this tile sits {} levels down its nest, and the region's path runs \
+                 from depth {} through {} levels; state the loops the tile is missing above it",
+                self.depth,
+                region.base,
+                region.levels.len()
+            );
+            self.depth - region.base
+        });
+        self.at_from(region, skip)
+    }
+
+    /// The path's steps from the `i`-th down, applied in turn.
+    fn at_from(&self, region: &Region, #[comptime] i: usize) -> Tile<T> {
+        let sub = self.at_step(&region.step(i));
+        if comptime!(i + 1 == region.levels.len()) {
+            sub
+        } else {
+            sub.at_from(region, comptime!(i + 1))
+        }
+    }
+
+    /// One level down: window this tile to `step`'s box.
+    fn at_step(&self, step: &Step) -> Tile<T> {
         let tile_kind = match &self.tile_kind {
-            TileKind::Gmem(g) => TileKind::new_Gmem(g.at(region, comptime!(self.space.clone()))),
-            TileKind::Smem(g) => TileKind::new_Smem(g.at(region, comptime!(self.space.clone()))),
+            TileKind::Gmem(g) => TileKind::new_Gmem(g.at(step, comptime!(self.space.clone()))),
+            TileKind::Smem(g) => TileKind::new_Smem(g.at(step, comptime!(self.space.clone()))),
             TileKind::TmaGmem(t) => {
-                TileKind::new_TmaGmem(t.at(region, comptime!(self.space.clone())))
+                TileKind::new_TmaGmem(t.at(step, comptime!(self.space.clone())))
             }
             TileKind::Procedural(p) => {
-                TileKind::new_Procedural(p.at(region, comptime!(self.space.clone())))
+                TileKind::new_Procedural(p.at(step, comptime!(self.space.clone())))
             }
             // A plane tile has nothing to window: pass it through. Legal only where the level
             // cuts nothing on m/n (a k-step walk); a cutting level would alias every region
             // onto the one tile.
             TileKind::PlaneTile(t) => {
                 comptime!(assert!(
-                    !region.level.cuts_tiles(&self.space),
+                    !step.level.cuts_tiles(&self.space),
                     "Tile::at: a level that cuts tiles cannot select into a single plane \
                      tile (it needs a partition, or a memory output)"
                 ));
@@ -458,22 +495,22 @@ impl<T: Numeric> Tile<T> {
                 // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a
                 // cut axis takes its constant digit and an uncut one selects the whole
                 // partition. A `Dynamic` axis (top level only) stays runtime, yielding `None`.
-                let mi = if comptime!(region.level.single_static_tile(&self.space, a0)) {
+                let mi = if comptime!(step.level.single_static_tile(&self.space, a0)) {
                     comptime!(Some(0u64))
                 } else {
-                    region.coord(a0).constant()
+                    step.coord(a0).constant()
                 };
-                let ni = if comptime!(region.level.single_static_tile(&self.space, a1)) {
+                let ni = if comptime!(step.level.single_static_tile(&self.space, a1)) {
                     comptime!(Some(0u64))
                 } else {
-                    region.coord(a1).constant()
+                    step.coord(a1).constant()
                 };
                 match comptime!(mi.zip(ni)) {
                     Some((c0, c1)) => {
                         let (sub_m, sub_n) = comptime!({
                             let (cm, cn) = (
-                                region.level.count(&self.space, a0),
-                                region.level.count(&self.space, a1),
+                                step.level.count(&self.space, a0),
+                                step.level.count(&self.space, a1),
                             );
                             assert!(
                                 p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),
@@ -494,7 +531,7 @@ impl<T: Numeric> Tile<T> {
                     // the static levels below. A rolled *cut* would be a caller bug.
                     None => {
                         comptime!(assert!(
-                            !region.level.cuts_tiles(&self.space),
+                            !step.level.cuts_tiles(&self.space),
                             "Tile::at: a level that cuts a partition must be \
                              walked with compile-time coordinates (an unrolled walk)"
                         ));
@@ -503,21 +540,10 @@ impl<T: Numeric> Tile<T> {
                 }
             }
         };
-        // Only a plane-resident accumulator's drain replays the record; a memory tile a leaf
-        // cuts its own way (fragments over a stage) states no loop, so it records nothing.
-        let descent = match &tile_kind {
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                comptime!(self.descent.under(&region.level))
-            }
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(Descent::default()),
-        };
         Tile::<T> {
             tile_kind,
-            space: comptime!(region.level.child(&self.space)),
-            descent,
+            space: comptime!(step.level.child(&self.space)),
+            depth: comptime!(self.depth + 1),
         }
     }
 
@@ -557,11 +583,61 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This tile's own box, as the runtime space a loop walks: its axes alone, a dynamic one
-    /// sized off its buffer. What a loop over one operand's windows walks (each lane's rows of
-    /// an output, whatever the operation's other axes do), where the kernel's space would step
-    /// the axes the operand does not span.
-    pub fn runtime_space(&self) -> Space {
+    /// sized off its buffer.
+    pub(crate) fn runtime_space(&self) -> Space {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
+    }
+
+    /// [`Space::level`] over this tile's own box: its axes alone, so a loop over one operand's
+    /// windows (each lane's rows of an output) steps nothing the operand does not span, where
+    /// the kernel's space would. The regions sit one level below this tile's depth.
+    pub fn level(&self, #[comptime] level: Level) -> Walk {
+        let space = self.runtime_space();
+        Walk::of(&space, level, space.root_at(comptime!(self.depth)))
+    }
+
+    /// [`Space::cubes`] over this tile's own box.
+    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
+        let space = self.runtime_space();
+        Walk::stated(
+            &space,
+            level,
+            space.root_at(comptime!(self.depth)),
+            comptime!(LevelScope::Cubes),
+        )
+    }
+
+    /// [`Space::planes`] over this tile's own box.
+    pub fn planes(&self, #[comptime] level: Level) -> Walk {
+        let space = self.runtime_space();
+        Walk::stated(
+            &space,
+            level,
+            space.root_at(comptime!(self.depth)),
+            comptime!(LevelScope::Planes),
+        )
+    }
+
+    /// [`Space::lanes`] over this tile's own box.
+    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
+        let space = self.runtime_space();
+        Walk::stated(
+            &space,
+            level,
+            space.root_at(comptime!(self.depth)),
+            comptime!(LevelScope::Lanes),
+        )
+    }
+
+    /// [`Space::walk`] over this tile's own box.
+    pub fn walk(&self, #[comptime] level: Level) -> Walk {
+        let space = self.runtime_space();
+        Walk::stated(
+            &space,
+            level,
+            space.root_at(comptime!(self.depth)),
+            comptime!(LevelScope::Sequential),
+        )
     }
 
     /// Zero this tile: `mma` accumulates over whatever is there, so a routine whose contract is
@@ -654,7 +730,17 @@ impl<T: Numeric> Tile<T> {
         // both sides carry (a gathered source is addressed per axis).
         let space = comptime!(self.space.clone());
         match &src.tile_kind {
-            TileKind::PlanePartition(s) => s.drain_into(self, comptime!(src.descent.below())),
+            // One fragment is stored as the fragment; a grid of them is stored one at a time,
+            // by the loop over its cells the kernel writes.
+            TileKind::PlanePartition(s) => match &mut self.tile_kind {
+                TileKind::Gmem(d) | TileKind::Smem(d) => s.fragment().store_window(d, space),
+                TileKind::PlaneTile(_)
+                | TileKind::PlanePartition(_)
+                | TileKind::TmaGmem(_)
+                | TileKind::Procedural(_) => {
+                    panic!("Tile::copy_from: a fragment stores into memory")
+                }
+            },
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -684,20 +770,19 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Drain a resident accumulator into memory `dst`, casting `T` down to `dst`'s element type.
-    /// [`copy_from`](Self::copy_from) cannot: its transports move bytes and stay same-type, but a
-    /// register accumulator is wider than the output it writes. Crate-internal, because closing an
-    /// accumulator's scope is the scope's own business.
-    pub fn drain_cast_into<Out: Numeric>(&self, dst: &mut Tile<Out>) {
-        match &self.tile_kind {
-            TileKind::PlanePartition(s) => s.drain_cast_into(dst, comptime!(self.descent.below())),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::drain_cast_into: only a partition drains with a cast")
+    /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
+    /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
+    /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
+    pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
+        let space = comptime!(self.space.clone());
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
+                s.store_cast_window(d, space)
             }
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlanePartition(s)) => {
+                s.fragment().store_cast_window(d, space)
+            }
+            _ => panic!("Tile::copy_cast_from: a fragment stores into memory; nothing else casts"),
         }
     }
 

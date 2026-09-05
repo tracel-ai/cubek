@@ -84,7 +84,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -105,7 +105,10 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
             Semiring::SUM_PROD,
         );
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -1115,7 +1118,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -1136,7 +1139,10 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
             Semiring::SUM_PROD,
         );
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of

@@ -718,7 +718,7 @@ fn procedural_mask_kernel<E: Float>(
     let mut output = output.tile(comptime!(space.clone()));
     output.zero();
 
-    for region in rhs.runtime_space().level(comptime!(level.clone())) {
+    for region in rhs.level(comptime!(level.clone())) {
         let rhs = rhs.at(&region);
         let child = comptime!(level.clone().child(&space.clone()));
         let mut factors = Sequence::new();

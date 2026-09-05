@@ -17,7 +17,7 @@ impl<T: Numeric> Tile<T> {
                 recipe,
             )),
             space,
-            descent: comptime!(Descent::default()),
+            depth: comptime!(0usize),
         }
     }
 }

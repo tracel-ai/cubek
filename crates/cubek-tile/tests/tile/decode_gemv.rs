@@ -60,7 +60,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let out = out.tile(comptime!(space.clone()));
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
-    for region in out.runtime_space().level(comptime!(cube.clone())) {
+    for region in out.level(comptime!(cube.clone())) {
         let mut out_w = out.at(&region);
         out_w.zero();
     }
@@ -113,7 +113,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut out = out.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
     let mut acc = out.block_accumulator::<E, E>(
         &w,
         comptime!(Fragments::new(
@@ -146,7 +146,14 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             }
         }
     }
-    acc.drain_cast_into(&mut out);
+    for r0 in out.level(comptime!(cube.clone())).unrolled() {
+        for r1 in r0.level(comptime!(plane.clone())).unrolled() {
+            for r2 in r1.level(comptime!(lane.clone())).unrolled() {
+                let mut out_w = out.at(&r2);
+                out_w.copy_cast_from(&acc.at(&r2));
+            }
+        }
+    }
 }
 
 #[test]

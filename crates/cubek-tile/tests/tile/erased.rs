@@ -259,7 +259,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
         comptime!(Fragments::new(
@@ -276,7 +276,10 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// The same contraction, draining into a sink.
@@ -299,7 +302,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
-    let mut c = Tile::<E>::of_sink(
+    let c = Tile::<E>::of_sink(
         sink,
         geometry,
         1usize,
@@ -323,7 +326,10 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// The same contraction again, this time reading its **lhs** through an erased source.
@@ -353,7 +359,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         comptime!(a.spec.clone()),
     );
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E>(
         &a,
         comptime!(Fragments::new(
@@ -370,7 +376,10 @@ fn source_matmul<E: Numeric, EA: Numeric>(
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// Which backing the contraction under test is given.
