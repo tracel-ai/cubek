@@ -86,8 +86,8 @@ impl Level {
         }
     }
 
-    /// The tile edge this level cuts `axis` to. An axis left whole has no edge of its own:
-    /// [`edge_in`](Level::edge_in) answers with the space's extent.
+    /// The tile edge this level cuts `axis` to. An axis left whole has no edge of its own; its
+    /// extent is the space's.
     pub fn edge(&self, axis: Axis) -> usize {
         match self.edges.get(axis) {
             Edge::Cut(edge) => edge,
