@@ -83,6 +83,18 @@ impl Region {
         }
     }
 
+    /// The empty path at `space`, the space itself sitting at `depth` in its nest: where a loop
+    /// over the space starts from.
+    pub(crate) fn root(space: &Space, #[comptime] depth: usize) -> Region {
+        Region::new(
+            Sequence::new(),
+            space.extents.sizes.clone(),
+            depth,
+            comptime!(space.clone()),
+            comptime!(Vec::new()),
+        )
+    }
+
     /// The region one level below the root at trailing-two coordinates `(c0, c1)` under
     /// `level`, `0` elsewhere, for a tile at `depth`: what a leaf states when it cuts an operand
     /// its own way. The coordinates carry their own constness ([`fcast`](crate::Fold::fcast)

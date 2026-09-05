@@ -1,8 +1,9 @@
 //! One decomposition [`Level`]: how each axis of a space is cut and dealt out, and the axes dealt
-//! as one. The value a kernel's loop states ([`Space::level`](crate::Space::level)), the value
-//! a [`Region`](crate::Region) carries down to `at`, and the value a launch sizes its grid from
-//! ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one method per level, so
-//! the grid and the loops cannot disagree.
+//! as one. The value a kernel's loop states, under the verb that says who takes the regions
+//! ([`Space::cubes`](crate::Space::cubes), [`Space::walk`](crate::Space::walk), and the rest),
+//! the value a [`Region`](crate::Region) carries down to `at`, and the value a launch sizes its
+//! grid from ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one method per
+//! level, so the grid and the loops cannot disagree.
 //!
 //! Built by [`Level::new`]: two verbs on a [`LevelCuts`] collector,
 //! [`distribute`](LevelCuts::distribute) for axes a hardware scope's workers take and

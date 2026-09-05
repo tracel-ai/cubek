@@ -593,7 +593,7 @@ impl<T: Numeric> Tile<T> {
     /// the kernel's space would. The regions sit one level below this tile's depth.
     pub fn level(&self, #[comptime] level: Level) -> Walk {
         let space = self.runtime_space();
-        Walk::of(&space, level, space.root_at(comptime!(self.depth)))
+        Walk::of(&space, level, Region::root(&space, comptime!(self.depth)))
     }
 
     /// [`Space::cubes`] over this tile's own box.
@@ -602,7 +602,7 @@ impl<T: Numeric> Tile<T> {
         Walk::stated(
             &space,
             level,
-            space.root_at(comptime!(self.depth)),
+            Region::root(&space, comptime!(self.depth)),
             comptime!(LevelScope::Cubes),
         )
     }
@@ -613,7 +613,7 @@ impl<T: Numeric> Tile<T> {
         Walk::stated(
             &space,
             level,
-            space.root_at(comptime!(self.depth)),
+            Region::root(&space, comptime!(self.depth)),
             comptime!(LevelScope::Planes),
         )
     }
@@ -624,7 +624,7 @@ impl<T: Numeric> Tile<T> {
         Walk::stated(
             &space,
             level,
-            space.root_at(comptime!(self.depth)),
+            Region::root(&space, comptime!(self.depth)),
             comptime!(LevelScope::Lanes),
         )
     }
@@ -635,7 +635,7 @@ impl<T: Numeric> Tile<T> {
         Walk::stated(
             &space,
             level,
-            space.root_at(comptime!(self.depth)),
+            Region::root(&space, comptime!(self.depth)),
             comptime!(LevelScope::Sequential),
         )
     }

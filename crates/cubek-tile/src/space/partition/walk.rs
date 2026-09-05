@@ -1,17 +1,19 @@
-//! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code.
+//! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code,
+//! and the verbs a kernel's loop states it with ([`Space::cubes`], [`Space::planes`],
+//! [`Space::lanes`], [`Space::walk`], and the same on a [`Region`] or a [`Tile`]).
 //!
-//! A walk is a sequence with random access and nothing else: [`Space::level`] computes once how
-//! many regions this cube or plane owns at the level ([`total`](Walk::total)) and how an index
-//! maps to one ([`region`](Walk::region)): decode the index as an odometer over the level's
-//! walked axes, last declared axis fastest, and add this instance's share on the distributed
-//! axes. It never iterates the instances themselves, the hardware does that, and it holds no
-//! current region: `for region in walk` is `for i in 0..total { region(i) }`. The only things a
-//! walk can be told are its order ([`reversed`](Walk::reversed)) and whether it unrolls
+//! A walk is a sequence with random access and nothing else: it computes once how many regions
+//! this cube or plane owns at the level ([`total`](Walk::total)) and how an index maps to one
+//! ([`region`](Walk::region)): decode the index as an odometer over the level's walked axes,
+//! last declared axis fastest, and add this instance's share on the distributed axes. It never
+//! iterates the instances themselves, the hardware does that, and it holds no current region:
+//! `for region in walk` is `for i in 0..total { region(i) }`. The only things a walk can be
+//! told are its order ([`reversed`](Walk::reversed)) and whether it unrolls
 //! ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering) is a
 //! schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
 //!
-//! Each region is a [`Region`] (the space at an origin, under the level); a [`Tile`] windows
-//! itself to it with `at`, coming back one level down.
+//! Each region is a [`Region`], the path of levels from the space to that box; a [`Tile`]
+//! windows itself to it with `at`, applying the steps below its own depth.
 
 use cubecl::prelude::*;
 
@@ -70,45 +72,49 @@ impl Space {
     /// The regions of `level` over this space, whatever verb the level is: what a kernel handed
     /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
     pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(self, level, self.root())
+        Walk::of(self, level, Region::root(self, 0usize))
     }
 
     /// Each cube's box of this space under `level`, which deals to the cube grid and steps
     /// nothing.
     pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, self.root(), comptime!(LevelScope::Cubes))
+        Walk::stated(
+            self,
+            level,
+            Region::root(self, 0usize),
+            comptime!(LevelScope::Cubes),
+        )
     }
 
     /// Each plane's box of this space under `level`, which deals to the cube's planes and steps
     /// nothing.
     pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, self.root(), comptime!(LevelScope::Planes))
+        Walk::stated(
+            self,
+            level,
+            Region::root(self, 0usize),
+            comptime!(LevelScope::Planes),
+        )
     }
 
     /// Each lane's box of this space under `level`, which deals to the plane's lanes and steps
     /// nothing.
     pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, self.root(), comptime!(LevelScope::Lanes))
+        Walk::stated(
+            self,
+            level,
+            Region::root(self, 0usize),
+            comptime!(LevelScope::Lanes),
+        )
     }
 
     /// Every region of this space under `level`, which deals to nobody: the loop steps them all.
     pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(self, level, self.root(), comptime!(LevelScope::Sequential))
-    }
-
-    /// The empty path a loop over this space starts from, at depth `0`.
-    pub(crate) fn root(&self) -> Region {
-        self.root_at(0usize)
-    }
-
-    /// The empty path a loop over this space starts from, the space itself sitting at `depth`.
-    pub(crate) fn root_at(&self, #[comptime] depth: usize) -> Region {
-        Region::new(
-            Sequence::new(),
-            self.extents.sizes.clone(),
-            depth,
-            comptime!(self.clone()),
-            comptime!(Vec::new()),
+        Walk::stated(
+            self,
+            level,
+            Region::root(self, 0usize),
+            comptime!(LevelScope::Sequential),
         )
     }
 }

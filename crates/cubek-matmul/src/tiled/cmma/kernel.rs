@@ -165,6 +165,8 @@ pub fn cmma_kernel<
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 for plane in stage.planes(comptime!(bp.planes(&batch))) {
+                    // The plane's window of each stage, taken once: the slot's origin is a
+                    // runtime value, so a window per step would pay its load and add per step.
                     let acc_plane = acc_stage.at(&plane);
                     let a_p = a_s.at(&plane);
                     let b_p = b_s.at(&plane);
