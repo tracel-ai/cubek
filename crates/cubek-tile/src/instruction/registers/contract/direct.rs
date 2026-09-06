@@ -15,8 +15,8 @@ use crate::*;
 /// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything
 /// else to the N-D nest, so the conditions below are re-asserted rather than re-decided.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut MemData<E>,
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
@@ -58,19 +58,19 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, ER, W, A, EM>(acc, lhs, rhs, shape, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, ER, A, A, EM>(acc, lhs, rhs, shape, config, semiring);
     }
 }
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
 #[cube]
-fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
-    acc: &mut MemData<E>,
+fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] shape: ContractShape,
@@ -97,7 +97,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
         let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
         // The contraction's own algebra: its products accumulate under the semiring's add.
-        let mut acc_view = acc.matrix_accumulate::<A>(
+        let mut acc_view = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(shape.acc_axes),
             comptime!(shape.space.clone()),
@@ -256,8 +256,8 @@ fn body<
 /// cache-served, and staging one would materialize the expansion reading it in place avoids.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
-    acc: &mut MemData<E>,
+pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     scales: &Sequence<Tile<ES>>,
@@ -297,13 +297,13 @@ pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nest_scaled::<E, EL, W, ER, W, A, ES, S>(
+        nest_scaled::<E, EL, W, ER, W, A, ES, S, EM>(
             acc, lhs, rhs, scales, shape, side, sw, config, semiring,
         );
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest_scaled::<E, EL, W, ER, A, A, ES, S>(
+        nest_scaled::<E, EL, W, ER, A, A, ES, S, EM>(
             acc, lhs, rhs, scales, shape, side, sw, config, semiring,
         );
     }
@@ -321,8 +321,9 @@ fn nest_scaled<
     A: Size,
     ES: Numeric,
     S: Size,
+    EM: Numeric,
 >(
-    acc: &mut MemData<E>,
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     scales: &Sequence<Tile<ES>>,
@@ -379,7 +380,7 @@ fn nest_scaled<
     let eligible = comptime!(mr * nr * contracted_per_step * aw <= config.budget);
 
     for mat in 0..matrices {
-        let mut acc_view = acc.matrix_accumulate::<A>(
+        let mut acc_view = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(shape.acc_axes),
             comptime!(space.clone()),

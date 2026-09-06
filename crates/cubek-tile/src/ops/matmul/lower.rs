@@ -108,8 +108,24 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `c = a · b` at a final memory tile through the software instruction run under `config`:
     /// the leaf a kernel that walks its own levels reaches, stated with the register block it
     /// runs rather than read off the space. `c` owns each cell outright here, so the block
-    /// starts from the identity and never reads `c` back.
+    /// starts from the identity and never reads `c` back. The sum runs at this tile's element;
+    /// [`mm_with_acc`](Self::mm_with_acc) carries it at a wider one.
     pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        self.mm_with_acc::<Acc, Lhs, Rhs>(lhs, rhs, config, semiring);
+    }
+
+    /// [`mm_with`](Self::mm_with) with the sum carried in `EA` and cast to this tile's element
+    /// as it is written: what a half-precision output needs, since a cell summed in its own
+    /// element stops growing once a product falls under half its spacing — an `f16` sum of
+    /// values near one goes no further than 2048. The register path states the same choice at
+    /// [`block_accumulator`](Self::block_accumulator).
+    pub fn mm_with_acc<EA: Numeric, Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -121,12 +137,25 @@ impl<Acc: Numeric> Tile<Acc> {
             InitFrom::Identity => {}
             InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
         }
-        self.mma_with(lhs, rhs, config, semiring);
+        self.mma_with_acc::<EA, Lhs, Rhs>(lhs, rhs, config, semiring);
         self.request_init_from(comptime!(InitFrom::Cell));
     }
 
     /// `c += a · b` at a final memory tile through the software instruction run under `config`.
     pub fn mma_with<Lhs: Numeric, Rhs: Numeric>(
+        &mut self,
+        lhs: &Tile<Lhs>,
+        rhs: &Tile<Rhs>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        self.mma_with_acc::<Acc, Lhs, Rhs>(lhs, rhs, config, semiring);
+    }
+
+    /// [`mma_with`](Self::mma_with) with the sum carried in `EA`: the cells are read widened
+    /// and written narrowed, and every partial on the way — a lane's, a group's, the plane's —
+    /// is combined at `EA`.
+    pub fn mma_with_acc<EA: Numeric, Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
@@ -141,7 +170,7 @@ impl<Acc: Numeric> Tile<Acc> {
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                contract::memory::<Acc, Lhs, Rhs>(g, lhs, rhs, space, config, semiring)
+                contract::memory::<EA, Lhs, Rhs, Acc>(g, lhs, rhs, space, config, semiring)
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -170,9 +199,11 @@ impl<Acc: Numeric> Tile<Acc> {
         ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(
-                g, lhs, rhs, scales, space, config, semiring,
-            ),
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                contract::memory_scaled::<Acc, Lhs, Rhs, S, Acc>(
+                    g, lhs, rhs, scales, space, config, semiring,
+                )
+            }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)

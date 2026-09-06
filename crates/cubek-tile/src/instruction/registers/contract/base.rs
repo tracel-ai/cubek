@@ -17,9 +17,16 @@ use crate::*;
 /// contracted *and* a logical coordinate is a physical one. Either condition failing takes the
 /// N-D nest, so a stencil contracting a single axis is a gather just as much as a two-axis
 /// reduce is.
+///
+/// `E` is the element the contraction runs in: the block's, and what every partial on the way
+/// to a cell — a lane's, a group's, the plane's — is combined at. The accumulator's cells are
+/// stored at its own `EM`, and where the two differ its [`AccumulateView`] widens each read and
+/// narrows each write; nothing here casts. A half-precision accumulator summing a long reduction
+/// runs in `f32` this way, since a cell summed in its own element stops growing once a product
+/// falls under half its spacing.
 #[cube]
-pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut MemData<E>,
+pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
@@ -59,9 +66,25 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     );
 
     if nd {
-        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
+        gather::contract::<E, EL, ER, EM>(
+            acc,
+            lhs,
+            rhs,
+            space,
+            contracted_per_step,
+            config,
+            semiring,
+        );
     } else {
-        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
+        direct::contract::<E, EL, ER, EM>(
+            acc,
+            lhs,
+            rhs,
+            space,
+            contracted_per_step,
+            config,
+            semiring,
+        );
     }
 }
 
@@ -74,8 +97,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
 /// rather than getting a wrong answer.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
-    acc: &mut MemData<E>,
+pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     scales: &Sequence<Tile<ES>>,
@@ -120,7 +143,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let side = comptime!(scale_side(&inner.space, &space, shape.acc_axes));
     let scales_projection = inner.projection();
     comptime!(check_scales_omit_rather_than_divide(&scales_projection));
-    direct::contract_scaled::<E, EL, ER, ES>(
+    direct::contract_scaled::<E, EL, ER, ES, EM>(
         acc,
         lhs,
         rhs,

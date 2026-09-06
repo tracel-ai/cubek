@@ -996,19 +996,22 @@ impl<T: Numeric> MemData<T> {
     /// The [`AccumulateView`] over batch matrix `i`: [`matrix_mut`](MemData::matrix_mut) plus the
     /// [`LaneShare`] these cells carry, the [`Monoid`] they fold under and what the accumulation
     /// starts from, so a leaf accumulates through it without being told any of the three.
-    pub(crate) fn matrix_accumulate<W: Size>(
+    ///
+    /// `E` is the element the accumulation runs in. The cells stay stored at this tile's, and
+    /// where the two differ the view widens each read and narrows each write.
+    pub(crate) fn matrix_accumulate<E: Numeric, W: Size>(
         &mut self,
         i: usize,
         #[comptime] axes: MatrixAxes,
         #[comptime] space: Space,
         #[comptime] monoid: Monoid,
-    ) -> AccumulateView<'_, T, W> {
+    ) -> AccumulateView<'_, E, W> {
         let lanes = comptime!(self.lanes);
         let split_share = comptime!(self.split_share);
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
-            self.matrix_mut::<W>(i, axes, space),
+            self.matrix_mut::<W>(i, axes, space).cast::<E>(),
             lanes,
             split_share,
             write,
@@ -1018,11 +1021,12 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The [`AccumulateView`] over flat elements: [`flat_mut`](MemData::flat_mut) plus the
-    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under.
-    pub(crate) fn flat_accumulate<W: Size>(
+    /// [`LaneShare`] these cells carry and the [`Monoid`] they fold under. `E` is the element
+    /// the accumulation runs in, as at [`matrix_accumulate`](MemData::matrix_accumulate).
+    pub(crate) fn flat_accumulate<E: Numeric, W: Size>(
         &mut self,
         #[comptime] monoid: Monoid,
-    ) -> AccumulateView<'_, T, W, Coords1d> {
+    ) -> AccumulateView<'_, E, W, Coords1d> {
         // A flat logical scan only agrees with this physical window under the direct,
         // non-storage-tiled mapping. Otherwise the reduction's logical accumulator index would
         // seed and commit a different physical cell than the one it reduces for.
@@ -1039,7 +1043,7 @@ impl<T: Numeric> MemData<T> {
         let write = comptime!(self.access.write);
         let init_from = comptime!(self.init_from);
         AccumulateView::new(
-            self.flat_mut::<W>(),
+            self.flat_mut::<W>().cast::<E>(),
             lanes,
             split_share,
             write,

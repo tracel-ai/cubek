@@ -272,8 +272,8 @@ fn masked_bound_depends_on(
 /// factorization of one factor takes it too: the per-row walk it caches is worth `nr` weight
 /// evaluations whatever the rank.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut MemData<E>,
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
@@ -330,18 +330,18 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         ));
         let size!(V) = rw;
         let size!(A) = aw;
-        separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
+        separable::contract::<E, EL, ER, V, A, EM>(acc, lhs, rhs, problem, config, semiring);
     } else if comptime!(contracted_per_step > 1) {
         // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
         // `aw`-wide neighbouring cells otherwise.
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);
+        nd::nest::<E, EL, W, ER, W, A, EM>(acc, lhs, rhs, problem, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(V) = rw;
         let size!(A) = aw;
-        nd::nest::<E, EL, W, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
+        nd::nest::<E, EL, W, ER, V, A, EM>(acc, lhs, rhs, problem, config, semiring);
     }
 }
 

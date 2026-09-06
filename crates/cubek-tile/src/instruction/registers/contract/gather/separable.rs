@@ -32,8 +32,8 @@ use super::{
 /// [`AxisProjection::advance`]. In both cases, reads and mask tests use the stepped physical
 /// coordinates rather than evaluating the projection terms per tap.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
-    acc: &mut MemData<E>,
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
@@ -70,7 +70,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
-        let mut acc = acc.matrix_accumulate::<A>(
+        let mut acc = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),

@@ -110,7 +110,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
         "reduce: MemData total_acc must be divisible by store.vector_size"
     ));
     let total_lines = comptime!(total_acc / ws);
-    let mut acc_view = acc.flat_accumulate::<W>(monoid);
+    let mut acc_view = acc.flat_accumulate::<Acc, W>(monoid);
     let in_view = input.nd_packed::<V>(comptime!(Guard::Checked));
 
     for line_idx in 0..total_lines {

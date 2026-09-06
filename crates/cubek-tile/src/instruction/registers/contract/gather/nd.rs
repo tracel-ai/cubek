@@ -12,8 +12,8 @@ use super::{GatherProblem, LhsRole, RhsRole, coords::cell_read};
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
 #[cube]
-pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
-    acc: &mut MemData<E>,
+pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size, EM: Numeric>(
+    acc: &mut MemData<EM>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
@@ -71,7 +71,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
         let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
-        let mut acc = acc.matrix_accumulate::<A>(
+        let mut acc = acc.matrix_accumulate::<E, A>(
             mat,
             comptime!(problem.block.acc_axes),
             comptime!(problem.block.space.clone()),
