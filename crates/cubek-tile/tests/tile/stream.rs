@@ -303,7 +303,12 @@ fn stream_matmul<E: Numeric>(
         let mut c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(&a_region, REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_region.block_accumulator::<E, E, E>(
+            &a_region,
+            &b_region,
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.zero();
         for cell in Walk::over(acc.op_space(&a_region, &b_region)).window(from, steps) {
             let mut acc_cell = acc.at(&cell);
@@ -338,7 +343,12 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let mut c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(&a_region, REGISTER_BLOCK, Monoid::Sum);
+        let mut acc = c_region.block_accumulator::<E, E, E>(
+            &a_region,
+            &b_region,
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
         acc.zero();
         let cells = Walk::over(acc.op_space(&a_region, &b_region)).window(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);

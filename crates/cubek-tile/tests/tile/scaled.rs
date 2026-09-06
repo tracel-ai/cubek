@@ -83,7 +83,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&a, &b)) {
         let mut acc_r = acc.at(&region);
@@ -1073,7 +1073,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E>(&a, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
     for region in Walk::over(acc.op_space(&a, &b)) {
         let mut acc_r = acc.at(&region);

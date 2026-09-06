@@ -103,8 +103,12 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
     let mut out = out.tile(space);
-    let mut acc =
-        out.block_accumulator::<E, E>(&w, comptime!(RegisterBlock::new(budget)), Monoid::Sum);
+    let mut acc = out.block_accumulator::<E, E, E>(
+        &w,
+        &x,
+        comptime!(RegisterBlock::new(budget)),
+        Monoid::Sum,
+    );
     acc.zero();
     for region in Walk::over(acc.op_space(&w, &x)) {
         let acc_cube = acc.at(&region);
