@@ -5,10 +5,10 @@
 //! ([`PackedView`](super::PackedView)): it reads and writes the one element it works in and
 //! never casts.
 //!
-//! The consumer this is for is a memory-backed accumulator whose sum runs wider than its cells.
-//! A cell summed in its own element stops growing once a product falls under half its spacing —
-//! an `f16` sum of values near one goes no further than 2048 — so a half-precision accumulator
-//! sums in `f32`. That change is not in this commit; nothing reads this view yet.
+//! Neither element has to be the wider one. A memory-backed accumulator serves `f32` over `f16`
+//! cells, because a cell summed in its own element stops growing once a product falls under half
+//! its spacing — an `f16` sum of values near one goes no further than 2048. A drain serves the
+//! other way, `f16` over `f32` cells, and rounds the accumulated result on the way in.
 
 use std::marker::PhantomData;
 
@@ -23,9 +23,9 @@ use cubecl::{
     },
 };
 
-/// A [`ViewMut`] over cells stored at `S`, read and written as `Vector<E, V>`: widened on the
-/// way out, narrowed on the way in, and touched nowhere else. The mutable twin of the packed
-/// read, for the accumulating side.
+/// A [`ViewMut`] over cells stored at `S`, read and written as `Vector<E, V>`: cast to the
+/// served element on the way out, back to the stored one on the way in, and touched nowhere
+/// else. The mutable twin of the packed read, for the accumulating side.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
 pub(crate) struct CastViewMut<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> {
@@ -59,7 +59,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> CastViewMut<'a, S
 }
 
 impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> CastViewMutExpand<'a, S, E, V, C> {
-    fn widen(
+    fn to_served(
         &self,
         scope: &Scope,
         stored: NativeExpand<Vector<S, V>>,
@@ -67,7 +67,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> CastViewMutExpand
         Vector::<E, V>::__expand_cast_from::<Vector<S, V>>(scope, stored)
     }
 
-    fn narrow(
+    fn to_stored(
         &self,
         scope: &Scope,
         served: NativeExpand<Vector<E, V>>,
@@ -107,7 +107,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> ViewOperationsExp
         pos: C::ExpandType,
     ) -> NativeExpand<Vector<E, V>> {
         let stored = self.stored.clone().__expand_read_method(scope, pos);
-        self.widen(scope, stored)
+        self.to_served(scope, stored)
     }
 
     fn __expand_read_checked_method(
@@ -116,7 +116,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> ViewOperationsExp
         pos: C::ExpandType,
     ) -> NativeExpand<Vector<E, V>> {
         let stored = self.stored.clone().__expand_read_checked_method(scope, pos);
-        self.widen(scope, stored)
+        self.to_served(scope, stored)
     }
 
     fn __expand_read_masked_method(
@@ -126,13 +126,13 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> ViewOperationsExp
         mask_value: NativeExpand<Vector<E, V>>,
     ) -> NativeExpand<Vector<E, V>> {
         // The mask is a served value, so it is selected at the served element rather than
-        // narrowed into the store and widened back.
+        // cast into the store and back.
         let stored = self
             .stored
             .clone()
             .__expand_read_checked_method(scope, pos.clone());
         let in_bounds = self.__expand_is_in_bounds_method(scope, pos);
-        let value = self.widen(scope, stored);
+        let value = self.to_served(scope, stored);
         select::expand::<Vector<E, V>>(scope, in_bounds, value, mask_value)
     }
 
@@ -145,7 +145,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a> ViewOperationsExp
             .stored
             .clone()
             .__expand_read_unchecked_method(scope, pos);
-        self.widen(scope, stored)
+        self.to_served(scope, stored)
     }
 
     fn __expand_as_linear_slice_method(
@@ -194,7 +194,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a>
         pos: C::ExpandType,
         value: NativeExpand<Vector<E, V>>,
     ) {
-        let stored = self.narrow(scope, value);
+        let stored = self.to_stored(scope, value);
         self.stored
             .clone()
             .__expand_write_method(scope, pos, stored);
@@ -206,7 +206,7 @@ impl<'a, S: Numeric, E: Numeric, V: Size, C: Coordinates + 'a>
         pos: C::ExpandType,
         value: NativeExpand<Vector<E, V>>,
     ) {
-        let stored = self.narrow(scope, value);
+        let stored = self.to_stored(scope, value);
         self.stored
             .clone()
             .__expand_write_checked_method(scope, pos, stored);

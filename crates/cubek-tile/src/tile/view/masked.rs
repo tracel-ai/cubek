@@ -114,8 +114,9 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
 
 #[cube]
 impl<'a, S: Numeric, V: Size, C: Coordinates + 'a> MaskedViewMut<'a, Vector<S, V>, C> {
-    /// These cells served at `E`: read widened, written narrowed, masked the same. What a
-    /// consumer working in an element the cells are not stored at reads and writes through.
+    /// These cells served at `E`: cast on the read, cast back on the write, masked the same.
+    /// What a consumer working in an element the cells are not stored at reads and writes
+    /// through.
     pub(crate) fn cast<E: Numeric>(self) -> MaskedViewMut<'a, Vector<E, V>, C> {
         let check = comptime!(self.check);
         MaskedViewMut::<'a, Vector<E, V>, C>::new(
