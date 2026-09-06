@@ -261,7 +261,7 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
@@ -298,7 +298,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         comptime!(c.spec.clone()),
         Write::Replace,
     );
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in Walk::over(acc.op_space(&a, &b)).unrolled() {
@@ -335,7 +335,7 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     );
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<EA, E>(&a, BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, E, E>(&a, &b, BLOCK, Monoid::Sum);
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
     for region in Walk::over(acc.op_space(&a, &b)).unrolled() {

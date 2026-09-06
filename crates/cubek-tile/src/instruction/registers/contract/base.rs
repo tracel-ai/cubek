@@ -33,7 +33,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
-    let contracted_per_step = comptime!(step_contracted_per_step(
+    let contracted_per_step = comptime!(contracted_per_step(
         &lhs.space, &rhs.space, &space, lw, rw, aw
     ));
     // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
@@ -90,7 +90,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     let lw = lhs.vector_size();
     let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
-    let contracted_per_step = comptime!(step_contracted_per_step(
+    let contracted_per_step = comptime!(contracted_per_step(
         &lhs.space, &rhs.space, &space, lw, rw, aw
     ));
     // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
@@ -134,13 +134,16 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the
-/// accumulator.
+/// accumulator: one where the rhs lines along the accumulator, its whole line where it lines
+/// along the contraction, so a block's lines are then partials of one cell.
 ///
 /// Asked per operand ([`Space::contracted_per_step`]) because the answer differs per operand: an lhs lined
 /// along the contracted axis folds, an rhs lined along the accumulator's innermost axis holds
 /// cells that must stay apart. Both must serve the same count, and the block's lanes mean one
-/// axis, so a folded step needs a scalar-contracted_per_step accumulator.
-fn step_contracted_per_step(
+/// axis, so a folded step needs a scalar-contracted_per_step accumulator. Settled once per block,
+/// whether the block is the memory leaf's or opened ahead of the walk
+/// ([`Tile::block_accumulator`]).
+pub(crate) fn contracted_per_step(
     lhs: &Space,
     rhs: &Space,
     acc: &Space,
@@ -207,14 +210,14 @@ mod tests {
     #[test]
     fn an_rhs_lined_along_the_accumulator_serves_one_value_a_step() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
-        assert_eq!(step_contracted_per_step(&lhs, &rhs, &acc, 4, 2, 2), 1);
+        assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 2, 2), 1);
     }
 
     /// Both operands lined along the contracted axis: the lanes are partials of one cell.
     #[test]
     fn both_operands_lined_along_the_contracted_axis_serve_a_line() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        assert_eq!(step_contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
+        assert_eq!(contracted_per_step(&lhs, &rhs, &acc, 4, 4, 1), 4);
     }
 
     /// A width the contracted extent does not divide would leave a masked tail.
@@ -222,7 +225,7 @@ mod tests {
     #[should_panic(expected = "served in whole lines")]
     fn a_width_that_misdivides_the_contracted_axis_is_refused() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_contracted_per_step(&lhs, &rhs, &acc, 3, 3, 1);
+        contracted_per_step(&lhs, &rhs, &acc, 3, 3, 1);
     }
 
     /// A lined rhs has nothing to fold against when the lhs serves one value a step.
@@ -230,7 +233,7 @@ mod tests {
     #[should_panic(expected = "line the lhs along")]
     fn a_folded_step_needs_both_operands_lined() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_contracted_per_step(&lhs, &rhs, &acc, 1, 4, 1);
+        contracted_per_step(&lhs, &rhs, &acc, 1, 4, 1);
     }
 
     /// The block's lanes mean one axis, and a lined accumulator has already claimed them.
@@ -238,7 +241,7 @@ mod tests {
     #[should_panic(expected = "cannot also be served")]
     fn a_folded_step_needs_a_scalar_accumulator() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[N, K]);
-        step_contracted_per_step(&lhs, &rhs, &acc, 4, 4, 2);
+        contracted_per_step(&lhs, &rhs, &acc, 4, 4, 2);
     }
 
     /// The rhs and the accumulator share their line, so they share its width.
@@ -246,6 +249,6 @@ mod tests {
     #[should_panic(expected = "served at one width")]
     fn an_rhs_lined_along_the_accumulator_shares_its_width() {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
-        step_contracted_per_step(&lhs, &rhs, &acc, 4, 1, 2);
+        contracted_per_step(&lhs, &rhs, &acc, 4, 1, 2);
     }
 }

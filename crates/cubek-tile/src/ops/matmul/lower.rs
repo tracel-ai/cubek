@@ -267,7 +267,7 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Cmma(d) => {
-                strided_2d(lhs, rhs, out);
+                strided_2d(lhs, rhs, out, false);
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
@@ -277,7 +277,7 @@ impl<E: Numeric> PlaneTile<E> {
                 d.mma(lhs, rhs)
             }
             PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, comptime!(out.clone()));
+                strided_2d(lhs, rhs, comptime!(out.clone()), comptime!(d.fold > 1));
                 d.mma(lhs, rhs, out, semiring)
             }
         }
@@ -299,7 +299,7 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, comptime!(out.clone()));
+                strided_2d(lhs, rhs, comptime!(out.clone()), false);
                 d.mma_scaled(lhs, rhs, scales, out, semiring)
             }
             PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
@@ -322,16 +322,27 @@ fn hardware_semiring(#[comptime] semiring: Semiring) {
 /// Asserts that operands are not gathered and read as one matrix each. A fragment contracts over
 /// one `k` edge, which is not one contracted *axis*: axes carried as one run flatten into an edge,
 /// and a partitioned contraction is exactly that. What it cannot read is a contraction its axes
-/// give no edge for.
+/// give no edge for. The rhs reads `(k, col)`, or `(col, k)` where a register block folds a step
+/// (`rhs_along_k`): lined along the contraction, its matrix is the transpose.
 #[cube]
-fn strided_2d<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
+fn strided_2d<EL: Numeric, ER: Numeric>(
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+    #[comptime] out: Space,
+    #[comptime] rhs_along_k: bool,
+) {
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
         let kc = Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out);
         let axes = MatrixAxes::accumulator(&out, &lhs.space);
-        MatrixAxes::find(&lhs.space, axes.rows(&out), kc).is_some()
-            && MatrixAxes::find(&rhs.space, kc, axes.cols(&out)).is_some()
+        let cols = axes.cols(&out);
+        let rhs_matrix = if rhs_along_k {
+            MatrixAxes::find(&rhs.space, cols, kc)
+        } else {
+            MatrixAxes::find(&rhs.space, kc, cols)
+        };
+        MatrixAxes::find(&lhs.space, axes.rows(&out), kc).is_some() && rhs_matrix.is_some()
     });
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered && flat,

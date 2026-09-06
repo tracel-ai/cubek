@@ -80,7 +80,7 @@ pub fn cpu_gemm_kernel<
     let mut c = c.tile(space);
 
     // The accumulator spans the cube's whole contraction: opened here, drained after it.
-    let mut acc = c.block_accumulator::<EA, EL>(&a, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<EA, EL, ER>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
     acc.zero();
 
     // This cube's box, K whole: one region.
