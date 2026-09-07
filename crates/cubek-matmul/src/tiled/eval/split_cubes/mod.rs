@@ -93,13 +93,15 @@ fn atomic_matmul<E: Numeric>(
     for region in space.level(comptime!(level.clone())) {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E>(
+        let b_cube = b.at(&region);
+        let mut acc = c_cube.block_accumulator::<E, E, E>(
             &a_cube,
+            &b_cube,
             comptime!(Fragments::new(&c_cube.space, &a_cube.space, &[])),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
-        acc.mm(&a_cube, &b.at(&region), Semiring::SUM_PROD);
+        acc.mm(&a_cube, &b_cube, Semiring::SUM_PROD);
         c_cube.copy_cast_from(&acc);
     }
 }
@@ -123,8 +125,9 @@ fn atomic_matmul_lanes<E: Numeric>(
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        let mut acc = c_cube.block_accumulator::<E, E>(
+        let mut acc = c_cube.block_accumulator::<E, E, E>(
             &a_cube,
+            &b_cube,
             comptime!(Fragments::new(
                 &c_cube.space,
                 &a_cube.space,

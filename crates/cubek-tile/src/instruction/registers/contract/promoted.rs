@@ -31,12 +31,15 @@ impl<T: Numeric> RegisterData<T> {
     ///
     /// The rhs may be packed too, and the width assert below is the whole of what governs it. A
     /// packed operand's `vector_size` is the *served* width — the binding's times the packing
-    /// factor — and the rhs's width must be the block's, so a packed rhs is served exactly when
-    /// the accumulator is declared at that served width. A caller that declares it narrower is
-    /// refused there, by an assert that names both widths; nothing packing-specific is left over
-    /// to refuse on its own. `a_packed_rhs_drains_from_a_promoted_accumulator` runs the unscaled
-    /// form, and `a_packed_decode_gemv_runs_in_this_spelling` the scaled one, which reaches this
-    /// same block through [`mma_scaled`](Self::mma_scaled).
+    /// factor — and the block was opened at the rhs's width, so a packed rhs is served exactly
+    /// when the same rhs opened the block. `a_packed_rhs_drains_from_a_promoted_accumulator`
+    /// runs the unscaled form, and `a_packed_decode_gemv_runs_in_this_spelling` the scaled one,
+    /// which reaches this same block through [`mma_scaled`](Self::mma_scaled).
+    ///
+    /// An rhs lined along the contraction is the folded step ([`fold`](Self::fold)): a step
+    /// consumes a whole line of each operand and the block's lanes are one cell's partials,
+    /// which [`store_cast_window`](Self::store_cast_window) collapses. The block must have been
+    /// opened that way: the lines are allocated at the open, not here.
     pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -52,21 +55,33 @@ impl<T: Numeric> RegisterData<T> {
         ));
         let vw = rhs.vector_size();
         let lw = lhs.vector_size();
+        let fold = comptime!(self.fold);
         // Either operand may be packed: the decode is the read's, and this is the only width
         // either one owes. A packed rhs is served at its packing factor, so it is this assert,
-        // not a packing test, that asks the accumulator to have been declared that wide.
+        // not a packing test, that asks the block to have been opened by the same rhs.
         comptime!(assert!(
             vw == self.vector_size,
             "RegisterData::mma: the block's lines are {} wide but the rhs serves {vw}; a packed \
-             rhs serves its packing factor, so declare the accumulator at that width",
+             rhs serves its packing factor, so open the block against the rhs it contracts",
             self.vector_size
         ));
-        // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
-        // A contracted axis is one both operands span, which is what this rules out.
+        // A contracted axis is one both operands span. The rhs lining along one is the folded
+        // step, and the block's lines mean one thing for the whole walk.
+        let lined_along_k = comptime!(lhs.space.contains(rhs.space.axis_at(rhs.space.rank() - 1)));
         comptime!(assert!(
-            !lhs.space.contains(rhs.space.axis_at(rhs.space.rank() - 1)),
-            "RegisterData::mma: the rhs lines along a contracted axis, which folds into one cell; \
-             the memory-backed leaf serves that step"
+            lined_along_k == (fold > 1),
+            "RegisterData::mma: the block's lines hold {fold} partials of a cell but the rhs lines \
+             along {}; open the block against the operands it contracts",
+            if lined_along_k {
+                "the contraction"
+            } else {
+                "the accumulator"
+            }
+        ));
+        comptime!(assert!(
+            fold == 1 || lw == fold,
+            "RegisterData::mma: a step consumes {fold} contracted values, so the lhs must line \
+             along the contraction at that width (it is {lw} wide)"
         ));
 
         let size!(L) = lw;
@@ -78,7 +93,12 @@ impl<T: Numeric> RegisterData<T> {
         // than off the last axis, so a split column group stays one edge.
         let cols = comptime!(MatrixAxes::accumulator(&out, &lhs.space).cols(&out));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
-        let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
+        // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator `(k, col)`.
+        let rhs_axes = comptime!(if fold > 1 {
+            MatrixAxes::of(&rhs.space, cols, kc)
+        } else {
+            MatrixAxes::of(&rhs.space, kc, cols)
+        });
         let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, 0usize);
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
         let rhs_mat = rhs.matrix_packed::<RA>(rhs_axes, 0usize);
@@ -92,7 +112,7 @@ impl<T: Numeric> RegisterData<T> {
             &rhs_mat,
             &mut self.data,
             lw,
-            1usize,
+            fold,
             mr,
             nr,
             kc,
@@ -126,17 +146,19 @@ impl<T: Numeric> RegisterData<T> {
         let inner = scales.index(0);
         let sw = inner.vector_size();
         // As [`mma`](Self::mma): a packed rhs — the decode gemv's whole shape — serves its
-        // packing factor, so this is the assert that asks the accumulator to be that wide.
+        // packing factor, so this is the assert that asks the block to have been opened by it.
         comptime!(assert!(
             vw == self.vector_size,
             "RegisterData::mma_scaled: the block's lines are {} wide but the rhs serves {vw}; a \
-             packed rhs serves its packing factor, so declare the accumulator at that width",
+             packed rhs serves its packing factor, so open the block against the rhs it contracts",
             self.vector_size
         ));
-        // The block's lanes are neighbouring cells, so the rhs must line along the accumulator.
+        // The scaled walk steps one contracted value at a time, so its block's lanes are
+        // neighbouring cells: a folded step here would need the scale level to step by lines.
         comptime!(assert!(
-            !lhs.space.contains(rhs.space.axis_at(rhs.space.rank() - 1)),
-            "RegisterData::mma_scaled: the rhs lines along a contracted axis, which folds into              one cell; the memory-backed leaf serves that step"
+            self.fold == 1,
+            "RegisterData::mma_scaled: the rhs lines along a contracted axis, which folds into \
+             one cell; the memory-backed leaf serves that step (Tile::mma_scaled_with)"
         ));
 
         let size!(L) = lw;

@@ -338,8 +338,9 @@ fn packed_gemv<E: Numeric, V: Size>(
         let scales = at_all(&scales, &cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
-        let mut acc = c.block_accumulator::<E, E>(
+        let mut acc = c.block_accumulator::<E, E, E>(
             &x,
+            &w,
             comptime!(Fragments::new(
                 &c.space,
                 &x.space,
@@ -1732,8 +1733,9 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
-        let mut acc = c.block_accumulator::<E, E>(
+        let mut acc = c.block_accumulator::<E, E, E>(
             &x,
+            &w,
             comptime!(Fragments::new(
                 &c.space,
                 &x.space,

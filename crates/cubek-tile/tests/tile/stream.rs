@@ -265,8 +265,9 @@ fn stream_matmul<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(
+        let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
+            &b_region,
             comptime!(Fragments::new(
                 &c_region.space,
                 &a_region.space,
@@ -312,8 +313,9 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
-        let mut acc = c_region.block_accumulator::<E, E>(
+        let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
+            &b_region,
             comptime!(Fragments::new(
                 &c_region.space,
                 &a_region.space,

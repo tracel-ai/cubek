@@ -125,7 +125,8 @@ pub fn cpu_gemm_kernel<
             let a = a.at(&plane);
             let b = b.at(&plane);
             let mut c = c.at(&plane);
-            let mut acc = c.block_accumulator::<EA, EL>(&a, fragments, REGISTER_BLOCK, Monoid::Sum);
+            let mut acc =
+                c.block_accumulator::<EA, EL, ER>(&a, &b, fragments, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
             for step in plane.walk(comptime!(bp.k_steps())) {
                 let mut acc_step = acc.at(&step);

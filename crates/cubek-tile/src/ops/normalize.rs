@@ -158,6 +158,7 @@ mod tests {
             MatrixAxes::trailing_pair(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
             8,
             1,
+            1,
             Monoid::Sum,
         );
         let tile = TileExpand::<f32> {

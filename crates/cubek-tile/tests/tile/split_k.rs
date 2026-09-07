@@ -321,8 +321,9 @@ fn atomic_split_matmul<E: Numeric>(
     let c = out.tile(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E>(
+    let mut acc = c.block_accumulator::<E, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,

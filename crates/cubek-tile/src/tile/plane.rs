@@ -28,7 +28,8 @@ pub enum PlaneTile<T: Numeric> {
 #[cube]
 impl<T: Numeric> PlaneTile<T> {
     /// An accumulator tile over the whole `m × n` MMA tile, uninitialized, in the `form` the
-    /// instruction contracts through.
+    /// instruction contracts through. `vector_size` and `fold` shape the software block's lines
+    /// ([`RegisterData::fold`]); the hardware encodings have no say in their layout.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
         #[comptime] form: PlaneForm,
@@ -37,6 +38,7 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] axes: MatrixAxes,
         #[comptime] k: usize,
         #[comptime] vector_size: usize,
+        #[comptime] fold: usize,
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
@@ -46,13 +48,12 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneForm::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
-            // `vector_size` is the promoting tile's, so the block's lines match the memory it
-            // will drain into; the hardware encodings above have no say in their layout.
             PlaneForm::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
                 axes,
                 vector_size,
+                fold,
                 config,
                 monoid,
             )),
@@ -218,12 +219,14 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// The plane-resident form of an accumulator over `space`: a partition mirroring its grid,
     /// tiles uninitialized. Opening the scope is purely structural; the caller states the init.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] axes: MatrixAxes,
         #[comptime] form: PlaneForm,
         #[comptime] fragments: Fragments,
         #[comptime] vector_size: usize,
+        #[comptime] fold: usize,
         #[comptime] monoid: Monoid,
         #[comptime] depth: usize,
     ) -> Tile<T> {
@@ -242,6 +245,7 @@ impl<T: Numeric> PlanePartition<T> {
                     axes,
                     k,
                     vector_size,
+                    fold,
                     monoid,
                 ));
             }

@@ -18,6 +18,7 @@ use cubek_test_utils::{
 };
 
 use cubek_tile::*;
+use half::f16;
 
 use super::references;
 
@@ -490,8 +491,9 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E>(
+    let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,
@@ -534,8 +536,9 @@ fn promoted_matmul_two_levels_in_place<E: Numeric, EA: Numeric, V: Size>(
             let c_p = c.at(&plane);
             let a_p = a.at(&plane);
             let b_p = b.at(&plane);
-            let mut acc = c_p.block_accumulator::<EA, E>(
+            let mut acc = c_p.block_accumulator::<EA, E, E>(
                 &a_p,
+                &b_p,
                 comptime!(Fragments::new(
                     &c_p.space,
                     &a_p.space,
@@ -573,8 +576,9 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<E, E>(
+    let mut acc = c.block_accumulator::<E, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,
@@ -1120,8 +1124,9 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
     let a = a.tile::<E>(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E>(
+    let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,
@@ -3162,6 +3167,110 @@ fn register_matmul_folded_step_rolled() {
     check_folded_step(lined_lhs_space(4, 4, 8), (4, 4, 8), 8);
 }
 
+/// The folded step through a promoted block. The rhs lines along `K`, so the block's lines are
+/// one cell's partials, collapsed on drain rather than committed per visit: the sum never meets
+/// the output between regions, which is what lets it run wider than the output
+/// ([`a_promoted_folded_step_sums_wider_than_its_output`]).
+#[test]
+fn register_matmul_promoted_folded_step() {
+    let client = cubecl::test_device().client();
+    let (m, n, k) = (4usize, 4usize, 8usize);
+    let launcher = lined_lhs_space(m, n, k);
+
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    let dtype = f32::elem_type_native();
+    promoted_matmul_in_place::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        4,
+        4,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        RegisterBlock::new(64),
+        Semiring::SUM_PROD,
+        dtype,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(folded_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
+}
+
+/// A half-precision output summing a long folded contraction: `4096` products of one. Summed in
+/// its own element the cell stops at `2048`, where one more product falls under half its spacing
+/// and rounds away; carried in `f32` across the walk and cast once on drain, it lands `4096`.
+/// The property a weight stored along `K` needs from a register block, the folded step being
+/// the only way such a weight contracts.
+#[test]
+fn a_promoted_folded_step_sums_wider_than_its_output() {
+    let client = cubecl::test_device().client();
+    let (m, n, k) = (1usize, 1usize, 4096usize);
+    let launcher = lined_lhs_space(m, n, k);
+    let out = f16::elem_type_native();
+    let acc = f32::elem_type_native();
+
+    let ones = vec![1.0f32; k];
+    let (a, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(out)
+        .custom(ones.clone())
+        .generate_with_f32_host_data();
+    let (b, _) = TestInput::builder(client.clone(), shape![n, k])
+        .dtype(out)
+        .custom(ones)
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(out)
+        .zeros()
+        .generate_without_host_data();
+
+    promoted_matmul_in_place::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        4,
+        4,
+        1,
+        TileArgLaunch::new(a.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[N, K])),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.space_arg(),
+        launcher.level(0),
+        RegisterBlock::new(64),
+        Semiring::SUM_PROD,
+        out,
+        acc,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    let have = got.get_f32(&[0, 0]);
+    assert!(
+        have == k as f32,
+        "an f16 cell summed in f32 holds {k}, got {have}"
+    );
+}
+
 /// The N-D nest at a folded step: two contracted axes, both operands lined along the faster of
 /// them. The reduce nest steps by the served width, so each step lands on a line start.
 #[test]
@@ -3414,6 +3523,58 @@ fn register_matmul_promoted_lane_group_fold() {
         dtype,
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
+/// The gemv's own layout, promoted: a plane split into groups, each owning a row, its lanes
+/// interleaving `K`, and the weight stored along `K` lining both operands along the contraction.
+/// Every lane's block is one line of partials, so the drain folds twice, across the line and then
+/// across the group, and the cell is written once at the end. The memory-backed leaf does both
+/// folds per visit and rounds the cell at each; a half-precision cell rounds away the walk that
+/// way, so this is the block a half-precision gemv runs in.
+#[test]
+fn register_matmul_promoted_folded_step_lane_group_fold() {
+    let client = cubecl::test_device().client();
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    let (groups, k) = (lanes / group_lanes, group_lanes * edge);
+    let (m, dtype) = (groups, f32::elem_type_native());
+    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
+
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[N, K]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    promoted_matmul_in_place::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        edge,
+        edge,
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        RegisterBlock::new(edge * n),
+        Semiring::SUM_PROD,
+        dtype,
+        dtype,
+    );
+
+    let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+    let (_, expected) = TestInput::builder(client, shape![m, n])
+        .custom(folded_matmul_reference(m, n, k))
+        .generate_with_f32_host_data();
+    assert_equals_approx(&output, &expected, 1e-3)
+        .as_test_outcome()
+        .enforce()
 }
 
 /// A packed lhs contracts into a register block to the product its scales and values describe.

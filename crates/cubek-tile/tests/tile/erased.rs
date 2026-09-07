@@ -263,8 +263,9 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E>(
+    let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,
@@ -313,8 +314,9 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
         comptime!(c.spec.clone()),
         Write::Replace,
     );
-    let mut acc = c.block_accumulator::<EA, E>(
+    let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,
@@ -363,8 +365,9 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     );
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut acc = c.block_accumulator::<EA, E>(
+    let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
+        &b,
         comptime!(Fragments::new(
             &c.space,
             &a.space,

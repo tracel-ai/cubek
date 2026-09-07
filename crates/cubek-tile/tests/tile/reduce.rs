@@ -1273,7 +1273,7 @@ fn resident_fold_kernel<E: Numeric>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let out = output.tile(comptime!(space.clone()));
-    let mut acc = out.block_accumulator::<E, E>(
+    let mut acc = out.block_reducer::<E, E>(
         &input,
         comptime!(Fragments::new(
             &out.space,

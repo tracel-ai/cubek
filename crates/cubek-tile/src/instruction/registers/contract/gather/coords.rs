@@ -42,7 +42,13 @@ pub(super) fn cell_position(
     #[comptime] problem: GatherProblem,
     #[comptime] width: usize,
 ) -> CoordsDyn {
-    let acc_coords = acc_cell_coords(batch, row, col);
+    let acc_coords = acc_cell_coords(
+        batch,
+        row,
+        col,
+        comptime!(problem.block.row_extents()),
+        comptime!(problem.block.column_line_extents()),
+    );
     resolve_nd_coords(
         operand,
         comptime!(problem.block.space.clone()),
@@ -69,20 +75,42 @@ pub(super) fn offset_last(coords: &CoordsDyn, #[comptime] rank: usize, delta: u3
     out
 }
 
-/// Assembles the accumulator cell coordinate [`resolve_nd_coords`] reads on its acc branch:
-/// `batch`'s own axes in order, then `row` (the accumulator's second to last axis), then `col`
-/// (its last). This is the axis order [`resolve_nd_coords`] assumes when it looks up
-/// `acc.position(axis)`.
+/// Assembles the accumulator cell coordinate [`resolve_nd_coords`] reads on its acc branch: one
+/// entry per axis of the accumulator's space, in the space's own order, because that is what
+/// `acc.position(axis)` indexes it by.
+///
+/// `batch`'s axes come already resolved; `row` unravels over the row group and `col` over the
+/// column group, whose innermost entry counts the cells one block column holds rather than
+/// scalars ([`ContractShape::cell_width`]). Both groups hold a single axis in the common case,
+/// where the unravels are the identity and this is exactly `[batch…, row, col]`. A column group
+/// spanning several axes is not: `MatrixAxes::accumulator` stops the group at the first axis the
+/// lhs spans, and an accumulator carrying axes the lhs does not pair it over — a depthwise
+/// convolution's `[batch, out_h, out_w, channel]` against a filter over the channel and the taps
+/// — leaves every one of them in the column group.
 #[cube]
-fn acc_cell_coords(batch: &Coords<u32>, row: u32, col: u32) -> Coords<u32> {
+fn acc_cell_coords(
+    batch: &Coords<u32>,
+    row: u32,
+    col: u32,
+    #[comptime] row_extents: Vec<usize>,
+    #[comptime] col_extents: Vec<usize>,
+) -> Coords<u32> {
     let mut out = Coords::<u32>::new();
 
     #[unroll]
     for p in 0..batch.len() {
         out.push(batch.at(p));
     }
-    out.push(row);
-    out.push(col);
+    let rows = unravel_const(comptime!(row_extents.clone()), row);
+    #[unroll]
+    for p in 0..rows.len() {
+        out.push(rows.at(p));
+    }
+    let cols = unravel_const(comptime!(col_extents.clone()), col);
+    #[unroll]
+    for p in 0..cols.len() {
+        out.push(cols.at(p));
+    }
 
     out
 }
