@@ -36,6 +36,14 @@ pub trait Fold: Sized {
     fn frem(self, _rhs: Self) -> Self {
         unexpanded!()
     }
+    /// The smaller of the two; two constants fold.
+    fn fmin(self, _rhs: Self) -> Self {
+        unexpanded!()
+    }
+    /// The larger of the two; two constants fold.
+    fn fmax(self, _rhs: Self) -> Self {
+        unexpanded!()
+    }
     /// The value re-typed to `To`, a constant staying constant (the stock `as` emits a
     /// cast instruction, which erases constness).
     fn fcast<To: Int>(self) -> To {
@@ -135,6 +143,20 @@ fn fold_rem<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -
     }
 }
 
+fn fold_min<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
+    match (constant(&lhs), constant(&rhs)) {
+        (Some(a), Some(b)) => constant_like(scope, a.min(b), &lhs),
+        _ => C::__expand_min(scope, lhs, rhs),
+    }
+}
+
+fn fold_max<C: Int>(scope: &Scope, lhs: NativeExpand<C>, rhs: NativeExpand<C>) -> NativeExpand<C> {
+    match (constant(&lhs), constant(&rhs)) {
+        (Some(a), Some(b)) => constant_like(scope, a.max(b), &lhs),
+        _ => C::__expand_max(scope, lhs, rhs),
+    }
+}
+
 /// Expand twin of [`Fold`]; blanket on integer expand elements.
 pub(crate) trait FoldExpand<C: Int>: Sized {
     fn __expand_fadd_method(self, scope: &Scope, rhs: Self) -> Self;
@@ -142,6 +164,8 @@ pub(crate) trait FoldExpand<C: Int>: Sized {
     fn __expand_fmul_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fdiv_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_frem_method(self, scope: &Scope, rhs: Self) -> Self;
+    fn __expand_fmin_method(self, scope: &Scope, rhs: Self) -> Self;
+    fn __expand_fmax_method(self, scope: &Scope, rhs: Self) -> Self;
     fn __expand_fcast_method<To: Int>(self, scope: &Scope) -> NativeExpand<To>;
     fn __expand_constant_method(self, scope: &Scope) -> Option<u64>;
 }
@@ -161,6 +185,12 @@ impl<C: Int> FoldExpand<C> for NativeExpand<C> {
     }
     fn __expand_frem_method(self, scope: &Scope, rhs: Self) -> Self {
         fold_rem(scope, self, rhs)
+    }
+    fn __expand_fmin_method(self, scope: &Scope, rhs: Self) -> Self {
+        fold_min(scope, self, rhs)
+    }
+    fn __expand_fmax_method(self, scope: &Scope, rhs: Self) -> Self {
+        fold_max(scope, self, rhs)
     }
     fn __expand_fcast_method<To: Int>(self, scope: &Scope) -> NativeExpand<To> {
         match constant(&self) {

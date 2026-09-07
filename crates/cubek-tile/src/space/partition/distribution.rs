@@ -51,10 +51,12 @@ pub enum ComputeScope {
 }
 
 impl Coverage {
+    /// How many instances take a `grid` of tiles: the pinned count, or as many runs of
+    /// `tiles` as the grid holds, the last one short where it does not divide.
     pub fn instances(self, grid: usize) -> usize {
         match self {
             Coverage::Instances(instances) => instances,
-            Coverage::TilesEach(tiles) => grid / tiles,
+            Coverage::TilesEach(tiles) => grid.div_ceil(tiles),
         }
     }
 
@@ -73,23 +75,58 @@ impl Coverage {
     }
 }
 
-/// `TilesEach` pins it, `Instances` splits the `grid` (folded, so a constant grid
-/// keeps its constant).
+/// The run of tiles each instance is dealt: `TilesEach` pins it, `Instances` splits the `grid`,
+/// rounded up so a grid that does not divide leaves its tail in the last runs rather than
+/// nowhere (folded, so a constant grid keeps its constant).
 #[cube]
-pub(crate) fn tiles_per_instance(grid: usize, #[comptime] cov: Coverage) -> usize {
+pub(crate) fn run_length(grid: usize, #[comptime] cov: Coverage) -> usize {
     match cov {
-        Coverage::Instances(instances) => grid.fdiv(instances.runtime()),
+        Coverage::Instances(instances) => grid
+            .fadd(comptime!(instances - 1).runtime())
+            .fdiv(instances.runtime()),
         Coverage::TilesEach(tiles) => tiles.runtime(),
     }
 }
 
-/// `Instances` pins it, `TilesEach` derives it from the `grid` (folded, so a constant
-/// grid keeps its constant).
+/// How many instances take the `grid`: `Instances` pins it, `TilesEach` derives it, rounded up
+/// (folded, so a constant grid keeps its constant).
 #[cube]
 pub(crate) fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
     match cov {
         Coverage::Instances(instances) => instances.runtime(),
-        Coverage::TilesEach(tiles) => grid.fdiv(tiles.runtime()),
+        Coverage::TilesEach(tiles) => grid
+            .fadd(comptime!(tiles - 1).runtime())
+            .fdiv(tiles.runtime()),
+    }
+}
+
+/// The tiles instance `pos` of `instances` takes of a `grid` dealt in runs of `run`: the whole
+/// run where the host proved the grid `divides`, else the run cut short where the grid ends
+/// inside it (contiguous), or the turns left to it (interleaved). Saturating, so an instance
+/// past the grid takes nothing.
+#[cube]
+pub(crate) fn instance_tiles(
+    grid: usize,
+    pos: usize,
+    instances: usize,
+    run: usize,
+    #[comptime] spread: Spread,
+    #[comptime] divides: bool,
+) -> usize {
+    if divides {
+        run
+    } else {
+        match spread {
+            Spread::Contiguous => {
+                let start = pos.fmul(run);
+                run.fmin(grid.fmax(start).fsub(start))
+            }
+            Spread::Interleaved => grid
+                .fmax(pos)
+                .fsub(pos)
+                .fadd(instances.fsub(1usize))
+                .fdiv(instances),
+        }
     }
 }
 

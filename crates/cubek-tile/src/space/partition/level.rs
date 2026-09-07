@@ -348,6 +348,29 @@ impl Level {
         }
     }
 
+    /// Whether every instance's run along `axis` of `space` is the full one: the grid divides
+    /// the stated count or run, which the host can only prove of a static extent, except for one
+    /// tile each, which any grid divides. What lets the kernel skip clamping a run.
+    pub(crate) fn divides(&self, space: &Space, axis: Axis) -> bool {
+        let (edge, coverage) = match (self.edge_kind(axis), self.distribution(axis)) {
+            (Edge::Cut(edge), Distribution::Spatial { coverage, .. }) => (edge, coverage),
+            _ => return true,
+        };
+        if coverage == Coverage::TilesEach(1) {
+            return true;
+        }
+        match space.extent_raw(axis) {
+            Extent::Static(extent) => {
+                let grid = extent.div_ceil(edge);
+                match coverage {
+                    Coverage::Instances(n) => grid.is_multiple_of(n),
+                    Coverage::TilesEach(t) => grid.is_multiple_of(t),
+                }
+            }
+            Extent::Dynamic => false,
+        }
+    }
+
     /// Whether `axis` is `Spatial` `TilesEach(1)`: its walk count is comptime `1`, so a step
     /// decode can skip it.
     pub(crate) fn single_tile(&self, axis: Axis) -> bool {

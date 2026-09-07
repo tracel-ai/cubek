@@ -19,7 +19,7 @@ use cubecl::prelude::*;
 
 use crate::{
     Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand,
-    instance_count, tiles_per_instance,
+    instance_count, instance_tiles, run_length,
 };
 
 use super::walk_order::walk_index;
@@ -230,8 +230,6 @@ impl Walk {
         for p in 0..rank {
             let axis = comptime!(space.axis_at(p));
             let dist = comptime!(level.distribution(axis));
-            let count = axis_count(grid.at(p), dist);
-            counts.push(count);
 
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
                 // Mixed-radix stride for axes sharing one hardware dim: the product of the
@@ -250,17 +248,27 @@ impl Walk {
                 );
                 let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
                 let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
-                positions.push(
-                    hardware_pos(comptime!(dist.scope_unchecked()))
-                        .fdiv(inner_weight)
-                        .frem(instances.at(p)),
-                );
+                let position = hardware_pos(comptime!(dist.scope_unchecked()))
+                    .fdiv(inner_weight)
+                    .frem(instances.at(p));
+                // This instance's run of the grid, cut short where the grid does not divide.
+                let run = run_length(grid.at(p), comptime!(dist.coverage()));
+                counts.push(instance_tiles(
+                    grid.at(p),
+                    position,
+                    instances.at(p),
+                    run,
+                    comptime!(dist.spread()),
+                    comptime!(level.divides(&space, axis)),
+                ));
+                positions.push(position);
                 if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-                    scales.push(tiles_per_instance(grid.at(p), comptime!(dist.coverage())));
+                    scales.push(run);
                 } else {
                     scales.push(instances.at(p));
                 }
             } else {
+                counts.push(grid.at(p));
                 positions.push(0usize);
                 scales.push(1usize);
             }
@@ -456,16 +464,6 @@ impl Iterable for WalkExpand {
     /// straight through rather than under a one-trip loop.
     fn const_len(&self) -> Option<usize> {
         crate::fold::constant(&self.steps).map(|n| n as usize)
-    }
-}
-
-/// Whole `grid` when `Sequential`, else this instance's `Spatial` share.
-#[cube]
-fn axis_count(grid: usize, #[comptime] dist: Distribution) -> usize {
-    if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-        tiles_per_instance(grid, dist.coverage())
-    } else {
-        grid
     }
 }
 

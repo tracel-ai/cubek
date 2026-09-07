@@ -1513,6 +1513,45 @@ fn matmul_interleaved_m_across_cubes() {
     );
 }
 
+/// A count the tile grid does not divide: four tiles across three cubes are runs of two, two
+/// and nothing; dealt three each they are a run of three and a run of one; in turns they are
+/// two, one and one. Every tile is visited once either way, none twice.
+#[test]
+fn matmul_m_across_cubes_that_do_not_divide() {
+    check_matmul(
+        16,
+        8,
+        8,
+        Level::cubes(&[Cut::new(M, 4).across(3)]),
+        Level::walk(&[(N, 4), (K, 4)]),
+        1,
+    );
+}
+
+#[test]
+fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
+    check_matmul(
+        16,
+        8,
+        8,
+        Level::cubes(&[Cut::new(M, 4).each(3)]),
+        Level::walk(&[(N, 4), (K, 4)]),
+        1,
+    );
+}
+
+#[test]
+fn matmul_m_in_turns_across_cubes_that_do_not_divide() {
+    check_matmul(
+        16,
+        8,
+        8,
+        Level::cubes(&[Cut::new(M, 4).across(3).interleaved()]),
+        Level::walk(&[(N, 4), (K, 4)]),
+        1,
+    );
+}
+
 #[test]
 fn matmul_double_buffered() {
     check_matmul(
@@ -1902,6 +1941,41 @@ fn matmul_cpu_cores_split_m_planes() {
         8,
         8,
         Level::planes(&[Cut::new(M, 4).each(2)]),
+        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+    );
+}
+
+/// The same short runs across a cube's planes: four tiles over three planes, three each, and
+/// in turns.
+#[test]
+fn matmul_cpu_m_across_planes_that_do_not_divide() {
+    check_matmul_cpu(
+        16,
+        8,
+        8,
+        Level::planes(&[Cut::new(M, 4).across(3)]),
+        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+    );
+}
+
+#[test]
+fn matmul_cpu_m_three_each_across_planes_leaves_a_short_run() {
+    check_matmul_cpu(
+        16,
+        8,
+        8,
+        Level::planes(&[Cut::new(M, 4).each(3)]),
+        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+    );
+}
+
+#[test]
+fn matmul_cpu_m_in_turns_across_planes_that_do_not_divide() {
+    check_matmul_cpu(
+        16,
+        8,
+        8,
+        Level::planes(&[Cut::new(M, 4).across(3).interleaved()]),
         Level::walk(&[(M, 4), (N, 4), (K, 4)]),
     );
 }
