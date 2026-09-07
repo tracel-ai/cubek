@@ -1,5 +1,5 @@
 //! The split vocabulary: how a single axis is distributed, sized, and dealt out. What a
-//! [`Deal`](crate::Deal) entry of a level states, read back per axis.
+//! [`Cut`](crate::Cut) entry of a level states, read back per axis.
 
 use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;

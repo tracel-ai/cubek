@@ -1420,7 +1420,7 @@ fn matmul_sequential_single_cube() {
         8,
         8,
         8,
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         sequential(&[(M, 4), (N, 4), (K, 4)]),
         1,
     );
@@ -1432,7 +1432,7 @@ fn matmul_one_tile_per_cube() {
         8,
         8,
         8,
-        Level::cubes(&[Deal::new(M, 4).across(2), Deal::new(N, 4).across(2)]),
+        Level::cubes(&[Cut::new(M, 4).across(2), Cut::new(N, 4).across(2)]),
         Level::walk(&[(K, 4)]),
         1,
     );
@@ -1448,7 +1448,7 @@ fn matmul_whole_k_at_the_leaf() {
         8,
         8,
         4,
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         sequential(&[(M, 4), (N, 4), (K, 4)]),
         1,
     );
@@ -1493,7 +1493,7 @@ fn matmul_contiguous_m_across_cubes() {
         16,
         8,
         8,
-        Level::cubes(&[Deal::new(M, 4).each(2)]),
+        Level::cubes(&[Cut::new(M, 4).each(2)]),
         Level::walk(&[(N, 4), (K, 4)]),
         1,
     );
@@ -1505,7 +1505,7 @@ fn matmul_interleaved_m_across_cubes() {
         16,
         8,
         8,
-        Level::cubes(&[Deal::new(M, 4).across(2).interleaved()]),
+        Level::cubes(&[Cut::new(M, 4).across(2).interleaved()]),
         Level::walk(&[(N, 4), (K, 4)]),
         1,
     );
@@ -1517,7 +1517,7 @@ fn matmul_double_buffered() {
         8,
         8,
         8,
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         sequential(&[(M, 4), (N, 4), (K, 4)]),
         2,
     );
@@ -1692,7 +1692,7 @@ fn check_matmul_batched(
         rhs.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         1,
         f32::elem_type_native(),
@@ -1814,7 +1814,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             rhs.arg(),
             acc.arg(),
             nest.space_arg(),
-            Level::cubes::<Deal>(&[]),
+            Level::cubes::<Cut>(&[]),
             nest.at(0),
             1,
             dtype,
@@ -1855,7 +1855,7 @@ fn matmul_cpu_sequential() {
         8,
         8,
         8,
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         sequential(&[(M, 4), (N, 4), (K, 4)]),
     );
 }
@@ -1866,7 +1866,7 @@ fn matmul_cpu_big_k() {
         8,
         8,
         16,
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         sequential(&[(M, 4), (N, 4), (K, 4)]),
     );
 }
@@ -1877,7 +1877,7 @@ fn matmul_cpu_cores_split_m() {
         16,
         8,
         8,
-        Level::cubes(&[Deal::new(M, 4).each(2)]),
+        Level::cubes(&[Cut::new(M, 4).each(2)]),
         Level::walk(&[(M, 4), (N, 4), (K, 4)]),
     );
 }
@@ -1888,7 +1888,7 @@ fn matmul_cpu_cores_split_m_planes() {
         16,
         8,
         8,
-        Level::planes(&[Deal::new(M, 4).each(2)]),
+        Level::planes(&[Cut::new(M, 4).each(2)]),
         Level::walk(&[(M, 4), (N, 4), (K, 4)]),
     );
 }
@@ -1969,7 +1969,7 @@ fn matmul_cpu_dynamic_k() {
             .clone()
             .with_dynamic(&[K])
             .launch_arg(&nest.space),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -1994,7 +1994,7 @@ fn register_matmul_unit_spread_n() {
     let n = plane_size * nr;
     let nest = Nest::new(
         Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::lanes(&[Deal::new(N, nr).across(plane_size)])],
+        vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
     );
 
     let a = TileInput::builder(&client, nest.space.project(&[M, K]))
@@ -2018,7 +2018,7 @@ fn register_matmul_unit_spread_n() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2438,7 +2438,7 @@ fn matmul_direct_vectorized() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2576,7 +2576,7 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
             b.arg(),
             c.arg(),
             nest.space_arg(),
-            Level::cubes::<Deal>(&[]),
+            Level::cubes::<Cut>(&[]),
             nest.at(0),
             depth,
             dtype,
@@ -2680,7 +2680,7 @@ fn tropical_matmul_in_place() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::MIN_SUM,
@@ -2904,7 +2904,7 @@ fn register_matmul_lined_lhs() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2994,7 +2994,7 @@ fn check_folded_step(nest: Nest, (m, n, k): (usize, usize, usize), budget: usize
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         RegisterBlock::new(budget),
         Semiring::SUM_PROD,
@@ -3056,7 +3056,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
@@ -3179,8 +3179,8 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
     Nest::new(
         Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
         vec![Level::lanes(&[
-            Deal::new(M, 1).across(groups),
-            Deal::new(K, edge).across(group_lanes).interleaved(),
+            Cut::new(M, 1).across(groups),
+            Cut::new(K, edge).across(group_lanes).interleaved(),
         ])],
     )
 }
@@ -3218,7 +3218,7 @@ fn register_matmul_lane_group_fold() {
         b.arg(),
         c.arg(),
         nest.space_arg(),
-        Level::cubes::<Deal>(&[]),
+        Level::cubes::<Cut>(&[]),
         nest.at(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
@@ -4579,9 +4579,9 @@ fn run_register_matmul_quant_rhs(
         .subspace(&[M, N])
         .vectorize(pack)
         .build();
-    // One level deals `N` across cubes where the test says so; the walk is always stated.
+    // One level cuts `N` across cubes where the test says so; the walk is always stated.
     let (outer, inner) = match nest.levels.len() {
-        1 => (Level::cubes::<Deal>(&[]), nest.at(0)),
+        1 => (Level::cubes::<Cut>(&[]), nest.at(0)),
         _ => (nest.at(0), nest.at(1)),
     };
     match serve {

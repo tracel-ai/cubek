@@ -1,7 +1,7 @@
 //! Unit tests for [`Space`]
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Deal, Level, Nest, Space};
+use cubek_tile::{Axis, Cut, Level, Nest, Space};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -241,7 +241,7 @@ fn one_axis_across_a_count_is_a_dial() {
     let nest = Nest::new(
         Space::new(&[(M, 64), (N, 64), (K, 16)]),
         vec![
-            Level::cubes(&[Deal::new(M, 16).across(4)]),
+            Level::cubes(&[Cut::new(M, 16).across(4)]),
             Level::walk(&[(N, 32)]),
         ],
     );
@@ -249,13 +249,13 @@ fn one_axis_across_a_count_is_a_dial() {
     assert!(matches!(nest.cube_count(), CubeCount::Static(4, 1, 1)));
 }
 
-/// Nothing named is nothing said: a level that names no axis deals every cube the whole space.
+/// Nothing named is nothing said: a level that names no axis cuts every cube the whole space.
 #[test]
 fn a_level_naming_no_axis_deals_everything_to_one_cube() {
     let nest = Nest::new(
         Space::new(&[(M, 64), (N, 64), (K, 16)]),
         vec![
-            Level::cubes::<Deal>(&[]),
+            Level::cubes::<Cut>(&[]),
             Level::walk(&[(M, 16), (N, 32), (K, 16)]),
         ],
     );
@@ -270,9 +270,9 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
 #[should_panic = "combine in registers"]
 fn sharing_tiles_across_lanes_is_refused() {
     let _ = Level::lanes(&[
-        Deal::new(M, 16).across(4),
-        Deal::new(N, 32).across(4),
-        Deal::new(K, 16).across(4),
+        Cut::new(M, 16).across(4),
+        Cut::new(N, 32).across(4),
+        Cut::new(K, 16).across(4),
     ])
     .shared_by(4);
 }
@@ -283,9 +283,9 @@ fn sharing_tiles_across_lanes_is_refused() {
 #[should_panic = "states a count or a spread of its own"]
 fn sharing_tiles_with_a_knob_on_an_entry_is_refused() {
     let _ = Level::cubes(&[
-        Deal::new(M, 16).interleaved(),
-        Deal::new(N, 32),
-        Deal::new(K, 16),
+        Cut::new(M, 16).interleaved(),
+        Cut::new(N, 32),
+        Cut::new(K, 16),
     ])
     .shared_by(5);
 }
@@ -301,7 +301,7 @@ fn an_axis_named_twice_is_refused() {
 #[test]
 #[should_panic = "states no lane count"]
 fn lanes_without_a_count_are_refused() {
-    let _ = Level::lanes(&[Deal::new(M, 16)]);
+    let _ = Level::lanes(&[Cut::new(M, 16)]);
 }
 
 // ---- A level that cuts nothing --------------------------------------------

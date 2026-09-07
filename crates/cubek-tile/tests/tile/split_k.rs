@@ -500,7 +500,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::cubes(&[(K, k / splits)]),
-            Level::lanes(&[Deal::new(N, per_lane).across(plane_size)]),
+            Level::lanes(&[Cut::new(N, per_lane).across(plane_size)]),
         ],
     );
 

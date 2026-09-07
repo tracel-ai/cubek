@@ -229,8 +229,8 @@ fn serving_geometry(promoted: bool) {
             Level::cubes(&[(M, rows_per_cube)]),
             Level::planes(&[(M, rows_per_plane)]),
             Level::lanes(&[
-                Deal::new(M, rows_per_lane).across(groups),
-                Deal::new(KI, factor).across(group_lanes).interleaved(),
+                Cut::new(M, rows_per_lane).across(groups),
+                Cut::new(KI, factor).across(group_lanes).interleaved(),
             ]),
             Level::walk(&[(KB, 1)]),
         ],

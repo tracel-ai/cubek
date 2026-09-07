@@ -115,7 +115,7 @@ impl DepthwiseSpace {
     /// rather than a contiguous run: a contiguous run puts a stride between what neighbouring
     /// lanes read and breaks the coalescing the whole NHWC layout is for.
     pub fn lanes(&self) -> Level {
-        Level::lanes(&[Deal::new(C, self.width)
+        Level::lanes(&[Cut::new(C, self.width)
             .across(self.plane_size)
             .interleaved()])
     }

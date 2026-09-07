@@ -46,7 +46,7 @@ use cubecl::{
 use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
-use cubek_tile::{Axis, Deal, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch};
+use cubek_tile::{Axis, Cut, Level, Nest, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch};
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
 /// fan-out. Held fixed across mappings so the numbers compare the partitioning, not the
@@ -174,7 +174,7 @@ impl Mapping {
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
                     Level::cubes(&[(N, plane_size * cols)]),
-                    Level::lanes(&[Deal::new(N, cols).across(plane_size)]),
+                    Level::lanes(&[Cut::new(N, cols).across(plane_size)]),
                 ],
             ),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
@@ -183,7 +183,7 @@ impl Mapping {
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
                     Level::cubes(&[(N, cols)]),
-                    Level::lanes(&[Deal::new(K, k / plane_size).across(plane_size)]),
+                    Level::lanes(&[Cut::new(K, k / plane_size).across(plane_size)]),
                 ],
             ),
         }

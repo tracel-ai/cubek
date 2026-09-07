@@ -21,21 +21,21 @@ pub enum Edge {
     Whole,
 }
 
-/// One axis's tiles dealt to a scope's workers: the tile edge, how many workers take them and
-/// which ones each takes. The entry of [`Level::cubes`], [`Level::planes`] and
+/// One axis cut into tiles for a scope's workers: the tile edge, how many workers take the tiles
+/// and which ones each takes. The entry of [`Level::cubes`], [`Level::planes`] and
 /// [`Level::lanes`]; a plain `(axis, edge)` converts to one tile per worker, in runs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Deal {
+pub struct Cut {
     axis: Axis,
     edge: usize,
     spread: Spread,
     coverage: Coverage,
 }
 
-impl Deal {
+impl Cut {
     /// `axis` cut to `edge`, one tile per worker.
     pub fn new(axis: Axis, edge: usize) -> Self {
-        Deal {
+        Cut {
             axis,
             edge,
             spread: Spread::Contiguous,
@@ -72,14 +72,14 @@ impl Deal {
     }
 }
 
-impl From<(Axis, usize)> for Deal {
-    fn from((axis, edge): (Axis, usize)) -> Deal {
-        Deal::new(axis, edge)
+impl From<(Axis, usize)> for Cut {
+    fn from((axis, edge): (Axis, usize)) -> Cut {
+        Cut::new(axis, edge)
     }
 }
 
 /// One decomposition level of a space: the axes it names, each with its tile edge and who takes
-/// the tiles, plus the axes it deals as one. An axis it does not name is handed down whole.
+/// the tiles, plus the axes it cuts as one. An axis it does not name is handed down whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
     edges: ByAxis<Edge>,
@@ -101,38 +101,38 @@ impl Level {
 
     /// The tiles of each entry ride a cube dimension of the launch grid, in order: the first
     /// entry's cubes are `X`, the second's `Y`, the third's `Z`. One tile per cube unless the
-    /// entry says otherwise ([`Deal`]). Batch axes go on `Z` too ([`batches`](Self::batches)).
+    /// entry says otherwise ([`Cut`]). Batch axes go on `Z` too ([`batches`](Self::batches)).
     /// Stated under [`cubes`](crate::Space::cubes); every entry is one box of the grid.
-    pub fn cubes<D: Into<Deal> + Clone>(deals: &[D]) -> Level {
+    pub fn cubes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
         assert!(
-            deals.len() <= 3,
+            cuts.len() <= 3,
             "Level::cubes: {} entries, but a launch grid has three dimensions",
-            deals.len()
+            cuts.len()
         );
         let scopes = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
-        Level::dealt(deals, |i| ComputeScope::Cube(scopes[i]), LevelScope::Cubes)
+        Level::cut_to(cuts, |i| ComputeScope::Cube(scopes[i]), LevelScope::Cubes)
     }
 
     /// The tiles of each entry ride the cube's planes, one tile per plane unless the entry says
-    /// otherwise ([`Deal`]). Several entries make a box per plane. Stated under
+    /// otherwise ([`Cut`]). Several entries make a box per plane. Stated under
     /// [`planes`](crate::Space::planes).
-    pub fn planes<D: Into<Deal> + Clone>(deals: &[D]) -> Level {
-        Level::dealt(deals, |_| ComputeScope::Plane, LevelScope::Planes)
+    pub fn planes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
+        Level::cut_to(cuts, |_| ComputeScope::Plane, LevelScope::Planes)
     }
 
     /// The tiles of each entry ride some of the plane's lanes; every entry states how many
-    /// ([`Deal::across`]), since the plane is carved between the entries and their counts must
+    /// ([`Cut::across`]), since the plane is carved between the entries and their counts must
     /// multiply to its width. Stated under [`lanes`](crate::Space::lanes).
-    pub fn lanes(deals: &[Deal]) -> Level {
-        for deal in deals {
+    pub fn lanes(cuts: &[Cut]) -> Level {
+        for cut in cuts {
             assert!(
-                matches!(deal.coverage, Coverage::Instances(_)),
+                matches!(cut.coverage, Coverage::Instances(_)),
                 "Level::lanes: {:?} states no lane count; say how many lanes take it \
-                 (`Deal::new(axis, edge).across(n)`)",
-                deal.axis
+                 (`Cut::new(axis, edge).across(n)`)",
+                cut.axis
             );
         }
-        Level::dealt(deals, |_| ComputeScope::Unit, LevelScope::Lanes)
+        Level::cut_to(cuts, |_| ComputeScope::Unit, LevelScope::Lanes)
     }
 
     /// One tile of each of `axes` per cube, on the grid's `Z` dimension: the batch axes of a
@@ -140,14 +140,14 @@ impl Level {
     pub fn batches(mut self, axes: &[Axis]) -> Level {
         assert!(
             self.scope == LevelScope::Cubes,
-            "Level::batches: batches ride cubes; this level deals to {:?}",
+            "Level::batches: batches ride cubes; this level cuts to {:?}",
             self.scope
         );
         for &axis in axes {
             self.push(
                 axis,
                 Edge::Cut(1),
-                Deal::new(axis, 1).distribution(ComputeScope::Cube(CubeAxis::Z)),
+                Cut::new(axis, 1).distribution(ComputeScope::Cube(CubeAxis::Z)),
             );
         }
         self
@@ -176,7 +176,7 @@ impl Level {
         };
         assert!(
             self.work.is_none(),
-            "Level::shared_by: this level already deals its tiles as one"
+            "Level::shared_by: this level already cuts its tiles as one"
         );
         let axes = self.axes();
         for &axis in &axes {
@@ -199,19 +199,19 @@ impl Level {
         self
     }
 
-    fn dealt<D: Into<Deal> + Clone>(
-        deals: &[D],
+    fn cut_to<D: Into<Cut> + Clone>(
+        cuts: &[D],
         scope_of: impl Fn(usize) -> ComputeScope,
         kind: LevelScope,
     ) -> Level {
-        let deals: Vec<Deal> = deals.iter().cloned().map(Into::into).collect();
-        let cuts: Vec<_> = deals.iter().map(|d| (d.axis, d.edge)).collect();
-        let dists: Vec<_> = deals
+        let cuts: Vec<Cut> = cuts.iter().cloned().map(Into::into).collect();
+        let edges: Vec<_> = cuts.iter().map(|c| (c.axis, c.edge)).collect();
+        let dists: Vec<_> = cuts
             .iter()
             .enumerate()
-            .map(|(i, d)| (d.axis, d.distribution(scope_of(i))))
+            .map(|(i, c)| (c.axis, c.distribution(scope_of(i))))
             .collect();
-        Level::build(&cuts, &dists, kind, None)
+        Level::build(&edges, &dists, kind, None)
     }
 
     fn build(
@@ -646,20 +646,4 @@ pub(crate) enum LevelRole {
     Instance,
     /// Partitions its tiles sequentially across a grid (every axis `Sequential`).
     Partition,
-}
-
-/// How one axis is cut at one level: the sub-tile `edge` and how the level hands the tiles out.
-#[derive(Clone, Copy, Debug)]
-struct Cut {
-    edge: Edge,
-    dist: Distribution,
-}
-
-impl Cut {
-    fn sequential(edge: Edge) -> Self {
-        Cut {
-            edge,
-            dist: Distribution::Sequential,
-        }
-    }
 }

@@ -1,7 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Deal, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg};
+use cubek_tile::{Cut, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -20,7 +20,7 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// cube walking all of `K`, one plane per group of rows, then the fold: `rows_per_lane` rows per
 /// aligned lane group, the group's lanes interleaving the contraction between them. Each takes
 /// one stored word of `KI`, and where a group reaches past one block it takes whole blocks of
-/// `KB` (a distribution deals one axis or the other and cannot straddle two). The partials the
+/// `KB` (a distribution cuts one axis or the other and cannot straddle two). The partials the
 /// lanes hold drain inside the plane.
 pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
     Space::new(&[
@@ -53,9 +53,9 @@ impl QuantGemvBlueprint {
     /// plane width: their product with the row groups is exactly it.
     pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
         Level::lanes(&[
-            Deal::new(M, self.rows_per_lane).across(self.groups()),
-            Deal::new(KB, 1).across(self.block_lanes).interleaved(),
-            Deal::new(KI, problem.factor())
+            Cut::new(M, self.rows_per_lane).across(self.groups()),
+            Cut::new(KB, 1).across(self.block_lanes).interleaved(),
+            Cut::new(KI, problem.factor())
                 .across(self.inside_lanes)
                 .interleaved(),
         ])

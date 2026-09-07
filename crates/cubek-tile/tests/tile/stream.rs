@@ -629,7 +629,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
             vec![
                 Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
-                Level::lanes(&[Deal::new(KK, 1).across(plane_size)]),
+                Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
             ],
         );
 

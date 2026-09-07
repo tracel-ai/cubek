@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Deal, Fragments, Level, Monoid, Nest,
-    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, Level, Monoid, Nest, PhysicalAxisMap,
+    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -233,7 +233,7 @@ impl Mapping {
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
                     Level::cubes(&[(N, COLS), (K, k / splits)]),
-                    Level::lanes(&[Deal::new(K, k / splits / plane_size).across(plane_size)]),
+                    Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
                 ],
             ),
         }

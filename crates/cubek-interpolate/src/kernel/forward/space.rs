@@ -1,7 +1,7 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubek_tile::{
-    Axis, Compaction, Deal, Level, Nest, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Axis, Compaction, Cut, Level, Nest, PhysicalAxisMap, Projection, RegisterBlock, Space,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -93,15 +93,15 @@ impl InterpolateSpace {
             "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
             geometry.lane_cols * geometry.lane_channels
         );
-        let deals: Vec<Deal> = [
+        let cuts: Vec<Cut> = [
             (OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane),
             (CHANNEL, geometry.lane_channels, geometry.channel_block),
         ]
         .into_iter()
         .filter(|&(_, instances, _)| instances > 1)
-        .map(|(axis, instances, edge)| Deal::new(axis, edge).across(instances))
+        .map(|(axis, instances, edge)| Cut::new(axis, edge).across(instances))
         .collect();
-        Level::lanes(&deals)
+        Level::lanes(&cuts)
     }
 }
 

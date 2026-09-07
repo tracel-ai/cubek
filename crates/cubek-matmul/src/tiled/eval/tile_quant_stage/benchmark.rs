@@ -146,7 +146,7 @@ impl TileQuantStageBench {
         vec![
             Level::cubes(&[(N, tn)]),
             Level::walk(&[(K, self.tk)]),
-            Level::lanes(&[Deal::new(N, un).across(plane_size)]),
+            Level::lanes(&[Cut::new(N, un).across(plane_size)]),
         ]
     }
 

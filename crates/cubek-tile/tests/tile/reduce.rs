@@ -1084,7 +1084,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
     let k = plane_size * kr;
     let nest = Nest::new(
         Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Deal::new(K, kr).across(plane_size)])],
+        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
     );
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
@@ -1108,7 +1108,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
     let k = plane_size * kr;
     let nest = Nest::new(
         Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Deal::new(K, kr).across(plane_size)])],
+        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
     );
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Max);
@@ -1134,7 +1134,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
     let k = plane_size * kr;
     let nest = Nest::new(
         Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Deal::new(K, kr).across(plane_size)])],
+        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
     );
 
     let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Min);
@@ -1202,7 +1202,7 @@ fn resident_max_over_lane_split_k() {
 
     let nest = Nest::new(
         Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::lanes(&[Deal::new(K, kr).across(plane_size)])],
+        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
     );
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
@@ -1271,8 +1271,8 @@ fn resident_max_over_lane_group_k() {
     let nest = Nest::new(
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::lanes(&[
-            Deal::new(M, 1).across(groups),
-            Deal::new(K, kr).across(group_lanes).interleaved(),
+            Cut::new(M, 1).across(groups),
+            Cut::new(K, kr).across(group_lanes).interleaved(),
         ])],
     );
 
