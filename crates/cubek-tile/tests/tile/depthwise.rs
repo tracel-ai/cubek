@@ -134,7 +134,7 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &cubecl::test_device().client(),
             Space::new(&[
                 (B, self.b),

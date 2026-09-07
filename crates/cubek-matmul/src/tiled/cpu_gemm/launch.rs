@@ -177,10 +177,13 @@ pub fn launch_ref(
 
     // The kernel's own statement of the space, with this launch's extents stamped on: geometry
     // off the concrete extents, overhang checks derived per operand, all inside the launcher.
+    let space = Space::new(&extents);
+    let plane_size = client.properties().hardware.plane_size_max;
     let launch = Launcher::new(
         client,
-        Space::new(&extents),
+        space.clone(),
         cpu_gemm_levels(&blueprint, &batch_axes),
+        blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
     );
 

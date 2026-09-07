@@ -58,7 +58,7 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![

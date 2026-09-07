@@ -1,5 +1,6 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
+use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{Axis, Compaction, Cut, Level, PhysicalAxisMap, Projection, RegisterBlock, Space};
 
 pub const BATCH: Axis = Axis(0);
@@ -58,6 +59,20 @@ impl InterpolateSpace {
 
     pub fn space(&self) -> Space {
         Space::new(&self.extents())
+    }
+
+    /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's
+    /// planes in each.
+    pub fn grid(&self) -> (CubeCount, CubeDim) {
+        let geometry = self.geometry;
+        (
+            CubeCount::Static(
+                self.width.div_ceil(geometry.cols_per_cube()) as u32,
+                self.height.div_ceil(geometry.rows_per_cube()) as u32,
+                self.batch as u32,
+            ),
+            CubeDim::new_2d(self.plane_size as u32, geometry.planes_per_cube as u32),
+        )
     }
 
     /// This cube's box of the output, the taps whole.

@@ -19,7 +19,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// The routine's five levels, each a method on the blueprint, outermost first: the cube grid,
 /// the stages of `K` a cube walks, one partition per plane, the instruction's `K` steps through
 /// the partition, and the fragment grid each step contracts. The kernel's loops state them one
-/// by one and the launch lists them here, so the two cannot drift on a value.
+/// by one; the launch lists them for the operand gates and checks them against the grid.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![
         bp.cubes(batch),
@@ -31,6 +31,21 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
 }
 
 impl CmmaBlueprint {
+    /// The grid this launch runs on: a cube per stage of the output and per batch, the
+    /// blueprint's planes in each.
+    pub fn grid(&self, space: &Space, batch: &[Axis], plane_size: u32) -> (CubeCount, CubeDim) {
+        let (stage_m, stage_n) = self.stage();
+        let batches: usize = batch.iter().map(|&a| space.extent(a)).product();
+        (
+            CubeCount::Static(
+                space.extent(M).div_ceil(stage_m) as u32,
+                space.extent(N).div_ceil(stage_n) as u32,
+                batches as u32,
+            ),
+            CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
+        )
+    }
+
     /// The cube grid: a box of the output per cube, one of every batch axis.
     pub fn cubes(&self, batch: &[Axis]) -> Level {
         let (stage_m, stage_n) = self.stage();

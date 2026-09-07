@@ -1458,7 +1458,7 @@ fn matmul_whole_k_at_the_leaf() {
 fn matmul_reversed_walk_single_cube() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, 4), (N, 4), (K, 4)])],
@@ -1594,7 +1594,7 @@ fn check_matmul(m: usize, n: usize, k: usize, cubes: Level, steps: Level, depth:
         Edge::Cut(edge) => edge,
         Edge::Whole => steps.edge(M),
     };
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![cubes, steps],
@@ -1637,7 +1637,7 @@ fn mma_folds_onto_what_c_holds() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 4usize, 4usize);
     // The whole contraction lands at the leaf, where `c = a·b` would overwrite.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, tile_edge), (N, tile_edge), (K, k)])],
@@ -1712,7 +1712,7 @@ fn check_matmul_batched(
     batch_edge: usize,
 ) {
     let client = cubecl::test_device().client();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
         vec![sequential(&[
@@ -1837,7 +1837,7 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(B0, b0), (B1, b1), (M, t), (N, t), (K, t)]),
         levels.to_vec(),
@@ -1985,7 +1985,7 @@ fn matmul_cpu_m_in_turns_across_planes_that_do_not_divide() {
 fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
     let client = cubecl::test_device().client();
     let tile_edge = inner.edge(M);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![outer, inner],
@@ -2031,7 +2031,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
 fn matmul_cpu_dynamic_k() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2087,7 +2087,7 @@ fn register_matmul_unit_spread_n() {
 
     let (m, k, nr) = (4usize, 8usize, 2usize);
     let n = plane_size * nr;
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
@@ -2153,7 +2153,7 @@ fn matmul_padded_rhs_stage_multi_line() {
 
 fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) {
     let client = cubecl::test_device().client();
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, m), (N, n), (K, k)])],
@@ -2168,7 +2168,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
     let c = TileInput::builder(&client, launch.space().project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         launch.space().clone(),
         launch.levels().to_vec(),
@@ -2208,7 +2208,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
 fn matmul_padded_lhs_stage_direct_tail() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 2usize, 3usize);
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2226,7 +2226,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
     let c = TileInput::builder(&client, launch.space().project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         launch.space().clone(),
         launch.levels().to_vec(),
@@ -2267,7 +2267,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
 fn matmul_multilevel_staged_then_direct() {
     let client = cubecl::test_device().client();
     let (m, n, k, final_edge) = (8usize, 8usize, 8usize, 2usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2365,7 +2365,7 @@ fn check_matmul_multilevel(
     let client = cubecl::test_device().client();
     let final_edge = 2usize;
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2426,7 +2426,7 @@ fn check_matmul_multilevel(
 fn matmul_staged_invariant_lhs() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2471,14 +2471,14 @@ fn matmul_staged_invariant_lhs() {
 fn matmul_a_level_that_cuts_nothing_is_kept() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let plain = Launcher::new(
+    let plain = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
         KernelForm::Static,
     );
     // The second level's edges are the first's: every axis's count is 1.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2535,7 +2535,7 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
 fn matmul_direct_vectorized() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2627,7 +2627,7 @@ fn matmul_double_buffered_mixed_residence_vectorized() {
 fn matmul_double_buffered_with_only_the_lhs_staged() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[
@@ -2675,7 +2675,7 @@ enum Staged {
 fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, depth: usize) {
     let client = cubecl::test_device().client();
     let (edge, v) = (4usize, 2usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2736,7 +2736,7 @@ fn register_matmul_promoted_accumulator() {
     // One block per instance (a 1x1 partition at the leaf), K walked in four steps: every
     // step returns to the same promoted accumulator, which is the round trip this removes.
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2782,7 +2782,7 @@ fn register_matmul_promoted_accumulator() {
 fn tropical_matmul_in_place() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2843,7 +2843,7 @@ fn tropical_matmul_in_place() {
 fn tropical_matmul_promoted() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -2908,7 +2908,7 @@ fn register_matmul_promoted_cube_plane() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 16usize);
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -2964,7 +2964,7 @@ fn register_matmul_promoted_cube_plane() {
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -3005,7 +3005,7 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
 /// A single-level nest whose leaf takes the whole problem, the shape the lined-lhs and folded
 /// tests drive.
 fn lined_lhs_space(m: usize, n: usize, k: usize) -> Launcher {
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, m), (N, n), (K, k)])],
@@ -3169,7 +3169,7 @@ fn register_matmul_folded_step_two_contracted_axes() {
     let client = cubecl::test_device().client();
     let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
     let k = k1 * k2;
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]),
         vec![Level::walk(&[(M, m), (N, n), (K, k1), (K2, k2)])],
@@ -3317,7 +3317,7 @@ fn run_folded_step_quant(
 /// point here is a plane carrying several cells at once.
 fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Launcher {
     let groups = plane_size / group_lanes;
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
         vec![Level::lanes(&[
@@ -3442,7 +3442,7 @@ fn register_matmul_promoted_accumulator_quant() {
         return;
     }
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
@@ -3776,7 +3776,7 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
@@ -3826,7 +3826,7 @@ fn mma_matmul_8x8x8() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
@@ -3871,7 +3871,7 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -3921,7 +3921,7 @@ fn cmma_matmul_multi_fragment_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -3973,7 +3973,7 @@ fn cmma_matmul_staged_n_walk_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -4100,7 +4100,7 @@ fn check_cmma_matmul_quant_walk(
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
@@ -4183,7 +4183,7 @@ fn mma_matmul_quant_until_read() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
@@ -4401,7 +4401,7 @@ fn run_register_matmul_quant(
     bm: usize,
     q: Vec<f32>,
 ) {
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![plan],
@@ -4491,7 +4491,7 @@ fn run_register_matmul_quant(
 #[test]
 fn register_matmul_quant_rhs_packed_q8() {
     let client = cubecl::test_device().client();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, 8), (N, 8), (K, 8)]),
         vec![register_partitioner(4, 4, 4)],
@@ -4512,7 +4512,7 @@ fn register_matmul_quant_rhs_packed_q8() {
 #[test]
 fn register_matmul_quant_rhs_packed_q4() {
     let client = cubecl::test_device().client();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, 8), (N, 16), (K, 8)]),
         vec![register_partitioner(4, 8, 4)],
@@ -4534,7 +4534,7 @@ fn register_matmul_quant_rhs_packed_q4() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row() {
     let client = cubecl::test_device().client();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, 1), (N, 8), (K, 8)]),
         vec![register_partitioner(1, 4, 4)],
@@ -4556,7 +4556,7 @@ fn register_matmul_quant_rhs_gemv_row() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = cubecl::test_device().client();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, 1), (N, 16), (K, 8)]),
         vec![Level::cubes(&[(N, 4)]), Level::walk(&[(M, 1), (K, 4)])],
@@ -4581,13 +4581,13 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = cubecl::test_device().client();
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(M, 1), (N, 8), (K, 8)]),
         vec![Level::walk(&[(M, 1), (N, 4), (K, 4)])],
         KernelForm::Static,
     );
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         launch.space().clone(),
         launch.levels().to_vec(),
@@ -4678,7 +4678,7 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 
 /// `4 × 8 × 16` walked in `4×4×4` tiles: four K regions per output tile.
 fn four_region_k_walk() -> Launcher {
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 4), (N, 8), (K, 16)]),
         vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
@@ -4745,7 +4745,7 @@ fn run_register_matmul_quant_rhs(
 
     // Routine-like: the launcher derives geometry and argument wiring from the nest; the
     // quantized RHS goes through the source builder, which binds it at the storage width.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         launch.space().clone(),
         launch.levels().to_vec(),

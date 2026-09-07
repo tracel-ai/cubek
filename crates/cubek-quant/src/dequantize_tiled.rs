@@ -53,9 +53,15 @@ pub fn launch_ref(
     // nothing to list and the grid is one cube.
     let extents = [(M, input.shape[0]), (N, input.shape[1])];
     let space = Space::new(&extents);
-    let launch = Launcher::new(client, space.clone(), vec![], KernelForm::Dynamic);
-    let cube_count = launch.cube_count();
-    let cube_dim = launch.cube_dim();
+    let plane_size = client.properties().hardware.plane_size_max;
+    let (cube_count, cube_dim) = (CubeCount::Static(1, 1, 1), CubeDim::new_2d(plane_size, 1));
+    let launch = Launcher::new(
+        client,
+        space.clone(),
+        vec![],
+        (cube_count.clone(), cube_dim),
+        KernelForm::Dynamic,
+    );
     let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing

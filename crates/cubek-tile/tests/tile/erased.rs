@@ -91,7 +91,7 @@ macro_rules! output_arg {
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
 fn space(form: KernelForm) -> Launcher {
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 3)])],
@@ -400,7 +400,7 @@ enum Backed {
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Launcher {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
@@ -534,7 +534,7 @@ const MASKED_ROWS: usize = 5;
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
 fn masked_space(form: KernelForm) -> Launcher {
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 2)])],

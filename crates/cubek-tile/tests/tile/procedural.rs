@@ -378,7 +378,7 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            launcher: Launcher::new(
+            launcher: Launcher::implied(
                 &cubecl::test_device().client(),
                 Space::new(&[(ROW, ROWS), (COL, COLS)]),
                 vec![Level::walk(&[(ROW, 2), (COL, 3)])],
@@ -685,7 +685,7 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 4)])],
@@ -715,7 +715,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 4)])],

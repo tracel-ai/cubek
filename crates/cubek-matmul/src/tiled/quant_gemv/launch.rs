@@ -76,10 +76,12 @@ pub fn launch_ref(
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
+    let plane_size = client.properties().hardware.plane_size_max;
     let launch = Launcher::new(
         client,
         quant_gemv_space(problem),
         quant_gemv_levels(&blueprint, problem),
+        blueprint.grid(problem, plane_size),
         KernelForm::Static,
     );
 

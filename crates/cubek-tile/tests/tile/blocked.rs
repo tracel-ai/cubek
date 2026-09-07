@@ -103,7 +103,7 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (K, depth)]),
         vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
@@ -163,7 +163,7 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
@@ -248,7 +248,7 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
@@ -344,7 +344,7 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -435,7 +435,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -543,7 +543,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -662,7 +662,7 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -785,7 +785,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -909,7 +909,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
@@ -1034,7 +1034,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[

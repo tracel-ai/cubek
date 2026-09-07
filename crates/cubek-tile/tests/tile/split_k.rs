@@ -108,7 +108,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Launcher::new(
+    let split_space = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
         vec![Level::cubes(&[(KB, 1)])],
@@ -150,7 +150,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         dtype,
     );
 
-    let fold_space = Launcher::new(
+    let fold_space = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (KB, splits)]),
         vec![Level::cubes(&[(M, 1)])],
@@ -364,7 +364,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::cubes(&[(K, k / splits)])],
@@ -502,7 +502,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -585,7 +585,7 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::planes(&[(K, k / num_planes)])],
@@ -690,7 +690,7 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::cubes(&[(K, k / splits)])],

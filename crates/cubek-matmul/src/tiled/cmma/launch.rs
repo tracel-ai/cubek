@@ -179,10 +179,13 @@ pub fn launch_ref(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
     // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
+    let space = Space::new(&extents);
+    let plane_size = client.properties().hardware.plane_size_max;
     let launch = Launcher::new(
         client,
-        Space::new(&extents),
+        space.clone(),
         cmma_levels(&blueprint, &batch_axes),
+        blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
     );
     let lhs = lhs.into_data();

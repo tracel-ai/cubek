@@ -1,8 +1,7 @@
-//! What a kernel's levels become at launch: the [`Launcher`] binds a space and the levels a
-//! kernel walks it with to a client for one kernel launch, reads the cube grid off the levels,
-//! and keeps the concrete (real-extent) space alongside the kernel-form one, so geometry and
-//! divisibility are always read off real extents and no call site can consume the space too
-//! early.
+//! One kernel launch: the [`Launcher`] binds a space, the levels a kernel walks it with and the
+//! grid the selector chose to a client, and keeps the concrete (real-extent) space alongside the
+//! kernel-form one, so geometry and divisibility are always read off real extents and no call
+//! site can consume the space too early.
 
 use cubecl::prelude::*;
 
@@ -10,6 +9,27 @@ use crate::{
     Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, SpaceLaunch, StridedOperand,
     StridedTileSource, Unset,
 };
+
+/// The grid `levels` over `space` deal to: cube dimension `d` gets the instance count of
+/// whichever axis rides `Cube(d)`, at any level; the cube is `plane_size × plane_count`. `Unit`
+/// axes ride the plane's lanes, so their instance product must be exactly `plane_size` or `1`;
+/// anything else idles or races lanes.
+pub(crate) fn implied_grid(
+    client: &Client,
+    space: &Space,
+    levels: &[Level],
+) -> (CubeCount, CubeDim) {
+    let plane_size = client.properties().hardware.plane_size_max;
+    let lanes = instances(space, levels, ComputeScope::Unit);
+    assert!(
+        lanes == 1 || lanes == plane_size,
+        "Launcher: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
+    );
+    (
+        cube_count(space, levels),
+        CubeDim::new_2d(plane_size, instances(space, levels, ComputeScope::Plane)),
+    )
+}
 
 /// Cube dimension `d` gets the instance count of whichever axis is `Spatial { Cube(d), .. }`,
 /// at any level of `levels` over `space`, else 1.
@@ -58,24 +78,50 @@ pub enum KernelForm<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-/// One launch: a space, the levels a kernel walks it with (outermost first), and the client it
-/// runs on. The grid is read off the levels; geometry, overhang and divisibility are read off
-/// the concrete (real-extent) space, and tile arguments project from the kernel-form one.
-///
-/// A blueprint lists its level methods here; a kernel with no blueprint (a test, a benchmark
-/// mapping) is handed its space and each of its levels from here, as comptime arguments, so its
-/// loops state the levels the grid was read from.
+/// One launch: a space, the levels a kernel walks it with (outermost first), the grid it runs
+/// on, and the client. The grid is the selector's decision, handed in by the blueprint; the
+/// levels are checked against it and read for the operand gates (overhang, line width, scale
+/// blocks), never for the grid. Geometry and divisibility are read off the concrete
+/// (real-extent) space, and tile arguments project from the kernel-form one.
 #[derive(Clone)]
 pub struct Launcher {
     client: Client,
     concrete: Space,
     levels: Vec<Level>,
+    cube_count: CubeCount,
+    cube_dim: CubeDim,
     kernel: Space,
 }
 
 impl Launcher {
-    /// `space` walked with `levels`, its extents this launch's real ones, in kernel `form`.
-    pub fn new(client: &Client, space: Space, levels: Vec<Level>, form: KernelForm<'_>) -> Self {
+    /// `space` walked with `levels` on `grid`, its extents this launch's real ones, in kernel
+    /// `form`. Refuses a grid the levels do not deal to, and a cube the device cannot hold.
+    pub fn new(
+        client: &Client,
+        space: Space,
+        levels: Vec<Level>,
+        grid: (CubeCount, CubeDim),
+        form: KernelForm<'_>,
+    ) -> Self {
+        let (cube_count, cube_dim) = grid;
+        let (implied_count, implied_dim) = implied_grid(client, &space, &levels);
+        let counts_agree = match (&cube_count, &implied_count) {
+            (CubeCount::Static(x, y, z), CubeCount::Static(ix, iy, iz)) => {
+                (x, y, z) == (ix, iy, iz)
+            }
+            _ => false,
+        };
+        assert!(
+            counts_agree && cube_dim == implied_dim,
+            "Launcher::new: the levels deal to {implied_count:?} cubes of {implied_dim:?}, but \
+             the launch is {cube_count:?} cubes of {cube_dim:?}"
+        );
+        let max_units = client.properties().hardware.max_units_per_cube;
+        assert!(
+            cube_dim.num_elems() <= max_units,
+            "Launcher::new: a cube of {} units, but the device holds at most {max_units}",
+            cube_dim.num_elems()
+        );
         let kernel = match form {
             KernelForm::Dynamic => space.clone().all_dynamic(),
             KernelForm::Static => space.clone(),
@@ -95,33 +141,30 @@ impl Launcher {
             client: client.clone(),
             concrete: space,
             levels,
+            cube_count,
+            cube_dim,
             kernel,
         }
     }
 
-    pub fn cube_count(&self) -> CubeCount {
-        cube_count(&self.concrete, &self.levels)
+    /// The launch `levels` imply, for a kernel with no blueprint to decide its grid (a test, a
+    /// benchmark mapping): as many cubes, planes and lanes as the levels deal to.
+    pub fn implied(
+        client: &Client,
+        space: Space,
+        levels: Vec<Level>,
+        form: KernelForm<'_>,
+    ) -> Self {
+        let grid = implied_grid(client, &space, &levels);
+        Launcher::new(client, space, levels, grid, form)
     }
 
-    /// `plane_size × plane_count`, plane length being the hardware's. `Unit` axes ride those
-    /// lanes, so their instance product must be exactly `plane_size` or `1`; anything else idles
-    /// or races lanes.
+    pub fn cube_count(&self) -> CubeCount {
+        self.cube_count.clone()
+    }
+
     pub fn cube_dim(&self) -> CubeDim {
-        let plane_size = self.client.properties().hardware.plane_size_max;
-        let lanes = instances(&self.concrete, &self.levels, ComputeScope::Unit);
-        assert!(
-            lanes == 1 || lanes == plane_size,
-            "Launcher::cube_dim: Unit axes must partition exactly plane_size ({plane_size}) \
-             lanes, got {lanes}"
-        );
-        let planes = instances(&self.concrete, &self.levels, ComputeScope::Plane);
-        let max_units = self.client.properties().hardware.max_units_per_cube;
-        assert!(
-            plane_size * planes <= max_units,
-            "Launcher::cube_dim: {planes} planes of {plane_size} lanes, but a cube holds at most \
-             {max_units} units on this device"
-        );
-        CubeDim::new_2d(plane_size, planes)
+        self.cube_dim
     }
 
     /// The concrete space: this launch's real extents.

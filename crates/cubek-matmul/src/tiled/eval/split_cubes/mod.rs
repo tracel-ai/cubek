@@ -218,13 +218,13 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::new(
+            Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
                 KernelForm::Static,
             ),
-            Mapping::Workspace { .. } => Launcher::new(
+            Mapping::Workspace { .. } => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
                 vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
@@ -233,7 +233,7 @@ impl Mapping {
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Launcher::new(
+            Mapping::AtomicLanes { .. } => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
@@ -248,7 +248,7 @@ impl Mapping {
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, client: &Client, problem: Problem) -> Launcher {
         let Problem { m, n, .. } = problem;
-        Launcher::new(
+        Launcher::implied(
             client,
             Space::new(&[(M, m), (N, n), (KB, self.splits())]),
             vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],

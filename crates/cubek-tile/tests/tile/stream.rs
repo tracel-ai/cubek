@@ -90,7 +90,7 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            launcher: Launcher::new(
+            launcher: Launcher::implied(
                 &cubecl::test_device().client(),
                 Space::new(&[(ROW, ROWS), (COL, COLS)]),
                 vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
@@ -420,7 +420,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(MM, m), (NN, n), (KK, k)]),
         vec![
@@ -629,7 +629,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &client,
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
             vec![

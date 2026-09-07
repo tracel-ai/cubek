@@ -12,13 +12,29 @@ pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 
 /// The routine's three levels, outermost first: the cube grid (a serial loop on CPU), the plane
 /// split (the parallel worker threads), and the plane's block stepped through `K` in the
-/// instruction's depth. The kernel's loops state them one by one and the launch lists them here,
-/// so the two cannot drift on a value.
+/// instruction's depth. The kernel's loops state them one by one; the launch lists them for the
+/// operand gates and checks them against the grid.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![bp.cubes(batch), bp.planes(), bp.k_steps()]
 }
 
 impl CpuGemmBlueprint {
+    /// The grid this launch runs on: a cube per box of the output and per batch, the blueprint's
+    /// planes in each.
+    pub fn grid(&self, space: &Space, batch: &[Axis], plane_size: u32) -> (CubeCount, CubeDim) {
+        let leaf = self.instruction;
+        let (cube_m, cube_n) = (self.planes.m * leaf.m, self.planes.n * leaf.n);
+        let batches: usize = batch.iter().map(|&a| space.extent(a)).product();
+        (
+            CubeCount::Static(
+                space.extent(M).div_ceil(cube_m) as u32,
+                space.extent(N).div_ceil(cube_n) as u32,
+                batches as u32,
+            ),
+            CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
+        )
+    }
+
     /// The cube grid: a box of the output per cube, one of every batch axis.
     pub fn cubes(&self, batch: &[Axis]) -> Level {
         let leaf = self.instruction;

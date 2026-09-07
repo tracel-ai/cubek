@@ -114,7 +114,7 @@ impl Operand {
         Operand {
             handle,
             layout,
-            launcher: Launcher::new(
+            launcher: Launcher::implied(
                 &cubecl::test_device().client(),
                 Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
                 vec![],

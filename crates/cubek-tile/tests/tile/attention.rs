@@ -181,7 +181,7 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (G, g),
@@ -576,7 +576,7 @@ fn run_cmma<E: Float + CubeElement>(
 
     // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
     // in blocks and nothing else.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (G, 1),
@@ -1162,7 +1162,7 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention nest, as in [`run`].
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (G, g),
@@ -1376,7 +1376,7 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
         vec![Level::walk(&[

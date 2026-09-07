@@ -70,7 +70,7 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Launcher {
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
         vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],

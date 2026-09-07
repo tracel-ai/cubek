@@ -131,7 +131,7 @@ fn levels_chain_into_a_multi_level_scheme() {
 fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Launcher {
     let (leaf_m, leaf_n, leaf_k) = (8, 8, 4);
     let (planes_m, planes_n) = (2, 4);
-    Launcher::new(
+    Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
@@ -169,7 +169,7 @@ fn overhangs_matches_cpu_gemm_checks() {
 fn overhangs_when_a_deeper_edge_misdivides_its_parent() {
     // Top divides (32 % 16 == 0) but the second edge doesn't divide the first (16 % 3 != 0):
     // the parent edge, not the top extent, is what each level must divide.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 32)]),
         vec![sequential(&[(M, 16)]), sequential(&[(M, 3)])],
@@ -187,7 +187,7 @@ fn overhangs_with_no_level_never() {
 #[test]
 #[should_panic(expected = "concrete space")]
 fn overhangs_dynamic_axis_panics() {
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64)]).all_dynamic(),
         vec![sequential(&[(M, 16)])],
@@ -202,7 +202,7 @@ fn overhangs_dynamic_axis_panics() {
 /// does, so the launch grid is their count.
 #[test]
 fn shared_tiles_launch_their_instances() {
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64), (N, 64), (K, 16)]),
         vec![
@@ -221,13 +221,13 @@ fn shared_tiles_launch_their_instances() {
 /// box of the grid, not a share.
 #[test]
 fn batches_are_a_dial_each() {
-    let one_line = Launcher::new(
+    let one_line = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
         vec![Level::cubes(&[(M, 16), (N, 32)]).batches(&[B0, B1])],
         KernelForm::Static,
     );
-    let a_dial_each = Launcher::new(
+    let a_dial_each = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
         vec![
@@ -250,7 +250,7 @@ fn batches_are_a_dial_each() {
 /// scope, which is what a cut has always meant: no work is stated.
 #[test]
 fn one_axis_across_a_count_is_a_dial() {
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64), (N, 64), (K, 16)]),
         vec![
@@ -266,7 +266,7 @@ fn one_axis_across_a_count_is_a_dial() {
 /// Nothing named is nothing said: a level that names no axis cuts every cube the whole space.
 #[test]
 fn a_level_naming_no_axis_deals_everything_to_one_cube() {
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64), (N, 64), (K, 16)]),
         vec![
@@ -328,13 +328,13 @@ fn lanes_without_a_count_are_refused() {
 /// kernel, so keeping it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
-    let plain = Launcher::new(
+    let plain = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64), (N, 64)]),
         vec![Level::walk(&[(M, 16), (N, 32)])],
         KernelForm::Static,
     );
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(M, 64), (N, 64)]),
         vec![

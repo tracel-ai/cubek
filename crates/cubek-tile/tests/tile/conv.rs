@@ -405,7 +405,7 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &cubecl::test_device().client(),
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
@@ -553,7 +553,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
@@ -630,7 +630,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
@@ -703,7 +703,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
@@ -873,7 +873,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
@@ -910,13 +910,13 @@ impl Conv1d {
         // by the output, which maps it identically, and `RH` by the weight. Only an axis no
         // operand witnesses has to stay static, which is what `dynamic` narrows to.
         let launch = match dynamic {
-            Some(axes) => Launcher::new(
+            Some(axes) => Launcher::implied(
                 &client,
                 launcher.space().clone(),
                 launcher.levels().to_vec(),
                 KernelForm::DynamicAlong(axes),
             ),
-            None => Launcher::new(
+            None => Launcher::implied(
                 &client,
                 launcher.space().clone(),
                 launcher.levels().to_vec(),
@@ -1141,7 +1141,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
@@ -1418,7 +1418,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
@@ -1661,7 +1661,7 @@ impl Conv2d {
     /// `check` under `stage`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &cubecl::test_device().client(),
             Space::new(&[
                 (OH, self.oh),
@@ -2181,7 +2181,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
         vec![Level::walk(&[
@@ -2434,7 +2434,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
@@ -2555,7 +2555,7 @@ impl Resize1d {
             .iter()
             .map(|&edge| Level::walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]))
             .collect();
-        Launcher::new(
+        Launcher::implied(
             &cubecl::test_device().client(),
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             levels,
@@ -2990,7 +2990,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
@@ -3065,7 +3065,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],

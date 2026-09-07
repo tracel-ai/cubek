@@ -177,7 +177,7 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let launcher = Launcher::new(
+        let launcher = Launcher::implied(
             &self.client,
             self.space(),
             self.levels(),

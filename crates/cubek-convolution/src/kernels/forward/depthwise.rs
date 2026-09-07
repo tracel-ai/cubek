@@ -91,6 +91,19 @@ impl DepthwiseSpace {
         Space::new(&self.extents())
     }
 
+    /// The grid this launch runs on: channels on `X`, columns on `Y`, rows and batches on `Z`,
+    /// a plane per row of the cube.
+    pub fn grid(&self) -> (CubeCount, CubeDim) {
+        (
+            CubeCount::Static(
+                self.c.div_ceil(self.tile_c) as u32,
+                self.ow.div_ceil(self.cols) as u32,
+                (self.oh.div_ceil(self.rows) * self.b) as u32,
+            ),
+            CubeDim::new_2d(self.plane_size as u32, self.rows as u32),
+        )
+    }
+
     /// This cube's box of the output with the taps whole. The channel axis takes X so that the
     /// fastest-moving cube index is the one memory is contiguous along.
     pub fn cubes(&self) -> Level {
@@ -369,7 +382,13 @@ pub fn launch_depthwise(
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
     let plan = tiling.plan(&geometry, lanes, tile_c, width);
-    let launch = Launcher::new(client, plan.space(), plan.levels(), KernelForm::Static);
+    let launch = Launcher::new(
+        client,
+        plan.space(),
+        plan.levels(),
+        plan.grid(),
+        KernelForm::Static,
+    );
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and

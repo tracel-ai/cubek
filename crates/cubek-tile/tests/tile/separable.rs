@@ -168,7 +168,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (ROW, ROWS),
@@ -256,7 +256,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (ROW, ROWS),
@@ -383,7 +383,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (ROW, ROWS),
@@ -476,7 +476,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (ROW, ROWS),
@@ -644,7 +644,7 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
@@ -738,7 +738,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
         vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])],
@@ -841,7 +841,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
@@ -919,7 +919,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
@@ -1029,7 +1029,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
@@ -1121,7 +1121,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
@@ -1230,7 +1230,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
         vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])],

@@ -37,6 +37,18 @@ pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) ->
 }
 
 impl QuantGemvBlueprint {
+    /// The grid this launch runs on: a cube per strip of rows, a plane per group of them, every
+    /// lane of the plane.
+    pub fn grid(&self, problem: &QuantGemvProblem, plane_size: u32) -> (CubeCount, CubeDim) {
+        (
+            CubeCount::Static(problem.d_out.div_ceil(self.rows_per_cube) as u32, 1, 1),
+            CubeDim::new_2d(
+                plane_size,
+                (self.rows_per_cube / self.rows_per_plane) as u32,
+            ),
+        )
+    }
+
     /// A strip of output rows per cube, `K` whole.
     pub fn cubes(&self) -> Level {
         Level::cubes(&[(M, self.rows_per_cube)])

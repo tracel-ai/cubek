@@ -52,7 +52,7 @@ fn copy_non_quantized_matches_reference() {
 fn copy_spread_across_cubes_and_planes_matches_reference() {
     let (m, n) = (4, 512);
     let client = cubecl::test_device().client();
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n)]),
         vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
@@ -195,7 +195,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
     let space = Space::new(&[(M, m), (N, n)]);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::new(&client, space.clone(), vec![], KernelForm::Static);
+    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Static);
     let input_op = launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -262,7 +262,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::new(&client, space.clone(), vec![], KernelForm::Static);
+    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Static);
     let input_op = launcher
         .arg(input.tile.handle().binding())
         .subspace(&[M, N])
@@ -668,7 +668,7 @@ fn two_level_without_global_scale_refused_by_the_builder() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let launcher = Launcher::new(&client, space.clone(), vec![], KernelForm::Dynamic);
+    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Dynamic);
     launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -716,7 +716,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         .generate_with_f32_host_data();
 
     // A nest that tiles into `bm×bn` blocks, one cube walking them.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, m), (N, n)]),
         vec![Level::walk(&[(M, bm), (N, bn)])],

@@ -167,14 +167,14 @@ impl Mapping {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Launcher::new(
+            Mapping::SeqK => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![Level::cubes(&[(N, 1)])],
                 KernelForm::Static,
             ),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Launcher::new(
+            Mapping::NSpread { cols } => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
@@ -185,7 +185,7 @@ impl Mapping {
             ),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
-            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Launcher::new(
+            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Launcher::implied(
                 client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![

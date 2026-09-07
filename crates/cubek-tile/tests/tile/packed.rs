@@ -178,7 +178,7 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
@@ -718,7 +718,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
@@ -835,7 +835,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
@@ -957,7 +957,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (M, rows),
@@ -1101,7 +1101,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (M, rows),
@@ -1250,7 +1250,7 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (M, rows),
@@ -1377,7 +1377,7 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
@@ -1500,7 +1500,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (M, 1),
@@ -1635,7 +1635,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[
             (M, 1),
@@ -1810,7 +1810,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
         vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],

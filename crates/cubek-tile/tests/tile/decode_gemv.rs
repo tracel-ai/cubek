@@ -223,7 +223,7 @@ fn serving_geometry(promoted: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
         vec![

@@ -67,7 +67,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let launch = Launcher::new(
+    let launch = Launcher::implied(
         &client,
         Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
         vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
@@ -100,7 +100,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = Launcher::new(
+    let launcher = Launcher::implied(
         &client,
         launch.space().clone(),
         launch.levels().to_vec(),
