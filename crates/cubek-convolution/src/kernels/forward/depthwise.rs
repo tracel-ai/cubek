@@ -91,6 +91,20 @@ impl DepthwiseSpace {
         Space::new(&self.extents())
     }
 
+    /// The tile every operand is cut to at the bottom.
+    pub fn leaf(&self) -> Vec<(Axis, usize)> {
+        self.space().leaf(&self.levels()).extents()
+    }
+
+    /// The axes some tile reaches past the end of.
+    pub fn overhangs(&self) -> Vec<Axis> {
+        let (space, levels) = (self.space(), self.levels());
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
     /// The grid this launch runs on: channels on `X`, columns on `Y`, rows and batches on `Z`,
     /// a plane per row of the cube.
     pub fn grid(&self) -> (CubeCount, CubeDim) {
@@ -382,13 +396,9 @@ pub fn launch_depthwise(
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
     let plan = tiling.plan(&geometry, lanes, tile_c, width);
-    let launch = Launcher::new(
-        client,
-        plan.space(),
-        plan.levels(),
-        plan.grid(),
-        KernelForm::Static,
-    );
+    let launch = Launcher::new(client, plan.space(), plan.grid(), KernelForm::Static)
+        .leaf(&plan.leaf())
+        .overhanging(&plan.overhangs());
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and

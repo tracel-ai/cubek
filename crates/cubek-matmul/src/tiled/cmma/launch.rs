@@ -16,7 +16,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
-        kernel::{cmma_kernel, cmma_levels},
+        kernel::cmma_kernel,
     },
     tiled::{K, M, N, batch_axis},
 };
@@ -184,10 +184,11 @@ pub fn launch_ref(
     let launch = Launcher::new(
         client,
         space.clone(),
-        cmma_levels(&blueprint, &batch_axes),
         blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
-    );
+    )
+    .leaf(&blueprint.leaf(&space, &batch_axes))
+    .overhanging(&blueprint.overhangs(&space, &batch_axes));
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 

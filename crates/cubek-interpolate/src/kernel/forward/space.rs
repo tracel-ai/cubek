@@ -61,6 +61,20 @@ impl InterpolateSpace {
         Space::new(&self.extents())
     }
 
+    /// The tile every operand is cut to at the bottom.
+    pub fn leaf(&self) -> Vec<(Axis, usize)> {
+        self.space().leaf(&self.levels()).extents()
+    }
+
+    /// The axes some tile reaches past the end of.
+    pub fn overhangs(&self) -> Vec<Axis> {
+        let (space, levels) = (self.space(), self.levels());
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
     /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's
     /// planes in each.
     pub fn grid(&self) -> (CubeCount, CubeDim) {

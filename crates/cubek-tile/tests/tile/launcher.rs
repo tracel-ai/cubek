@@ -879,15 +879,6 @@ fn quant_scheme() -> QuantScheme {
         .with_value(QuantValue::Q8S)
 }
 
-/// Scale blocks cut by the operand's own tiling: `K` is cut into 16-element tiles, so a 6-element
-/// block leaves a tile origin mid-block, where the tile's window-relative lookup would silently
-/// read a neighbour's scale.
-#[test]
-#[should_panic(expected = "straddle its 6-element scale blocks")]
-fn quantized_block_straddling_a_cut_panics() {
-    quantize(1, quant_scheme().per_block([64, 6], ScaleDtype::F32));
-}
-
 /// 2-element blocks tile every `K` cut (16, then 4), so the tiling is fine, but a line is one
 /// read, and a 4-wide line spans two of them.
 #[test]

@@ -10,10 +10,7 @@ use crate::{
         broadcast_batches,
     },
     routine::{BlueprintStrategy, DeviceSettings},
-    tiled::cpu_gemm::{
-        base::CpuGemmRoutine,
-        kernel::{cpu_gemm_kernel, cpu_gemm_levels},
-    },
+    tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
     tiled::{K, M, N, batch_axis},
 };
 
@@ -182,10 +179,11 @@ pub fn launch_ref(
     let launch = Launcher::new(
         client,
         space.clone(),
-        cpu_gemm_levels(&blueprint, &batch_axes),
         blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
-    );
+    )
+    .leaf(&blueprint.leaf(&space, &batch_axes))
+    .overhanging(&blueprint.overhangs(&space, &batch_axes));
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher

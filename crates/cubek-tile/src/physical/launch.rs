@@ -1,5 +1,5 @@
-//! One kernel launch: the [`Launcher`] binds a space, the levels a kernel walks it with and the
-//! grid the selector chose to a client, and keeps the concrete (real-extent) space alongside the
+//! One kernel launch: the [`Launcher`] binds a space, the grid the selector chose and the tiles
+//! its operands are cut to to a client, and keeps the concrete (real-extent) space alongside the
 //! kernel-form one, so geometry and divisibility are always read off real extents and no call
 //! site can consume the space too early.
 
@@ -9,27 +9,6 @@ use crate::{
     Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, SpaceLaunch, StridedOperand,
     StridedTileSource, Unset,
 };
-
-/// The grid `levels` over `space` deal to: cube dimension `d` gets the instance count of
-/// whichever axis rides `Cube(d)`, at any level; the cube is `plane_size × plane_count`. `Unit`
-/// axes ride the plane's lanes, so their instance product must be exactly `plane_size` or `1`;
-/// anything else idles or races lanes.
-pub(crate) fn implied_grid(
-    client: &Client,
-    space: &Space,
-    levels: &[Level],
-) -> (CubeCount, CubeDim) {
-    let plane_size = client.properties().hardware.plane_size_max;
-    let lanes = instances(space, levels, ComputeScope::Unit);
-    assert!(
-        lanes == 1 || lanes == plane_size,
-        "Launcher: Unit axes must partition exactly plane_size ({plane_size}) lanes, got {lanes}"
-    );
-    (
-        cube_count(space, levels),
-        CubeDim::new_2d(plane_size, instances(space, levels, ComputeScope::Plane)),
-    )
-}
 
 /// Cube dimension `d` gets the instance count of whichever axis is `Spatial { Cube(d), .. }`,
 /// at any level of `levels` over `space`, else 1.
@@ -78,44 +57,39 @@ pub enum KernelForm<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-/// One launch: a space, the levels a kernel walks it with (outermost first), the grid it runs
-/// on, and the client. The grid is the selector's decision, handed in by the blueprint; the
-/// levels are checked against it and read for the operand gates (overhang, line width, scale
-/// blocks), never for the grid. Geometry and divisibility are read off the concrete
-/// (real-extent) space, and tile arguments project from the kernel-form one.
+/// One launch: a space, the grid the selector chose, the tiles the operands are cut to and the
+/// axes that overhang, bound to a client. Every one of those is the blueprint's statement; no
+/// level crosses here. Geometry and divisibility are read off the concrete (real-extent) space,
+/// and tile arguments project from the kernel-form one.
+///
+/// A kernel with no blueprint (a test, a benchmark mapping) is [`implied`](Launcher::implied)
+/// by its levels instead, and keeps them to hand its loops one each.
 #[derive(Clone)]
 pub struct Launcher {
     client: Client,
     concrete: Space,
-    levels: Vec<Level>,
+    kernel: Space,
     cube_count: CubeCount,
     cube_dim: CubeDim,
-    kernel: Space,
+    /// The tile every operand is cut to at the bottom, per axis; an axis not listed is whole.
+    leaf: Vec<(Axis, usize)>,
+    /// The axes some tile reaches past the end of, whose accesses are masked.
+    overhangs: Vec<Axis>,
+    /// The levels an implied launch was read from; empty for a stated one.
+    levels: Vec<Level>,
 }
 
 impl Launcher {
-    /// `space` walked with `levels` on `grid`, its extents this launch's real ones, in kernel
-    /// `form`. Refuses a grid the levels do not deal to, and a cube the device cannot hold.
+    /// `space` on `grid`, its extents this launch's real ones, in kernel `form`. Refuses a cube
+    /// the device cannot hold. State the leaf and the overhanging axes with
+    /// [`leaf`](Launcher::leaf) and [`overhanging`](Launcher::overhanging).
     pub fn new(
         client: &Client,
         space: Space,
-        levels: Vec<Level>,
         grid: (CubeCount, CubeDim),
         form: KernelForm<'_>,
     ) -> Self {
         let (cube_count, cube_dim) = grid;
-        let (implied_count, implied_dim) = implied_grid(client, &space, &levels);
-        let counts_agree = match (&cube_count, &implied_count) {
-            (CubeCount::Static(x, y, z), CubeCount::Static(ix, iy, iz)) => {
-                (x, y, z) == (ix, iy, iz)
-            }
-            _ => false,
-        };
-        assert!(
-            counts_agree && cube_dim == implied_dim,
-            "Launcher::new: the levels deal to {implied_count:?} cubes of {implied_dim:?}, but \
-             the launch is {cube_count:?} cubes of {cube_dim:?}"
-        );
         let max_units = client.properties().hardware.max_units_per_cube;
         assert!(
             cube_dim.num_elems() <= max_units,
@@ -140,23 +114,56 @@ impl Launcher {
         Launcher {
             client: client.clone(),
             concrete: space,
-            levels,
+            kernel,
             cube_count,
             cube_dim,
-            kernel,
+            leaf: Vec::new(),
+            overhangs: Vec::new(),
+            levels: Vec::new(),
         }
     }
 
-    /// The launch `levels` imply, for a kernel with no blueprint to decide its grid (a test, a
-    /// benchmark mapping): as many cubes, planes and lanes as the levels deal to.
+    /// The tile every operand is cut to at the bottom: what a line width has to divide.
+    pub fn leaf(mut self, leaf: &[(Axis, usize)]) -> Self {
+        self.leaf = leaf.to_vec();
+        self
+    }
+
+    /// The axes along which some tile reaches past the tensor, so every access is masked.
+    pub fn overhanging(mut self, axes: &[Axis]) -> Self {
+        self.overhangs = axes.to_vec();
+        self
+    }
+
+    /// The launch `levels` imply, for a kernel with no blueprint to state one: as many cubes,
+    /// planes and lanes as the levels deal to, the leaf they cut to, the axes they overhang.
     pub fn implied(
         client: &Client,
         space: Space,
         levels: Vec<Level>,
         form: KernelForm<'_>,
     ) -> Self {
-        let grid = implied_grid(client, &space, &levels);
-        Launcher::new(client, space, levels, grid, form)
+        let plane_size = client.properties().hardware.plane_size_max;
+        let lanes = instances(&space, &levels, ComputeScope::Unit);
+        assert!(
+            lanes == 1 || lanes == plane_size,
+            "Launcher::implied: Unit axes must partition exactly plane_size ({plane_size}) lanes, \
+             got {lanes}"
+        );
+        let grid = (
+            cube_count(&space, &levels),
+            CubeDim::new_2d(plane_size, instances(&space, &levels, ComputeScope::Plane)),
+        );
+        let leaf = space.leaf(&levels).extents();
+        let overhangs: Vec<Axis> = space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect();
+        let mut launch = Launcher::new(client, space, grid, form)
+            .leaf(&leaf)
+            .overhanging(&overhangs);
+        launch.levels = levels;
+        launch
     }
 
     pub fn cube_count(&self) -> CubeCount {
@@ -165,6 +172,15 @@ impl Launcher {
 
     pub fn cube_dim(&self) -> CubeDim {
         self.cube_dim
+    }
+
+    /// The leaf edge along `axis`: the stated tile, or the whole extent where none was.
+    fn leaf_edge(&self, axis: Axis) -> usize {
+        self.leaf
+            .iter()
+            .find(|&&(a, _)| a == axis)
+            .map(|&(_, edge)| edge)
+            .unwrap_or_else(|| self.concrete.extent(axis))
     }
 
     /// The concrete space: this launch's real extents.
@@ -182,12 +198,13 @@ impl Launcher {
         self.kernel.launch_arg(&self.concrete)
     }
 
-    /// The levels, outermost first.
+    /// The levels an implied launch was read from, outermost first.
     pub fn levels(&self) -> &[Level] {
         &self.levels
     }
 
-    /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
+    /// Level `i` of an implied launch, outermost first: what a kernel states its `i`-th loop
+    /// with.
     pub fn level(&self, i: usize) -> Level {
         self.levels[i].clone()
     }
@@ -197,7 +214,7 @@ impl Launcher {
     pub fn arg(&self, binding: TensorBinding) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedOperand::source(binding)
             .space(&self.kernel)
-            .concrete(&self.concrete, &self.levels)
+            .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
@@ -215,7 +232,7 @@ impl Launcher {
     pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedTileSource::<Unset, Unset, Unset>::of_geometry(geometry)
             .space(&self.kernel)
-            .concrete(&self.concrete, &self.levels)
+            .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
     }
 
@@ -240,17 +257,16 @@ impl Launcher {
                 "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
-        // The one gate that is about the levels rather than the geometry: a masked access reports
+        // The one gate that is about the tiles rather than the geometry: a masked access reports
         // its length in lines and would wrongly clip, so an overhanging subspace is served scalar
         // whatever its extents and strides would allow. `serves_lines` below answers the rest.
-        let (space, levels) = (&self.concrete, &self.levels);
         let masked = operands
             .iter()
-            .any(|(_, subspace)| subspace.iter().any(|&a| space.overhangs(levels, a)));
+            .any(|(_, subspace)| subspace.iter().any(|a| self.overhangs.contains(a)));
         if masked {
             return 1;
         }
-        let leaf = space.leaf(levels).extent(axis);
+        let leaf = self.leaf_edge(axis);
         self.client
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {

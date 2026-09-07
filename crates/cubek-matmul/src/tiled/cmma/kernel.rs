@@ -19,7 +19,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// The routine's five levels, each a method on the blueprint, outermost first: the cube grid,
 /// the stages of `K` a cube walks, one partition per plane, the instruction's `K` steps through
 /// the partition, and the fragment grid each step contracts. The kernel's loops state them one
-/// by one; the launch lists them for the operand gates and checks them against the grid.
+/// by one; the blueprint reads its leaf and its overhangs off the same list.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![
         bp.cubes(batch),
@@ -31,6 +31,20 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
 }
 
 impl CmmaBlueprint {
+    /// The tile every operand is cut to at the bottom: the instruction's.
+    pub fn leaf(&self, space: &Space, batch: &[Axis]) -> Vec<(Axis, usize)> {
+        space.leaf(&cmma_levels(self, batch)).extents()
+    }
+
+    /// The axes some tile reaches past the end of.
+    pub fn overhangs(&self, space: &Space, batch: &[Axis]) -> Vec<Axis> {
+        let levels = cmma_levels(self, batch);
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
     /// The grid this launch runs on: a cube per stage of the output and per batch, the
     /// blueprint's planes in each.
     pub fn grid(&self, space: &Space, batch: &[Axis], plane_size: u32) -> (CubeCount, CubeDim) {

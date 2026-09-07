@@ -12,13 +12,27 @@ pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 
 /// The routine's three levels, outermost first: the cube grid (a serial loop on CPU), the plane
 /// split (the parallel worker threads), and the plane's block stepped through `K` in the
-/// instruction's depth. The kernel's loops state them one by one; the launch lists them for the
-/// operand gates and checks them against the grid.
+/// instruction's depth. The kernel's loops state them one by one; the blueprint reads its leaf
+/// and its overhangs off the same list.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
     vec![bp.cubes(batch), bp.planes(), bp.k_steps()]
 }
 
 impl CpuGemmBlueprint {
+    /// The tile every operand is cut to at the bottom: the instruction's.
+    pub fn leaf(&self, space: &Space, batch: &[Axis]) -> Vec<(Axis, usize)> {
+        space.leaf(&cpu_gemm_levels(self, batch)).extents()
+    }
+
+    /// The axes some tile reaches past the end of.
+    pub fn overhangs(&self, space: &Space, batch: &[Axis]) -> Vec<Axis> {
+        let levels = cpu_gemm_levels(self, batch);
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
     /// The grid this launch runs on: a cube per box of the output and per batch, the blueprint's
     /// planes in each.
     pub fn grid(&self, space: &Space, batch: &[Axis], plane_size: u32) -> (CubeCount, CubeDim) {

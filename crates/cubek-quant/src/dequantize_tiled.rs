@@ -58,7 +58,6 @@ pub fn launch_ref(
     let launch = Launcher::new(
         client,
         space.clone(),
-        vec![],
         (cube_count.clone(), cube_dim),
         KernelForm::Dynamic,
     );
