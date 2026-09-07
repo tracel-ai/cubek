@@ -9,7 +9,7 @@
 mod arg;
 mod delivery;
 mod geometry;
-mod launch;
+pub(crate) mod launch;
 mod layout;
 mod projection;
 mod residence;

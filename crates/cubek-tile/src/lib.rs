@@ -14,9 +14,8 @@
 //! instruction at the leaf ([`Tile::mm_with`], [`Tile::mma`]), and the store of each fragment
 //! to its window of the output ([`Tile::copy_cast_from`]), one more loop over the cells. A
 //! [`Region`] is the path those loops took from the space, so the root tile and any window of
-//! it read one region alike. The launch
-//! ([`Launcher`]) sizes the grid from the same levels the kernel's loops state, listed into a
-//! [`Nest`] by the blueprint, and binds the tensors to the same extents.
+//! it read one region alike. The launch ([`Launcher`]) reads the grid off the same levels the
+//! kernel's loops state, listed by the blueprint, and binds the tensors to the same extents.
 #![allow(dead_code)]
 
 mod axis;

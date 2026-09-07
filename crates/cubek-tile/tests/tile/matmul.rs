@@ -1458,29 +1458,31 @@ fn matmul_whole_k_at_the_leaf() {
 fn matmul_reversed_walk_single_cube() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, 4), (N, 4), (K, 4)])],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
     matmul_smem_ring_reversed::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         1,
         f32::elem_type_native(),
     );
@@ -1553,31 +1555,36 @@ fn check_matmul(m: usize, n: usize, k: usize, cubes: Level, steps: Level, depth:
         Edge::Cut(edge) => edge,
         Edge::Whole => steps.edge(M),
     };
-    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![cubes, steps]);
+    let launcher = Launcher::new(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![cubes, steps],
+        KernelForm::Static,
+    );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
     // Poisoned, not zeroed: the kernel owns the init, so anything `c` held must be gone from the
     // result.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
     matmul_smem_ring::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         depth,
         f32::elem_type_native(),
     );
@@ -1591,31 +1598,33 @@ fn mma_folds_onto_what_c_holds() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 4usize, 4usize);
     // The whole contraction lands at the leaf, where `c = a·b` would overwrite.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, tile_edge), (N, tile_edge), (K, k)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
 
     matmul_smem_ring_accumulate::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         1,
         f32::elem_type_native(),
     );
@@ -1664,7 +1673,8 @@ fn check_matmul_batched(
     batch_edge: usize,
 ) {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
         vec![sequential(&[
             (B, batch_edge),
@@ -1672,28 +1682,29 @@ fn check_matmul_batched(
             (N, tile_edge),
             (K, tile_edge),
         ])],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[B, M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[B, M, K]))
         .tile(&[batch_edge, tile_edge, tile_edge])
         .arange();
-    let rhs = TileInput::builder(&client, nest.space.project(&[B, K, N]))
+    let rhs = TileInput::builder(&client, launcher.space().project(&[B, K, N]))
         .tile(&[batch_edge, tile_edge, tile_edge])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[B, M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[B, M, N]))
         .tile(&[batch_edge, tile_edge, tile_edge])
         .zeros();
 
     matmul_smem_ring::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         1,
         a.arg(),
         rhs.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         1,
         f32::elem_type_native(),
     );
@@ -1787,22 +1798,24 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(B0, b0), (B1, b1), (M, t), (N, t), (K, t)]),
         levels.to_vec(),
+        KernelForm::Static,
     );
-    let out = nest.space.project(&[B0, B1, M, N]);
-    let lhs = TileInput::builder(&client, nest.space.project(&[B0, M, K]))
+    let out = launcher.space().project(&[B0, B1, M, N]);
+    let lhs = TileInput::builder(&client, launcher.space().project(&[B0, M, K]))
         .tile(&[1, t, t])
         .arange();
-    let rhs = TileInput::builder(&client, nest.space.project(&[B1, K, N]))
+    let rhs = TileInput::builder(&client, launcher.space().project(&[B1, K, N]))
         .tile(&[1, t, t])
         .arange();
     let acc = TileInput::builder(&client, out.clone())
         .tile(&[1, 1, t, t])
         .zeros();
 
-    let cube_count = nest.cube_count();
+    let cube_count = launcher.cube_count();
     let cube_dim = CubeDim::new_single();
     match levels.len() {
         1 => matmul_smem_ring::launch(
@@ -1813,9 +1826,9 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             lhs.arg(),
             rhs.arg(),
             acc.arg(),
-            nest.space_arg(),
+            launcher.space_arg(),
             Level::cubes::<Cut>(&[]),
-            nest.at(0),
+            launcher.level(0),
             1,
             dtype,
         ),
@@ -1826,9 +1839,9 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             lhs.arg(),
             rhs.arg(),
             acc.arg(),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             StageStorage::Strided,
             1,
             1,
@@ -1898,32 +1911,37 @@ fn matmul_cpu_cores_split_m_planes() {
 fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
     let client = cubecl::test_device().client();
     let tile_edge = inner.edge(M);
-    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![outer, inner]);
+    let launcher = Launcher::new(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![outer, inner],
+        KernelForm::Static,
+    );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -1939,38 +1957,41 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
 fn matmul_cpu_dynamic_k() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[edge, edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[edge, edge])
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[edge, edge])
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space
+        launcher
+            .space()
             .clone()
             .with_dynamic(&[K])
-            .launch_arg(&nest.space),
+            .launch_arg(launcher.space()),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -1992,34 +2013,36 @@ fn register_matmul_unit_spread_n() {
 
     let (m, k, nr) = (4usize, 8usize, 2usize);
     let n = plane_size * nr;
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -2056,20 +2079,27 @@ fn matmul_padded_rhs_stage_multi_line() {
 
 fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launch = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, m), (N, n), (K, k)])],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launch.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launch.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launch.space().project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
+    let launcher = Launcher::new(
+        &client,
+        launch.space().clone(),
+        launch.levels().to_vec(),
+        KernelForm::Dynamic,
+    );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let b_op = launcher.arg(b.handle().binding()).subspace(&[K, N]).build();
     let c_op = launcher.arg(c.handle().binding()).subspace(&[M, N]).build();
@@ -2082,7 +2112,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         b_op.arg(),
         c_op.arg(),
         launcher.space_arg(),
-        launcher.concrete().at(0),
+        launcher.level(0),
         4,
         f32::elem_type_native(),
     );
@@ -2104,23 +2134,30 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
 fn matmul_padded_lhs_stage_direct_tail() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (2usize, 2usize, 3usize);
-    let nest = Nest::new(
+    let launch = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, m), (N, n), (K, k)]),
             Level::walk(&[(M, m), (N, n), (K, k)]),
         ],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launch.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launch.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launch.space().project(&[M, N]))
         .untiled()
         .zeros();
-    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
+    let launcher = Launcher::new(
+        &client,
+        launch.space().clone(),
+        launch.levels().to_vec(),
+        KernelForm::Dynamic,
+    );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let b_op = launcher.arg(b.handle().binding()).subspace(&[K, N]).build();
     let c_op = launcher.arg(c.handle().binding()).subspace(&[M, N]).build();
@@ -2133,8 +2170,8 @@ fn matmul_padded_lhs_stage_direct_tail() {
         b_op.arg(),
         c_op.arg(),
         launcher.space_arg(),
-        launcher.concrete().at(0),
-        launcher.concrete().at(1),
+        launcher.level(0),
+        launcher.level(1),
         4,
         f32::elem_type_native(),
     );
@@ -2156,32 +2193,34 @@ fn matmul_padded_lhs_stage_direct_tail() {
 fn matmul_multilevel_staged_then_direct() {
     let client = cubecl::test_device().client();
     let (m, n, k, final_edge) = (8usize, 8usize, 8usize, 2usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             sequential(&[(M, 4), (N, 4), (K, 4)]),
             sequential(&[(M, 2), (N, 2), (K, 2)]),
         ],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[final_edge, final_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[final_edge, final_edge])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[final_edge, final_edge])
         .zeros();
     matmul_two_levels_smem_then_in_place_reversed::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         StageStorage::Strided,
         1,
         f32::elem_type_native(),
@@ -2231,10 +2270,10 @@ enum StageLayout {
 }
 
 impl StageLayout {
-    fn storage(self, nest: &Nest) -> StageStorage {
+    fn storage(self, launcher: &Launcher) -> StageStorage {
         match self {
             StageLayout::Tiled => StageStorage::Tiled {
-                block: nest.space.leaf(&nest.levels).extents(),
+                block: launcher.space().leaf(launcher.levels()).extents(),
             },
             StageLayout::Strided => StageStorage::Strided,
         }
@@ -2252,50 +2291,52 @@ fn check_matmul_multilevel(
     let client = cubecl::test_device().client();
     let final_edge = 2usize;
     let dtype = f32::elem_type_native();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             sequential(&[(M, 4), (N, 4), (K, 4)]),
             sequential(&[(M, 2), (N, 2), (K, 2)]),
         ],
+        KernelForm::Static,
     );
-    let storage = layout.storage(&nest);
+    let storage = layout.storage(&launcher);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[final_edge, final_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[final_edge, final_edge])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[final_edge, final_edge])
         .zeros();
 
     match inner {
         Inner::Direct => matmul_two_levels_smem_then_in_place::launch(
             &client,
-            nest.cube_count(),
+            launcher.cube_count(),
             CubeDim::new_single(),
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             storage,
             depth_outer,
             dtype,
         ),
         Inner::Staged(depth_inner) => matmul_two_levels_smem_then_smem::launch(
             &client,
-            nest.cube_count(),
+            launcher.cube_count(),
             CubeDim::new_single(),
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             storage,
             depth_outer,
             depth_inner,
@@ -2311,34 +2352,36 @@ fn check_matmul_multilevel(
 fn matmul_staged_invariant_lhs() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, 4), (N, 4), (K, 4)]),
             Level::walk(&[(M, 4), (N, 2), (K, 4)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     matmul_two_levels_smem_then_smem::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         StageStorage::Strided,
         1,
         1,
@@ -2354,43 +2397,47 @@ fn matmul_staged_invariant_lhs() {
 fn matmul_a_level_that_cuts_nothing_is_kept() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (8usize, 8usize, 8usize);
-    let plain = Nest::new(
+    let plain = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        KernelForm::Static,
     );
     // The second level's edges are the first's: every axis's count is 1.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, 4), (N, 4), (K, 4)]),
             Level::walk(&[(M, 4), (N, 4), (K, 4)]),
         ],
+        KernelForm::Static,
     );
-    assert_eq!(plain.levels.len(), 1);
-    assert_eq!(nest.levels.len(), 2);
-    assert_ne!(nest, plain);
-    assert_eq!(nest.cube_dim(&client), plain.cube_dim(&client));
+    assert_eq!(plain.levels().len(), 1);
+    assert_eq!(launcher.levels().len(), 2);
+    assert_ne!(launcher.levels(), plain.levels());
+    assert_eq!(launcher.cube_dim(), plain.cube_dim());
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     matmul_two_levels_smem_then_in_place::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         StageStorage::Strided,
         1,
         f32::elem_type_native(),
@@ -2414,22 +2461,24 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
 fn matmul_direct_vectorized() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         2,
         2,
@@ -2437,9 +2486,9 @@ fn matmul_direct_vectorized() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -2504,36 +2553,38 @@ fn matmul_double_buffered_mixed_residence_vectorized() {
 fn matmul_double_buffered_with_only_the_lhs_staged() {
     let client = cubecl::test_device().client();
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[
             (M, tile_edge),
             (N, tile_edge),
             (K, tile_edge),
         ])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile_edge, tile_edge])
         .arange();
     // Poisoned, not zeroed: the kernel owns the init.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
     matmul_lhs_smem_ring::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         2,
         f32::elem_type_native(),
     );
@@ -2550,47 +2601,49 @@ enum Staged {
 fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, depth: usize) {
     let client = cubecl::test_device().client();
     let (edge, v) = (4usize, 2usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
     let dtype = f32::elem_type_native();
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     match staged {
         Staged::Both => matmul_smem_ring::launch(
             &client,
-            nest.cube_count(),
+            launcher.cube_count(),
             CubeDim::new_single(),
             v,
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
+            launcher.space_arg(),
             Level::cubes::<Cut>(&[]),
-            nest.at(0),
+            launcher.level(0),
             depth,
             dtype,
         ),
         Staged::LhsOnly => matmul_lhs_smem_ring::launch(
             &client,
-            nest.cube_count(),
+            launcher.cube_count(),
             CubeDim::new_single(),
             v,
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             depth,
             dtype,
         ),
@@ -2609,35 +2662,37 @@ fn register_matmul_promoted_accumulator() {
     // One block per instance (a 1x1 partition at the leaf), K walked in four steps: every
     // step returns to the same promoted accumulator, which is the round trip this removes.
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
     promoted_matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         dtype,
@@ -2653,35 +2708,37 @@ fn register_matmul_promoted_accumulator() {
 fn tropical_matmul_in_place() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .uniform(7, 1., 9.);
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .uniform(13, 1., 9.);
     // Poisoned: the kernel owns the init under this algebra too, and its identity is not zero.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::MIN_SUM,
         f32::elem_type_native(),
@@ -2712,34 +2769,36 @@ fn tropical_matmul_in_place() {
 fn tropical_matmul_promoted() {
     let client = cubecl::test_device().client();
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .uniform(11, 1., 9.);
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .uniform(17, 1., 9.);
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
     promoted_matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::MAX_SUM,
         dtype,
@@ -2775,40 +2834,42 @@ fn register_matmul_promoted_cube_plane() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 16usize);
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::cubes(&[(M, m), (N, n)]),
             Level::planes(&[(M, leaf_m), (N, leaf_n)]),
             Level::walk(&[(K, leaf_k)]),
         ],
+        KernelForm::Static,
     );
 
     let dtype = f32::elem_type_native();
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     promoted_matmul_two_levels_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         // Rhs and output vectorized along N, as a real launch does: the tensor args stay
         // scalar-unit and the kernel's `Vector<E, V>` element carries the width.
         2,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
-        nest.at(2),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        launcher.level(2),
         REGISTER_BLOCK,
         dtype,
         dtype,
@@ -2829,35 +2890,37 @@ fn register_matmul_promoted_cube_plane() {
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, 4), (N, 4), (K, 4)]),
             Level::walk(&[(M, 2), (N, 2), (K, 2)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the promoted accumulator.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     block_matmul_two_levels_smem_below::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         f32::elem_type_native(),
     );
     assert_matmul_arange(&client, c.handle(), m, n, k);
@@ -2867,10 +2930,12 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
 
 /// A single-level nest whose leaf takes the whole problem, the shape the lined-lhs and folded
 /// tests drive.
-fn lined_lhs_space(m: usize, n: usize, k: usize) -> Nest {
-    Nest::new(
+fn lined_lhs_space(m: usize, n: usize, k: usize) -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, m), (N, n), (K, k)])],
+        KernelForm::Static,
     )
 }
 
@@ -2880,32 +2945,32 @@ fn lined_lhs_space(m: usize, n: usize, k: usize) -> Nest {
 fn register_matmul_lined_lhs() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let nest = lined_lhs_space(m, n, k);
+    let launcher = lined_lhs_space(m, n, k);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         2,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -2919,23 +2984,23 @@ fn register_matmul_lined_lhs() {
 fn register_matmul_promoted_lined_lhs() {
     let client = cubecl::test_device().client();
     let (m, n, k) = (4usize, 4usize, 8usize);
-    let nest = lined_lhs_space(m, n, k);
+    let launcher = lined_lhs_space(m, n, k);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     let dtype = f32::elem_type_native();
     promoted_matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         // Lhs 2-wide along K, rhs and output 2-wide along N: both the lane fan-out and the
         // block's own line width are off their scalar case at once.
         2,
@@ -2944,8 +3009,8 @@ fn register_matmul_promoted_lined_lhs() {
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         dtype,
@@ -2970,32 +3035,32 @@ fn folded_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
 /// lanes are `K`-partials of one cell, and one horizontal fold collapses them. The rhs is declared
 /// `[N, K]`, which is what puts its line on the contracted axis. `budget` sizes the block: too
 /// small for the shape and the rolled body runs, indexing its local arrays at runtime.
-fn check_folded_step(nest: Nest, (m, n, k): (usize, usize, usize), budget: usize) {
+fn check_folded_step(launcher: Launcher, (m, n, k): (usize, usize, usize), budget: usize) {
     let client = cubecl::test_device().client();
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[N, K]))
+    let b = TileInput::builder(&client, launcher.space().project(&[N, K]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·Bᵀ` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         4,
         4,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         RegisterBlock::new(budget),
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -3030,34 +3095,36 @@ fn register_matmul_folded_step_two_contracted_axes() {
     let client = cubecl::test_device().client();
     let (m, n, k1, k2) = (4usize, 4usize, 2usize, 4usize);
     let k = k1 * k2;
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]),
         vec![Level::walk(&[(M, m), (N, n), (K, k1), (K2, k2)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K, K2]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K, K2]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[N, K, K2]))
+    let b = TileInput::builder(&client, launcher.space().project(&[N, K, K2]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         4,
         4,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -3113,22 +3180,22 @@ fn run_folded_step_quant(
         return;
     }
 
-    let nest = lined_lhs_space(m, n, k);
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let launcher = lined_lhs_space(m, n, k);
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[N, K]))
+    let b = TileInput::builder(&client, launcher.space().project(&[N, K]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_quant_lhs_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         pack,
         QuantTileArgLaunch::new(
             a.tile.tensor_arg(1),
@@ -3141,8 +3208,8 @@ fn run_folded_step_quant(
         ),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         RegisterBlock::new(64),
         u32::elem_type_native(),
         f32::elem_type_native(),
@@ -3174,14 +3241,16 @@ fn run_folded_step_quant(
 ///
 /// `groups == 1` is the same nest at `LaneShare::Plane`, which is the case already covered; the
 /// point here is a plane carrying several cells at once.
-fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Nest {
+fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: usize) -> Launcher {
     let groups = plane_size / group_lanes;
-    Nest::new(
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
         vec![Level::lanes(&[
             Cut::new(M, 1).across(groups),
             Cut::new(K, edge).across(group_lanes).interleaved(),
         ])],
+        KernelForm::Static,
     )
 }
 
@@ -3195,31 +3264,31 @@ fn register_matmul_lane_group_fold() {
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
     let m = groups;
-    let nest = lane_group_fold_space(lanes, group_lanes, edge, n);
+    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         Level::cubes::<Cut>(&[]),
-        nest.at(0),
+        launcher.level(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -3241,30 +3310,30 @@ fn register_matmul_promoted_lane_group_fold() {
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
     let (m, dtype) = (groups, f32::elem_type_native());
-    let nest = lane_group_fold_space(lanes, group_lanes, edge, n);
+    let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     promoted_matmul_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         1,
         1,
         1,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
         dtype,
@@ -3299,27 +3368,29 @@ fn register_matmul_promoted_accumulator_quant() {
         return;
     }
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .packed(&scheme, DequantAt::Read)
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned: the kernel owns `out = A·B` whatever the buffer held.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     promoted_matmul_quant_lhs_in_place::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         QuantTileArgLaunch::new(
             a.tile.tensor_arg(1),
             a.scales_binding().into_tensor_arg(),
@@ -3331,8 +3402,8 @@ fn register_matmul_promoted_accumulator_quant() {
         ),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         RegisterBlock::new(64),
         u32::elem_type_native(),
         f32::elem_type_native(),
@@ -3631,33 +3702,35 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
-    let storage = layout.storage(&nest);
+    let storage = layout.storage(&launcher);
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragment.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     cmma_matmul_k_walk::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         v,
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         storage,
         depth,
         f32::elem_type_native(),
@@ -3679,31 +3752,33 @@ fn mma_matmul_8x8x8() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragment.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     mma_matmul_k_walk::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         MmaIOConfig::manual(),
         f32::elem_type_native(),
     );
@@ -3722,35 +3797,37 @@ fn cmma_matmul_plane_partitioned_stage() {
     }
 
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, m), (N, n), (K, edge)]),
             Level::planes(&[(M, edge), (N, edge)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragment.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     cmma_matmul_two_levels_planes::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         2,
         f32::elem_type_native(),
     );
@@ -3770,37 +3847,39 @@ fn cmma_matmul_multi_fragment_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, m), (N, n), (K, stage_k)]),
             Level::planes(&[(M, part), (N, part)]),
             Level::walk(&[(M, i), (N, i), (K, i)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragments.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     cmma_matmul_three_levels_planes_fragments::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
-        nest.at(2),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        launcher.level(2),
         2,
         f32::elem_type_native(),
     );
@@ -3820,7 +3899,8 @@ fn cmma_matmul_staged_n_walk_partition() {
 
     let (m, n, k) = (32usize, 32usize, 32usize);
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, m), (N, n), (K, stage_k)]),
@@ -3829,32 +3909,33 @@ fn cmma_matmul_staged_n_walk_partition() {
             Level::walk(&[(M, part), (N, i), (K, i)]),
             Level::walk(&[(M, i), (N, i), (K, i)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragments.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
     cmma_matmul_five_levels::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
-        nest.at(2),
-        nest.at(3),
-        nest.at(4),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        launcher.level(2),
+        launcher.level(3),
+        launcher.level(4),
         2,
         f32::elem_type_native(),
     );
@@ -3945,9 +4026,11 @@ fn check_cmma_matmul_quant_walk(
     }
 
     let (m, n, edge) = (8usize, 8usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
     let a_dtype = ElemType::from_quant_value(scheme.value);
@@ -3960,17 +4043,17 @@ fn check_cmma_matmul_quant_walk(
         .custom(scale_vals.clone())
         .generate_without_host_data();
 
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     cmma_matmul_k_walk_quant::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         v,
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
@@ -3983,8 +4066,8 @@ fn check_cmma_matmul_quant_walk(
         ),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         depth,
         a_dtype,
         f32::elem_type_native(),
@@ -4026,9 +4109,11 @@ fn mma_matmul_quant_until_read() {
     }
 
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     );
 
     let scale = 0.05f32;
@@ -4047,17 +4132,17 @@ fn mma_matmul_quant_until_read() {
         .custom(vec![scale])
         .generate_without_host_data();
 
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
 
     mma_matmul_k_walk_quant::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         QuantTileArgLaunch::new(
             a_input.binding().into_tensor_arg(),
             scales.binding().into_tensor_arg(),
@@ -4069,8 +4154,8 @@ fn mma_matmul_quant_until_read() {
         ),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         MmaIOConfig::manual(),
         a_dtype,
         f32::elem_type_native(),
@@ -4242,12 +4327,17 @@ fn run_register_matmul_quant(
     bm: usize,
     q: Vec<f32>,
 ) {
-    let nest = Nest::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![plan]);
+    let launcher = Launcher::new(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![plan],
+        KernelForm::Static,
+    );
 
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .zeros();
     let e_dtype = f32::elem_type_native();
@@ -4268,8 +4358,8 @@ fn run_register_matmul_quant(
             ),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             REGISTER_BLOCK,
             a_dtype,
             e_dtype,
@@ -4290,8 +4380,8 @@ fn run_register_matmul_quant(
             ),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             REGISTER_BLOCK,
             a_dtype,
             e_dtype,
@@ -4327,13 +4417,15 @@ fn run_register_matmul_quant(
 #[test]
 fn register_matmul_quant_rhs_packed_q8() {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 8), (N, 8), (K, 8)]),
         vec![register_partitioner(4, 4, 4)],
+        KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
         client,
-        nest.clone(),
+        launcher.clone(),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
@@ -4346,13 +4438,15 @@ fn register_matmul_quant_rhs_packed_q8() {
 #[test]
 fn register_matmul_quant_rhs_packed_q4() {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 8), (N, 16), (K, 8)]),
         vec![register_partitioner(4, 8, 4)],
+        KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
         client,
-        nest.clone(),
+        launcher.clone(),
         QuantValue::Q4S,
         8,
         DequantAt::Read,
@@ -4366,13 +4460,15 @@ fn register_matmul_quant_rhs_packed_q4() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row() {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 1), (N, 8), (K, 8)]),
         vec![register_partitioner(1, 4, 4)],
+        KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
         client,
-        nest.clone(),
+        launcher.clone(),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
@@ -4386,13 +4482,15 @@ fn register_matmul_quant_rhs_gemv_row() {
 #[test]
 fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 1), (N, 16), (K, 8)]),
         vec![Level::cubes(&[(N, 4)]), Level::walk(&[(M, 1), (K, 4)])],
+        KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
         client,
-        nest.clone(),
+        launcher.clone(),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
@@ -4409,13 +4507,21 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = cubecl::test_device().client();
-    let nest = Nest::new(
+    let launch = Launcher::new(
+        &client,
         Space::new(&[(M, 1), (N, 8), (K, 8)]),
         vec![Level::walk(&[(M, 1), (N, 4), (K, 4)])],
+        KernelForm::Static,
+    );
+    let launcher = Launcher::new(
+        &client,
+        launch.space().clone(),
+        launch.levels().to_vec(),
+        KernelForm::Dynamic,
     );
     run_register_matmul_quant_rhs(
         client,
-        nest.clone(),
+        launcher.clone(),
         QuantValue::Q8S,
         4,
         DequantAt::Read,
@@ -4497,10 +4603,12 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 }
 
 /// `4 × 8 × 16` walked in `4×4×4` tiles: four K regions per output tile.
-fn four_region_k_walk() -> Nest {
-    Nest::new(
+fn four_region_k_walk() -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, 4), (N, 8), (K, 16)]),
         vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        KernelForm::Static,
     )
 }
 
@@ -4509,7 +4617,7 @@ fn four_region_k_walk() -> Nest {
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant_rhs(
     client: Client,
-    nest: Nest,
+    launch: Launcher,
     value: QuantValue,
     bn: usize,
     dequant_at: DequantAt,
@@ -4538,15 +4646,15 @@ fn run_register_matmul_quant_rhs(
     }
 
     let (m, n, k) = (
-        nest.space.extent(M),
-        nest.space.extent(N),
-        nest.space.extent(K),
+        launch.space().extent(M),
+        launch.space().extent(N),
+        launch.space().extent(K),
     );
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launch.space().project(&[M, K]))
         .untiled()
         .arange();
     // The weight and its per-(k, N-group) scales, minted together.
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launch.space().project(&[K, N]))
         .untiled()
         .packed(&mint_scheme, dequant_at)
         .arange();
@@ -4555,7 +4663,7 @@ fn run_register_matmul_quant_rhs(
             .custom(vec![g])
             .generate_without_host_data()
     });
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launch.space().project(&[M, N]))
         .untiled()
         .zeros();
     let b_dtype = u32::elem_type_native();
@@ -4563,7 +4671,12 @@ fn run_register_matmul_quant_rhs(
 
     // Routine-like: the launcher derives geometry and argument wiring from the nest; the
     // quantized RHS goes through the source builder, which binds it at the storage width.
-    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
+    let launcher = Launcher::new(
+        &client,
+        launch.space().clone(),
+        launch.levels().to_vec(),
+        KernelForm::Dynamic,
+    );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
     let mut scales = vec![b.scales_binding()];
     scales.extend(global_scale.map(|g| g.binding()));
@@ -4580,9 +4693,9 @@ fn run_register_matmul_quant_rhs(
         .vectorize(pack)
         .build();
     // One level cuts `N` across cubes where the test says so; the walk is always stated.
-    let (outer, inner) = match nest.levels.len() {
-        1 => (Level::cubes::<Cut>(&[]), nest.at(0)),
-        _ => (nest.at(0), nest.at(1)),
+    let (outer, inner) = match launch.levels().len() {
+        1 => (Level::cubes::<Cut>(&[]), launch.level(0)),
+        _ => (launch.level(0), launch.level(1)),
     };
     match serve {
         Serve::Staged => matmul_quant_rhs_smem_ring::launch(

@@ -168,7 +168,8 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (ROW, ROWS),
             (COL, COLS),
@@ -183,12 +184,13 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])],
+        KernelForm::Static,
     );
 
     separable_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]),
@@ -198,8 +200,8 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             TileSpec::direct(&[ROW, COL]),
         ),
         separable,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -254,7 +256,8 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (ROW, ROWS),
             (COL, COLS),
@@ -269,22 +272,23 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]);
 
     separable_kernel_staged::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         Some(4),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -379,7 +383,8 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (ROW, ROWS),
             (COL, QCOLS),
@@ -394,9 +399,9 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])],
+        KernelForm::Static,
     );
 
-    let launcher = Launcher::new(&client, &nest, KernelForm::Static);
     let input_op = launcher
         .arg(in_handle.binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
@@ -422,7 +427,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.space_arg(),
-        launcher.concrete().at(0),
+        launcher.level(0),
         in_dtype,
         f32_ty,
     );
@@ -471,7 +476,8 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (ROW, ROWS),
             (COL, pack),
@@ -486,12 +492,16 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             (TAP[1], TAPS[1]),
             (TAP[2], TAPS[2]),
         ])],
+        KernelForm::Static,
     );
 
-    let input = TileInput::builder(&client, nest.space.project(&[TAP[0], TAP[1], TAP[2], COL]))
-        .untiled()
-        .packed(&scheme, DequantAt::Read)
-        .arange();
+    let input = TileInput::builder(
+        &client,
+        launcher.space().project(&[TAP[0], TAP[1], TAP[2], COL]),
+    )
+    .untiled()
+    .packed(&scheme, DequantAt::Read)
+    .arange();
 
     let f32_ty = f32::elem_type_native();
     let out_handle = TestInput::builder(client.clone(), shape![ROWS, pack])
@@ -499,7 +509,6 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(&client, &nest, KernelForm::Static);
     let input_op = launcher
         .arg(input.tile.handle().binding())
         .subspace(&[TAP[0], TAP[1], TAP[2], COL])
@@ -519,7 +528,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.space_arg(),
-        launcher.concrete().at(0),
+        launcher.level(0),
         u32::elem_type_native(),
         f32_ty,
     );
@@ -635,9 +644,11 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -650,16 +661,16 @@ fn check_resampling(normalized: bool) {
 
     resample_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         normalized,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -727,21 +738,23 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
         vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])],
+        KernelForm::Static,
     );
 
     procedural_mask_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -828,9 +841,11 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -844,15 +859,15 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
 
     resample_kernel_masked::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -904,9 +919,11 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -920,15 +937,15 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 
     resample_kernel_masked_staged::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -1012,9 +1029,11 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -1027,15 +1046,15 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 
     column_spanning_resample_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -1102,9 +1121,11 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
         vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -1118,15 +1139,15 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 
     column_spanning_resample_kernel_masked::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -1209,15 +1230,17 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
         vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])],
+        KernelForm::Static,
     );
 
     zero_sum_fallback_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[TAP[0], TAP[1], COL]),
@@ -1226,8 +1249,8 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 

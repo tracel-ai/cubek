@@ -8,8 +8,8 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, FragmentOwnership, FragmentShape, Level, MaskProbe, MemData, Nest, RegisterBlock,
-    RowState, Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
+    Axis, FragmentOwnership, FragmentShape, KernelForm, Launcher, Level, MaskProbe, MemData,
+    RegisterBlock, RowState, Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -181,7 +181,8 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (G, g),
             (QP, qp),
@@ -200,6 +201,7 @@ fn run(
             (R, 1),
             (C, 1),
         ])],
+        KernelForm::Static,
     );
 
     attention_fold_kernel::launch(
@@ -226,8 +228,8 @@ fn run(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         units,
         causal,
         block,
@@ -574,7 +576,8 @@ fn run_cmma<E: Float + CubeElement>(
 
     // `R` and `C` are the score tile's own axes, declared degenerate here: the launch walks `S`
     // in blocks and nothing else.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (G, 1),
             (QP, rows),
@@ -593,6 +596,7 @@ fn run_cmma<E: Float + CubeElement>(
             (R, 1),
             (C, 1),
         ])],
+        KernelForm::Static,
     );
     // The axis is on the operand only where its binding has a dim for it: a spec naming one it
     // does not is a different operand, not the same one spanned.
@@ -625,8 +629,8 @@ fn run_cmma<E: Float + CubeElement>(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         units,
         causal,
         block,
@@ -1158,7 +1162,8 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention nest, as in [`run`].
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (G, g),
             (QP, qp),
@@ -1177,6 +1182,7 @@ fn run_split_at(
             (R, 1),
             (C, 1),
         ])],
+        KernelForm::Static,
     );
 
     attention_fold_split_kernel::launch(
@@ -1203,8 +1209,8 @@ fn run_split_at(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         team,
         splits,
         causal,
@@ -1370,7 +1376,8 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
         vec![Level::walk(&[
             (G, g),
@@ -1379,6 +1386,7 @@ fn run_stream(
             (D, d),
             (V, val_dim),
         ])],
+        KernelForm::Static,
     );
 
     attention_stream_test_kernel::launch(
@@ -1404,8 +1412,8 @@ fn run_stream(
         ),
         scale,
         bound_s as u32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         lanes,
         splits,
         block,

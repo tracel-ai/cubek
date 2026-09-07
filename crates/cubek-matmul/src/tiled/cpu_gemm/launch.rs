@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Nest, Space, StorageTiling};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, StorageTiling};
 
 use crate::{
     definition::{
@@ -179,10 +179,8 @@ pub fn launch_ref(
     // off the concrete extents, overhang checks derived per operand, all inside the launcher.
     let launch = Launcher::new(
         client,
-        &Nest::new(
-            Space::new(&extents),
-            cpu_gemm_levels(&blueprint, &batch_axes),
-        ),
+        Space::new(&extents),
+        cpu_gemm_levels(&blueprint, &batch_axes),
         KernelForm::Dynamic,
     );
 

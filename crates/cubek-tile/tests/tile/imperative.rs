@@ -58,34 +58,36 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![
             Level::walk(&[(M, m), (N, n), (K, block_k)]),
             Level::walk(&[(M, tile), (N, tile), (K, tile)]),
         ],
+        KernelForm::Static,
     );
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile, tile])
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .tile(&[tile, tile])
         .arange();
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
     ring_matmul::launch(
         &client,
-        nest.cube_count(),
+        launcher.cube_count(),
         CubeDim::new_single(),
         a.arg(),
         b.arg(),
         c.arg(),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         depth,
         dtype,
     );

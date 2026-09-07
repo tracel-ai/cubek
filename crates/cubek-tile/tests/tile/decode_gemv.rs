@@ -223,7 +223,8 @@ fn serving_geometry(promoted: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
         vec![
             Level::cubes(&[(M, rows_per_cube)]),
@@ -234,6 +235,7 @@ fn serving_geometry(promoted: bool) {
             ]),
             Level::walk(&[(KB, 1)]),
         ],
+        KernelForm::Static,
     );
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
     let budget = rows_per_lane * factor;
@@ -261,7 +263,6 @@ fn serving_geometry(promoted: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::new(&client, &nest, KernelForm::Static);
     let w_op = launcher
         .arg(w_tensor.binding())
         .gathered(Projection::new(
@@ -316,9 +317,9 @@ fn serving_geometry(promoted: bool) {
             s_op.arg(),
             out_op.arg(),
             launcher.space_arg(),
-            launcher.concrete().at(0),
-            launcher.concrete().at(1),
-            launcher.concrete().at(2),
+            launcher.level(0),
+            launcher.level(1),
+            launcher.level(2),
             budget,
             [dtype, dtype],
         );
@@ -334,9 +335,9 @@ fn serving_geometry(promoted: bool) {
             s_op.arg(),
             out_op.arg(),
             launcher.space_arg(),
-            launcher.concrete().at(0),
-            launcher.concrete().at(1),
-            launcher.concrete().at(2),
+            launcher.level(0),
+            launcher.level(1),
+            launcher.level(2),
             budget,
             [dtype, dtype],
         );

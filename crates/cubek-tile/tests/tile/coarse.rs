@@ -69,10 +69,12 @@ fn coarse_spec() -> TileSpec {
 
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
-fn space(cut: usize) -> Nest {
-    Nest::new(
+fn space(cut: usize) -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
         vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+        KernelForm::Static,
     )
 }
 
@@ -87,7 +89,7 @@ fn rhs_data() -> Vec<f32> {
 }
 
 /// Launch [`coarse_lhs_matmul`] over `space` and return `c`.
-fn run(nest: Nest) -> HostData {
+fn run(launcher: Launcher) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
@@ -106,16 +108,16 @@ fn run(nest: Nest) -> HostData {
 
     coarse_lhs_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a.binding().into_tensor_arg(), coarse_spec()),
         TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 

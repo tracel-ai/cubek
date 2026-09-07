@@ -183,15 +183,17 @@ fn two_levels_fold_in_order() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
     );
 
     two_level_scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -228,8 +230,8 @@ fn two_levels_fold_in_order() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -279,7 +281,8 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -287,12 +290,13 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -325,8 +329,8 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -375,7 +379,8 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -383,12 +388,13 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -420,8 +426,8 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -475,15 +481,17 @@ fn a_scale_over_no_axis_covers_everything() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -513,8 +521,8 @@ fn a_scale_over_no_axis_covers_everything() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -564,7 +572,8 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -572,12 +581,13 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -609,8 +619,8 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -663,7 +673,8 @@ fn f16_scales_are_read_as_f16() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -671,12 +682,13 @@ fn f16_scales_are_read_as_f16() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -708,8 +720,8 @@ fn f16_scales_are_read_as_f16() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, scale_dtype],
     );
 
@@ -759,7 +771,8 @@ fn scales_over_the_columns_scale_the_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -767,12 +780,13 @@ fn scales_over_the_columns_scale_the_rhs() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -805,8 +819,8 @@ fn scales_over_the_columns_scale_the_rhs() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -855,7 +869,8 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -863,12 +878,13 @@ fn an_rhs_scale_survives_a_finer_cut() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -900,8 +916,8 @@ fn an_rhs_scale_survives_a_finer_cut() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -950,7 +966,8 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -958,12 +975,13 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -995,8 +1013,8 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -1047,7 +1065,8 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -1055,12 +1074,13 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul_promoted::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1092,8 +1112,8 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -1193,7 +1213,8 @@ fn rhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[
             (M, rows),
@@ -1201,12 +1222,13 @@ fn rhs_scales_are_served_several_at_a_time() {
             (KB, per_region),
             (KI, inside),
         ])],
+        KernelForm::Static,
     );
 
     wide_rhs_scaled_matmul_promoted::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
@@ -1241,8 +1263,8 @@ fn rhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -1327,15 +1349,17 @@ fn lhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])],
+        KernelForm::Static,
     );
 
     wide_lhs_scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
@@ -1366,8 +1390,8 @@ fn lhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 

@@ -150,10 +150,6 @@ impl TileQuantStageBench {
         ]
     }
 
-    fn nest(&self) -> Nest {
-        Nest::new(Space::new(&self.extents()), self.levels())
-    }
-
     fn space(&self) -> Space {
         Space::new(&self.extents())
     }
@@ -181,7 +177,12 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let launcher = Launcher::new(&self.client, &self.nest(), KernelForm::Static);
+        let launcher = Launcher::new(
+            &self.client,
+            self.space(),
+            self.levels(),
+            KernelForm::Static,
+        );
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
         let b = launcher
             .arg(b.tile.handle().binding())
@@ -207,9 +208,9 @@ impl Benchmark for TileQuantStageBench {
             b.arg(),
             c.arg(),
             launcher.space_arg(),
-            launcher.concrete().at(0),
-            launcher.concrete().at(1),
-            launcher.concrete().at(2),
+            launcher.level(0),
+            launcher.level(1),
+            launcher.level(2),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

@@ -6,9 +6,7 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
 };
-use cubek_tile::{
-    Axis, Geometry, KernelForm, Launcher, Nest, Space, Strided, Tma, TmaTileArgLaunch,
-};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, Strided, Tma, TmaTileArgLaunch};
 
 use crate::{
     definition::{
@@ -183,7 +181,8 @@ pub fn launch_ref(
     // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
     let launch = Launcher::new(
         client,
-        &Nest::new(Space::new(&extents), cmma_levels(&blueprint, &batch_axes)),
+        Space::new(&extents),
+        cmma_levels(&blueprint, &batch_axes),
         KernelForm::Dynamic,
     );
     let lhs = lhs.into_data();
@@ -248,7 +247,7 @@ struct Elems {
 #[allow(clippy::too_many_arguments)]
 fn launch_strided(
     client: &Client,
-    launch: &Launcher<'_>,
+    launch: &Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     blueprint: &CmmaBlueprint,
@@ -306,7 +305,7 @@ fn launch_strided(
 #[allow(clippy::too_many_arguments)]
 fn launch_tma(
     client: &Client,
-    launch: &Launcher<'_>,
+    launch: &Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     blueprint: &CmmaBlueprint,

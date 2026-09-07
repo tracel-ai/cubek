@@ -12,7 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{KernelForm, Launcher, Nest, PhysicalAxisMap, Projection};
+use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -78,10 +78,8 @@ pub fn launch_ref(
     // nothing on.
     let launch = Launcher::new(
         client,
-        &Nest::new(
-            quant_gemv_space(problem),
-            quant_gemv_levels(&blueprint, problem),
-        ),
+        quant_gemv_space(problem),
+        quant_gemv_levels(&blueprint, problem),
         KernelForm::Static,
     );
 

@@ -103,23 +103,25 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (K, depth)]),
         vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
+        KernelForm::Static,
     );
 
     matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(b_t.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -161,15 +163,17 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
     );
 
     matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -194,8 +198,8 @@ fn a_partitioned_axis_contracts_the_same() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -244,15 +248,17 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -286,8 +292,8 @@ fn scales_omit_the_axis_inside_the_block() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -338,7 +344,8 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -346,12 +353,13 @@ fn a_split_output_axis_contracts_the_same() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -373,8 +381,8 @@ fn a_split_output_axis_contracts_the_same() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -427,7 +435,8 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -435,12 +444,13 @@ fn scales_omit_the_axis_inside_the_column_block() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -468,8 +478,8 @@ fn scales_omit_the_axis_inside_the_column_block() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -533,7 +543,8 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -541,12 +552,13 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     wide_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         inside,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
@@ -569,8 +581,8 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -650,7 +662,8 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -658,12 +671,13 @@ fn scales_are_served_several_at_a_time() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     wide_scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
@@ -692,8 +706,8 @@ fn scales_are_served_several_at_a_time() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -771,7 +785,8 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -779,12 +794,13 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     promoted_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -806,8 +822,8 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -893,7 +909,8 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -901,12 +918,13 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     wide_scaled_promoted::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
@@ -933,8 +951,8 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1016,7 +1034,8 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
         vec![Level::walk(&[
             (M, rows),
@@ -1024,12 +1043,13 @@ fn scales_keep_their_own_element_when_served_as_lines() {
             (NI, inside),
             (K, depth),
         ])],
+        KernelForm::Static,
     );
 
     wide_typed_scaled_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(a_t.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
@@ -1056,8 +1076,8 @@ fn scales_keep_their_own_element_when_served_as_lines() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, scale_dtype],
     );
 

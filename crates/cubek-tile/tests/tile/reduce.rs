@@ -183,7 +183,7 @@ fn run(
     a_axes: &[Axis],
     b_axes: &[Axis],
     c_axes: &[Axis],
-    nest: Nest,
+    launcher: Launcher,
 ) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
@@ -205,8 +205,8 @@ fn run(
 
     reduce_matmul_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.binding().into_tensor_arg(),
             TileSpec::direct(a_axes),
@@ -219,8 +219,8 @@ fn run(
             c_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(c_axes),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -229,9 +229,11 @@ fn run(
 
 /// The one-axis reference: an ordinary `{M, N, K}` matmul through the 2-D register leaf.
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, tm), (N, tn), (K, k)])],
+        KernelForm::Static,
     );
     run(
         shape![m, k],
@@ -240,15 +242,17 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
         &[M, K],
         &[K, N],
         &[M, N],
-        nest.clone(),
+        launcher.clone(),
     )
 }
 
 /// [`plain`] with a leading batch axis both operands span.
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K, k)])],
+        KernelForm::Static,
     );
     run(
         shape![b, m, k],
@@ -257,7 +261,7 @@ fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -
         &[B, M, K],
         &[B, K, N],
         &[B, M, N],
-        nest.clone(),
+        launcher.clone(),
     )
 }
 
@@ -284,9 +288,11 @@ fn split_k_whole_reduce_at_leaf() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
         vec![Level::walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        KernelForm::Static,
     );
 
     let got = run(
@@ -296,7 +302,7 @@ fn split_k_whole_reduce_at_leaf() {
         &[M, K1, K2],
         &[K1, K2, N],
         &[M, N],
-        nest.clone(),
+        launcher.clone(),
     );
     assert_same(&got, &plain(m, n, k, tm, tn), &[m, n]);
 }
@@ -308,9 +314,11 @@ fn split_k_major_half_walked() {
     let (m, n, k1, k2) = (8, 8, 3, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
         vec![Level::walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)])],
+        KernelForm::Static,
     );
 
     let got = run(
@@ -320,7 +328,7 @@ fn split_k_major_half_walked() {
         &[M, K1, K2],
         &[K1, K2, N],
         &[M, N],
-        nest.clone(),
+        launcher.clone(),
     );
     assert_same(&got, &plain(m, n, k, tm, tn), &[m, n]);
 }
@@ -332,9 +340,11 @@ fn split_k_with_a_batch_axis() {
     let (b, m, n, k1, k2) = (3, 4, 8, 2, 4);
     let (k, tm, tn) = (k1 * k2, 4, 4);
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]),
         vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        KernelForm::Static,
     );
 
     let got = run(
@@ -344,7 +354,7 @@ fn split_k_with_a_batch_axis() {
         &[B, M, K1, K2],
         &[B, K1, K2, N],
         &[B, M, N],
-        nest.clone(),
+        launcher.clone(),
     );
     assert_same(&got, &plain_batched(b, m, n, k, tm, tn), &[b, m, n]);
 }
@@ -354,7 +364,7 @@ fn run_reduce(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    nest: Nest,
+    launcher: Launcher,
     monoid: Monoid,
 ) -> HostData {
     run_reduce_with_vw(
@@ -362,7 +372,7 @@ fn run_reduce(
         out_shape,
         in_axes,
         out_axes,
-        nest.clone(),
+        launcher.clone(),
         monoid,
         1,
         Read::InPlace,
@@ -376,7 +386,7 @@ fn run_reduce_staged(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    nest: Nest,
+    launcher: Launcher,
     monoid: Monoid,
     depth: usize,
 ) -> HostData {
@@ -385,7 +395,7 @@ fn run_reduce_staged(
         out_shape,
         in_axes,
         out_axes,
-        nest.clone(),
+        launcher.clone(),
         monoid,
         1,
         Read::Smem { depth },
@@ -395,12 +405,22 @@ fn run_reduce_staged(
 /// Exercise a 2-D `M × K -> M` reduction and derive the reference fold from `op`, so schedule
 /// coverage does not duplicate the three identities and comparison loops.
 fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
     // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
-    let got = run_reduce_staged(shape![m, k], shape![m], &[M, K], &[M], nest, monoid, depth);
+    let got = run_reduce_staged(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        monoid,
+        depth,
+    );
 
     for i in 0..m {
         let values = (0..k).map(|j| ((i * k + j) % 7) as f32);
@@ -424,7 +444,7 @@ fn run_reduce_with_vw(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    nest: Nest,
+    launcher: Launcher,
     monoid: Monoid,
     in_vw: usize,
     read: Read,
@@ -449,12 +469,12 @@ fn run_reduce_with_vw(
         1 => {
             reduce_kernel::launch(
                 &client,
-                nest.cube_count(),
-                nest.cube_dim(&client),
+                launcher.cube_count(),
+                launcher.cube_dim(),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 read,
                 monoid,
                 f32_ty,
@@ -463,12 +483,12 @@ fn run_reduce_with_vw(
         4 => {
             reduce_kernel_v4::launch(
                 &client,
-                nest.cube_count(),
-                nest.cube_dim(&client),
+                launcher.cube_count(),
+                launcher.cube_dim(),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 read,
                 monoid,
                 f32_ty,
@@ -483,12 +503,21 @@ fn run_reduce_with_vw(
 #[test]
 fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Sum,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -499,12 +528,21 @@ fn test_reduce_axis_sum_2d_to_1d() {
 #[test]
 fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Sum,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -515,12 +553,21 @@ fn test_reduce_axis_sum_walked_levels() {
 #[test]
 fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Max);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Max,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -533,12 +580,21 @@ fn test_reduce_axis_max_2d_to_1d() {
 #[test]
 fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Min);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Min,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -551,9 +607,11 @@ fn test_reduce_axis_min_2d_to_1d() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(B, b), (M, m), (K, k)]),
         vec![Level::walk(&[(B, 1), (M, 2), (K, 4)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce(
@@ -561,7 +619,7 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
         shape![b],
         &[B, M, K],
         &[B],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Sum,
     );
 
@@ -611,9 +669,11 @@ fn test_reduce_axis_min_double_buffered() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -621,7 +681,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
         shape![k],
         &[M, K],
         &[K],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Sum,
         1,
         Read::InPlace,
@@ -638,9 +698,11 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -648,7 +710,7 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
         shape![k],
         &[M, K],
         &[K],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -669,9 +731,11 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -679,7 +743,7 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
         shape![m],
         &[M, K],
         &[M],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Max,
         4,
         Read::InPlace,
@@ -707,7 +771,7 @@ fn run_reduce_checked(
     out_shape: Shape,
     in_axes: &[Axis],
     out_axes: &[Axis],
-    nest: Nest,
+    launcher: Launcher,
     monoid: Monoid,
     read: Read,
 ) -> HostData {
@@ -728,15 +792,15 @@ fn run_reduce_checked(
 
     reduce_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             in_binding.into_tensor_arg(),
             TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         read,
         monoid,
         f32_ty,
@@ -745,10 +809,12 @@ fn run_reduce_checked(
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
 
-fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Nest {
-    Nest::new(
+fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, m), (K, tk)])],
+        KernelForm::Static,
     )
 }
 
@@ -851,7 +917,7 @@ fn test_reduce_axis_max_nondivisible_k() {
 /// `k` is 5, so a mask that leaked the padded overhang would report the tile edge instead.
 fn check_procedural_reduce(read: Read) {
     let (m, k, tk) = (4, 6, 4);
-    let nest = nondivisible_k_space(m, k, tk);
+    let launcher = nondivisible_k_space(m, k, tk);
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
     let output = TestInput::builder(client.clone(), shape![m])
@@ -861,14 +927,14 @@ fn check_procedural_reduce(read: Read) {
 
     procedural_reduce_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         read,
         dtype,
     );
@@ -947,9 +1013,11 @@ fn test_reduce_axis_min_nondivisible_k_positive_data() {
 #[test]
 fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -957,7 +1025,7 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
         shape![k],
         &[M, K],
         &[K],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Max,
         4,
         Read::InPlace,
@@ -978,9 +1046,11 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -988,7 +1058,7 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
         shape![k],
         &[M, K],
         &[K],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Min,
         4,
         Read::InPlace,
@@ -1011,9 +1081,11 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
 #[test]
 fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (K, k)]),
         vec![Level::walk(&[(M, tm), (K, tk)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -1021,7 +1093,7 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
         shape![m],
         &[M, K],
         &[M],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -1041,9 +1113,11 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
 #[test]
 fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(B, b), (M, m), (K, k)]),
         vec![Level::walk(&[(B, 1), (M, 2), (K, 8)])],
+        KernelForm::Static,
     );
 
     let got = run_reduce_with_vw(
@@ -1051,7 +1125,7 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
         shape![b, k],
         &[B, M, K],
         &[B, K],
-        nest.clone(),
+        launcher.clone(),
         Monoid::Sum,
         4,
         Read::InPlace,
@@ -1082,12 +1156,21 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (K, k)]),
         vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Sum);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Sum,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k).map(|j| ((i * k + j) % 7) as f32).sum();
@@ -1106,12 +1189,21 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (K, k)]),
         vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Max);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Max,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1132,12 +1224,21 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 
     let (m, kr) = (4usize, 4usize);
     let k = plane_size * kr;
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (K, k)]),
         vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        KernelForm::Static,
     );
 
-    let got = run_reduce(shape![m, k], shape![m], &[M, K], &[M], nest, Monoid::Min);
+    let got = run_reduce(
+        shape![m, k],
+        shape![m],
+        &[M, K],
+        &[M],
+        launcher,
+        Monoid::Min,
+    );
 
     for i in 0..m {
         let want: f32 = (0..k)
@@ -1200,9 +1301,11 @@ fn resident_max_over_lane_split_k() {
     let (m, n, kr) = (4usize, 4usize, 2usize);
     let k = plane_size * kr;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        KernelForm::Static,
     );
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
@@ -1221,8 +1324,8 @@ fn resident_max_over_lane_split_k() {
 
     resident_fold_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N, K]),
@@ -1231,8 +1334,8 @@ fn resident_max_over_lane_split_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         Monoid::Max,
         f32_ty,
     );
@@ -1268,12 +1371,14 @@ fn resident_max_over_lane_group_k() {
     let (groups, k) = (plane_size / group_lanes, group_lanes * kr);
     let m = groups;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::lanes(&[
             Cut::new(M, 1).across(groups),
             Cut::new(K, kr).across(group_lanes).interleaved(),
         ])],
+        KernelForm::Static,
     );
 
     let values: Vec<f32> = (0..m * n * k).map(|i| -1.0 - ((i % 13) as f32)).collect();
@@ -1289,8 +1394,8 @@ fn resident_max_over_lane_group_k() {
 
     resident_fold_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             in_handle.binding().into_tensor_arg(),
             TileSpec::direct(&[M, N, K]),
@@ -1299,8 +1404,8 @@ fn resident_max_over_lane_group_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         Monoid::Max,
         f32_ty,
     );

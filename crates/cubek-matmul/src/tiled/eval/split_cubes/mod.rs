@@ -35,8 +35,8 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, Level, Monoid, Nest, PhysicalAxisMap,
-    Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, KernelForm, Launcher, Level, Monoid,
+    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -214,37 +214,45 @@ impl Mapping {
 
     /// The contraction's nest. `N` rides the cubes in every mapping, so only the treatment of
     /// `K` differs.
-    fn nest(self, problem: Problem, plane_size: usize) -> Nest {
+    fn launcher(self, client: &Client, problem: Problem, plane_size: usize) -> Launcher {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Nest::new(
+            Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::new(
+                client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
+                KernelForm::Static,
             ),
-            Mapping::Workspace { .. } => Nest::new(
+            Mapping::Workspace { .. } => Launcher::new(
+                client,
                 Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
                 vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
+                KernelForm::Static,
             ),
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Nest::new(
+            Mapping::AtomicLanes { .. } => Launcher::new(
+                client,
                 Space::new(&[(M, m), (N, n), (K, k)]),
                 vec![
                     Level::cubes(&[(N, COLS), (K, k / splits)]),
                     Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
                 ],
+                KernelForm::Static,
             ),
         }
     }
 
     /// The fold pass's nest, for the mapping that has one.
-    fn fold_space(self, problem: Problem) -> Nest {
+    fn fold_space(self, client: &Client, problem: Problem) -> Launcher {
         let Problem { m, n, .. } = problem;
-        Nest::new(
+        Launcher::new(
+            client,
             Space::new(&[(M, m), (N, n), (KB, self.splits())]),
             vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
+            KernelForm::Static,
         )
     }
 
@@ -297,8 +305,8 @@ struct Bound {
     client: Client,
     mapping: Mapping,
     samples: usize,
-    nest: Nest,
-    fold_space: Nest,
+    launcher: Launcher,
+    fold_space: Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     fold_cube_count: CubeCount,
@@ -325,8 +333,8 @@ impl Bound {
         let Problem { m, n, k } = problem;
         let splits = mapping.splits();
         let inside = k / splits;
-        let nest = mapping.nest(problem, lanes);
-        let fold_space = mapping.fold_space(problem);
+        let launcher = mapping.launcher(client, problem, lanes);
+        let fold_space = mapping.fold_space(client, problem);
 
         let a = TileInput::builder(client, Space::new(&[(M, m), (K, k)]))
             .untiled()
@@ -356,11 +364,11 @@ impl Bound {
             mapping,
             // The verifying run never times anything; `bench` states the count it wants.
             samples: 1,
-            cube_count: nest.cube_count(),
-            cube_dim: nest.cube_dim(client),
+            cube_count: launcher.cube_count(),
+            cube_dim: launcher.cube_dim(),
             fold_cube_count: fold_space.cube_count(),
-            fold_cube_dim: fold_space.cube_dim(client),
-            nest: nest.clone(),
+            fold_cube_dim: fold_space.cube_dim(),
+            launcher: launcher.clone(),
             fold_space,
             a,
             b,
@@ -392,8 +400,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.nest.space_arg(),
-                    self.nest.at(0),
+                    self.launcher.space_arg(),
+                    self.launcher.level(0),
                     dtype,
                 );
             }
@@ -405,9 +413,9 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.nest.space_arg(),
-                    self.nest.at(0),
-                    self.nest.at(1),
+                    self.launcher.space_arg(),
+                    self.launcher.level(0),
+                    self.launcher.level(1),
                     dtype,
                 );
             }
@@ -419,8 +427,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[M, N])),
-                    self.nest.space_arg(),
-                    self.nest.at(0),
+                    self.launcher.space_arg(),
+                    self.launcher.level(0),
                     dtype,
                 );
             }
@@ -432,8 +440,8 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
-                    self.nest.space_arg(),
-                    self.nest.at(0),
+                    self.launcher.space_arg(),
+                    self.launcher.level(0),
                     dtype,
                 );
                 fold_splits::launch(
@@ -443,7 +451,7 @@ impl Bound {
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
                     TileArgLaunch::new(self.folded.tensor_arg(1), TileSpec::direct(&[M, N])),
                     self.fold_space.space_arg(),
-                    self.fold_space.at(0),
+                    self.fold_space.level(0),
                     dtype,
                 );
             }

@@ -1,8 +1,6 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
-use cubek_tile::{
-    Axis, Compaction, Cut, Level, Nest, PhysicalAxisMap, Projection, RegisterBlock, Space,
-};
+use cubek_tile::{Axis, Compaction, Cut, Level, PhysicalAxisMap, Projection, RegisterBlock, Space};
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -58,9 +56,8 @@ impl InterpolateSpace {
         ]
     }
 
-    /// The extents and the levels together: what the launch sizes its grid from.
-    pub fn nest(&self) -> Nest {
-        Nest::new(Space::new(&self.extents()), self.levels())
+    pub fn space(&self) -> Space {
+        Space::new(&self.extents())
     }
 
     /// This cube's box of the output, the taps whole.

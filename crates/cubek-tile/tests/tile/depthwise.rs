@@ -134,7 +134,8 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &cubecl::test_device().client(),
             Space::new(&[
                 (B, self.b),
                 (OH, self.oh),
@@ -148,6 +149,7 @@ impl Depthwise {
                 Level::planes(&[(C, 1)]),
                 Level::walk(&[(OW, 1), (OH, 1)]),
             ],
+            KernelForm::Static,
         );
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
@@ -172,7 +174,7 @@ impl Depthwise {
         ))
         .checked(true);
 
-        let (got, want) = self.run(nest, in_spec);
+        let (got, want) = self.run(launcher, in_spec);
         for b in 0..self.b {
             for oh in 0..self.oh {
                 for ow in 0..self.ow {
@@ -188,7 +190,7 @@ impl Depthwise {
         }
     }
 
-    fn run(&self, nest: Nest, in_spec: TileSpec) -> (HostData, Vec<f32>) {
+    fn run(&self, launcher: Launcher, in_spec: TileSpec) -> (HostData, Vec<f32>) {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
@@ -217,15 +219,15 @@ impl Depthwise {
 
         depthwise_kernel::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
-            nest.at(2),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
+            launcher.level(2),
             f32_ty,
         );
 

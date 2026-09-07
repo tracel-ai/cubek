@@ -82,7 +82,7 @@ fn copy_one_run<E: Numeric>(
 struct Harness {
     client: Client,
     dtype: ElemType,
-    nest: Nest,
+    launcher: Launcher,
 }
 
 impl Harness {
@@ -90,9 +90,11 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::new(
+            launcher: Launcher::new(
+                &cubecl::test_device().client(),
                 Space::new(&[(ROW, ROWS), (COL, COLS)]),
                 vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+                KernelForm::Static,
             ),
         }
     }
@@ -145,11 +147,11 @@ fn runs_cover_the_grid(cubes: usize) {
     copy_run::launch(
         &h.client,
         CubeCount::Static(cubes as u32, 1, 1),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_dim(),
         src_arg,
         dst_arg,
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         cubes,
         h.dtype,
     );
@@ -194,13 +196,13 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
     copy_one_run::launch(
         &h.client,
         CubeCount::Static(1, 1, 1),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_dim(),
         src_arg,
         dst_arg,
         start,
         steps,
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
 
@@ -418,12 +420,14 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(MM, m), (NN, n), (KK, k)]),
         vec![
             Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
             Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
         ],
+        KernelForm::Static,
     );
 
     // One region of the distribution costs a share every `K` block of its contraction.
@@ -431,8 +435,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
     match rhs {
         RhsStage::InPlace => stream_matmul::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -445,17 +449,17 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             runs,
             stride,
             dtype,
         ),
         RhsStage::Smem => stream_matmul_staged_rhs::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -468,9 +472,9 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             runs,
             stride,
             dtype,
@@ -625,12 +629,14 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &client,
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
             vec![
                 Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
                 Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
             ],
+            KernelForm::Static,
         );
 
         // The lanes cover `K` between them, one step each together: a region costs the share
@@ -638,8 +644,8 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
         let stride = k / plane_size;
         stream_matmul::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -652,9 +658,9 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             runs,
             stride,
             dtype,

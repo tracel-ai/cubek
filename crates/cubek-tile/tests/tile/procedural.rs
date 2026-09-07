@@ -370,7 +370,7 @@ fn divided_direct_copy_kernel<E: Float>(
 struct Harness {
     client: Client,
     dtype: ElemType,
-    nest: Nest,
+    launcher: Launcher,
 }
 
 impl Harness {
@@ -378,9 +378,11 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            nest: Nest::new(
+            launcher: Launcher::new(
+                &cubecl::test_device().client(),
                 Space::new(&[(ROW, ROWS), (COL, COLS)]),
                 vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+                KernelForm::Static,
             ),
         }
     }
@@ -442,11 +444,11 @@ fn user_recipe_evaluates_in_place() {
     let output = h.output();
     product_kernel_in_place::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
@@ -458,11 +460,11 @@ fn user_recipe_materializes_through_a_staged_walk() {
     let output = h.output();
     product_kernel_staged::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
@@ -474,11 +476,11 @@ fn selecting_a_region_rebases_the_recipe_origin() {
     let output = h.output();
     rebase_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |_, _| 4.0);
@@ -491,11 +493,11 @@ fn check_phase(launch_ratio: bool) {
     let output = h.output();
     phase_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         launch_ratio,
         h.dtype,
     );
@@ -521,11 +523,11 @@ fn constant_evaluates_its_value_everywhere() {
     let output = h.output();
     constant_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |_, _| -1.25);
@@ -537,11 +539,11 @@ fn affine_coordinates_evaluate_absolute_positions() {
     let output = h.output();
     affine_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         offset(-2.5),
         h.dtype,
     );
@@ -556,11 +558,11 @@ fn linear_is_a_triangle_with_unit_support() {
     let output = h.output();
     linear_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         offset(-2.5),
         h.dtype,
     );
@@ -575,18 +577,18 @@ fn linear_is_a_triangle_with_unit_support() {
 fn a_procedural_tile_works_over_an_integer_element_type() {
     let client = cubecl::test_device().client();
     let dtype = i32::elem_type_native();
-    let nest = Harness::new().nest;
+    let launcher = Harness::new().launcher;
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
     integer_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         output_arg!(output),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
     let got = HostData::from_tensor_handle(&client, output, HostDataType::I32);
@@ -603,11 +605,11 @@ fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
     let output = h.output();
     linear_over_axis_value_kernel::launch(
         &h.client,
-        h.nest.cube_count(),
-        h.nest.cube_dim(&h.client),
+        h.launcher.cube_count(),
+        h.launcher.cube_dim(),
         output_arg!(output),
-        h.nest.space_arg(),
-        h.nest.at(0),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
     // x = row / 2, so the triangle falls to zero at row 2 and stays there.
@@ -626,11 +628,11 @@ fn cubic_matches_the_keys_convolution() {
         let output = h.output();
         cubic_kernel::launch(
             &h.client,
-            h.nest.cube_count(),
-            h.nest.cube_dim(&h.client),
+            h.launcher.cube_count(),
+            h.launcher.cube_dim(),
             output_arg!(output),
-            h.nest.space_arg(),
-            h.nest.at(0),
+            h.launcher.space_arg(),
+            h.launcher.level(0),
             offset(-2.5),
             ratio,
             h.dtype,
@@ -658,11 +660,11 @@ fn lanczos_matches_the_windowed_sinc() {
         let output = h.output();
         lanczos_kernel::launch(
             &h.client,
-            h.nest.cube_count(),
-            h.nest.cube_dim(&h.client),
+            h.launcher.cube_count(),
+            h.launcher.cube_dim(),
             output_arg!(output),
-            h.nest.space_arg(),
-            h.nest.at(0),
+            h.launcher.space_arg(),
+            h.launcher.level(0),
             offset(start),
             lobes,
             h.dtype,
@@ -683,9 +685,11 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+        KernelForm::Static,
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
@@ -694,10 +698,10 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 
     direct_copy_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         output_arg!(output),
-        nest.space_arg(),
+        launcher.space_arg(),
         dtype,
     );
 
@@ -711,13 +715,11 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let concrete = Nest::new(
+    let launch = Launcher::new(
+        &client,
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 4)])],
-    );
-    let space = Nest::new(
-        concrete.space.clone().with_dynamic(&[ROW]),
-        concrete.levels.clone(),
+        KernelForm::DynamicAlong(&[ROW]),
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
@@ -726,11 +728,11 @@ fn divided_direct_copy_preserves_the_parent_bound() {
 
     divided_direct_copy_kernel::launch(
         &client,
-        concrete.cube_count(),
-        concrete.cube_dim(&client),
+        launch.cube_count(),
+        launch.cube_dim(),
         output_arg!(output),
-        space.space.launch_arg(&concrete.space),
-        space.at(0),
+        launch.space_arg(),
+        launch.level(0),
         dtype,
     );
 

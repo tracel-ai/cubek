@@ -2,7 +2,7 @@
 //! takes the tiles. The value a kernel's loop states, under the verb that says who takes the
 //! regions ([`Space::cubes`](crate::Space::cubes), [`Space::walk`](crate::Space::walk), and the
 //! rest), the value a [`Region`](crate::Region) carries down to `at`, and the value a launch
-//! sizes its grid from ([`Nest`](crate::Nest)). A blueprint hands the same value to both, one
+//! sizes its grid from ([`Launcher`](crate::Launcher)). A blueprint hands the same value to both, one
 //! method per level, so the grid and the loops cannot disagree.
 //!
 //! One constructor per verb: [`Level::cubes`], [`Level::planes`], [`Level::lanes`] deal tiles

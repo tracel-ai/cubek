@@ -67,9 +67,11 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let nest = Nest::new(
+    let launch = Launcher::new(
+        &client,
         Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
         vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
+        KernelForm::Static,
     );
 
     // Shape and strides count values; the packing says how many share a stored word.
@@ -98,7 +100,12 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = Launcher::new(&client, &nest, KernelForm::Dynamic);
+    let launcher = Launcher::new(
+        &client,
+        launch.space().clone(),
+        launch.levels().to_vec(),
+        KernelForm::Dynamic,
+    );
     let w_op = launcher
         .arg(w_tensor.clone().binding())
         .gathered(split())
@@ -127,7 +134,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),
-        nest.space_arg(),
+        launch.space_arg(),
         [dtype, dtype],
     );
 

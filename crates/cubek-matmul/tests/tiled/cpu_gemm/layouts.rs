@@ -13,7 +13,7 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, Nest, Projection, Space, TileArg, TileArgLaunch, TileSpec};
+use cubek_tile::{Axis, KernelForm, Launcher, Projection, Space, TileArg, TileArgLaunch, TileSpec};
 
 use super::Dims;
 use crate::harness::assert_result;
@@ -58,7 +58,7 @@ fn copy_logical<E: Numeric>(
 struct Operand {
     handle: TensorHandle,
     layout: InnerLayout,
-    nest: Nest,
+    launcher: Launcher,
     batch: usize,
     rows: usize,
     cols: usize,
@@ -114,9 +114,11 @@ impl Operand {
         Operand {
             handle,
             layout,
-            nest: Nest::new(
+            launcher: Launcher::new(
+                &cubecl::test_device().client(),
                 Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
                 vec![],
+                KernelForm::Static,
             ),
             batch,
             rows,
@@ -135,7 +137,7 @@ fn copy(client: &Client, src: &Operand, dst: &Operand) {
         CubeDim::new_single(),
         tile_arg(src),
         tile_arg(dst),
-        src.nest.space_arg(),
+        src.launcher.space_arg(),
         f32::elem_type_native(),
     );
 }
@@ -151,7 +153,7 @@ fn physical_binding(op: &Operand) -> TensorBinding {
 /// strides) bundled with the comptime `TileSpec` (the operand's spanned axes).
 fn tile_arg<E: Numeric, V: Size>(op: &Operand) -> TileArgLaunch<'static, E, V> {
     let (tensor, tiling) = op.layout.tensor_arg(physical_binding(op), 1);
-    let axes: Vec<_> = op.nest.space.axes().collect();
+    let axes: Vec<_> = op.launcher.space().axes().collect();
     TileArgLaunch::new(tensor, TileSpec::new(Projection::tiled(&axes, tiling)))
 }
 

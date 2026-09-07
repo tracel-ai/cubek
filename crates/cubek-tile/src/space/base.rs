@@ -612,7 +612,7 @@ mod contraction_tests {
             Level::walk(&[(M, 4), (N, 4), (K, 4)]),
         ];
         assert!(matches!(
-            Nest::new(space, levels.to_vec()).cube_count(),
+            crate::physical::launch::cube_count(&space, &levels),
             CubeCount::Static(3, 1, 1)
         ));
     }

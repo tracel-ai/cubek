@@ -178,15 +178,17 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
     );
 
     nvfp4_shaped_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -225,8 +227,8 @@ fn nvfp4_shaped_decode() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -716,15 +718,17 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
     );
 
     packed_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -758,8 +762,8 @@ fn a_packed_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -831,15 +835,17 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
     );
 
     packed_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -872,8 +878,8 @@ fn eight_bit_fields_contract_against_their_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -951,7 +957,8 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (M, rows),
             (NB, blocks_n),
@@ -966,12 +973,13 @@ fn a_packed_rhs_contracts_against_its_scales() {
             (KB, 1),
             (KI, block_k),
         ])],
+        KernelForm::Static,
     );
 
     packed_matmul_rhs::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1014,8 +1022,8 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1093,7 +1101,8 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (M, rows),
             (NB, blocks_n),
@@ -1108,12 +1117,13 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
             (KB, 1),
             (KI, block_k),
         ])],
+        KernelForm::Static,
     );
 
     packed_matmul_rhs::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1156,8 +1166,8 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1240,7 +1250,8 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (M, rows),
             (NB, blocks_n),
@@ -1255,12 +1266,13 @@ fn several_lines_may_share_one_scale() {
             (KB, 1),
             (KI, block_k),
         ])],
+        KernelForm::Static,
     );
 
     packed_matmul_rhs::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1303,8 +1315,8 @@ fn several_lines_may_share_one_scale() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1365,15 +1377,17 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
         vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
     );
 
     native_matmul::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1405,8 +1419,8 @@ fn an_i8_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1486,7 +1500,8 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (M, 1),
             (NB, blocks_n),
@@ -1495,12 +1510,13 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]),
         vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
     );
 
     packed_gemv::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1543,9 +1559,9 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 
@@ -1619,7 +1635,8 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[
             (M, 1),
             (NB, blocks_n),
@@ -1628,12 +1645,13 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
             (KI, block_k),
         ]),
         vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
     );
 
     packed_gemv::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1676,9 +1694,9 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 
@@ -1792,15 +1810,17 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
         vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
     );
 
     packed_gemv_unscaled::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1827,9 +1847,9 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        nest.space_arg(),
-        nest.at(0),
-        nest.at(1),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 

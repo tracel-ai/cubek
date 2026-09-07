@@ -90,17 +90,19 @@ macro_rules! output_arg {
 
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
-fn space() -> Nest {
-    Nest::new(
+fn space(form: KernelForm) -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(ROW, ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+        form,
     )
 }
 
 fn run(sink: bool) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let nest = space();
+    let launcher = space(KernelForm::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -108,18 +110,18 @@ fn run(sink: bool) -> HostData {
     match sink {
         true => sink_kernel::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             output_arg!(output),
-            nest.space_arg(),
+            launcher.space_arg(),
             dtype,
         ),
         false => buffer_kernel::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             output_arg!(output),
-            nest.space_arg(),
+            launcher.space_arg(),
             dtype,
         ),
     }
@@ -195,7 +197,7 @@ fn derived_sink_kernel<E: Float>(
 fn a_launcher_derived_spec_addresses_the_sink() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(&client, &space(), KernelForm::Static);
+    let launcher = space(KernelForm::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -396,32 +398,34 @@ enum Backed {
 
 /// `K` walked in four steps above a one-block leaf: every step returns to the same promoted
 /// accumulator, so the destination is touched exactly once, on the drain.
-fn matmul_space() -> Nest {
+fn matmul_space() -> Launcher {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Nest::new(
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(M, m), (N, n), (K, k)]),
         vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        KernelForm::Static,
     )
 }
 
 fn run_matmul(backed: Backed) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let nest = matmul_space();
+    let launcher = matmul_space();
 
-    let a = TileInput::builder(&client, nest.space.project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, nest.space.project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
     // that folded the destination in instead of writing it would show up as the poison.
-    let c = TileInput::builder(&client, nest.space.project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
-    let (count, dim) = (nest.cube_count(), nest.cube_dim(&client));
+    let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     match backed {
         Backed::Sink => sink_matmul::launch(
             &client,
@@ -430,8 +434,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             dtype,
             dtype,
         ),
@@ -442,8 +446,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             dtype,
             dtype,
         ),
@@ -454,8 +458,8 @@ fn run_matmul(backed: Backed) -> HostData {
             a.arg(),
             b.arg(),
             c.arg(),
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             dtype,
             dtype,
         ),
@@ -529,10 +533,12 @@ const MASKED_ROWS: usize = 5;
 /// lines and re-express every coarser stride as `stride / 2`, arithmetic a stated geometry runs
 /// on numbers nobody read off a tensor. The columns stay exact and in bounds, since a vectorized
 /// innermost axis that can leave the buffer is refused outright.
-fn masked_space() -> Nest {
-    Nest::new(
+fn masked_space(form: KernelForm) -> Launcher {
+    Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
         vec![Level::walk(&[(ROW, 2), (COL, 2)])],
+        form,
     )
 }
 
@@ -611,7 +617,7 @@ enum Erased {
 fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::new(&client, &masked_space(), KernelForm::Dynamic);
+    let launcher = masked_space(KernelForm::Dynamic);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()

@@ -211,7 +211,7 @@ fn run(
     in_spec: TileSpec,
     w_axes: &[Axis],
     out_spec: TileSpec,
-    nest: Nest,
+    launcher: Launcher,
     in_v: usize,
     config: RegisterBlock,
     stage: Stage,
@@ -242,10 +242,10 @@ fn run(
     let w_binding = w_handle.binding();
     let w_spec = TileSpec::direct(w_axes);
     let out_binding = out_handle.clone().binding();
-    let cube_count = nest.cube_count();
-    let cube_dim = nest.cube_dim(&client);
+    let cube_count = launcher.cube_count();
+    let cube_dim = launcher.cube_dim();
     // The kernel that walks this space: one loop per level, the stage where `stage` says.
-    match (nest.levels.len(), stage) {
+    match (launcher.levels().len(), stage) {
         (1, Stage::InPlace) => conv_kernel::launch(
             &client,
             cube_count,
@@ -255,8 +255,8 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
@@ -269,8 +269,8 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             f32_ty,
         ),
         (
@@ -294,8 +294,8 @@ fn run(
                 config,
                 depth,
                 width,
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 f32_ty,
             )
         }
@@ -308,9 +308,9 @@ fn run(
             TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
@@ -323,9 +323,9 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             depth,
-            nest.space_arg(),
-            nest.at(0),
-            nest.at(1),
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
@@ -405,7 +405,8 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &cubecl::test_device().client(),
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
                 (OH, tile_oh),
@@ -413,6 +414,7 @@ impl Conv1d {
                 (RH, self.rh),
                 (CI, self.ci),
             ])],
+            KernelForm::Static,
         );
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
@@ -433,7 +435,7 @@ impl Conv1d {
             in_spec,
             &[RH, CI, CO],
             TileSpec::direct(&[OH, CO]).checked(checked),
-            nest.clone(),
+            launcher.clone(),
             in_v,
             config,
             stage,
@@ -551,9 +553,11 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -575,7 +579,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        nest.clone(),
+        launcher.clone(),
         1,
         RegisterBlock::new(16),
         Stage::InPlace,
@@ -626,9 +630,11 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -650,7 +656,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        nest.clone(),
+        launcher.clone(),
         1,
         RegisterBlock::new(16),
         Stage::InPlace,
@@ -697,9 +703,11 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -721,7 +729,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        nest.clone(),
+        launcher.clone(),
         1,
         RegisterBlock::new(16),
         Stage::Smem {
@@ -865,7 +873,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
                 (OH, tile_oh),
@@ -873,6 +882,7 @@ impl Conv1d {
                 (RH, self.rh),
                 (CI, self.ci),
             ])],
+            KernelForm::Static,
         );
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
@@ -900,8 +910,18 @@ impl Conv1d {
         // by the output, which maps it identically, and `RH` by the weight. Only an axis no
         // operand witnesses has to stay static, which is what `dynamic` narrows to.
         let launch = match dynamic {
-            Some(axes) => Launcher::new(&client, &nest, KernelForm::DynamicAlong(axes)),
-            None => Launcher::new(&client, &nest, KernelForm::Dynamic),
+            Some(axes) => Launcher::new(
+                &client,
+                launcher.space().clone(),
+                launcher.levels().to_vec(),
+                KernelForm::DynamicAlong(axes),
+            ),
+            None => Launcher::new(
+                &client,
+                launcher.space().clone(),
+                launcher.levels().to_vec(),
+                KernelForm::Dynamic,
+            ),
         };
         let in_arg = launch
             .arg(in_handle.binding())
@@ -936,7 +956,7 @@ impl Conv1d {
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 launch.space_arg(),
-                launch.concrete().at(0),
+                launch.level(0),
                 f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
@@ -950,7 +970,7 @@ impl Conv1d {
                 RegisterBlock::new(16),
                 depth,
                 launch.space_arg(),
-                launch.concrete().at(0),
+                launch.level(0),
                 f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
@@ -1121,7 +1141,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
                 (OH, tile_oh),
@@ -1129,6 +1150,7 @@ impl Conv1d {
                 (RH, self.rh),
                 (CI, self.ci),
             ])],
+            KernelForm::Static,
         );
 
         let in_spec = TileSpec::new(Projection::new(
@@ -1162,8 +1184,8 @@ impl Conv1d {
 
         conv_kernel_dynamic::launch(
             &client,
-            nest.cube_count(),
-            nest.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(
                 w_handle.binding().into_tensor_arg(),
@@ -1175,8 +1197,8 @@ impl Conv1d {
             ),
             self.stride as u32,
             self.dilation as u32,
-            nest.space_arg(),
-            nest.at(0),
+            launcher.space_arg(),
+            launcher.level(0),
             f32_ty,
         );
 
@@ -1396,7 +1418,8 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &client,
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
             vec![Level::walk(&[
                 (OH, tile_oh),
@@ -1404,6 +1427,7 @@ impl Conv1d {
                 (RH, self.rh),
                 (CI, self.ci),
             ])],
+            KernelForm::Static,
         );
 
         let gathered = if dynamic_scales {
@@ -1450,8 +1474,8 @@ impl Conv1d {
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
         let out_spec = TileSpec::direct(&[OH, CO]).checked(true);
-        let cube_count = nest.cube_count();
-        let cube_dim = nest.cube_dim(&client);
+        let cube_count = launcher.cube_count();
+        let cube_dim = launcher.cube_dim();
         match (dynamic_scales, staged) {
             (true, false) => conv_kernel_all_dynamic::launch(
                 &client,
@@ -1463,8 +1487,8 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
@@ -1477,8 +1501,8 @@ impl Conv1d {
                 self.stride as u32,
                 self.dilation as u32,
                 offset,
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
@@ -1489,8 +1513,8 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
@@ -1501,8 +1525,8 @@ impl Conv1d {
                 TileArgLaunch::new(w_binding.into_tensor_arg(), w_spec),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
-                nest.space_arg(),
-                nest.at(0),
+                launcher.space_arg(),
+                launcher.level(0),
                 f32_ty,
             ),
         }
@@ -1637,7 +1661,8 @@ impl Conv2d {
     /// `check` under `stage`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
-        let nest = Nest::new(
+        let launcher = Launcher::new(
+            &cubecl::test_device().client(),
             Space::new(&[
                 (OH, self.oh),
                 (OW, self.ow),
@@ -1654,6 +1679,7 @@ impl Conv2d {
                 (RW, self.rw),
                 (CI, self.ci),
             ])],
+            KernelForm::Static,
         );
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
@@ -1673,7 +1699,7 @@ impl Conv2d {
             in_spec,
             &[RH, RW, CI, CO],
             TileSpec::direct(&[OH, OW, CO]),
-            nest.clone(),
+            launcher.clone(),
             1,
             RegisterBlock::new(16),
             stage,
@@ -2143,7 +2169,7 @@ struct Conv2dViewSetup {
     /// `(sh, sw, dh, dw)`, the strides then the dilations.
     steps: (usize, usize, usize, usize),
     in_w: usize,
-    nest: Nest,
+    launcher: Launcher,
     in_spec: TileSpec,
     in_data: Vec<f32>,
     in_handle: cubecl::std::tensor::TensorHandle,
@@ -2155,7 +2181,8 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
         vec![Level::walk(&[
             (OH, oh),
@@ -2164,6 +2191,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
             (RW, rw),
             (CI, ci),
         ])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2187,7 +2215,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         logical: (oh, ow, rh, rw, ci),
         steps: (sh, sw, dh, dw),
         in_w,
-        nest,
+        launcher,
         in_spec,
         in_data,
         in_handle,
@@ -2204,7 +2232,7 @@ fn conv2d_projected_matrix_view() {
     let s = setup_conv2d_view();
     let (oh, ow, rh, rw, ci) = s.logical;
     let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, nest) = (s.in_w, s.in_data, s.nest);
+    let (in_w, in_data, launcher) = (s.in_w, s.in_data, s.launcher);
 
     let matrices = oh * ow * rh;
     let (rows, cols) = (rw, ci);
@@ -2218,11 +2246,11 @@ fn conv2d_projected_matrix_view() {
 
     projected_matrix_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         matrices,
         rows,
         cols,
@@ -2282,7 +2310,7 @@ fn conv2d_fragment_matrix_view() {
     let s = setup_conv2d_view();
     let (oh, ow, rh, rw, ci) = s.logical;
     let (sh, sw, dh, dw) = s.steps;
-    let (in_w, in_data, nest) = (s.in_w, s.in_data, s.nest);
+    let (in_w, in_data, launcher) = (s.in_w, s.in_data, s.launcher);
 
     let (rows, cols) = (oh * ow, rh * rw * ci);
 
@@ -2295,11 +2323,11 @@ fn conv2d_fragment_matrix_view() {
 
     fragment_matrix_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(s.in_handle.binding().into_tensor_arg(), s.in_spec),
         out_handle.clone().binding().into_tensor_arg(),
-        nest.space_arg(),
+        launcher.space_arg(),
         rows,
         cols,
         f32_ty,
@@ -2406,9 +2434,11 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &client,
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2438,8 +2468,8 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     conv_mma_kernel::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
@@ -2450,8 +2480,8 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
             TileSpec::direct(&[OH, CO]),
         ),
         io,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -2520,20 +2550,17 @@ impl Resize1d {
     /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
     /// entries nest a second descent, which is where a rational window's leftover phase has to
     /// accumulate rather than restart.
-    fn space(&self, oh_edges: &[usize]) -> Nest {
-        let mut tiling = Nest::new(
+    fn space(&self, oh_edges: &[usize]) -> Launcher {
+        let levels = oh_edges
+            .iter()
+            .map(|&edge| Level::walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]))
+            .collect();
+        Launcher::new(
+            &cubecl::test_device().client(),
             Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![],
-        );
-        for &edge in oh_edges {
-            tiling.levels.push(Level::walk(&[
-                (OH, edge),
-                (CO, self.co),
-                (RH, self.rh),
-                (CI, self.ci),
-            ]));
-        }
-        tiling
+            levels,
+            KernelForm::Static,
+        )
     }
 
     fn check(&self, oh_edges: &[usize]) {
@@ -2806,7 +2833,7 @@ fn resize1d_rational_dynamic() {
         offset: -2,
         divisor: 6,
     };
-    let nest = resize.space(&[2]);
+    let launcher = resize.space(&[2]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2841,8 +2868,8 @@ fn resize1d_rational_dynamic() {
 
     conv_kernel_rational_dynamic::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         TileArgLaunch::new(
             w_handle.binding().into_tensor_arg(),
@@ -2854,8 +2881,8 @@ fn resize1d_rational_dynamic() {
         ),
         resize.divisor as u32,
         resize.offset as i32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 
@@ -2914,7 +2941,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         offset: -2,
         divisor: 6,
     };
-    let nest = resize.space(&[2]);
+    let launcher = resize.space(&[2]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2938,13 +2965,13 @@ fn resize1d_dynamic_stage_read_before_fill() {
 
     conv_kernel_rational_dynamic_stage_read::launch(
         &client,
-        nest.cube_count(),
-        nest.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
         resize.divisor as u32,
         resize.offset as i32,
-        nest.space_arg(),
-        nest.at(0),
+        launcher.space_arg(),
+        launcher.level(0),
         f32_ty,
     );
 }
@@ -2963,9 +2990,11 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2987,7 +3016,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        nest.clone(),
+        launcher.clone(),
         1,
         RegisterBlock::new(16),
         Stage::Smem {
@@ -3036,9 +3065,11 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let nest = Nest::new(
+    let launcher = Launcher::new(
+        &cubecl::test_device().client(),
         Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
         vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        KernelForm::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -3060,7 +3091,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         in_spec,
         &[RH, CI, CO],
         TileSpec::direct(&[OH, CO]).checked(true),
-        nest.clone(),
+        launcher.clone(),
         1,
         RegisterBlock::new(16).lane_fanout(),
         Stage::Smem {
