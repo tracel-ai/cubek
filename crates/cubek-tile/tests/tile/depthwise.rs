@@ -46,24 +46,29 @@ fn depthwise_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] cubes: Level,
+    #[comptime] planes: Level,
+    #[comptime] cells: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.op_space(&input, &weight)) {
-        let out_cube = out.at(&region);
-        let input_cube = input.at(&region);
-        let weight_cube = weight.at(&region);
-        for region in Walk::over(out_cube.op_space(&input_cube, &weight_cube)) {
-            let mut out_plane = out_cube.at(&region);
-            out_plane.mm_with(
-                &input_cube.at(&region),
-                &weight_cube.at(&region),
-                REGISTER_BLOCK,
-                Semiring::SUM_PROD,
-            );
+    let out = out.tile(comptime!(space.clone()));
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let out = out.at(&cube);
+        let input = input.at(&cube);
+        let weight = weight.at(&cube);
+        for plane in cube.planes(comptime!(planes.clone())) {
+            for cell in plane.walk(comptime!(cells.clone())) {
+                let mut out = out.at(&cell);
+                out.mm_with(
+                    &input.at(&cell),
+                    &weight.at(&cell),
+                    REGISTER_BLOCK,
+                    Semiring::SUM_PROD,
+                );
+            }
         }
     }
 }
@@ -129,37 +134,23 @@ impl Depthwise {
     }
 
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
-        let space = Tiling::over(&[
-            (B, self.b),
-            (OH, self.oh),
-            (OW, self.ow),
-            (C, self.c),
-            (RH, self.rh),
-            (RW, self.rw),
-        ])
-        // Two levels, not one. A single all-`sequential` level puts the whole
-        // convolution in one instance; the grid has to separate the output before
-        // anything else about the kernel matters.
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(C, tile_c)])
-                .distribute(cubes(CubeAxis::Y), &[(OW, tile_ow)])
-                .distribute(cubes(CubeAxis::Z), &[(OH, tile_oh)])
-                .distribute(cubes(CubeAxis::Z), &[(B, 1)])
-                .walk(&[(RH, self.rh), (RW, self.rw)]);
-        })
-        // Channels across the cube's planes; the leaf spreads each plane's tile over its
-        // own lanes, so consecutive lanes still read consecutive channels of one pixel,
-        // which is the whole reason to keep NHWC here.
-        .level(|l| {
-            l.distribute(planes(), &[(C, 1)]).walk(&[
-                (OW, 1),
-                (OH, 1),
-                (B, 1),
+        let launcher = Launcher::implied(
+            &cubecl::test_device().client(),
+            Space::new(&[
+                (B, self.b),
+                (OH, self.oh),
+                (OW, self.ow),
+                (C, self.c),
                 (RH, self.rh),
                 (RW, self.rw),
-            ]);
-        })
-        .build();
+            ]),
+            vec![
+                Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
+                Level::planes(&[(C, 1)]),
+                Level::walk(&[(OW, 1), (OH, 1)]),
+            ],
+            KernelForm::Static,
+        );
 
         // Two gathered physical axes, one per spatial pair; the channel axis rides identity, as
         // it does for the dense case: it is only the weight and accumulator that change.
@@ -183,7 +174,7 @@ impl Depthwise {
         ))
         .checked(true);
 
-        let (got, want) = self.run(space, in_spec);
+        let (got, want) = self.run(launcher, in_spec);
         for b in 0..self.b {
             for oh in 0..self.oh {
                 for ow in 0..self.ow {
@@ -199,7 +190,7 @@ impl Depthwise {
         }
     }
 
-    fn run(&self, space: Space, in_spec: TileSpec) -> (HostData, Vec<f32>) {
+    fn run(&self, launcher: Launcher, in_spec: TileSpec) -> (HostData, Vec<f32>) {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
@@ -228,12 +219,15 @@ impl Depthwise {
 
         depthwise_kernel::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            space,
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
+            launcher.level(2),
             f32_ty,
         );
 

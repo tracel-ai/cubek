@@ -1,12 +1,14 @@
-//! The plane-resident accumulators a kernel opens before the walk it spans and drains after
-//! ([`drain_cast_into`](Tile::drain_cast_into)): a partition of fragments mirroring the
-//! output tile's grid, in the form the leaf contracts through.
+//! The plane-resident accumulator an output opens: a partition of fragments mirroring the output's
+//! grid, contracted into under the levels below the open, and stored back one fragment per cell
+//! by the loop the kernel writes over them ([`Tile::copy_cast_from`]).
 //!
 //! ```ignore
-//! let mut acc = c.cmma_accumulator::<EA, _>(&a, Monoid::Sum);
+//! let mut acc = c.cmma_accumulator::<EA, EL>(&a, fragments, Monoid::Sum);
 //! acc.zero();
-//! for region in walk { acc.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD); }
-//! c.drain_cast_into(&acc);
+//! for step in plane.walk(steps) { /* acc.at(&cell).mma(..) */ }
+//! for cell in plane.walk(cells).unrolled() {
+//!     c.at(&cell).copy_cast_from(&acc.at(&cell));
+//! }
 //! ```
 
 use cubecl::prelude::*;
@@ -14,19 +16,61 @@ use cubecl::prelude::*;
 use crate::instruction::registers::contract;
 use crate::*;
 
+/// The shape a plane-resident accumulator is opened at: the `m_tiles × n_tiles` fragments one
+/// plane holds, each `m × n` and contracting `k` a step. Stated where the accumulator opens,
+/// before the loops that walk it exist; the walk then checks itself against it (a level's grid
+/// must divide the partition, the leaf must be one fragment).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Fragments {
+    pub m_tiles: usize,
+    pub n_tiles: usize,
+    pub m: usize,
+    pub n: usize,
+    pub k: usize,
+}
+
+impl Fragments {
+    /// The shape an accumulator over `out` contracting `lhs` has under `levels`, the ones below
+    /// the site it opens at: what a kernel handed its levels reads off them. A blueprint that
+    /// holds the shape states the fields directly.
+    pub fn new(out: &Space, lhs: &Space, levels: &[Level]) -> Self {
+        let (m_tiles, n_tiles) = partition_shape(out, levels);
+        let leaf = out.leaf(levels);
+        let lhs_leaf = lhs.leaf(levels);
+        let axes = MatrixAxes::accumulator(&leaf, &lhs_leaf);
+        // The edges the accumulator's own axes give, not its last two: a split column group is
+        // one edge, and sizing the block off the innermost axis alone would cut it in half.
+        Fragments {
+            m_tiles,
+            n_tiles,
+            m: axes.rows(&leaf),
+            n: axes.cols(&leaf),
+            k: lhs_leaf.contracted_extent(out),
+        }
+    }
+}
+
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// The plane-resident accumulator this output contracts in through the tensor-core
     /// instruction: a partition of cmma fragments mirroring this tile's grid, uninitialized. The
-    /// kernel opens it before the walk it spans and drains it after
-    /// ([`drain_cast_into`](Tile::drain_cast_into)). `lhs` sizes the contraction depth.
+    /// kernel opens it before the walk it spans and stores it after, one fragment per cell
+    /// ([`copy_cast_from`](Tile::copy_cast_from)). `lhs` sizes the contraction depth.
     pub fn cmma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
+        #[comptime] fragments: Fragments,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         let vector_size = self.vector_size();
-        self.accumulator_in::<EA, EL>(lhs, comptime!(PlaneForm::Cmma), vector_size, 1usize, monoid)
+        self.accumulator_in::<EA, EL>(
+            lhs,
+            fragments,
+            comptime!(PlaneForm::Cmma),
+            vector_size,
+            1usize,
+            monoid,
+        )
     }
 
     /// [`cmma_accumulator`](Tile::cmma_accumulator) through the manual-mma instruction, whose
@@ -34,12 +78,14 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn mma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
+        #[comptime] fragments: Fragments,
         #[comptime] io: MmaIOConfig,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         let vector_size = self.vector_size();
         self.accumulator_in::<EA, EL>(
             lhs,
+            fragments,
             comptime!(PlaneForm::Mma { io }),
             vector_size,
             1usize,
@@ -60,6 +106,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
+        #[comptime] fragments: Fragments,
         #[comptime] config: RegisterBlock,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
@@ -67,9 +114,9 @@ impl<Acc: Numeric> Tile<Acc> {
         let rw = rhs.vector_size();
         let aw = self.vector_size();
         let fold = comptime!(contract::contracted_per_step(
-            &lhs.space.final_space(),
-            &rhs.space.final_space(),
-            &self.space.final_space(),
+            &lhs.space,
+            &rhs.space,
+            &self.space,
             lw,
             rw,
             aw
@@ -84,6 +131,7 @@ impl<Acc: Numeric> Tile<Acc> {
         ));
         self.accumulator_in::<EA, EL>(
             lhs,
+            fragments,
             comptime!(PlaneForm::Registers { config }),
             rw,
             fold,
@@ -96,12 +144,14 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn block_reducer<EA: Numeric, In: Numeric>(
         &self,
         input: &Tile<In>,
+        #[comptime] fragments: Fragments,
         #[comptime] config: RegisterBlock,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         let vector_size = self.vector_size();
         self.accumulator_in::<EA, In>(
             input,
+            fragments,
             comptime!(PlaneForm::Registers { config }),
             vector_size,
             1usize,
@@ -115,25 +165,21 @@ impl<Acc: Numeric> Tile<Acc> {
     pub(crate) fn accumulator_in<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
+        #[comptime] fragments: Fragments,
         #[comptime] form: PlaneForm,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
-        let k = comptime!(lhs.space.final_space().contracted_extent(&self.space));
-        let lanes = comptime!(self.space.lanes());
         PlanePartition::<EA>::mirror(
             comptime!(self.space.clone()),
-            comptime!(MatrixAxes::accumulator(
-                &self.space.final_space(),
-                &lhs.space.final_space()
-            )),
+            comptime!(MatrixAxes::accumulator(&self.space, &lhs.space)),
             comptime!(form),
-            comptime!(k),
+            comptime!(fragments),
             vector_size,
             fold,
-            lanes,
             monoid,
+            comptime!(self.depth),
         )
     }
 }

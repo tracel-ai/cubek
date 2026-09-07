@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, Launcher, StorageTiling};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, StorageTiling};
 
 use crate::{
     definition::{
@@ -10,10 +10,7 @@ use crate::{
         broadcast_batches,
     },
     routine::{BlueprintStrategy, DeviceSettings},
-    tiled::cpu_gemm::{
-        base::CpuGemmRoutine,
-        kernel::{cpu_gemm_kernel, cpu_gemm_space},
-    },
+    tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
     tiled::{K, M, N, batch_axis},
 };
 
@@ -177,7 +174,16 @@ pub fn launch_ref(
 
     // The kernel's own statement of the space, with this launch's extents stamped on: geometry
     // off the concrete extents, overhang checks derived per operand, all inside the launcher.
-    let launch = Launcher::new(client, cpu_gemm_space(&blueprint, &batch_axes, k), &extents);
+    let space = Space::new(&extents);
+    let plane_size = client.properties().hardware.plane_size_max;
+    let launch = Launcher::new(
+        client,
+        space.clone(),
+        blueprint.grid(&space, &batch_axes, plane_size),
+        KernelForm::Dynamic,
+    )
+    .leaf(&blueprint.leaf(&space, &batch_axes))
+    .overhanging(&blueprint.overhangs(&space, &batch_axes));
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher
@@ -228,9 +234,9 @@ pub fn launch_ref(
         a.arg(),
         b.arg(),
         c.arg(),
+        launch.space_arg(),
         blueprint.clone(),
         batch_axes,
-        k,
         dtypes.lhs_global,
         dtypes.rhs_global,
         dtypes.acc_global,

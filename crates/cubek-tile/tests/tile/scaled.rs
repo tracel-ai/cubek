@@ -46,16 +46,17 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -75,17 +76,28 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
+    let c = c.tile(comptime!(space.clone()));
+    let mut acc = c.block_accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(acc.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -94,7 +106,10 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
             Semiring::SUM_PROD,
         );
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// [`scaled_matmul`] with two scale levels: block scales, and one factor over the whole tensor.
@@ -105,7 +120,8 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     blocks: &TileArg<'_, S, Const<1>>,
     global: &TileArg<'_, S, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -115,9 +131,9 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     let mut scales = Sequence::new();
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -168,16 +184,17 @@ fn two_levels_fold_in_order() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
+    );
 
     two_level_scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -214,7 +231,8 @@ fn two_levels_fold_in_order() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -264,16 +282,22 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -306,7 +330,8 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -355,16 +380,22 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -396,7 +427,8 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -419,7 +451,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
 /// which is what a per-tensor level is.
 ///
 /// It is spelled the way every other granularity is — by which axes the operand distinguishes. The
-/// space still names `[M, KB]`, so the scales' matrix has the same shape any other level's would;
+/// nest still names `[M, KB]`, so the scales' matrix has the same shape any other level's would;
 /// the projection addresses neither, so every position reads the same value. Nothing divides, and
 /// nothing states "per tensor" anywhere.
 #[test]
@@ -450,16 +482,17 @@ fn a_scale_over_no_axis_covers_everything() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -489,7 +522,8 @@ fn a_scale_over_no_axis_covers_everything() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -539,16 +573,22 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -580,7 +620,8 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -633,16 +674,22 @@ fn f16_scales_are_read_as_f16() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -674,7 +721,8 @@ fn f16_scales_are_read_as_f16() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, scale_dtype],
     );
 
@@ -724,16 +772,22 @@ fn scales_over_the_columns_scale_the_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -766,7 +820,8 @@ fn scales_over_the_columns_scale_the_rhs() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -815,16 +870,22 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -856,7 +917,8 @@ fn an_rhs_scale_survives_a_finer_cut() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -905,16 +967,22 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -946,7 +1014,8 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -997,16 +1066,22 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     scaled_matmul_promoted::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1038,7 +1113,8 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -1065,17 +1141,28 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
+    let c = c.tile(comptime!(space.clone()));
+    let mut acc = c.block_accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(acc.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -1084,7 +1171,10 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
             Semiring::SUM_PROD,
         );
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
@@ -1125,16 +1215,22 @@ fn rhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[
+            (M, rows),
+            (N, cols),
+            (KB, per_region),
+            (KI, inside),
+        ])],
+        KernelForm::Static,
+    );
 
     wide_rhs_scaled_matmul_promoted::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
@@ -1169,7 +1265,8 @@ fn rhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 
@@ -1197,16 +1294,17 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -1253,16 +1351,17 @@ fn lhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])],
+        KernelForm::Static,
+    );
 
     wide_lhs_scaled_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         lanes,
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
@@ -1293,7 +1392,8 @@ fn lhs_scales_are_served_several_at_a_time() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         [dtype, dtype],
     );
 

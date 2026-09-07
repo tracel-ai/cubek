@@ -49,11 +49,11 @@ fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<T
 fn packed_copy<O: Numeric, V: Size>(
     input: &TileArg<'_, u32, Const<1>>,
     output: &TileArg<'_, O, V>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(O)] _dtype: ElemType,
 ) {
     let input = input.tile_packed::<O>(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }
 
@@ -65,16 +65,17 @@ fn packed_matmul<E: Numeric>(
     x: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -94,7 +95,8 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     blocks: &TileArg<'_, E, Const<1>>,
     global: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
@@ -102,9 +104,9 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     let mut scales = Sequence::new();
     scales.push(blocks.tile(comptime!(space.clone())));
     scales.push(global.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -176,16 +178,17 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
+    );
 
     nvfp4_shaped_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -224,7 +227,8 @@ fn nvfp4_shaped_decode() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -255,16 +259,17 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&x, &w)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &x.at(&region),
@@ -286,16 +291,17 @@ fn native_matmul<E: Numeric>(
     x: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&w, &x)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -316,27 +322,48 @@ fn packed_gemv<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let mut scales = Sequence::new();
     scales.push(scale.tile(comptime!(space.clone())));
-    let mut c = c.tile(space);
-    // The accumulator lives in registers across the whole walk and drains once.
-    let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
-    for region in Walk::over(acc.op_space(&x, &w)) {
-        let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(
-            &x.at(&region),
-            &w.at(&region),
-            &at_all(&scales, &region),
-            Semiring::SUM_PROD,
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let x = x.at(&cube);
+        let w = w.at(&cube);
+        let scales = at_all(&scales, &cube);
+        let c = c.at(&cube);
+        // The accumulator lives in registers across the whole walk and drains once.
+        let mut acc = c.block_accumulator::<E, E, E>(
+            &x,
+            &w,
+            comptime!(Fragments::new(
+                &c.space,
+                &x.space,
+                std::slice::from_ref(&steps)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
         );
+        acc.zero();
+        for step in cube.walk(comptime!(steps.clone())) {
+            let mut acc_s = acc.at(&step);
+            acc_s.mma_scaled(
+                &x.at(&step),
+                &w.at(&step),
+                &at_all(&scales, &step),
+                Semiring::SUM_PROD,
+            );
+        }
+        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+            let mut c_w = c.at(&r0);
+            c_w.copy_cast_from(&acc.at(&r0));
+        }
     }
-    acc.drain_cast_into(&mut c);
 }
 
 /// Four 8-bit values per word.
@@ -398,7 +425,7 @@ fn eight_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -471,7 +498,7 @@ fn four_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -546,7 +573,7 @@ fn fp4_codes_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -619,7 +646,7 @@ fn two_bit_fields_unpack_on_read() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        space.launch_arg(&space),
         dtype,
     );
 
@@ -692,16 +719,17 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
+    );
 
     packed_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -735,7 +763,8 @@ fn a_packed_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -807,16 +836,17 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        KernelForm::Static,
+    );
 
     packed_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -849,7 +879,8 @@ fn eight_bit_fields_contract_against_their_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -927,22 +958,29 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+        KernelForm::Static,
+    );
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -985,7 +1023,8 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1063,22 +1102,29 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+        KernelForm::Static,
+    );
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1121,7 +1167,8 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1204,22 +1251,29 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, rows),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
-    .level(|l| {
-        l.walk(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)]);
-    })
-    .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, blocks_k),
+            (KI, block_k),
+        ]),
+        vec![Level::walk(&[
+            (M, rows),
+            (NB, blocks_n),
+            (NI, bn),
+            (KB, 1),
+            (KI, block_k),
+        ])],
+        KernelForm::Static,
+    );
 
     packed_matmul_rhs::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1262,7 +1316,8 @@ fn several_lines_may_share_one_scale() {
                 ],
             )),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1323,16 +1378,17 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, rows), (N, cols), (KB, blocks), (KI, block)])
-        .level(|l| {
-            l.walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        KernelForm::Static,
+    );
 
     native_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -1364,7 +1420,8 @@ fn an_i8_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -1444,27 +1501,23 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[
             (M, 1),
+            (NB, blocks_n),
             (NI, bn),
-            (KB, 1),
+            (KB, blocks_k),
             (KI, block_k),
-        ]);
-    })
-    .build();
+        ]),
+        vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
+    );
 
     packed_gemv::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1507,7 +1560,9 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 
@@ -1581,27 +1636,23 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[
-        (M, 1),
-        (NB, blocks_n),
-        (NI, bn),
-        (KB, blocks_k),
-        (KI, block_k),
-    ])
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(NB, 1)]).walk(&[
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[
             (M, 1),
+            (NB, blocks_n),
             (NI, bn),
-            (KB, 1),
+            (KB, blocks_k),
             (KI, block_k),
-        ]);
-    })
-    .build();
+        ]),
+        vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
+    );
 
     packed_gemv::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1644,7 +1695,9 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 
@@ -1668,19 +1721,39 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
     w: &TileArg<'_, u32, Const<1>>,
     c: &TileArg<'_, E, V>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] cubes: Level,
+    #[comptime] steps: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut c = c.tile(space);
-    let mut acc = c.block_accumulator::<E, E, E>(&x, &w, REGISTER_BLOCK, Monoid::Sum);
-    acc.zero();
-    for region in Walk::over(acc.op_space(&x, &w)) {
-        let mut acc_r = acc.at(&region);
-        acc_r.mma(&x.at(&region), &w.at(&region), Semiring::SUM_PROD);
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space.cubes(comptime!(cubes.clone())) {
+        let x = x.at(&cube);
+        let w = w.at(&cube);
+        let c = c.at(&cube);
+        let mut acc = c.block_accumulator::<E, E, E>(
+            &x,
+            &w,
+            comptime!(Fragments::new(
+                &c.space,
+                &x.space,
+                std::slice::from_ref(&steps)
+            )),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
+        acc.zero();
+        for step in cube.walk(comptime!(steps.clone())) {
+            let mut acc_s = acc.at(&step);
+            acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
+        }
+        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+            let mut c_w = c.at(&r0);
+            c_w.copy_cast_from(&acc.at(&r0));
+        }
     }
-    acc.drain_cast_into(&mut c);
 }
 
 /// A packed rhs drains from a promoted accumulator, exactly as its scaled twin does.
@@ -1739,17 +1812,17 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(N, bn)])
-                .walk(&[(M, 1), (KB, 1), (KI, block_k)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
+        vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],
+        KernelForm::Static,
+    );
 
     packed_gemv_unscaled::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         factor,
         TileArgLaunch::new(
             x_tensor.binding().into_tensor_arg(),
@@ -1776,7 +1849,9 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
         dtype,
     );
 

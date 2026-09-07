@@ -6,7 +6,7 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
 };
-use cubek_tile::{Axis, Geometry, Launcher, Strided, Tma, TmaTileArgLaunch};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, Strided, Tma, TmaTileArgLaunch};
 
 use crate::{
     definition::{
@@ -16,7 +16,7 @@ use crate::{
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
-        kernel::{cmma_kernel, cmma_space},
+        kernel::cmma_kernel,
     },
     tiled::{K, M, N, batch_axis},
 };
@@ -178,9 +178,17 @@ pub fn launch_ref(
         .copied()
         .chain([(M, m), (N, n), (K, k)])
         .collect();
-    // The kernel's own statement of the space, with this launch's extents stamped on for the
-    // grid and the geometry.
-    let launch = Launcher::new(client, cmma_space(&blueprint, &batch_axes), &extents);
+    // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
+    let space = Space::new(&extents);
+    let plane_size = client.properties().hardware.plane_size_max;
+    let launch = Launcher::new(
+        client,
+        space.clone(),
+        blueprint.grid(&space, &batch_axes, plane_size),
+        KernelForm::Dynamic,
+    )
+    .leaf(&blueprint.leaf(&space, &batch_axes))
+    .overhanging(&blueprint.overhangs(&space, &batch_axes));
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
@@ -243,7 +251,7 @@ struct Elems {
 #[allow(clippy::too_many_arguments)]
 fn launch_strided(
     client: &Client,
-    launch: &Launcher<'_>,
+    launch: &Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     blueprint: &CmmaBlueprint,
@@ -285,6 +293,7 @@ fn launch_strided(
         a.arg(),
         b.arg(),
         c.arg(),
+        launch.space_arg(),
         blueprint.clone(),
         batch_axes.to_vec(),
         elems.lhs,
@@ -300,7 +309,7 @@ fn launch_strided(
 #[allow(clippy::too_many_arguments)]
 fn launch_tma(
     client: &Client,
-    launch: &Launcher<'_>,
+    launch: &Launcher,
     cube_count: CubeCount,
     cube_dim: CubeDim,
     blueprint: &CmmaBlueprint,
@@ -363,6 +372,7 @@ fn launch_tma(
         a,
         b,
         c.arg(),
+        launch.space_arg(),
         blueprint.clone(),
         batch_axes.to_vec(),
         elems.lhs,

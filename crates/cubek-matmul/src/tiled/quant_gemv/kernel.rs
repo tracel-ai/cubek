@@ -1,10 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{
-    CubeAxis, Region, RegisterBlock, Semiring, Space, Tile, TileArg, Tiling, Walk, cubes, lanes,
-    planes,
-};
+use cubek_tile::{Axis, Cut, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -23,37 +20,75 @@ pub(super) const KI: cubek_tile::Axis = cubek_tile::Axis(17);
 /// cube walking all of `K`, one plane per group of rows, then the fold: `rows_per_lane` rows per
 /// aligned lane group, the group's lanes interleaving the contraction between them. Each takes
 /// one stored word of `KI`, and where a group reaches past one block it takes whole blocks of
-/// `KB` (a distribution deals one axis or the other and cannot straddle two). The partials the
+/// `KB` (a distribution cuts one axis or the other and cannot straddle two). The partials the
 /// lanes hold drain inside the plane.
-pub fn quant_gemv_space(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Space {
-    let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
-    Tiling::over(&[
+pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
+    Space::new(&[
         (M, problem.d_out),
         (N, problem.rows),
-        (KB, blocks),
-        (KI, block),
+        (KB, problem.blocks()),
+        (KI, problem.block),
     ])
-    .level(|l| {
-        l.distribute(cubes(CubeAxis::X), &[(M, bp.rows_per_cube)])
-            .walk(&[(N, problem.rows), (KB, blocks), (KI, block)]);
-    })
-    .level(|l| {
-        l.distribute(planes(), &[(M, bp.rows_per_plane)]).walk(&[
-            (N, problem.rows),
-            (KB, blocks),
-            (KI, block),
-        ]);
-    })
-    .level(|l| {
-        // Interleaved on `(KB, KI)`, so the lanes of a group read neighbouring words. The lane
-        // counts are the blueprint's, derived on the host from the plane width: their product
-        // with the row groups is exactly it.
-        l.distribute(lanes(bp.groups()), &[(M, bp.rows_per_lane)])
-            .distribute(lanes(bp.block_lanes).interleaved(), &[(KB, 1)])
-            .distribute(lanes(bp.inside_lanes).interleaved(), &[(KI, factor)])
-            .walk(&[(N, problem.rows)]);
-    })
-    .build()
+}
+
+/// The routine's three levels, outermost first, each a method on the blueprint.
+pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
+    vec![bp.cubes(), bp.planes(), bp.lanes(problem)]
+}
+
+impl QuantGemvBlueprint {
+    /// The tile every operand is cut to at the bottom: a lane's rows against one stored word.
+    pub fn leaf(&self, problem: &QuantGemvProblem) -> Vec<(Axis, usize)> {
+        quant_gemv_space(problem)
+            .leaf(&quant_gemv_levels(self, problem))
+            .extents()
+    }
+
+    /// The axes some tile reaches past the end of: none, the blueprint refuses a problem its
+    /// tiles do not divide.
+    pub fn overhangs(&self, problem: &QuantGemvProblem) -> Vec<Axis> {
+        let (space, levels) = (quant_gemv_space(problem), quant_gemv_levels(self, problem));
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
+    /// The grid this launch runs on: a cube per strip of rows, a plane per group of them, every
+    /// lane of the plane.
+    pub fn grid(&self, problem: &QuantGemvProblem, plane_size: u32) -> (CubeCount, CubeDim) {
+        (
+            CubeCount::Static(problem.d_out.div_ceil(self.rows_per_cube) as u32, 1, 1),
+            CubeDim::new_2d(
+                plane_size,
+                (self.rows_per_cube / self.rows_per_plane) as u32,
+            ),
+        )
+    }
+
+    /// A strip of output rows per cube, `K` whole.
+    pub fn cubes(&self) -> Level {
+        Level::cubes(&[(M, self.rows_per_cube)])
+    }
+
+    /// One plane per group of rows, `K` whole.
+    pub fn planes(&self) -> Level {
+        Level::planes(&[(M, self.rows_per_plane)])
+    }
+
+    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
+    /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
+    /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
+    /// plane width: their product with the row groups is exactly it.
+    pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
+        Level::lanes(&[
+            Cut::new(M, self.rows_per_lane).across(self.groups()),
+            Cut::new(KB, 1).across(self.block_lanes).interleaved(),
+            Cut::new(KI, problem.factor())
+                .across(self.inside_lanes)
+                .interleaved(),
+        ])
+    }
 }
 
 /// The register block the leaf runs under: one scalar accumulator per row a lane owns, per
@@ -86,6 +121,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     x: &TileArg<'_, EX, VX>,
     scales: &Sequence<TileArg<'_, ES, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
+    space: Space,
     #[comptime] bp: QuantGemvBlueprint,
     #[comptime] problem: QuantGemvProblem,
     #[define(EC)] _served_dtype: ElemType,
@@ -93,7 +129,6 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     #[define(ES)] _scale_dtype: ElemType,
     #[define(EO)] _out_dtype: ElemType,
 ) {
-    let space = comptime!(quant_gemv_space(&bp, &problem));
     let config = comptime!(register_block(&bp, &problem));
     let w = w.tile_packed::<EC>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
@@ -102,29 +137,36 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     for k in 0..scales.len() {
         scale_tiles.push(scales.index(k).tile(comptime!(space.clone())));
     }
-    let mut out = out.tile(space);
-    // The output folds every step into what it holds, so it starts from zero.
-    out.zero();
+    let out = out.tile(comptime!(space.clone()));
+    // Each lane zeroes the window it owns: the output folds every step into what it holds.
+    for cube in out.cubes(comptime!(bp.cubes())) {
+        let out_cube = out.at(&cube);
+        for plane in cube.planes(comptime!(bp.planes())) {
+            let out_plane = out_cube.at(&plane);
+            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+                let mut out_lane = out_plane.at(&lane);
+                out_lane.zero();
+            }
+        }
+    }
 
-    // This cube's strip of rows.
-    for region in Walk::over(out.op_space(&w, &x)) {
-        let out_cube = out.at(&region);
-        let w_cube = w.at(&region);
-        let x_cube = x.at(&region);
-        let scales_cube = at_all(&scale_tiles, &region);
-        // This plane's group of rows.
-        for region in Walk::over(out_cube.op_space(&w_cube, &x_cube)) {
-            let out_plane = out_cube.at(&region);
-            let w_plane = w_cube.at(&region);
-            let x_plane = x_cube.at(&region);
-            let scales_plane = at_all(&scales_cube, &region);
-            // This lane's rows against its share of the contraction.
-            for region in Walk::over(out_plane.op_space(&w_plane, &x_plane)) {
-                let mut out_lane = out_plane.at(&region);
-                let scales_lane = at_all(&scales_plane, &region);
+    for cube in space.cubes(comptime!(bp.cubes())) {
+        let out_cube = out.at(&cube);
+        let w_cube = w.at(&cube);
+        let x_cube = x.at(&cube);
+        let scales_cube = at_all(&scale_tiles, &cube);
+        for plane in cube.planes(comptime!(bp.planes())) {
+            let out_plane = out_cube.at(&plane);
+            let w_plane = w_cube.at(&plane);
+            let x_plane = x_cube.at(&plane);
+            let scales_plane = at_all(&scales_cube, &plane);
+            // The lane's share of the blocks, one stored word a step.
+            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+                let mut out_lane = out_plane.at(&lane);
+                let scales_lane = at_all(&scales_plane, &lane);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&region),
-                    &x_plane.at(&region),
+                    &w_plane.at(&lane),
+                    &x_plane.at(&lane),
                     &scales_lane,
                     config,
                     Semiring::SUM_PROD,

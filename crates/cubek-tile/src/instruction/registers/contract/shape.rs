@@ -216,7 +216,6 @@ fn column_cell_width(contracted_per_step: usize, spread: usize, vw: usize) -> us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flat_space;
 
     const B: Axis = Axis(0);
     const OH: Axis = Axis(1);
@@ -235,9 +234,9 @@ mod tests {
     /// past the end of its own list.
     #[test]
     fn the_cell_coordinate_covers_every_accumulator_axis() {
-        let acc = flat_space(&[(B, 1), (OH, 1), (OW, 4), (C, 4)]);
-        let lhs = flat_space(&[(C, 4), (RH, 3), (RW, 3)]);
-        let rhs = flat_space(&[(B, 1), (OH, 1), (OW, 4), (C, 4), (RH, 3), (RW, 3)]);
+        let acc = Space::new(&[(B, 1), (OH, 1), (OW, 4), (C, 4)]);
+        let lhs = Space::new(&[(C, 4), (RH, 3), (RW, 3)]);
+        let rhs = Space::new(&[(B, 1), (OH, 1), (OW, 4), (C, 4), (RH, 3), (RW, 3)]);
 
         let shape = ContractShape::new(&lhs, &rhs, acc.clone(), 1, 4, 4, 4);
 
@@ -259,9 +258,9 @@ mod tests {
     /// are the identity and the coordinate is `batch…, row, col` as before.
     #[test]
     fn a_single_axis_per_edge_leaves_the_coordinate_unchanged() {
-        let acc = flat_space(&[(B, 2), (OH, 4), (C, 8)]);
-        let lhs = flat_space(&[(B, 2), (OH, 4), (RH, 6)]);
-        let rhs = flat_space(&[(B, 2), (RH, 6), (C, 8)]);
+        let acc = Space::new(&[(B, 2), (OH, 4), (C, 8)]);
+        let lhs = Space::new(&[(B, 2), (OH, 4), (RH, 6)]);
+        let rhs = Space::new(&[(B, 2), (RH, 6), (C, 8)]);
 
         let shape = ContractShape::new(&lhs, &rhs, acc.clone(), 1, 4, 4, 4);
 

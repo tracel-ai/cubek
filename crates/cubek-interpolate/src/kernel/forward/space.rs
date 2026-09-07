@@ -1,9 +1,7 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
-use cubek_tile::{
-    Axis, Compaction, CubeAxis, LevelCuts, PhysicalAxisMap, Projection, RegisterBlock, Space,
-    Tiling, cubes, lanes, planes,
-};
+use cubecl::{CubeCount, CubeDim};
+use cubek_tile::{Axis, Compaction, Cut, Level, PhysicalAxisMap, Projection, RegisterBlock, Space};
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -35,77 +33,105 @@ pub struct InterpolateSpace {
 }
 
 impl InterpolateSpace {
-    /// Three levels. CHANNEL is the cube walk's only moving axis, and it moves only past
-    /// `lanes * 4` channels; below that the walk is one region.
+    /// The space's axes and their extents, every one static.
+    pub fn extents(&self) -> Vec<(Axis, usize)> {
+        vec![
+            (BATCH, self.batch),
+            (OUTPUT_H, self.height),
+            (OUTPUT_W, self.width),
+            (TAP_H, self.taps),
+            (TAP_W, self.taps),
+            (CHANNEL, self.channels),
+        ]
+    }
+
+    /// Four levels, outermost first: the cube grid, the channel blocks a cube walks (one region
+    /// below `lanes * 4` channels), this plane's rows, then this lane's columns and channel
+    /// lines.
+    pub fn levels(&self) -> Vec<Level> {
+        vec![
+            self.cubes(),
+            self.channel_blocks(),
+            self.planes(),
+            self.lanes(),
+        ]
+    }
+
     pub fn space(&self) -> Space {
-        let Self {
-            batch,
-            height,
-            width,
-            channels,
-            plane_size,
-            taps,
-            geometry,
-        } = *self;
+        Space::new(&self.extents())
+    }
+
+    /// The tile every operand is cut to at the bottom.
+    pub fn leaf(&self) -> Vec<(Axis, usize)> {
+        self.space().leaf(&self.levels()).extents()
+    }
+
+    /// The axes some tile reaches past the end of.
+    pub fn overhangs(&self) -> Vec<Axis> {
+        let (space, levels) = (self.space(), self.levels());
+        space
+            .axes()
+            .filter(|&axis| space.overhangs(&levels, axis))
+            .collect()
+    }
+
+    /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's
+    /// planes in each.
+    pub fn grid(&self) -> (CubeCount, CubeDim) {
+        let geometry = self.geometry;
+        (
+            CubeCount::Static(
+                self.width.div_ceil(geometry.cols_per_cube()) as u32,
+                self.height.div_ceil(geometry.rows_per_cube()) as u32,
+                self.batch as u32,
+            ),
+            CubeDim::new_2d(self.plane_size as u32, geometry.planes_per_cube as u32),
+        )
+    }
+
+    /// This cube's box of the output, the taps whole.
+    pub fn cubes(&self) -> Level {
+        let geometry = self.geometry;
+        Level::cubes(&[
+            (OUTPUT_W, geometry.cols_per_cube()),
+            (OUTPUT_H, geometry.rows_per_cube()),
+        ])
+        .batches(&[BATCH])
+    }
+
+    /// The cube's box walked one channel block at a time.
+    pub fn channel_blocks(&self) -> Level {
+        Level::walk(&[(CHANNEL, self.geometry.channels_per_cube())])
+    }
+
+    /// The cube's rows across its planes.
+    pub fn planes(&self) -> Level {
+        let geometry = self.geometry;
+        Level::planes(&[
+            Cut::new(OUTPUT_H, geometry.rows_per_plane).across(geometry.planes_per_cube)
+        ])
+    }
+
+    /// This lane's columns and channel lines. The interpolation splits the plane across two
+    /// axes, so the counts are stated outright; one lane along an axis is no split at all, and
+    /// the axis is handed down whole.
+    pub fn lanes(&self) -> Level {
+        let (geometry, plane_size) = (self.geometry, self.plane_size);
         assert!(
             geometry.lane_cols * geometry.lane_channels == plane_size,
             "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
             geometry.lane_cols * geometry.lane_channels
         );
-        let channels_per_cube = geometry.channels_per_cube();
-        Tiling::over(&[
-            (BATCH, batch),
-            (OUTPUT_H, height),
-            (OUTPUT_W, width),
-            (TAP_H, taps),
-            (TAP_W, taps),
-            (CHANNEL, channels),
-        ])
-        .level(|level| {
-            level
-                .distribute(cubes(CubeAxis::Z), &[(BATCH, 1)])
-                .distribute(cubes(CubeAxis::Y), &[(OUTPUT_H, geometry.rows_per_cube())])
-                .distribute(cubes(CubeAxis::X), &[(OUTPUT_W, geometry.cols_per_cube())])
-                .walk(&[(TAP_H, taps), (TAP_W, taps), (CHANNEL, channels_per_cube)]);
-        })
-        .level(|level| {
-            level
-                .distribute(planes(), &[(OUTPUT_H, geometry.rows_per_plane)])
-                .walk(&[
-                    (BATCH, 1),
-                    (OUTPUT_W, geometry.cols_per_cube()),
-                    (TAP_H, taps),
-                    (TAP_W, taps),
-                    (CHANNEL, channels_per_cube),
-                ]);
-        })
-        .level(|level| {
-            lanes_over(level, OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane);
-            lanes_over(
-                level,
-                CHANNEL,
-                geometry.lane_channels,
-                geometry.channel_block,
-            );
-            level.walk(&[
-                (BATCH, 1),
-                (OUTPUT_H, geometry.rows_per_plane),
-                (TAP_H, taps),
-                (TAP_W, taps),
-            ]);
-        })
-        .build()
+        let cuts: Vec<Cut> = [
+            (OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane),
+            (CHANNEL, geometry.lane_channels, geometry.channel_block),
+        ]
+        .into_iter()
+        .filter(|&(_, instances, _)| instances > 1)
+        .map(|(axis, instances, edge)| Cut::new(axis, edge).across(instances))
+        .collect();
+        Level::lanes(&cuts)
     }
-}
-
-/// `edge`-sized tiles of `axis` dealt to `instances` lanes of the plane. The interpolation
-/// splits the plane across two axes, so the count is stated outright. One lane is no split at
-/// all, and is walked so the coordinate stays comptime.
-fn lanes_over(level: &mut LevelCuts, axis: Axis, instances: usize, edge: usize) {
-    match instances {
-        1 => level.walk(&[(axis, edge)]),
-        n => level.distribute(lanes(n), &[(axis, edge)]),
-    };
 }
 
 pub fn input_projection(

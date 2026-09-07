@@ -5,11 +5,12 @@
 //! and it may start inside one output tile and end inside another. No box of a four by two grid
 //! holds three regions.
 //!
-//! [`Walk::window`] is that range. The axes of the distributed work stay `Sequential`, so the
-//! walk's counts are the whole grid and its flat index already carries every coordinate; an
-//! instance's share is `base` and `steps` into it, both runtime. The first tests here are the
-//! assignment on a copy, with no contraction and nothing partial: they prove the shares cover the
-//! grid exactly once, and that a share starting late reads the regions it was given.
+//! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
+//! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat
+//! index already carries every coordinate; an instance's run is `base` and `steps` into it,
+//! both runtime. The first tests here are the assignment on a copy, with no contraction and
+//! nothing partial: they prove the runs cover the grid exactly once, and that a run starting
+//! late reads the regions it was given.
 
 use cubecl::{
     features::AtomicUsage,
@@ -37,13 +38,14 @@ const REGIONS: usize = (ROWS / TILE_ROWS) * (COLS / TILE_COLS);
 fn copy_run<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[comptime] cubes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(space);
-    let walk = Walk::over(dst.runtime_space());
+    let dst = dst.tile(comptime!(space.clone()));
+    let walk = dst.level(comptime!(level.clone()));
     let total = walk.total();
     let pos = CUBE_POS_X as usize;
 
@@ -63,12 +65,13 @@ fn copy_one_run<E: Numeric>(
     dst: &TileArg<'_, E, Const<1>>,
     #[comptime] start: usize,
     #[comptime] steps: usize,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(comptime!(space.clone()));
-    let dst = dst.tile(space);
-    let walk = Walk::over(dst.runtime_space());
+    let dst = dst.tile(comptime!(space.clone()));
+    let walk = dst.level(comptime!(level.clone()));
 
     // Stated at launch but taken as runtime values: a window whose bounds fold to constants
     // would prove the decode only for the case the compiler could have unrolled.
@@ -80,7 +83,7 @@ fn copy_one_run<E: Numeric>(
 struct Harness {
     client: Client,
     dtype: ElemType,
-    space: Space,
+    launcher: Launcher,
 }
 
 impl Harness {
@@ -88,11 +91,12 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            space: Tiling::over(&[(ROW, ROWS), (COL, COLS)])
-                .level(|level| {
-                    level.walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)]);
-                })
-                .build(),
+            launcher: Launcher::implied(
+                &cubecl::test_device().client(),
+                Space::new(&[(ROW, ROWS), (COL, COLS)]),
+                vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+                KernelForm::Static,
+            ),
         }
     }
 
@@ -144,10 +148,11 @@ fn runs_cover_the_grid(cubes: usize) {
     copy_run::launch(
         &h.client,
         CubeCount::Static(cubes as u32, 1, 1),
-        h.space.cube_dim(&h.client),
+        h.launcher.cube_dim(),
         src_arg,
         dst_arg,
-        h.space.clone(),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         cubes,
         h.dtype,
     );
@@ -192,12 +197,13 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
     copy_one_run::launch(
         &h.client,
         CubeCount::Static(1, 1, 1),
-        h.space.cube_dim(&h.client),
+        h.launcher.cube_dim(),
         src_arg,
         dst_arg,
         start,
         steps,
-        h.space.clone(),
+        h.launcher.space_arg(),
+        h.launcher.level(0),
         h.dtype,
     );
 
@@ -234,87 +240,51 @@ const KK: Axis = Axis(4);
 /// The leaf's register block, held fixed across every kernel here.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
-/// This cube's share of the work: the run of output regions it touches and, for the first and
-/// last, how much of their contraction is its own. `stride` is how many steps of the level below
-/// one region costs a share (the steps its instances take *together*), so the share is counted
-/// in the same unit whatever the level below cuts across the plane.
-#[derive(CubeType)]
-struct Share {
-    /// The first region touched, and how many are.
-    first: usize,
-    touched: usize,
-    /// The share's bounds on the joint step index.
-    start: usize,
-    end: usize,
-}
-
-/// The share `instances` cubes cut `regions` regions of `stride` steps into. Two divisions rather
-/// than a size each: the shares abut, cover the work once, and differ in length by at most one.
-#[cube]
-fn share(regions: &Walk, #[comptime] instances: usize, #[comptime] stride: usize) -> Share {
-    let work = regions.total() * stride;
-    let pos = CUBE_POS_X as usize;
-    let start = pos * work / instances;
-    let end = (pos + 1) * work / instances;
-    let first = start / stride;
-    // Through the region the share's last step falls in. `end` is exclusive, so the step before
-    // it is the one to find; an empty share (more cubes than work) touches nothing.
-    let touched = select(start < end, (end - 1) / stride + 1 - first, 0);
-    Share {
-        first,
-        touched,
-        start,
-        end,
-    }
-}
-
-/// The steps of region `step` of the share that are the share's own: whole in the middle of the
-/// share, part of a region at either end of it.
-#[cube]
-fn own_steps(share: &Share, step: usize, #[comptime] stride: usize) -> (usize, usize) {
-    let base = (share.first + step) * stride;
-    let from = select(base < share.start, share.start - base, 0);
-    let to = select(share.end < base + stride, share.end - base, stride);
-    (from, to - from)
-}
-
-/// The streamed contraction: each cube takes its share of the joint index over the output's
-/// tiles and their contraction, opens a register accumulator per output region it touches, folds
-/// that region's part of the share, and drains once through the atomic sink.
+/// The streamed contraction: each cube takes its run of the joint index over the output's tiles
+/// and their contraction, opens a register accumulator per output region it touches, folds that
+/// region's part of the run, and drains once through the atomic sink.
 #[cube(launch)]
 fn stream_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
-    #[comptime] instances: usize,
-    #[comptime] stride: usize,
+    space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(space);
-    let regions = Walk::over(c.op_space(&a, &b));
-    let share = share(&regions, instances, stride);
-    let walk = regions.window(share.first, share.touched);
-    for step in 0..share.touched {
-        let region = walk.region(step);
-        let (from, steps) = own_steps(&share, step, stride);
-        let mut c_region = c.at(&region);
+    let c = out.tile(comptime!(space.clone()));
+    let run = space
+        .cubes(comptime!(outer.clone()))
+        .run(comptime!(inner.clone()));
+    for i in 0..run.touched() {
+        let region = run.region(i);
+        let (from, steps) = run.steps(i);
+        let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
+            comptime!(Fragments::new(
+                &c_region.space,
+                &a_region.space,
+                std::slice::from_ref(&inner)
+            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        for cell in Walk::over(acc.op_space(&a_region, &b_region)).window(from, steps) {
+        for cell in region.level(comptime!(inner.clone())).window(from, steps) {
             let mut acc_cell = acc.at(&cell);
             acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
         }
-        acc.drain_cast_into(&mut c_region);
+        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+            let mut c_region_w = c_region.at(&r0);
+            c_region_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -326,31 +296,36 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
-    #[comptime] instances: usize,
-    #[comptime] stride: usize,
+    space: Space,
+    #[comptime] outer: Level,
+    #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(space);
-    let regions = Walk::over(c.op_space(&a, &b));
-    let share = share(&regions, instances, stride);
-    let walk = regions.window(share.first, share.touched);
-    for step in 0..share.touched {
-        let region = walk.region(step);
-        let (from, steps) = own_steps(&share, step, stride);
-        let mut c_region = c.at(&region);
+    let c = out.tile(comptime!(space.clone()));
+    let run = space
+        .cubes(comptime!(outer.clone()))
+        .run(comptime!(inner.clone()));
+    for i in 0..run.touched() {
+        let region = run.region(i);
+        let (from, steps) = run.steps(i);
+        let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
+            comptime!(Fragments::new(
+                &c_region.space,
+                &a_region.space,
+                std::slice::from_ref(&inner)
+            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        let cells = Walk::over(acc.op_space(&a_region, &b_region)).window(from, steps);
+        let cells = region.level(comptime!(inner.clone())).window(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         pipelined(cells, &mut ring, |slot, cell| {
             let mut acc_cell = acc.at(cell);
@@ -359,7 +334,10 @@ fn stream_matmul_staged_rhs<E: Numeric>(
                 acc_cell.mma(&a_cell, b_s, Semiring::SUM_PROD);
             });
         });
-        acc.drain_cast_into(&mut c_region);
+        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+            let mut c_region_w = c_region.at(&r0);
+            c_region_w.copy_cast_from(&acc.at(&r0));
+        }
     }
 }
 
@@ -397,28 +375,21 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(MM, m), (NN, n), (KK, k)])
-        // The output's tiles and their contraction, distributed as one. `K` is uncut here, so a
-        // region of this level is one output tile and the index reaches through the level below.
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(runs),
-                &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-            );
-        })
-        // One tile's contraction, which is what a run counts in.
-        .level(|l| {
-            l.walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(MM, m), (NN, n), (KK, k)]),
+        vec![
+            Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+            Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
+        ],
+        KernelForm::Static,
+    );
 
-    // One region of the distribution costs a share every `K` block of its contraction.
-    let stride = k / BLOCK_K;
     match rhs {
         RhsStage::InPlace => stream_matmul::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -431,15 +402,15 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            space,
-            runs,
-            stride,
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             dtype,
         ),
         RhsStage::Smem => stream_matmul_staged_rhs::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -452,9 +423,9 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            space,
-            runs,
-            stride,
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             dtype,
         ),
     }
@@ -607,26 +578,20 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let space = Tiling::over(&[(MM, m), (NN, n), (KK, k)])
-            .level(|l| {
-                l.distribute(
-                    cubes(CubeAxis::X).instances(runs),
-                    &[(MM, TILE_M), (NN, TILE_N), (KK, k)],
-                );
-            })
-            .level(|l| {
-                l.distribute(lanes(plane_size), &[(KK, 1)])
-                    .walk(&[(MM, TILE_M), (NN, TILE_N)]);
-            })
-            .build();
+        let launcher = Launcher::implied(
+            &client,
+            Space::new(&[(MM, m), (NN, n), (KK, k)]),
+            vec![
+                Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+                Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
+            ],
+            KernelForm::Static,
+        );
 
-        // The lanes cover `K` between them, one step each together: a region costs the share
-        // `k / plane_size` steps, not `k`.
-        let stride = k / plane_size;
         stream_matmul::launch(
             &client,
-            space.cube_count(),
-            space.cube_dim(&client),
+            launcher.cube_count(),
+            launcher.cube_dim(),
             TileArgLaunch::new(
                 a_handle.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, KK]),
@@ -639,9 +604,9 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            space,
-            runs,
-            stride,
+            launcher.space_arg(),
+            launcher.level(0),
+            launcher.level(1),
             dtype,
         );
 

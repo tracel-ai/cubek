@@ -1055,7 +1055,7 @@ impl<T: Numeric> MemData<T> {
     /// Under a gathering [`Projection`] a physical axis is an affine combination of axes, so its
     /// advance sums one term per contributing axis and its extent is the receptive field
     /// ([`Projection::span`]) rather than a single edge: consecutive sibling windows overlap.
-    pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> MemData<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> MemData<T> {
         let mut origin = Coords::<i32>::new();
         let mut extent = Coords::<u32>::new();
         // Per-physical-axis window_start advances, summed below (chained, so constants fold).
@@ -1073,41 +1073,49 @@ impl<T: Numeric> MemData<T> {
             #[unroll]
             for p in 0..rank {
                 let axis = space.axis_at(p);
-                // The innermost (vectorized) axis's edge is a line count, so `/ width`.
-                let edge = comptime!(if p == last {
-                    let e = space.partitioner().edge(axis);
-                    // A padded stage's innermost extent need not fill whole lines, but then its
-                    // partial tail line has no sibling to start after it: the axis has to be cut
-                    // whole, or the next region would begin mid-line. `extent_raw` because a
-                    // `Dynamic` axis has no extent to be cut whole, and owes the divisibility.
-                    assert!(
-                        e.is_multiple_of(w)
-                            || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
-                        "MemData::at: the innermost edge {e} is neither a whole number of \
-                         {w}-wide lines nor the axis's whole extent ({:?}), so a region would \
-                         start mid-line",
-                        space.extent_raw(axis)
-                    );
-                    e.div_ceil(w)
+                // An axis left whole over a dynamic extent has no edge to cut by: the window
+                // carries through unmoved and uncropped.
+                if comptime!(matches!(step.level.edge_in(&space, axis), Extent::Dynamic)) {
+                    origin.push(self.window.origin.at(p));
+                    extent.push(self.window.extent.at(p));
+                    advances.push(0u32);
                 } else {
-                    space.partitioner().edge(axis)
-                });
-                let index = region.coord(axis);
+                    // The innermost (vectorized) axis's edge is a line count, so `/ width`.
+                    let edge = comptime!(if p == last {
+                        let e = step.level.edge_in(&space, axis).get();
+                        // A padded stage's innermost extent need not fill whole lines, but then its
+                        // partial tail line has no sibling to start after it: the axis has to be cut
+                        // whole, or the next region would begin mid-line. `extent_raw` because a
+                        // `Dynamic` axis has no extent to be cut whole, and owes the divisibility.
+                        assert!(
+                            e.is_multiple_of(w)
+                                || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
+                            "MemData::at: the innermost edge {e} is neither a whole number of \
+                         {w}-wide lines nor the axis's whole extent ({:?}), so a step would \
+                         start mid-line",
+                            space.extent_raw(axis)
+                        );
+                        e.div_ceil(w)
+                    } else {
+                        step.level.edge_in(&space, axis).get()
+                    });
+                    let index = step.coord(axis);
 
-                origin.push(
-                    self.window
-                        .origin
-                        .at(p)
-                        .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>()),
-                );
-                extent.push(comptime!(edge as u32).runtime());
-                advances.push(index.fcast::<u32>().fmul(step_offset(
-                    comptime!(self.layout.projection.clone()),
-                    comptime!(Axis(p as u8)),
-                    edge,
-                    &self.layout.physical_shape,
-                    &self.layout.physical_strides,
-                )));
+                    origin.push(
+                        self.window
+                            .origin
+                            .at(p)
+                            .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>()),
+                    );
+                    extent.push(comptime!(edge as u32).runtime());
+                    advances.push(index.fcast::<u32>().fmul(step_offset(
+                        comptime!(self.layout.projection.clone()),
+                        comptime!(Axis(p as u8)),
+                        edge,
+                        &self.layout.physical_shape,
+                        &self.layout.physical_strides,
+                    )));
+                }
             }
             // Every axis at coefficient 1, which no Dynamic term and no divisor can spell, so
             // there is nothing to carry and no phase to leave over.
@@ -1116,14 +1124,8 @@ impl<T: Numeric> MemData<T> {
             let mut residues = Coords::<u32>::new();
             #[unroll]
             for pa in 0..rank {
-                let (step, residue, span) = gathered_descent(
-                    comptime!(proj.clone()),
-                    comptime!(space.clone()),
-                    region,
-                    &self.map,
-                    w,
-                    pa,
-                );
+                let (step, residue, span) =
+                    gathered_descent(comptime!(proj.clone()), step, &self.map, w, pa);
 
                 // `step` only moves forward, so add directly to the signed origin.
                 origin.push(self.window.origin.at(pa).fadd(step.fcast::<i32>()));
@@ -1160,14 +1162,17 @@ impl<T: Numeric> MemData<T> {
                      scale grid is addressed unsigned"
                 ));
                 // A quantized operand is direct (asserted at construction), so the child window's
-                // extent per axis is this level's cut edge.
+                // extent per axis is this level's cut edge; an axis left whole keeps its extent.
                 ComptimeOption::new_Some(info.window(
                     &origin_u32,
                     rank,
                     comptime!(self.store.vector_size),
                     comptime!(
                         (0..rank)
-                            .map(|p| space.partitioner().edge(space.axis_at(p)))
+                            .map(|p| match step.level.edge_in(&space, space.axis_at(p)) {
+                                Extent::Static(edge) => edge,
+                                Extent::Dynamic => info.extent[p],
+                            })
                             .collect::<Vec<_>>()
                     ),
                 ))
@@ -1209,12 +1214,15 @@ impl<T: Numeric> MemData<T> {
                 units: self.access.units,
             }),
             lanes: comptime!(Lanes {
-                share: join_lane_share(self.lanes.share, space.lane_share()),
-                work: self.lanes.work,
+                share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
+                work: join_lane_work(self.lanes.work, step.level.rides_lanes()),
             }),
-            // Settled at construction, so a descent carries it: which instances hold a cell is a
-            // fact about the whole space, and windowing down does not change it.
-            split_share: comptime!(self.split_share),
+            // Joined level by level: the level's whole space still has the axis this operand's
+            // projection dropped, which is what tells a split from a cut of the whole axis.
+            split_share: comptime!(join_split_share(
+                self.split_share,
+                step.level.split_share_of(&step.space, &space)
+            )),
             init_from: comptime!(self.init_from),
         }
     }
@@ -1236,8 +1244,7 @@ impl<T: Numeric> MemData<T> {
 #[cube]
 fn gathered_descent(
     #[comptime] projection: Projection,
-    #[comptime] space: Space,
-    region: &Region,
+    cut: &Step,
     map: &RuntimeMap,
     #[comptime] vector_size: usize,
     #[comptime] pa: usize,
@@ -1255,7 +1262,7 @@ fn gathered_descent(
     #[unroll]
     for t in 0..n {
         let term = comptime!(axis_map.terms()[t]);
-        let edge = comptime!(space.partitioner().edge(term.axis));
+        let edge = comptime!(cut.level.edge_in(&cut.space, term.axis).get());
         match comptime!(term.scale) {
             Scale::Static(s) => {
                 let step = comptime!(if lined {
@@ -1263,7 +1270,7 @@ fn gathered_descent(
                 } else {
                     edge * s
                 });
-                terms.push(region.coord(term.axis).fmul(step).fcast::<u32>());
+                terms.push(cut.coord(term.axis).fmul(step).fcast::<u32>());
                 spans.push(comptime!(((edge - 1) * s) as u32).runtime());
             }
             // The line division above never meets a runtime coefficient: the innermost physical
@@ -1274,8 +1281,7 @@ fn gathered_descent(
                     .coefficients
                     .at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));
                 terms.push(
-                    region
-                        .coord(term.axis)
+                    cut.coord(term.axis)
                         .fcast::<u32>()
                         .fmul(comptime!(edge as u32).runtime())
                         .fmul(coefficient),
@@ -1291,7 +1297,7 @@ fn gathered_descent(
         // for the mapping that is.
         let span = if comptime!(!axis_map.has_dynamic_scale()) {
             comptime!({
-                let s = projection.span(pa, |a| space.partitioner().edge(a));
+                let s = projection.span(pa, |a| cut.level.edge_in(&cut.space, a).get());
                 (if lined { s / vector_size } else { s }) as u32
             })
             .runtime()

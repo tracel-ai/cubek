@@ -32,10 +32,6 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma: the leaf contracts a final tile; walk the levels above it first"
-        ));
         mma_leaf(self, lhs, rhs, semiring)
     }
 
@@ -74,32 +70,7 @@ impl<Acc: Numeric> Tile<Acc> {
         scales: &Sequence<Tile<S>>,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_scaled: the leaf contracts a final tile; walk the levels above it first"
-        ));
         mma_leaf_scaled(self, lhs, rhs, scales, semiring)
-    }
-
-    /// The level's operation space: the merge of the operands' spaces, sized by whichever operand
-    /// [`witnesses`](Tile::witnesses) each [`Dynamic`](crate::Extent) axis. The output contributes
-    /// no axis beyond `lhs ∪ rhs`. What a kernel walks at a level ([`Walk::over`]).
-    ///
-    /// The accumulator is asked for sizes all the same, and first: spanning an axis and being able
-    /// to state its size are different things (a gathered operand's bound is the receptive field
-    /// its axes reach over, so it answers for neither), and an axis the output spans is one it
-    /// writes, so its bound is the extent the walk must cover.
-    pub fn op_space<Lhs: Numeric, Rhs: Numeric>(&self, lhs: &Tile<Lhs>, rhs: &Tile<Rhs>) -> Space {
-        let merged = comptime!({
-            let merged = Space::merge(&[&lhs.space, &rhs.space]);
-            assert!(
-                self.space.axes().all(|axis| merged.contains(axis)),
-                "Tile::mma: the output spans an axis neither operand does, so the walk would never \
-                 step it and every region would write the same slice"
-            );
-            merged
-        });
-        witnessed_space(merged, self, lhs, rhs)
     }
 }
 
@@ -133,11 +104,6 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_with: the software instruction runs on a final tile; walk the levels above \
-             it first"
-        ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
@@ -163,11 +129,6 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        comptime!(assert!(
-            self.space.is_final(),
-            "Tile::mma_scaled_with: the software instruction runs on a final tile; walk the \
-             levels above it first"
-        ));
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(

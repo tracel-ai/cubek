@@ -1,7 +1,7 @@
 //! Unit tests for [`Space`]
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, ByAxis, CubeAxis, Distribution, Partitioner, Space, Tiling, cubes, lanes};
+use cubek_tile::{Axis, Cut, KernelForm, Launcher, Level, Space};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -90,22 +90,16 @@ fn merge_conflicting_extent_panics() {
     let _ = Space::merge(&[&lhs, &rhs]);
 }
 
-// ---- Space::divide (the tiling scheme) ------------------------------------
+// ---- Level::child (the tiling scheme) --------------------------------------
 
-fn sequential(edges: &[(Axis, usize)]) -> Partitioner {
-    let dists = edges
-        .iter()
-        .map(|&(a, _)| (a, Distribution::Sequential))
-        .collect::<Vec<_>>();
-    Partitioner::over(ByAxis::new(edges), ByAxis::new(&dists)).level()
+fn sequential(edges: &[(Axis, usize)]) -> Level {
+    Level::walk(edges)
 }
 
 #[test]
-fn divide_cuts_each_axis_to_its_sub_tile_edge() {
-    let partitioner = sequential(&[(M, 4), (N, 3), (K, 2)]);
-    let space = Space::new(&[(M, 16), (N, 12), (K, 8)]).with_partitioner(partitioner);
-
-    let tile = space.divide();
+fn a_level_cuts_each_axis_to_its_edge() {
+    let level = sequential(&[(M, 4), (N, 3), (K, 2)]);
+    let tile = level.child(&Space::new(&[(M, 16), (N, 12), (K, 8)]));
     assert_eq!(tile.extent(M), 4);
     assert_eq!(tile.extent(N), 3);
     assert_eq!(tile.extent(K), 2);
@@ -113,283 +107,246 @@ fn divide_cuts_each_axis_to_its_sub_tile_edge() {
 }
 
 #[test]
-fn divide_chains_into_a_multi_level_scheme() {
-    // The scheme is a tree of spaces
-    let space = Space::new(&[(M, 64), (N, 64)]).with_partitioner(sequential(&[(M, 16), (N, 16)]));
-    let level1 = space.divide();
-    let level2 = level1
-        .clone()
-        .with_partitioner(sequential(&[(M, 4), (N, 4)]))
-        .divide();
+fn levels_chain_into_a_multi_level_scheme() {
+    let space = Space::new(&[(M, 64), (N, 64)]);
+    let level1 = sequential(&[(M, 16), (N, 16)]).child(&space);
+    let level2 = sequential(&[(M, 4), (N, 4)]).child(&level1);
 
     assert_eq!(level1.extent(M), 16);
     assert_eq!(level2.extent(M), 4);
     assert_eq!(level2.extent(N), 4);
+    assert_eq!(
+        space.leaf(&[
+            sequential(&[(M, 16), (N, 16)]),
+            sequential(&[(M, 4), (N, 4)])
+        ]),
+        level2
+    );
 }
 
-// ---- Space::overhangs ------------------------------------------------------
+// ---- overhangs -------------------------------------------------------------
 
 /// A cpu_gemm-shaped two-level scheme: a cube tile of `planes × leaf` leaves over `(m, n, k)`,
 /// K cut to its full extent at the cube level (sequential contraction) then to `leaf_k`.
-fn cpu_gemm_space(m: usize, n: usize, k: usize) -> Space {
+fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Launcher {
     let (leaf_m, leaf_n, leaf_k) = (8, 8, 4);
     let (planes_m, planes_n) = (2, 4);
-    Space::new(&[(M, m), (N, n), (K, k)])
-        .with_partitioner(sequential(&[
-            (M, planes_m * leaf_m),
-            (N, planes_n * leaf_n),
-            (K, k),
-        ]))
-        .with_partitioner(sequential(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)]))
+    Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![
+            sequential(&[(M, planes_m * leaf_m), (N, planes_n * leaf_n), (K, k)]),
+            sequential(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)]),
+        ],
+        KernelForm::Static,
+    )
+}
+
+fn hangs(launcher: &Launcher, axis: Axis) -> bool {
+    launcher.space().overhangs(launcher.levels(), axis)
 }
 
 #[test]
 fn overhangs_matches_cpu_gemm_checks() {
     // Every level divides: cube tiles 16×32, leaves 8×8×4.
-    let space = cpu_gemm_space(64, 64, 16);
-    assert!(!space.overhangs(M));
-    assert!(!space.overhangs(N));
-    assert!(!space.overhangs(K));
+    let launcher = cpu_gemm_nest(64, 64, 16);
+    assert!(!hangs(&launcher, M));
+    assert!(!hangs(&launcher, N));
+    assert!(!hangs(&launcher, K));
 
     // m = 40 is not a multiple of the cube tile (16): M overhangs (cpu_gemm's check_m).
     // Within a cube the plane split is exact, so the leaf level adds nothing.
-    assert!(cpu_gemm_space(40, 64, 16).overhangs(M));
+    assert!(hangs(&cpu_gemm_nest(40, 64, 16), M));
 
     // K's cube-level cut is its full extent (always divides); k = 18 fails only at the
     // leaf (leaf_k = 4): the deeper level alone drives the overhang (cpu_gemm's check_k).
-    let space = cpu_gemm_space(64, 64, 18);
-    assert!(space.overhangs(K));
-    assert!(!space.overhangs(M));
+    let launcher = cpu_gemm_nest(64, 64, 18);
+    assert!(hangs(&launcher, K));
+    assert!(!hangs(&launcher, M));
 }
 
 #[test]
 fn overhangs_when_a_deeper_edge_misdivides_its_parent() {
     // Top divides (32 % 16 == 0) but the second edge doesn't divide the first (16 % 3 != 0):
     // the parent edge, not the top extent, is what each level must divide.
-    let space = Space::new(&[(M, 32)])
-        .with_partitioner(sequential(&[(M, 16)]))
-        .with_partitioner(sequential(&[(M, 3)]));
-    assert!(space.overhangs(M));
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 32)]),
+        vec![sequential(&[(M, 16)]), sequential(&[(M, 3)])],
+        KernelForm::Static,
+    );
+    assert!(hangs(&launcher, M));
 }
 
 #[test]
-fn overhangs_final_space_never() {
-    // No partitioner level: nothing to misdivide.
-    assert!(!Space::new(&[(M, 7)]).overhangs(M));
+fn overhangs_with_no_level_never() {
+    // No level: nothing to misdivide.
+    assert!(!Space::new(&[(M, 7)]).overhangs(&[], M));
 }
 
 #[test]
 #[should_panic(expected = "concrete space")]
 fn overhangs_dynamic_axis_panics() {
-    let space = Space::new(&[(M, 64)])
-        .with_partitioner(sequential(&[(M, 16)]))
-        .all_dynamic();
-    let _ = space.overhangs(M);
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64)]).all_dynamic(),
+        vec![sequential(&[(M, 16)])],
+        KernelForm::Static,
+    );
+    let _ = hangs(&launcher, M);
 }
 
+// ---- Level constructors ----------------------------------------------------------
+
+/// The tiles of several axes dealt as one index: the shares ride the cubes even though no axis
+/// does, so the launch grid is their count.
 #[test]
-fn with_partitioner_stacks_levels_and_divide_descends() {
-    // Stacking partitioners builds the whole multi-level scheme up front
-    let space = Space::new(&[(M, 64), (N, 64)])
-        .with_partitioner(sequential(&[(M, 16), (N, 16)]))
-        .with_partitioner(sequential(&[(M, 4), (N, 4)]));
-    assert!(!space.is_final());
-
-    let level1 = space.divide(); // head (16×16) consumed, 4×4 remains
-    assert_eq!(level1.extent(M), 16);
-    assert!(!level1.is_final());
-
-    let final_space = level1.divide(); // 4×4 consumed
-    assert_eq!(final_space.extent(M), 4);
-    assert_eq!(final_space.extent(N), 4);
-    assert!(final_space.is_final());
-
-    // `final_space()` shortcuts straight to the bottom of the stack.
-    assert_eq!(space.final_space().extent(M), 4);
-    assert!(space.final_space().is_final());
+fn shared_tiles_launch_their_instances() {
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes(&[(M, 16), (N, 32), (K, 16)]).shared_by(5),
+            Level::walk(&[(M, 16), (N, 32), (K, 4)]),
+        ],
+        KernelForm::Static,
+    );
+    assert!(launcher.level(0).work().is_some());
+    // Five cubes, not `4 * 2 * 1`.
+    assert!(matches!(launcher.cube_count(), CubeCount::Static(5, 1, 1)));
+    assert_eq!(launcher.levels().len(), 2);
 }
 
-// ---- Tiling::over -----------------------------------------------------------
-
-/// Distributing work is a statement about the level's cuts, so it is available wherever cuts are
-/// collected.
+/// Batch axes ride `Z` one tile each, however many there are and however they are listed: a
+/// box of the grid, not a share.
 #[test]
-fn over_distributes_work() {
-    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(5),
-                &[(M, 16), (N, 32), (K, 16)],
-            );
-        })
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32), (K, 4)]);
-        })
-        .build();
+fn batches_are_a_dial_each() {
+    let one_line = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
+        vec![Level::cubes(&[(M, 16), (N, 32)]).batches(&[B0, B1])],
+        KernelForm::Static,
+    );
+    let a_dial_each = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes(&[(M, 16), (N, 32)])
+                .batches(&[B0])
+                .batches(&[B1]),
+        ],
+        KernelForm::Static,
+    );
 
-    // The shares ride the cubes even though no axis does.
-    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
-    assert_eq!(space.partitioner().depth(), 2);
+    assert_eq!(one_line.levels(), a_dial_each.levels());
+    // No work: the lowering that reads this is the one that picks the per-region accumulator
+    // nest.
+    assert!(one_line.level(0).work().is_none());
+    // Both axes ride Z, one cube per (B0, B1) pair, behind the `4 x 2` grid on X and Y.
+    assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
 
-/// One region each is a box of the grid however many axes are named, so the line deals a dial per
-/// axis and states no work. What lets a whole group of batch axes be one `distribute` line
-/// without turning the level into a share.
+/// One axis is a box whatever the count, so `across` on it sizes the axis's own tiles over the
+/// scope, which is what a cut has always meant: no work is stated.
 #[test]
-fn distributing_several_axes_one_region_each_deals_a_dial_each() {
-    let level = |l: &mut cubek_tile::LevelCuts| {
-        l.walk(&[(M, 16), (N, 32), (K, 16)]);
-    };
-    let one_line = Tiling::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(B0, 1), (B1, 1)]);
-            level(l);
-        })
-        .build();
-    let a_dial_each = Tiling::over(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(B0, 1)])
-                .distribute(cubes(CubeAxis::Z), &[(B1, 1)]);
-            level(l);
-        })
-        .build();
-
-    assert_eq!(one_line, a_dial_each);
-    // No work: the walk under it is the one an undistributed level has, and the lowering that
-    // reads this is the one that picks the per-region accumulator nest.
-    assert!(one_line.partitioner().work().is_none());
-    // Both axes still ride Z, one cube per (B0, B1) pair.
-    assert!(matches!(one_line.cube_count(), CubeCount::Static(1, 1, 6)));
+fn one_axis_across_a_count_is_a_dial() {
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes(&[Cut::new(M, 16).across(4)]),
+            Level::walk(&[(N, 32)]),
+        ],
+        KernelForm::Static,
+    );
+    assert!(launcher.level(0).work().is_none());
+    assert!(matches!(launcher.cube_count(), CubeCount::Static(4, 1, 1)));
 }
 
-/// The same axes with a count stated cannot be a box: a share begins inside one region and ends
-/// inside another, so they are read as one index instead.
+/// Nothing named is nothing said: a level that names no axis cuts every cube the whole space.
 #[test]
-fn distributing_several_axes_with_a_count_reads_them_as_one_index() {
-    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(5),
-                &[(M, 16), (N, 32), (K, 16)],
-            );
-        })
-        .build();
-    assert!(space.partitioner().work().is_some());
-    // The shares ride the cubes, and no axis of them does: five cubes, not `4 * 2 * 1`.
-    assert!(matches!(space.cube_count(), CubeCount::Static(5, 1, 1)));
-}
-
-/// One axis is a box whatever the count, so it is dealt a dial: `instances` there sizes the
-/// axis's own tiles across the scope, which is what a cut has always meant.
-#[test]
-fn distributing_one_axis_with_a_count_is_a_dial() {
-    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X).instances(4), &[(M, 16)])
-                .walk(&[(N, 32), (K, 16)]);
-        })
-        .build();
-    assert!(space.partitioner().work().is_none());
-    assert!(matches!(space.cube_count(), CubeCount::Static(4, 1, 1)));
-}
-
-/// Nothing named is nothing said: a matmul with no batch axis passes an empty list and the level
-/// reads as if the line were not there.
-#[test]
-fn distributing_no_axis_states_nothing() {
-    let space = Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[])
-                .walk(&[(M, 16), (N, 32), (K, 16)]);
-        })
-        .build();
-    assert!(space.partitioner().work().is_none());
-    assert!(matches!(space.cube_count(), CubeCount::Static(1, 1, 1)));
+fn a_level_naming_no_axis_deals_everything_to_one_cube() {
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64), (N, 64), (K, 16)]),
+        vec![
+            Level::cubes::<Cut>(&[]),
+            Level::walk(&[(M, 16), (N, 32), (K, 16)]),
+        ],
+        KernelForm::Static,
+    );
+    assert!(launcher.level(0).work().is_none());
+    assert!(matches!(launcher.cube_count(), CubeCount::Static(1, 1, 1)));
+    assert_eq!(&launcher.level(0).child(launcher.space()), launcher.space());
 }
 
 /// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
 /// shares are on different regions, so they never reach a reduction together.
 #[test]
 #[should_panic = "combine in registers"]
-fn distributing_work_across_lanes_is_refused() {
-    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(lanes(4), &[(M, 16), (N, 32), (K, 16)]);
-        })
-        .build();
+fn sharing_tiles_across_lanes_is_refused() {
+    let _ = Level::lanes(&[
+        Cut::new(M, 16).across(4),
+        Cut::new(N, 32).across(4),
+        Cut::new(K, 16).across(4),
+    ])
+    .shared_by(4);
 }
 
-/// A share is walked as a nest, one region at a time, so its steps have to be consecutive.
-/// Instances taking turns would put a different region under the accumulator at every step.
+/// A share is a run of one index, so its entries say nothing of their own: a count or a spread on
+/// one of them would size a box a share has no use for.
 #[test]
-#[should_panic = "instances taking turns would leave no region long enough"]
-fn distributing_work_in_turns_is_refused() {
-    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.distribute(
-                cubes(CubeAxis::X).instances(5).interleaved(),
-                &[(M, 16), (N, 32), (K, 16)],
-            );
-        })
-        .build();
+#[should_panic = "states a count or a spread of its own"]
+fn sharing_tiles_with_a_knob_on_an_entry_is_refused() {
+    let _ = Level::cubes(&[
+        Cut::new(M, 16).interleaved(),
+        Cut::new(N, 32),
+        Cut::new(K, 16),
+    ])
+    .shared_by(5);
 }
 
 /// A level states each of its axes once, whichever way it states them.
 #[test]
 #[should_panic = "a level states each of its axes once"]
-fn an_axis_both_cut_and_distributed_is_refused() {
-    Tiling::over(&[(M, 64), (N, 64), (K, 16)])
-        .level(|l| {
-            l.walk(&[(K, 16)]).distribute(
-                cubes(CubeAxis::X).instances(5),
-                &[(M, 16), (N, 32), (K, 16)],
-            );
-        })
-        .build();
+fn an_axis_named_twice_is_refused() {
+    let _ = Level::cubes(&[(M, 16), (M, 32)]);
+}
+
+/// Lanes carve one plane between them, so every entry says how many it takes.
+#[test]
+#[should_panic = "states no lane count"]
+fn lanes_without_a_count_are_refused() {
+    let _ = Level::lanes(&[Cut::new(M, 16)]);
 }
 
 // ---- A level that cuts nothing --------------------------------------------
 
 /// A level whose edges are the extents handed to it has one instance on every axis, so it
 /// partitions nothing. It stays all the same: the kernel walks the levels it stated, one loop
-/// per level, so the space has to hold every one of them. A one-region walk folds away in the
+/// per level, so the list has to hold every one of them. A one-region walk folds away in the
 /// kernel, so keeping it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
-    let plain = Tiling::over(&[(M, 64), (N, 64)])
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        .build();
-    let space = Tiling::over(&[(M, 64), (N, 64)])
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        // The same edges again: nothing left to cut, still a level.
-        .level(|l| {
-            l.walk(&[(M, 16), (N, 32)]);
-        })
-        .build();
+    let plain = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64), (N, 64)]),
+        vec![Level::walk(&[(M, 16), (N, 32)])],
+        KernelForm::Static,
+    );
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, 64), (N, 64)]),
+        vec![
+            Level::walk(&[(M, 16), (N, 32)]),
+            // The same edges again: nothing left to cut, still a level.
+            Level::walk(&[(M, 16), (N, 32)]),
+        ],
+        KernelForm::Static,
+    );
 
-    assert_ne!(space, plain);
-    assert_eq!(space.partitioner().depth(), 2);
-    assert_eq!(space.divide().extent(M), 16);
-    assert_eq!(space.divide().divide().extent(M), 16);
-    assert!(space.divide().divide().is_final());
-}
-
-/// The only level of a space stays even when its cuts take the whole extent: a space with a
-/// level is a tile walked in cells, and a space with none is the cell. A one-region walk is the
-/// degenerate case of the first, not the second: the shape a plan takes when the knob it splits
-/// on (attention's split count, a plane grid of one) lands on 1.
-#[test]
-fn the_only_level_stays_even_when_it_cuts_nothing() {
-    let space = Tiling::over(&[(M, 64), (N, 64)])
-        .level(|l| {
-            l.walk(&[(M, 64), (N, 64)]);
-        })
-        .build();
-
-    assert_eq!(space.partitioner().depth(), 1);
-    assert!(space.divide().is_final());
+    assert_ne!(launcher.levels(), plain.levels());
+    assert_eq!(launcher.levels().len(), 2);
+    assert_eq!(launcher.level(0).child(launcher.space()).extent(M), 16);
+    assert_eq!(launcher.space().leaf(launcher.levels()).extent(M), 16);
 }

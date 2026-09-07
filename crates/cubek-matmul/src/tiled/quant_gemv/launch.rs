@@ -12,7 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{Launcher, PhysicalAxisMap, Projection};
+use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -76,7 +76,15 @@ pub fn launch_ref(
     let (factor, block, blocks) = (problem.factor(), problem.block, problem.blocks());
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch = Launcher::new(client, quant_gemv_space(&blueprint, problem), &[]);
+    let plane_size = client.properties().hardware.plane_size_max;
+    let launch = Launcher::new(
+        client,
+        quant_gemv_space(problem),
+        blueprint.grid(problem, plane_size),
+        KernelForm::Static,
+    )
+    .leaf(&blueprint.leaf(problem))
+    .overhanging(&blueprint.overhangs(problem));
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;
     // the scales span `KB` alone and address it as it stands.
@@ -149,6 +157,7 @@ pub fn launch_ref(
         x_op.arg(),
         s_args,
         out_op.arg(),
+        launch.space_arg(),
         blueprint,
         *problem,
         dtypes.served,

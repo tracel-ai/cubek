@@ -11,7 +11,7 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{client::Client, ir::ElemType, prelude::*};
-use cubek_tile::{Geometry, Launcher};
+use cubek_tile::{Geometry, KernelForm, Launcher};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
@@ -146,7 +146,9 @@ fn dispatch<F: SeparableFilterFamily>(
     };
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch = Launcher::new(client, plan.space(), &[]);
+    let launch = Launcher::new(client, plan.space(), plan.grid(), KernelForm::Static)
+        .leaf(&plan.leaf())
+        .overhanging(&plan.overhangs());
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -219,6 +221,7 @@ fn dispatch<F: SeparableFilterFamily>(
         vector_size,
         input_arg.arg(),
         output_arg.arg(),
+        launch.space_arg(),
         row.scale as u32,
         row.offset as i32,
         row.divisor as u32,

@@ -17,6 +17,7 @@ mod register;
 mod tma;
 mod view;
 
+pub use accumulator::*;
 pub use base::*;
 pub use cmma::*;
 pub use mem::*;

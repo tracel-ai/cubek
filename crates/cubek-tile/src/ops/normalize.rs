@@ -159,15 +159,12 @@ mod tests {
             8,
             1,
             1,
-            Lanes {
-                share: LaneShare::Whole,
-                work: LaneWork::Repeated,
-            },
             Monoid::Sum,
         );
         let tile = TileExpand::<f32> {
             tile_kind: TileKindExpand::PlaneTile(plane_tile),
             space: Space::new(&[(Axis(0), 4)]),
+            depth: 0,
         };
         tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
     }

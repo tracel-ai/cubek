@@ -31,9 +31,10 @@ struct TileSourceData<'a> {
     /// unbound one states them, and both reach [`labeled`] the same way.
     geometry: Geometry,
     space: Option<&'a Space>,
-    /// The concrete (real-extent) space, when minted by a [`Launcher`](crate::Launcher):
-    /// lets [`build`](StridedTileSource::build) derive the bounds-check from overhang.
-    concrete: Option<&'a Space>,
+    /// The concrete (real-extent) space and the axes that overhang, when minted by a
+    /// [`Launcher`](crate::Launcher): lets [`build`](StridedTileSource::build) derive the
+    /// bounds-check.
+    concrete: Option<(&'a Space, &'a [Axis])>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
     /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
@@ -185,8 +186,8 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
 
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
-    pub(crate) fn concrete(mut self, space: &'a Space) -> Self {
-        self.data.concrete = Some(space);
+    pub(crate) fn concrete(mut self, space: &'a Space, overhangs: &'a [Axis]) -> Self {
+        self.data.concrete = Some((space, overhangs));
         self
     }
 
@@ -427,11 +428,11 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
 
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
         let boundary = boundary.unwrap_or_else(|| match concrete {
-            Some(concrete) => {
+            Some((concrete, overhangs)) => {
                 let overhangs = addressed
                     .iter()
                     .filter(|&&axis| concrete.contains(axis))
-                    .any(|&axis| concrete.overhangs(axis));
+                    .any(|axis| overhangs.contains(axis));
                 (overhangs || projection.may_underflow()).then_some(Boundary::Zero)
             }
             None => Some(Boundary::Zero),
@@ -465,9 +466,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
             // that same silence to drop one.
-            Some(axis) => {
-                concrete.is_some_and(|space| space.contains(axis) && !space.overhangs(axis))
-            }
+            Some(axis) => concrete.is_some_and(|(concrete, overhangs)| {
+                concrete.contains(axis) && !overhangs.contains(&axis)
+            }),
             None => false,
         };
 

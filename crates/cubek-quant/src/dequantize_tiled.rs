@@ -5,8 +5,7 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, ByAxis, DequantAt, Distribution, Partitioner, QuantTileArg, Space, StridedOperand,
-    TileArg,
+    Axis, DequantAt, KernelForm, Launcher, QuantTileArg, Space, StridedOperand, TileArg,
 };
 
 // Input axes
@@ -50,9 +49,18 @@ pub fn launch_ref(
         input.shape,
         output.shape
     );
-    let space = sequential_space(&[(M, input.shape[0]), (N, input.shape[1])]);
-    let cube_count = space.cube_count();
-    let cube_dim = space.cube_dim(client);
+    // One tile covering every axis, walked by a single cube: no level cuts it, so there is
+    // nothing to list and the grid is one cube.
+    let extents = [(M, input.shape[0]), (N, input.shape[1])];
+    let space = Space::new(&extents);
+    let plane_size = client.properties().hardware.plane_size_max;
+    let (cube_count, cube_dim) = (CubeCount::Static(1, 1, 1), CubeDim::new_2d(plane_size, 1));
+    let launch = Launcher::new(
+        client,
+        space.clone(),
+        (cube_count.clone(), cube_dim),
+        KernelForm::Dynamic,
+    );
     let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing
@@ -75,23 +83,12 @@ pub fn launch_ref(
         cube_dim,
         input_op.arg(),
         output_op.arg(),
-        space.all_dynamic(),
+        launch.space_arg(),
         input_dtype,
         output_dtype,
     );
 
     Ok(())
-}
-
-/// A row-major space whose every axis is `Sequential`: a single cube walks all the tiles.
-/// Each axis is one tile covering its full extent (one tile total).
-fn sequential_space(extents: &[(Axis, usize)]) -> Space {
-    let dists: Vec<(Axis, Distribution)> = extents
-        .iter()
-        .map(|&(a, _)| (a, Distribution::Sequential))
-        .collect();
-    let partitioner = Partitioner::over(ByAxis::new(extents), ByAxis::new(&dists)).level();
-    Space::new(extents).with_partitioner(partitioner)
 }
 
 fn check_i8_supported(client: &Client, scheme: &QuantScheme) {
@@ -122,11 +119,11 @@ fn check_i8_supported(client: &Client, scheme: &QuantScheme) {
 pub fn dequantize<I: Numeric, O: Numeric>(
     input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {
     let input = input.tile::<O>(comptime!(space.clone()));
-    let mut output = output.tile(space);
+    let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }

@@ -39,14 +39,15 @@ fn coarse_lhs_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = c.tile(space);
+    let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -68,12 +69,13 @@ fn coarse_spec() -> TileSpec {
 
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
-fn space(cut: usize) -> Space {
-    Tiling::over(&[(M, ROWS), (N, COLS), (K, DEPTH)])
-        .level(|l| {
-            l.walk(&[(M, ROWS), (N, COLS), (K, cut)]);
-        })
-        .build()
+fn space(cut: usize) -> Launcher {
+    Launcher::implied(
+        &cubecl::test_device().client(),
+        Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
+        vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+        KernelForm::Static,
+    )
 }
 
 /// Distinct per `(m, block)` and not integers, so an off-by-one block index cannot pass.
@@ -87,7 +89,7 @@ fn rhs_data() -> Vec<f32> {
 }
 
 /// Launch [`coarse_lhs_matmul`] over `space` and return `c`.
-fn run(space: Space) -> HostData {
+fn run(launcher: Launcher) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
 
@@ -106,15 +108,16 @@ fn run(space: Space) -> HostData {
 
     coarse_lhs_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(a.binding().into_tensor_arg(), coarse_spec()),
         TileArgLaunch::new(b.binding().into_tensor_arg(), TileSpec::direct(&[K, N])),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 

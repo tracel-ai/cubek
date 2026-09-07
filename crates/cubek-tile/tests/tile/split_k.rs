@@ -44,13 +44,14 @@ fn split_partials<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     partials: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let partials = partials.tile(space);
-    for region in Walk::over(partials.op_space(&a, &b)) {
+    let partials = partials.tile(comptime!(space.clone()));
+    for region in space.level(comptime!(level.clone())) {
         let mut partials_cube = partials.at(&region);
         partials_cube.mm_with(
             &a.at(&region),
@@ -66,12 +67,13 @@ fn split_partials<E: Numeric>(
 fn reduce_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let partials = partials.tile(comptime!(space.clone()));
-    let out = out.tile(space);
-    for region in Walk::over(out.reduce_space(&partials)) {
+    let out = out.tile(comptime!(space.clone()));
+    for region in space.level(comptime!(level.clone())) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -106,19 +108,19 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Tiling::over(&[(M, m), (N, n), (KB, splits), (KI, inside)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(KB, 1)])
-                .walk(&[(M, m), (N, n), (KI, inside)]);
-        })
-        .build();
+    let split_space = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
+        vec![Level::cubes(&[(KB, 1)])],
+        KernelForm::Static,
+    );
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
     // two logical axes. `inside` is `KB`'s stride through it, `1` is `KI`'s.
     split_partials::launch(
         &client,
         split_space.cube_count(),
-        split_space.cube_dim(&client),
+        split_space.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -143,21 +145,22 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             partials.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[KB, M, N]),
         ),
-        split_space,
+        split_space.space_arg(),
+        split_space.level(0),
         dtype,
     );
 
-    let fold_space = Tiling::over(&[(M, m), (N, n), (KB, splits)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::X), &[(M, 1)])
-                .walk(&[(N, n), (KB, splits)]);
-        })
-        .build();
+    let fold_space = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (KB, splits)]),
+        vec![Level::cubes(&[(M, 1)])],
+        KernelForm::Static,
+    );
 
     reduce_splits::launch(
         &client,
         fold_space.cube_count(),
-        fold_space.cube_dim(&client),
+        fold_space.cube_dim(),
         TileArgLaunch::new(
             partials.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[KB, M, N]),
@@ -166,7 +169,8 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        fold_space,
+        fold_space.space_arg(),
+        fold_space.level(0),
         dtype,
     );
 
@@ -308,21 +312,35 @@ fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut c = out.tile(space);
+    let c = out.tile(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
-    let mut acc = c.block_accumulator::<E, E, E>(&a, &b, REGISTER_BLOCK, Monoid::Sum);
+    let mut acc = c.block_accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        REGISTER_BLOCK,
+        Monoid::Sum,
+    );
     acc.zero();
-    for region in Walk::over(c.op_space(&a, &b)) {
+    for region in space.level(comptime!(level.clone())) {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    acc.drain_cast_into(&mut c);
+    for r0 in c.level(comptime!(level.clone())).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
 }
 
 /// `a·b` with `K` dealt out over `splits` cubes, folded atomically into a zeroed output.
@@ -347,17 +365,17 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![Level::cubes(&[(K, k / splits)])],
+        KernelForm::Static,
+    );
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -370,7 +388,8 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -484,18 +503,20 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(lanes(plane_size), &[(N, per_lane)])
-                .distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![
+            Level::cubes(&[(K, k / splits)]),
+            Level::lanes(&[Cut::new(N, per_lane).across(plane_size)]),
+        ],
+        KernelForm::Static,
+    );
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -508,7 +529,8 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -564,17 +586,17 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(planes(), &[(K, k / num_planes)])
-                .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![Level::planes(&[(K, k / num_planes)])],
+        KernelForm::Static,
+    );
 
     atomic_split_matmul::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -587,7 +609,8 @@ fn an_atomic_drain_folds_across_planes() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 
@@ -618,13 +641,14 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    #[comptime] space: Space,
+    space: Space,
+    #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(space);
-    for region in Walk::over(c.op_space(&a, &b)) {
+    let c = out.tile(comptime!(space.clone()));
+    for region in space.level(comptime!(level.clone())) {
         let mut c_region = c.at(&region);
         c_region.mm_with(
             &a.at(&region),
@@ -667,17 +691,17 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let space = Tiling::over(&[(M, m), (N, n), (K, k)])
-        .level(|l| {
-            l.distribute(cubes(CubeAxis::Z), &[(K, k / splits)])
-                .walk(&[(M, m), (N, n)]);
-        })
-        .build();
+    let launcher = Launcher::implied(
+        &client,
+        Space::new(&[(M, m), (N, n), (K, k)]),
+        vec![Level::cubes(&[(K, k / splits)])],
+        KernelForm::Static,
+    );
 
     atomic_split_matmul_in_place::launch(
         &client,
-        space.cube_count(),
-        space.cube_dim(&client),
+        launcher.cube_count(),
+        launcher.cube_dim(),
         TileArgLaunch::new(
             a_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, K]),
@@ -690,7 +714,8 @@ fn a_folding_output_contracts_in_place() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        space,
+        launcher.space_arg(),
+        launcher.level(0),
         dtype,
     );
 

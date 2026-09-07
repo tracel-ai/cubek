@@ -28,7 +28,7 @@ fn softmax_walk_kernel(
     lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] lanes: usize,
@@ -37,7 +37,7 @@ fn softmax_walk_kernel(
     #[comptime] num_blocks: usize,
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let mask_tile = mask.tile(comptime!(space.clone()));
     let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
@@ -247,7 +247,7 @@ fn run_at(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        gmem_space,
+        gmem_space.launch_arg(&gmem_space),
         block_space,
         units,
         lanes,
@@ -343,7 +343,7 @@ fn softmax_smem_acc_kernel(
     lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
-    #[comptime] space: Space,
+    space: Space,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,
@@ -351,7 +351,7 @@ fn softmax_smem_acc_kernel(
     #[comptime] val_dim: usize,
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
-    let mask_tile = mask.tile(space);
+    let mask_tile = mask.tile(comptime!(space.clone()));
     let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
     let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
@@ -521,7 +521,7 @@ fn run_smem_acc(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        gmem_space,
+        gmem_space.launch_arg(&gmem_space),
         block_space,
         units,
         causal,

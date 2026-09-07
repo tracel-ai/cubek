@@ -47,6 +47,7 @@ impl<T: Numeric> TmaData<T> {
                 units,
             }),
             space: comptime!(space),
+            depth: comptime!(0usize),
         }
     }
 }
@@ -81,15 +82,19 @@ impl<T: Numeric> TmaData<T> {
 
     /// Window down to `region`: advance the global origin by each axis's tile coordinate
     /// times its sub-tile edge, so the next `tensor_map_load` copies the windowed box.
-    pub(crate) fn at(&self, region: &Region, #[comptime] space: Space) -> TmaData<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> TmaData<T> {
         let mut pos = CoordsDyn::new();
 
         #[unroll]
         for p in 0..space.rank() {
             let axis = space.axis_at(p);
-            let edge = space.partitioner().edge(axis);
-            let index = region.coord(axis);
-            pos.push(self.pos[p] + (index * edge) as u32);
+            match comptime!(step.level.edge_kind(axis)) {
+                Edge::Cut(edge) => {
+                    let index = step.coord(axis);
+                    pos.push(self.pos[p] + (index * edge) as u32);
+                }
+                Edge::Whole => pos.push(self.pos[p]),
+            }
         }
 
         TmaData::<T> {
