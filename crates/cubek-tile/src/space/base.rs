@@ -602,21 +602,6 @@ mod contraction_tests {
         assert_eq!(level.split_share_of(&space, &space), SplitShare::Whole);
     }
 
-    /// The shares ride the cubes even though no axis does, so the launch grid is their count.
-    #[test]
-    fn distributed_work_launches_its_instances() {
-        use cubecl::CubeCount;
-        let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-        let levels = [
-            Level::cubes(&[(M, 4), (N, 4), (K, 8)]).shared_by(3),
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-        ];
-        assert!(matches!(
-            crate::physical::launch::cube_count(&space, &levels),
-            CubeCount::Static(3, 1, 1)
-        ));
-    }
-
     /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
     /// The reason the question is asked of the level's whole space: a mapping parameterised by
     /// its split count writes the same cut with `splits` of one, and refusing that would refuse

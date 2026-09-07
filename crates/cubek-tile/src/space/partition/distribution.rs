@@ -66,13 +66,6 @@ impl Coverage {
             Coverage::TilesEach(_) => None,
         }
     }
-
-    pub(crate) fn tiles_const(self) -> Option<usize> {
-        match self {
-            Coverage::TilesEach(t) => Some(t),
-            Coverage::Instances(_) => None,
-        }
-    }
 }
 
 /// The run of tiles each instance is dealt: `TilesEach` pins it, `Instances` splits the `grid`,

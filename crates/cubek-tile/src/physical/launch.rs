@@ -12,7 +12,7 @@ use crate::{
 
 /// Cube dimension `d` gets the instance count of whichever axis is `Spatial { Cube(d), .. }`,
 /// at any level of `levels` over `space`, else 1.
-pub(crate) fn cube_count(space: &Space, levels: &[Level]) -> CubeCount {
+fn cube_count(space: &Space, levels: &[Level]) -> CubeCount {
     CubeCount::Static(
         instances(space, levels, ComputeScope::Cube(CubeAxis::X)),
         instances(space, levels, ComputeScope::Cube(CubeAxis::Y)),
@@ -137,6 +137,8 @@ impl Launcher {
 
     /// The launch `levels` imply, for a kernel with no blueprint to state one: as many cubes,
     /// planes and lanes as the levels deal to, the leaf they cut to, the axes they overhang.
+    /// A second constructor, not `new`: a launch is stated, and this one reads off the levels
+    /// what a blueprint would have stated, which only a test or a benchmark mapping wants.
     pub fn implied(
         client: &Client,
         space: Space,

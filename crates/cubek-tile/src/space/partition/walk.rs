@@ -60,6 +60,23 @@ pub struct Walk {
     order: WalkOrder,
 }
 
+/// This instance's run of a level dealt as one index ([`Level::shared_by`]): the regions it
+/// touches, and for the first and last, how much of their walk below is its own. Counted in
+/// steps of the level below, the steps its instances take *together*, so a run is measured the
+/// same whatever that level cuts across the plane.
+#[derive(CubeType)]
+pub struct Run {
+    /// The regions the run touches, in order.
+    regions: Walk,
+    /// The first of them, in the level's flat index.
+    first: usize,
+    /// The run's bounds on the joint step index.
+    start: usize,
+    end: usize,
+    /// Steps of the level below per region.
+    stride: usize,
+}
+
 /// The loops a kernel writes over a space or a region, one verb per statement. A distribute verb
 /// (`cubes`, `planes`, `lanes`) hands each instance of that scope its region and iterates that:
 /// once when each instance takes one tile, its share otherwise. `walk` steps every region. The
@@ -421,27 +438,7 @@ impl Walk {
             digit.fmul(self.scales.at(p)).fadd(self.positions.at(p))
         }
     }
-}
 
-/// This instance's run of a level dealt as one index ([`Level::shared_by`]): the regions it
-/// touches, and for the first and last, how much of their walk below is its own. Counted in
-/// steps of the level below, the steps its instances take *together*, so a run is measured the
-/// same whatever that level cuts across the plane.
-#[derive(CubeType)]
-pub struct Run {
-    /// The regions the run touches, in order.
-    regions: Walk,
-    /// The first of them, in the level's flat index.
-    first: usize,
-    /// The run's bounds on the joint step index.
-    start: usize,
-    end: usize,
-    /// Steps of the level below per region.
-    stride: usize,
-}
-
-#[cube]
-impl Walk {
     /// This instance's run of the index this level deals as one, counted in steps of `below`,
     /// the level each region is walked with. Two divisions rather than a length each: the runs
     /// abut, cover the work once, and differ in length by at most one.

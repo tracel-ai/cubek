@@ -284,8 +284,8 @@ impl<E: Numeric> TmaTileArg<E> {
 /// rejection, so this is the one gate.
 ///
 /// A line is one read, so it may not straddle two scale blocks: the innermost block must be a
-/// multiple of the served width. (Whether a tile straddles a block is the blueprint's to refuse;
-/// the quantized tile path is on its way out.)
+/// multiple of the served width. Whether a tile straddles a block is the blueprint's to refuse,
+/// where the tiles are decided.
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,

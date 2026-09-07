@@ -5,11 +5,12 @@
 //! and it may start inside one output tile and end inside another. No box of a four by two grid
 //! holds three regions.
 //!
-//! [`Walk::window`] is that range. The axes of the distributed work stay `Sequential`, so the
-//! walk's counts are the whole grid and its flat index already carries every coordinate; an
-//! instance's share is `base` and `steps` into it, both runtime. The first tests here are the
-//! assignment on a copy, with no contraction and nothing partial: they prove the shares cover the
-//! grid exactly once, and that a share starting late reads the regions it was given.
+//! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
+//! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat
+//! index already carries every coordinate; an instance's run is `base` and `steps` into it,
+//! both runtime. The first tests here are the assignment on a copy, with no contraction and
+//! nothing partial: they prove the runs cover the grid exactly once, and that a run starting
+//! late reads the regions it was given.
 
 use cubecl::{
     features::AtomicUsage,
