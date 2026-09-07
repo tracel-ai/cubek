@@ -75,9 +75,12 @@ impl InterpolateSpace {
         Level::walk(&[(CHANNEL, self.geometry.channels_per_cube())])
     }
 
-    /// This plane's rows.
+    /// The cube's rows across its planes.
     pub fn planes(&self) -> Level {
-        Level::planes(&[(OUTPUT_H, self.geometry.rows_per_plane)])
+        let geometry = self.geometry;
+        Level::planes(&[
+            Cut::new(OUTPUT_H, geometry.rows_per_plane).across(geometry.planes_per_cube)
+        ])
     }
 
     /// This lane's columns and channel lines. The interpolation splits the plane across two

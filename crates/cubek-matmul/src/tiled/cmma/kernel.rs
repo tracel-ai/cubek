@@ -10,7 +10,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring, Space,
+    Axis, Cut, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring, Space,
     StageStorage, TileArg, pipelined,
 };
 
@@ -42,10 +42,13 @@ impl CmmaBlueprint {
         Level::walk(&[(K, self.stage_k)])
     }
 
-    /// The stage split one partition per plane.
+    /// The stage split across the blueprint's planes, one partition each.
     pub fn planes(&self) -> Level {
-        let (c, i) = (self.partition, self.instruction);
-        Level::planes(&[(M, c.m * i.m), (N, c.n * i.n)])
+        let (c, i, p) = (self.partition, self.instruction, self.planes);
+        Level::planes(&[
+            Cut::new(M, c.m * i.m).across(p.m),
+            Cut::new(N, c.n * i.n).across(p.n),
+        ])
     }
 
     /// The partition stepped through the stage's `K` in the instruction's depth.

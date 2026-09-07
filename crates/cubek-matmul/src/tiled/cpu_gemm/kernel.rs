@@ -1,7 +1,7 @@
 //! The CpuGemm kernel: the space it runs over and the walk written out, level by level.
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Fragments, Level, Monoid, RegisterBlock, Semiring, Space, TileArg};
+use cubek_tile::{Axis, Cut, Fragments, Level, Monoid, RegisterBlock, Semiring, Space, TileArg};
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 
@@ -27,10 +27,13 @@ impl CpuGemmBlueprint {
         Level::cubes(&[(M, cube_m), (N, cube_n)]).batches(batch)
     }
 
-    /// One register block per plane.
+    /// The cube's box across the blueprint's planes, one register block each.
     pub fn planes(&self) -> Level {
-        let leaf = self.instruction;
-        Level::planes(&[(M, leaf.m), (N, leaf.n)])
+        let (leaf, p) = (self.instruction, self.planes);
+        Level::planes(&[
+            Cut::new(M, leaf.m).across(p.m),
+            Cut::new(N, leaf.n).across(p.n),
+        ])
     }
 
     /// The plane's block stepped through `K` in the instruction's depth.

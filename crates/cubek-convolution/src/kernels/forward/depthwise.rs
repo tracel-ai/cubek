@@ -100,9 +100,9 @@ impl DepthwiseSpace {
         Level::cubes(&[(C, tile_c), (OW, cols), (OH, rows)]).batches(&[B])
     }
 
-    /// One row per plane.
+    /// The cube's rows across its planes, one each.
     pub fn planes(&self) -> Level {
-        Level::planes(&[(OH, 1)])
+        Level::planes(&[Cut::new(OH, 1).across(self.rows)])
     }
 
     /// Channels across the plane's lanes. Columns stay whole: they are the register block, not a

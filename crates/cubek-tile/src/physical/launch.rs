@@ -114,10 +114,14 @@ impl Launcher {
             "Launcher::cube_dim: Unit axes must partition exactly plane_size ({plane_size}) \
              lanes, got {lanes}"
         );
-        CubeDim::new_2d(
-            plane_size,
-            instances(&self.concrete, &self.levels, ComputeScope::Plane),
-        )
+        let planes = instances(&self.concrete, &self.levels, ComputeScope::Plane);
+        let max_units = self.client.properties().hardware.max_units_per_cube;
+        assert!(
+            plane_size * planes <= max_units,
+            "Launcher::cube_dim: {planes} planes of {plane_size} lanes, but a cube holds at most \
+             {max_units} units on this device"
+        );
+        CubeDim::new_2d(plane_size, planes)
     }
 
     /// The concrete space: this launch's real extents.

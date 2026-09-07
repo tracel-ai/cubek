@@ -394,11 +394,17 @@ impl Walk {
                 .fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
         );
         // `% count` is a no-op when `idx` has no more significant digit: a range fact,
-        // which folding (which only sees values) cannot know.
-        if comptime!((0..p).all(|e| self.level.single_tile(self.space.axis_at(e)))) {
+        // which folding (which only sees values) cannot know. A count of one is the exception:
+        // there `% 1` folds to the constant `0`, which `quot` alone would not.
+        let count = self.counts.at(p);
+        let one = count.constant();
+        if comptime!(
+            one != Some(1)
+                && (0..p).all(|e| self.level.single_tile(&self.space, self.space.axis_at(e)))
+        ) {
             quot
         } else {
-            quot.frem(self.counts.at(p))
+            quot.frem(count)
         }
     }
 

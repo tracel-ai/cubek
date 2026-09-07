@@ -371,10 +371,21 @@ impl Level {
         }
     }
 
-    /// Whether `axis` is `Spatial` `TilesEach(1)`: its walk count is comptime `1`, so a step
+    /// Whether each worker's run along a dealt `axis` of `space` is comptime one tile, however
+    /// it was said (one tile each, or as many workers as the static grid holds), so a step
     /// decode can skip it.
-    pub(crate) fn single_tile(&self, axis: Axis) -> bool {
-        self.distribution(axis).single_tile()
+    pub(crate) fn single_tile(&self, space: &Space, axis: Axis) -> bool {
+        let (edge, coverage) = match (self.edge_kind(axis), self.distribution(axis)) {
+            (Edge::Cut(edge), Distribution::Spatial { coverage, .. }) => (edge, coverage),
+            _ => return false,
+        };
+        match coverage {
+            Coverage::TilesEach(t) => t == 1,
+            Coverage::Instances(n) => match space.extent_raw(axis) {
+                Extent::Static(extent) => extent.div_ceil(edge) == n,
+                Extent::Dynamic => false,
+            },
+        }
     }
 
     /// Whether this level cuts `axis` of `space` into a single, statically-known tile, so its
