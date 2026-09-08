@@ -4,10 +4,9 @@ use super::{
 };
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, ReduceRequirements,
+        Accumulator, AccumulatorFormat, Item, PackedExtremum, ReduceOutputMode, ReduceRequirements,
         ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, SlotCount, Value, ValueExpand,
-        ValueOrder, empty_order_key, finalize_key, key_insert, order_key_coordinate,
-        order_key_value, pack_order_key, packs_key,
+        packs_key,
     },
     precision::ReducePrecision,
 };
@@ -110,14 +109,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            Accumulator::<P> {
-                elements: Value::new_None(),
-                args: Value::new_None(),
-                packed: Value::new_single(empty_order_key::<P::EA, P::SI>(
-                    Vector::new(min_identity::<P::EA>()),
-                    ValueOrder::Ascending,
-                )),
-            }
+            PackedExtremum::ascending().null_accumulator::<P>(min_identity::<P::EA>())
         } else {
             let args = if comptime!(this.output.has_indices()) {
                 Value::new_single(Vector::empty().fill(u32::MAX))
@@ -142,18 +134,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            let key = pack_order_key::<P::EA, P::SI>(
-                Vector::cast_from(item.elements),
-                item.args.item(),
-                ValueOrder::Ascending,
-            );
-            // The key already ranks min's winner highest, so the plane op stays `plane_max`.
-            let candidate = match reduce_step {
-                ReduceStep::Plane => plane_max(key),
-                ReduceStep::Identity => key,
-            };
-
-            key_insert::<P::SI>(&mut accumulator.packed, candidate);
+            PackedExtremum::ascending().reduce::<P>(accumulator, item, reduce_step);
         } else {
             let (candidate, candidate_coord) = match reduce_step {
                 ReduceStep::Plane => plane_min_candidate(item.elements, &item.args),
@@ -173,9 +154,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            // The key already ranks min's winner highest, so the plane op stays `plane_max`.
-            let winning = plane_max(accumulator.packed.item());
-            accumulator.packed.assign(&Value::new_single(winning));
+            PackedExtremum::ascending().plane_reduce_inplace::<P>(accumulator);
         } else {
             let (candidate, candidate_coord) =
                 plane_min_candidate(accumulator.elements.item(), &accumulator.args);
@@ -193,7 +172,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            key_insert::<P::SI>(&mut accumulator.packed, other.packed.item());
+            PackedExtremum::ascending().fuse_accumulators::<P>(accumulator, other);
         } else {
             min_insert(
                 &mut accumulator.elements,
@@ -216,17 +195,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            let key =
-                Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(accumulator.packed.item()));
-
-            (
-                Value::new_single(Out::cast_from(
-                    order_key_value::<P::EA, Const<1>>(key, ValueOrder::Ascending).extract(0usize),
-                )),
-                Value::new_single(Idx::cast_from(
-                    order_key_coordinate::<Const<1>>(key).extract(0usize),
-                )),
-            )
+            PackedExtremum::ascending().to_output_parallel::<P, Out, Idx>(accumulator)
         } else {
             match accumulator.args {
                 Value::None => {
@@ -265,15 +234,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            let key = accumulator.packed.item();
-
-            (
-                Value::new_single(Vector::cast_from(order_key_value::<P::EA, P::SI>(
-                    key,
-                    ValueOrder::Ascending,
-                ))),
-                Value::new_single(Vector::cast_from(order_key_coordinate::<P::SI>(key))),
-            )
+            PackedExtremum::ascending().to_output_perpendicular::<P, Out, Idx>(accumulator)
         } else {
             let values = Value::new_single(Vector::cast_from(accumulator.elements.item()));
             let indices = match accumulator.args {
