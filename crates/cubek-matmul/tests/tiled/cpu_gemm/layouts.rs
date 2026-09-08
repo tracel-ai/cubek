@@ -13,7 +13,9 @@ use cubek_matmul::{
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, KernelForm, Launcher, Projection, Space, TileArg, TileArgLaunch, TileSpec};
+use cubek_tile::{
+    Axis, KernelForm, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+};
 
 use super::Dims;
 use crate::harness::assert_result;
@@ -116,8 +118,10 @@ impl Operand {
             layout,
             launcher: Launcher::implied(
                 &cubecl::test_device().client(),
-                Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
-                vec![],
+                Partitioning::new(
+                    Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
+                    vec![],
+                ),
                 KernelForm::Static,
             ),
             batch,

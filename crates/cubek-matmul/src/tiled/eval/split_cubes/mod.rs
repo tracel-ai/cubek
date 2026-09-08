@@ -36,7 +36,8 @@ use cubek_test_utils::{
 };
 use cubek_tile::{
     AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, KernelForm, Launcher, Level, Monoid,
-    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -223,14 +224,18 @@ impl Mapping {
         match self {
             Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (K, k)]),
-                vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                    vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
+                ),
                 KernelForm::Static,
             ),
             Mapping::Workspace { .. } => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
-                vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
+                    vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
+                ),
                 KernelForm::Static,
             ),
             // The cube's slice of K cut again across the plane: each lane contracts its own
@@ -238,11 +243,13 @@ impl Mapping {
             // and one fold per cube reaches memory.
             Mapping::AtomicLanes { .. } => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (K, k)]),
-                vec![
-                    Level::cubes(&[(N, COLS), (K, k / splits)]),
-                    Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
-                ],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                    vec![
+                        Level::cubes(&[(N, COLS), (K, k / splits)]),
+                        Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
+                    ],
+                ),
                 KernelForm::Static,
             ),
         }
@@ -253,8 +260,10 @@ impl Mapping {
         let Problem { m, n, .. } = problem;
         Launcher::implied(
             client,
-            Space::new(&[(M, m), (N, n), (KB, self.splits())]),
-            vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
+            Partitioning::new(
+                Space::new(&[(M, m), (N, n), (KB, self.splits())]),
+                vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
+            ),
             KernelForm::Static,
         )
     }

@@ -179,8 +179,7 @@ impl Benchmark for TileQuantStageBench {
         let (a, b, c) = &*args;
         let launcher = Launcher::implied(
             &self.client,
-            self.space(),
-            self.levels(),
+            Partitioning::new(self.space(), self.levels()),
             KernelForm::Static,
         );
         let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();

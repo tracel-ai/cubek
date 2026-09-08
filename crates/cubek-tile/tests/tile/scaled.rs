@@ -186,8 +186,10 @@ fn two_levels_fold_in_order() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        ),
         KernelForm::Static,
     );
 
@@ -284,13 +286,15 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -382,13 +386,15 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -484,8 +490,10 @@ fn a_scale_over_no_axis_covers_everything() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        ),
         KernelForm::Static,
     );
 
@@ -575,13 +583,15 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -676,13 +686,15 @@ fn f16_scales_are_read_as_f16() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -774,13 +786,15 @@ fn scales_over_the_columns_scale_the_rhs() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -872,13 +886,15 @@ fn an_rhs_scale_survives_a_finer_cut() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -969,13 +985,15 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -1068,13 +1086,15 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -1217,13 +1237,15 @@ fn rhs_scales_are_served_several_at_a_time() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (N, cols),
-            (KB, per_region),
-            (KI, inside),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, per_region),
+                (KI, inside),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -1353,8 +1375,10 @@ fn lhs_scales_are_served_several_at_a_time() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])],
+        Partitioning::new(
+            Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])],
+        ),
         KernelForm::Static,
     );
 

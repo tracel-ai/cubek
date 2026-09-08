@@ -69,8 +69,10 @@ fn a_packed_tensor_decodes_against_its_scales() {
     // that one of their values covers a block of columns.
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
-        vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
+        Partitioning::new(
+            Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
+            vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
+        ),
         KernelForm::Static,
     );
 
@@ -102,8 +104,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
     };
     let launcher = Launcher::implied(
         &client,
-        launch.space().clone(),
-        launch.levels().to_vec(),
+        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
         KernelForm::Dynamic,
     );
     let w_op = launcher

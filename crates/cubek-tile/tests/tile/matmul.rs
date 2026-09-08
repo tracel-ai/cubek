@@ -684,9 +684,12 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
         &a,
         &b,
         comptime!(StageStorage::Tiled {
-            block: Space::merge(&[&a.space, &b.space])
-                .leaf(std::slice::from_ref(&level))
-                .extents()
+            block: Partitioning::new(
+                Space::merge(&[&a.space, &b.space]),
+                std::slice::from_ref(&level).to_vec()
+            )
+            .leaf()
+            .extents()
         }),
         depth,
     );
@@ -816,9 +819,12 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         &a,
         &b,
         comptime!(StageStorage::Tiled {
-            block: Space::merge(&[&a.space, &b.space])
-                .leaf(&[outer.clone(), inner.clone()])
-                .extents()
+            block: Partitioning::new(
+                Space::merge(&[&a.space, &b.space]),
+                vec![outer.clone(), inner.clone()]
+            )
+            .leaf()
+            .extents()
         }),
         depth,
     );
@@ -873,9 +879,12 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         &a,
         &b,
         comptime!(StageStorage::Tiled {
-            block: Space::merge(&[&a.space, &b.space])
-                .leaf(&[stage.clone(), plane.clone(), fragment.clone()])
-                .extents()
+            block: Partitioning::new(
+                Space::merge(&[&a.space, &b.space]),
+                vec![stage.clone(), plane.clone(), fragment.clone()]
+            )
+            .leaf()
+            .extents()
         }),
         depth,
     );
@@ -946,15 +955,18 @@ fn cmma_matmul_five_levels<E: Numeric>(
         &a,
         &b,
         comptime!(StageStorage::Tiled {
-            block: Space::merge(&[&a.space, &b.space])
-                .leaf(&[
+            block: Partitioning::new(
+                Space::merge(&[&a.space, &b.space]),
+                vec![
                     stage.clone(),
                     plane.clone(),
                     step.clone(),
                     col.clone(),
                     row.clone()
-                ])
-                .extents()
+                ]
+            )
+            .leaf()
+            .extents()
         }),
         depth,
     );
@@ -1465,8 +1477,10 @@ fn matmul_reversed_walk_single_cube() {
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, 4), (N, 4), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, 4), (N, 4), (K, 4)])],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
@@ -1601,8 +1615,7 @@ fn check_matmul(m: usize, n: usize, k: usize, cubes: Level, steps: Level, depth:
     };
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![cubes, steps],
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![cubes, steps]),
         KernelForm::Static,
     );
 
@@ -1644,8 +1657,10 @@ fn mma_folds_onto_what_c_holds() {
     // The whole contraction lands at the leaf, where `c = a·b` would overwrite.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, tile_edge), (N, tile_edge), (K, k)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, tile_edge), (N, tile_edge), (K, k)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1719,13 +1734,15 @@ fn check_matmul_batched(
     let client = cubecl::test_device().client();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
-        vec![sequential(&[
-            (B, batch_edge),
-            (M, tile_edge),
-            (N, tile_edge),
-            (K, tile_edge),
-        ])],
+        Partitioning::new(
+            Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
+            vec![sequential(&[
+                (B, batch_edge),
+                (M, tile_edge),
+                (N, tile_edge),
+                (K, tile_edge),
+            ])],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launcher.space().project(&[B, M, K]))
@@ -1844,8 +1861,10 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(B0, b0), (B1, b1), (M, t), (N, t), (K, t)]),
-        levels.to_vec(),
+        Partitioning::new(
+            Space::new(&[(B0, b0), (B1, b1), (M, t), (N, t), (K, t)]),
+            levels.to_vec(),
+        ),
         KernelForm::Static,
     );
     let out = launcher.space().project(&[B0, B1, M, N]);
@@ -1992,8 +2011,7 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
     let tile_edge = inner.edge(M);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![outer, inner],
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![outer, inner]),
         KernelForm::Static,
     );
 
@@ -2038,8 +2056,10 @@ fn matmul_cpu_dynamic_k() {
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2094,8 +2114,10 @@ fn register_matmul_unit_spread_n() {
     let n = plane_size * nr;
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2160,8 +2182,10 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
     let client = cubecl::test_device().client();
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, m), (N, n), (K, k)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, m), (N, n), (K, k)])],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launch.space().project(&[M, K]))
@@ -2175,8 +2199,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         .zeros();
     let launcher = Launcher::implied(
         &client,
-        launch.space().clone(),
-        launch.levels().to_vec(),
+        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
         KernelForm::Dynamic,
     );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
@@ -2215,11 +2238,13 @@ fn matmul_padded_lhs_stage_direct_tail() {
     let (m, n, k) = (2usize, 2usize, 3usize);
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, m), (N, n), (K, k)]),
-            Level::walk(&[(M, m), (N, n), (K, k)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, k)]),
+                Level::walk(&[(M, m), (N, n), (K, k)]),
+            ],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launch.space().project(&[M, K]))
@@ -2233,8 +2258,7 @@ fn matmul_padded_lhs_stage_direct_tail() {
         .zeros();
     let launcher = Launcher::implied(
         &client,
-        launch.space().clone(),
-        launch.levels().to_vec(),
+        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
         KernelForm::Dynamic,
     );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
@@ -2274,11 +2298,13 @@ fn matmul_multilevel_staged_then_direct() {
     let (m, n, k, final_edge) = (8usize, 8usize, 8usize, 2usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            sequential(&[(M, 4), (N, 4), (K, 4)]),
-            sequential(&[(M, 2), (N, 2), (K, 2)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                sequential(&[(M, 4), (N, 4), (K, 4)]),
+                sequential(&[(M, 2), (N, 2), (K, 2)]),
+            ],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
@@ -2352,7 +2378,7 @@ impl StageLayout {
     fn storage(self, launcher: &Launcher) -> StageStorage {
         match self {
             StageLayout::Tiled => StageStorage::Tiled {
-                block: launcher.space().leaf(launcher.levels()).extents(),
+                block: launcher.partitioning().leaf().extents(),
             },
             StageLayout::Strided => StageStorage::Strided,
         }
@@ -2372,11 +2398,13 @@ fn check_matmul_multilevel(
     let dtype = f32::elem_type_native();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            sequential(&[(M, 4), (N, 4), (K, 4)]),
-            sequential(&[(M, 2), (N, 2), (K, 2)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                sequential(&[(M, 4), (N, 4), (K, 4)]),
+                sequential(&[(M, 2), (N, 2), (K, 2)]),
+            ],
+        ),
         KernelForm::Static,
     );
     let storage = layout.storage(&launcher);
@@ -2433,11 +2461,13 @@ fn matmul_staged_invariant_lhs() {
     let (m, n, k) = (8usize, 8usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-            Level::walk(&[(M, 4), (N, 2), (K, 4)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+                Level::walk(&[(M, 4), (N, 2), (K, 4)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -2478,18 +2508,22 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
     let (m, n, k) = (8usize, 8usize, 8usize);
     let plain = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        ),
         KernelForm::Static,
     );
     // The second level's edges are the first's: every axis's count is 1.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+            ],
+        ),
         KernelForm::Static,
     );
     assert_eq!(plain.levels().len(), 1);
@@ -2542,8 +2576,10 @@ fn matmul_direct_vectorized() {
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
@@ -2634,12 +2670,14 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
     let (m, n, k, tile_edge) = (8usize, 8usize, 8usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[
-            (M, tile_edge),
-            (N, tile_edge),
-            (K, tile_edge),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[
+                (M, tile_edge),
+                (N, tile_edge),
+                (K, tile_edge),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -2682,8 +2720,10 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
     let (edge, v) = (4usize, 2usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2743,8 +2783,10 @@ fn register_matmul_promoted_accumulator() {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2789,8 +2831,10 @@ fn tropical_matmul_in_place() {
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2850,8 +2894,10 @@ fn tropical_matmul_promoted() {
     let (m, n, k, edge) = (4usize, 4usize, 8usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2915,12 +2961,14 @@ fn register_matmul_promoted_cube_plane() {
     let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::cubes(&[(M, m), (N, n)]),
-            Level::planes(&[(M, leaf_m), (N, leaf_n)]),
-            Level::walk(&[(K, leaf_k)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::cubes(&[(M, m), (N, n)]),
+                Level::planes(&[(M, leaf_m), (N, leaf_n)]),
+                Level::walk(&[(K, leaf_k)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -2971,11 +3019,13 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let (m, n, k) = (4usize, 4usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-            Level::walk(&[(M, 2), (N, 2), (K, 2)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+                Level::walk(&[(M, 2), (N, 2), (K, 2)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -3012,8 +3062,10 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
 fn lined_lhs_space(m: usize, n: usize, k: usize) -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, m), (N, n), (K, k)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, m), (N, n), (K, k)])],
+        ),
         KernelForm::Static,
     )
 }
@@ -3280,8 +3332,10 @@ fn register_matmul_folded_step_two_contracted_axes() {
     let k = k1 * k2;
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]),
-        vec![Level::walk(&[(M, m), (N, n), (K, k1), (K2, k2)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]),
+            vec![Level::walk(&[(M, m), (N, n), (K, k1), (K2, k2)])],
+        ),
         KernelForm::Static,
     );
 
@@ -3428,11 +3482,13 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
     let groups = plane_size / group_lanes;
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
-        vec![Level::lanes(&[
-            Cut::new(M, 1).across(groups),
-            Cut::new(K, edge).across(group_lanes).interleaved(),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
+            vec![Level::lanes(&[
+                Cut::new(M, 1).across(groups),
+                Cut::new(K, edge).across(group_lanes).interleaved(),
+            ])],
+        ),
         KernelForm::Static,
     )
 }
@@ -3605,8 +3661,10 @@ fn register_matmul_promoted_accumulator_quant() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -3939,8 +3997,10 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
     let (m, n, edge) = (8usize, 8usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
     let storage = layout.storage(&launcher);
@@ -3989,8 +4049,10 @@ fn mma_matmul_8x8x8() {
     let (m, n, k, edge) = (8usize, 8usize, 8usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -4034,11 +4096,13 @@ fn cmma_matmul_plane_partitioned_stage() {
     let (m, n, k, edge) = (16usize, 16usize, 32usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, m), (N, n), (K, edge)]),
-            Level::planes(&[(M, edge), (N, edge)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, edge)]),
+                Level::planes(&[(M, edge), (N, edge)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -4084,12 +4148,14 @@ fn cmma_matmul_multi_fragment_partition() {
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, m), (N, n), (K, stage_k)]),
-            Level::planes(&[(M, part), (N, part)]),
-            Level::walk(&[(M, i), (N, i), (K, i)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, stage_k)]),
+                Level::planes(&[(M, part), (N, part)]),
+                Level::walk(&[(M, i), (N, i), (K, i)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -4136,14 +4202,16 @@ fn cmma_matmul_staged_n_walk_partition() {
     let (part, i, stage_k) = (16usize, 8usize, 16usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, m), (N, n), (K, stage_k)]),
-            Level::planes(&[(M, part), (N, part)]),
-            Level::walk(&[(M, part), (N, part), (K, i)]),
-            Level::walk(&[(M, part), (N, i), (K, i)]),
-            Level::walk(&[(M, i), (N, i), (K, i)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, stage_k)]),
+                Level::planes(&[(M, part), (N, part)]),
+                Level::walk(&[(M, part), (N, part), (K, i)]),
+                Level::walk(&[(M, part), (N, i), (K, i)]),
+                Level::walk(&[(M, i), (N, i), (K, i)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -4263,8 +4331,10 @@ fn check_cmma_matmul_quant_walk(
     let (m, n, edge) = (8usize, 8usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -4346,8 +4416,10 @@ fn mma_matmul_quant_until_read() {
     let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     );
 
@@ -4564,8 +4636,7 @@ fn run_register_matmul_quant(
 ) {
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![plan],
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![plan]),
         KernelForm::Static,
     );
 
@@ -4654,8 +4725,10 @@ fn register_matmul_quant_rhs_packed_q8() {
     let client = cubecl::test_device().client();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, 8), (N, 8), (K, 8)]),
-        vec![register_partitioner(4, 4, 4)],
+        Partitioning::new(
+            Space::new(&[(M, 8), (N, 8), (K, 8)]),
+            vec![register_partitioner(4, 4, 4)],
+        ),
         KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
@@ -4675,8 +4748,10 @@ fn register_matmul_quant_rhs_packed_q4() {
     let client = cubecl::test_device().client();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, 8), (N, 16), (K, 8)]),
-        vec![register_partitioner(4, 8, 4)],
+        Partitioning::new(
+            Space::new(&[(M, 8), (N, 16), (K, 8)]),
+            vec![register_partitioner(4, 8, 4)],
+        ),
         KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
@@ -4697,8 +4772,10 @@ fn register_matmul_quant_rhs_gemv_row() {
     let client = cubecl::test_device().client();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, 1), (N, 8), (K, 8)]),
-        vec![register_partitioner(1, 4, 4)],
+        Partitioning::new(
+            Space::new(&[(M, 1), (N, 8), (K, 8)]),
+            vec![register_partitioner(1, 4, 4)],
+        ),
         KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
@@ -4719,8 +4796,10 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
     let client = cubecl::test_device().client();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, 1), (N, 16), (K, 8)]),
-        vec![Level::cubes(&[(N, 4)]), Level::walk(&[(M, 1), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(M, 1), (N, 16), (K, 8)]),
+            vec![Level::cubes(&[(N, 4)]), Level::walk(&[(M, 1), (K, 4)])],
+        ),
         KernelForm::Static,
     );
     run_register_matmul_quant_rhs(
@@ -4744,14 +4823,15 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = cubecl::test_device().client();
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(M, 1), (N, 8), (K, 8)]),
-        vec![Level::walk(&[(M, 1), (N, 4), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(M, 1), (N, 8), (K, 8)]),
+            vec![Level::walk(&[(M, 1), (N, 4), (K, 4)])],
+        ),
         KernelForm::Static,
     );
     let launcher = Launcher::implied(
         &client,
-        launch.space().clone(),
-        launch.levels().to_vec(),
+        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
         KernelForm::Dynamic,
     );
     run_register_matmul_quant_rhs(
@@ -4841,8 +4921,10 @@ fn register_matmul_quant_rhs_two_level_staged_dequantized_smem() {
 fn four_region_k_walk() -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, 4), (N, 8), (K, 16)]),
-        vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(M, 4), (N, 8), (K, 16)]),
+            vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+        ),
         KernelForm::Static,
     )
 }
@@ -4908,8 +4990,7 @@ fn run_register_matmul_quant_rhs(
     // quantized RHS goes through the source builder, which binds it at the storage width.
     let launcher = Launcher::implied(
         &client,
-        launch.space().clone(),
-        launch.levels().to_vec(),
+        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
         KernelForm::Dynamic,
     );
     let a_op = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();

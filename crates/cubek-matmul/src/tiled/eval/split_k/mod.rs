@@ -47,7 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Cut, KernelForm, Launcher, Level, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
+    Axis, Cut, KernelForm, Launcher, Level, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -169,29 +170,35 @@ impl Mapping {
             // One column per cube, one lane, whole K walked serially.
             Mapping::SeqK => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (K, k)]),
-                vec![Level::cubes(&[(N, 1)])],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                    vec![Level::cubes(&[(N, 1)])],
+                ),
                 KernelForm::Static,
             ),
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
             Mapping::NSpread { cols } => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (K, k)]),
-                vec![
-                    Level::cubes(&[(N, plane_size * cols)]),
-                    Level::lanes(&[Cut::new(N, cols).across(plane_size)]),
-                ],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                    vec![
+                        Level::cubes(&[(N, plane_size * cols)]),
+                        Level::lanes(&[Cut::new(N, cols).across(plane_size)]),
+                    ],
+                ),
                 KernelForm::Static,
             ),
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
             Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Launcher::implied(
                 client,
-                Space::new(&[(M, m), (N, n), (K, k)]),
-                vec![
-                    Level::cubes(&[(N, cols)]),
-                    Level::lanes(&[Cut::new(K, k / plane_size).across(plane_size)]),
-                ],
+                Partitioning::new(
+                    Space::new(&[(M, m), (N, n), (K, k)]),
+                    vec![
+                        Level::cubes(&[(N, cols)]),
+                        Level::lanes(&[Cut::new(K, k / plane_size).across(plane_size)]),
+                    ],
+                ),
                 KernelForm::Static,
             ),
         }

@@ -105,8 +105,10 @@ fn one_contracted_axis_is_the_reference() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (K, depth)]),
-        vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (K, depth)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
+        ),
         KernelForm::Static,
     );
 
@@ -165,8 +167,10 @@ fn a_partitioned_axis_contracts_the_same() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        ),
         KernelForm::Static,
     );
 
@@ -250,8 +254,10 @@ fn scales_omit_the_axis_inside_the_block() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-        vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        ),
         KernelForm::Static,
     );
 
@@ -346,13 +352,15 @@ fn a_split_output_axis_contracts_the_same() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -437,13 +445,15 @@ fn scales_omit_the_axis_inside_the_column_block() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -545,13 +555,15 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -664,13 +676,15 @@ fn scales_are_served_several_at_a_time() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -788,13 +802,15 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -913,13 +929,15 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -1038,13 +1056,15 @@ fn scales_keep_their_own_element_when_served_as_lines() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-        vec![Level::walk(&[
-            (M, rows),
-            (NB, blocks),
-            (NI, inside),
-            (K, depth),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
+            vec![Level::walk(&[
+                (M, rows),
+                (NB, blocks),
+                (NI, inside),
+                (K, depth),
+            ])],
+        ),
         KernelForm::Static,
     );
 

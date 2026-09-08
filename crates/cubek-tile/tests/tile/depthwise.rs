@@ -136,19 +136,21 @@ impl Depthwise {
     fn check(&self, tile_oh: usize, tile_ow: usize, tile_c: usize) {
         let launcher = Launcher::implied(
             &cubecl::test_device().client(),
-            Space::new(&[
-                (B, self.b),
-                (OH, self.oh),
-                (OW, self.ow),
-                (C, self.c),
-                (RH, self.rh),
-                (RW, self.rw),
-            ]),
-            vec![
-                Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
-                Level::planes(&[(C, 1)]),
-                Level::walk(&[(OW, 1), (OH, 1)]),
-            ],
+            Partitioning::new(
+                Space::new(&[
+                    (B, self.b),
+                    (OH, self.oh),
+                    (OW, self.ow),
+                    (C, self.c),
+                    (RH, self.rh),
+                    (RW, self.rw),
+                ]),
+                vec![
+                    Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
+                    Level::planes(&[(C, 1)]),
+                    Level::walk(&[(OW, 1), (OH, 1)]),
+                ],
+            ),
             KernelForm::Static,
         );
 

@@ -6,45 +6,9 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, ComputeScope, CubeAxis, Geometry, Level, Set, Space, SpaceLaunch, StridedOperand,
+    Axis, Geometry, Level, Partitioning, Set, Space, SpaceLaunch, StridedOperand,
     StridedTileSource, Unset,
 };
-
-/// Cube dimension `d` gets the instance count of whichever axis is `Spatial { Cube(d), .. }`,
-/// at any level of `levels` over `space`, else 1.
-fn cube_count(space: &Space, levels: &[Level]) -> CubeCount {
-    CubeCount::Static(
-        instances(space, levels, ComputeScope::Cube(CubeAxis::X)),
-        instances(space, levels, ComputeScope::Cube(CubeAxis::Y)),
-        instances(space, levels, ComputeScope::Cube(CubeAxis::Z)),
-    )
-}
-
-/// Product of instance counts over every axis riding `scope`, across every level, times the
-/// instance count of any work a level distributes as one on it ([`Work`](crate::Work)).
-fn instances(space: &Space, levels: &[Level], scope: ComputeScope) -> u32 {
-    let mut total = 1u32;
-    let mut space = space.clone();
-    for level in levels {
-        // Work distributed as one rides its scope whole rather than through any one of its
-        // axes, so its instance count is the dim's and no axis of it contributes.
-        if let Some(work) = level.work()
-            && work.scope() == scope
-        {
-            total *= work.instances() as u32;
-        }
-        for axis in space.axes() {
-            let dist = level.distribution(axis);
-            if dist.scope() == Some(scope) {
-                // `count` is `ceil`, so an indivisible axis adds the instance for its
-                // partial tile.
-                total *= dist.coverage().instances(level.count(&space, axis)) as u32;
-            }
-        }
-        space = level.child(&space);
-    }
-    total
-}
 
 /// Which extents the compiled kernel reads at runtime. Every one (`Dynamic`) makes one compiled
 /// kernel serve every shape; none (`Static`) specializes the kernel to this launch's extents;
@@ -135,32 +99,23 @@ impl Launcher {
         self
     }
 
-    /// The launch `levels` imply, for a kernel with no blueprint to state one: as many cubes,
-    /// planes and lanes as the levels deal to, the leaf they cut to, the axes they overhang.
-    /// A second constructor, not `new`: a launch is stated, and this one reads off the levels
-    /// what a blueprint would have stated, which only a test or a benchmark mapping wants.
-    pub fn implied(
-        client: &Client,
-        space: Space,
-        levels: Vec<Level>,
-        form: KernelForm<'_>,
-    ) -> Self {
+    /// The launch `partitioning` implies, for a kernel with no blueprint to state one: as many
+    /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they
+    /// overhang. A second constructor, not `new`: a launch is stated, and this one reads off
+    /// the levels what a blueprint would have stated, which only a test or a benchmark mapping
+    /// wants.
+    pub fn implied(client: &Client, partitioning: Partitioning, form: KernelForm<'_>) -> Self {
         let plane_size = client.properties().hardware.plane_size_max;
-        let lanes = instances(&space, &levels, ComputeScope::Unit);
+        let lanes = partitioning.lanes();
         assert!(
             lanes == 1 || lanes == plane_size,
             "Launcher::implied: Unit axes must partition exactly plane_size ({plane_size}) lanes, \
              got {lanes}"
         );
-        let grid = (
-            cube_count(&space, &levels),
-            CubeDim::new_2d(plane_size, instances(&space, &levels, ComputeScope::Plane)),
-        );
-        let leaf = space.leaf(&levels).extents();
-        let overhangs: Vec<Axis> = space
-            .axes()
-            .filter(|&axis| space.overhangs(&levels, axis))
-            .collect();
+        let grid = (partitioning.cube_count(), partitioning.cube_dim(plane_size));
+        let leaf = partitioning.leaf().extents();
+        let overhangs = partitioning.overhanging();
+        let (space, levels) = partitioning.into_parts();
         let mut launch = Launcher::new(client, space, grid, form)
             .leaf(&leaf)
             .overhanging(&overhangs);
@@ -203,6 +158,12 @@ impl Launcher {
     /// The levels an implied launch was read from, outermost first.
     pub fn levels(&self) -> &[Level] {
         &self.levels
+    }
+
+    /// The partitioning an implied launch was read from: its concrete space with those levels.
+    /// A launch that stated its grid has no levels, so this is its space uncut.
+    pub fn partitioning(&self) -> Partitioning {
+        Partitioning::new(self.concrete.clone(), self.levels.clone())
     }
 
     /// Level `i` of an implied launch, outermost first: what a kernel states its `i`-th loop

@@ -170,20 +170,22 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ]),
-        vec![Level::walk(&[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ]),
+            vec![Level::walk(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -258,20 +260,22 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ]),
-        vec![Level::walk(&[
-            (ROW, ROWS),
-            (COL, COLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ]),
+            vec![Level::walk(&[
+                (ROW, ROWS),
+                (COL, COLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -385,20 +389,22 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (ROW, ROWS),
-            (COL, QCOLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ]),
-        vec![Level::walk(&[
-            (ROW, ROWS),
-            (COL, QCOLS),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (ROW, ROWS),
+                (COL, QCOLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ]),
+            vec![Level::walk(&[
+                (ROW, ROWS),
+                (COL, QCOLS),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -478,20 +484,22 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (ROW, ROWS),
-            (COL, pack),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ]),
-        vec![Level::walk(&[
-            (ROW, ROWS),
-            (COL, pack),
-            (TAP[0], TAPS[0]),
-            (TAP[1], TAPS[1]),
-            (TAP[2], TAPS[2]),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (ROW, ROWS),
+                (COL, pack),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ]),
+            vec![Level::walk(&[
+                (ROW, ROWS),
+                (COL, pack),
+                (TAP[0], TAPS[0]),
+                (TAP[1], TAPS[1]),
+                (TAP[2], TAPS[2]),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -646,8 +654,10 @@ fn check_resampling(normalized: bool) {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-        vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        Partitioning::new(
+            Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
+            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        ),
         KernelForm::Static,
     );
 
@@ -740,8 +750,10 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .generate_without_host_data();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
-        vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])],
+        Partitioning::new(
+            Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
+            vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])],
+        ),
         KernelForm::Static,
     );
 
@@ -843,8 +855,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-        vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        Partitioning::new(
+            Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
+            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        ),
         KernelForm::Static,
     );
 
@@ -921,8 +935,10 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-        vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        Partitioning::new(
+            Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
+            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1031,8 +1047,10 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-        vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        Partitioning::new(
+            Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
+            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1123,8 +1141,10 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-        vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        Partitioning::new(
+            Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
+            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1232,8 +1252,10 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
-        vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])],
+        Partitioning::new(
+            Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
+            vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])],
+        ),
         KernelForm::Static,
     );
 

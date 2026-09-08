@@ -305,7 +305,7 @@ impl Space {
     }
 
     /// The leaf `levels` reach below this space: each level's child of the last.
-    pub fn leaf(&self, levels: &[Level]) -> Space {
+    pub(crate) fn leaf(&self, levels: &[Level]) -> Space {
         levels
             .iter()
             .fold(self.clone(), |space, level| level.child(&space))
@@ -315,7 +315,7 @@ impl Space {
     /// extent handed to it (this space's at the first level, the parent edge below), leaving a
     /// partial tile that needs masking. A dynamic axis panics: the answer
     /// is the concrete space's, never the kernel-form one's.
-    pub fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
+    pub(crate) fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
         assert!(
             !self.is_dynamic(axis),
             "Space::overhangs: axis {axis:?} is Dynamic; ask the concrete space"
