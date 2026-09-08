@@ -1,5 +1,6 @@
-//! The row ops at plane ownership: a plane owns a row-slice, its lanes split
-//! the reduced axis, and each row's reduction closes in one plane instruction.
+//! The row ops at plane ownership: a plane owns every row of the tile it is
+//! handed (the kernel windows the score tile per plane), its lanes split the
+//! reduced axis, and each row's reduction closes in one plane instruction.
 //! The [`rowwise`](super::rowwise) twin runs the same algebra with a unit
 //! owning the whole row; which one a call reaches is the state's
 //! [`RowShare`] and nothing else.
@@ -13,9 +14,9 @@
 //! divide the lines, which a fold sized to its plane arranges.
 //!
 //! **The plane must be the cube's**: `lanes` is the width the device commits
-//! to, and a plane may not straddle the x dim's teams, so `CUBE_DIM_X` has to
-//! be a whole number of planes. A wrong width reduces over the wrong lanes and
-//! is silently wrong, which is why the caller states it rather than reads it.
+//! to, and a plane may not straddle the x dim, so `CUBE_DIM_X` has to be a
+//! whole number of planes. A wrong width reduces over the wrong lanes and is
+//! silently wrong, which is why the caller states it rather than reads it.
 
 use cubecl::prelude::*;
 
@@ -41,7 +42,7 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpp {
-            let r = plane_row(ri, rpp, lanes);
+            let r = ri;
             if r < rows {
                 let q = probe.row_q(r);
                 #[unroll]
@@ -83,7 +84,7 @@ impl<EA: Float> Tile<EA> {
         #[unroll]
         for ri in 0..rpp {
             let mut partial = base[ri];
-            let r = plane_row(ri, rpp, lanes);
+            let r = ri;
             if r < rows {
                 #[unroll]
                 for li in 0..comptime!(lines.div_ceil(lanes)) {
@@ -120,7 +121,7 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpp {
-            let r = plane_row(ri, rpp, lanes);
+            let r = ri;
             if r < rows {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
@@ -160,7 +161,7 @@ impl<EA: Float> Tile<EA> {
         #[unroll]
         for ri in 0..rpp {
             let mut partial = EA::from_int(0);
-            let r = plane_row(ri, rpp, lanes);
+            let r = ri;
             if r < rows {
                 #[unroll]
                 for li in 0..comptime!(lines.div_ceil(lanes)) {
@@ -201,7 +202,7 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpp {
-            let r = plane_row(ri, rpp, lanes);
+            let r = ri;
             if r < rows {
                 #[unroll]
                 for li in 0..comptime!(lines.div_ceil(lanes)) {
@@ -220,12 +221,4 @@ impl<EA: Float> Tile<EA> {
 #[cube]
 fn lane(#[comptime] lanes: usize) -> usize {
     UNIT_POS_X as usize % lanes
-}
-
-/// The score row this plane's `ri`-th slot owns. Plane-uniform by
-/// construction, so a guard on it never splits a plane and the reductions
-/// below it are reached by every lane.
-#[cube]
-fn plane_row(ri: usize, #[comptime] rpp: usize, #[comptime] lanes: usize) -> usize {
-    (UNIT_POS_X as usize / lanes) * rpp + ri
 }

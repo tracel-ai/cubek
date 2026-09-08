@@ -11,6 +11,7 @@ mod base;
 mod config;
 pub mod logsumexp;
 mod mma;
+pub(crate) use mma::rhs_layout;
 pub mod plane;
 pub mod registers;
 

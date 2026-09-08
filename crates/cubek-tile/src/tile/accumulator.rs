@@ -159,6 +159,42 @@ impl<Acc: Numeric> Tile<Acc> {
         )
     }
 
+    /// This plane-resident accumulator opened for row-wise ops: a scratch of one tile in shared
+    /// memory per plane, `planes` of them for the cube's planes of `lanes` units, that
+    /// [`rescale_rows`](Tile::rescale_rows) bounces each tile through. Stated where the
+    /// accumulator opens, since the scratch is part of its residence.
+    pub fn with_scratch(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
+        let space = comptime!(self.space.clone());
+        let depth = comptime!(self.depth);
+        match self.tile_kind {
+            TileKind::PlanePartition(p) => {
+                let (m, n) = p.at(0usize, 0usize).shape();
+                let cells = comptime!(m * n);
+                let start = (UNIT_POS as usize / lanes) * cells;
+                let end = start + cells;
+                let scratch = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
+                    .map(|scratch| &scratch[start..end]);
+                Tile::<Acc> {
+                    tile_kind: TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                        frags: p.frags,
+                        m_tiles: comptime!(p.m_tiles),
+                        n_tiles: comptime!(p.n_tiles),
+                        scratch: ComptimeOption::new_Some(scratch),
+                    }),
+                    space,
+                    depth,
+                }
+            }
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
+            }
+        }
+    }
+
     /// The plane-resident partition an accumulator contracts in, in `form`, uninitialized and
     /// shaped to meet `lhs` at the instruction. `vector_size` is its lines' width and `fold` what
     /// a line holds ([`RegisterData::fold`]); only the software form reads them.
