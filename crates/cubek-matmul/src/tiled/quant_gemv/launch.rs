@@ -12,7 +12,7 @@
 //! interleave the fold is built on.
 
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection};
+use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection, ScalesArgLaunch};
 
 use crate::{
     definition::MatmulSetupError,
@@ -46,9 +46,10 @@ pub struct QuantGemvBindings {
     pub x: TensorBinding,
     /// The packed weight, `[d_out, d_in]` in values over a buffer of `u32` words.
     pub weights: TensorBinding,
-    /// The scale levels, innermost first, each at whatever element it is stored in. What a level
+    /// The scale levels, innermost first, each at whatever element it is stored in: the block
+    /// level, then the factor over the whole tensor where the scheme has one. What a level
     /// covers is read off its own shape: `[d_out, d_in / block]` distinguishes every block, a
-    /// single element covers the tensor. Nothing states how many there are.
+    /// single element covers the tensor.
     pub scales: Vec<TensorBinding>,
     /// The result, `[d_out, rows]` — the weight's rows are the output's, this orientation
     /// putting them on the buffer's outer dim.
@@ -108,10 +109,17 @@ pub fn launch_ref(
         // step, unpacks the word's other values and discards them.
         .vectorize(factor)
         .build();
-    // One operand per level, each addressing exactly the axes its own shape distinguishes. An
-    // extent of one is a level that does not vary there, which is what makes it cover a tile of
-    // the tiles below it.
-    let mut s_args = SequenceArg::new();
+    // The block level first, the factor over the whole tensor where the scheme has one; each
+    // addresses exactly the axes its own shape distinguishes. An extent of one is an axis a level
+    // does not vary along, which is what makes it cover a tile of the tiles below it.
+    if !(1..=2).contains(&scales.len()) {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "QuantGemv: {} scale levels, where a scheme carries a block level and at most one \
+             factor over the whole tensor",
+            scales.len()
+        ))));
+    }
+    let mut levels = Vec::new();
     for binding in scales {
         let dims: Vec<usize> = binding.shape.iter().copied().collect();
         let full = [(M, problem.d_out), (KB, blocks)];
@@ -138,9 +146,14 @@ pub fn launch_ref(
             }
         }
         let projection = Projection::new(&[M, KB], &maps);
-        let level = launch.arg(binding).gathered(projection).build();
-        s_args.push(level.arg());
+        levels.push(launch.arg(binding).gathered(projection).build());
     }
+    let mut levels = levels.into_iter();
+    let block = levels.next().expect("a block level, checked above").arg();
+    let s_args = match levels.next() {
+        Some(global) => ScalesArgLaunch::block_under(block, global.arg()),
+        None => ScalesArgLaunch::block(block),
+    };
     // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
     let out_op = launch.arg(out).subspace(&[M, N]).build();

@@ -441,6 +441,33 @@ impl<T: Numeric> Tile<T> {
     /// tile's depth, applied in turn. Each tile projects a step onto its own axes, so
     /// `lhs ∈ {M,K}` and `out ∈ {M,N}` line up on their own; the caller never matches axes by
     /// hand, and the root tile and a window of it read one region alike.
+    /// This operand's window placed at `from` on `axis`, reading no further than `until`, both
+    /// counted in that axis's own elements.
+    ///
+    /// A region names a whole tile of an axis; this names an element and says where reads stop,
+    /// which a tile coordinate cannot. A packed sequence starts wherever the one before it ended
+    /// and runs for however long it is, so both halves are runtime. `until` arms
+    /// [`Boundary::Zero`] on the axis, so a last tile overrunning the range reads zero there
+    /// rather than the next sequence's values.
+    pub fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> Tile<T> {
+        let tile_kind = match &self.tile_kind {
+            TileKind::Gmem(g) => TileKind::new_Gmem(g.within(axis, from, until)),
+            TileKind::Smem(g) => TileKind::new_Smem(g.within(axis, from, until)),
+            TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_) => panic!(
+                "Tile::within: only a memory operand carries a window to place; a fragment, a \
+                 tensor-map source and a recipe have none"
+            ),
+        };
+        Tile::<T> {
+            tile_kind,
+            space: comptime!(self.space.clone()),
+            depth: comptime!(self.depth),
+        }
+    }
+
     pub fn at(&self, region: &Region) -> Tile<T> {
         let skip = comptime!({
             assert!(

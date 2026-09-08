@@ -14,6 +14,7 @@ mod plane;
 mod procedural;
 mod quant;
 mod register;
+mod scales;
 mod tma;
 mod view;
 
@@ -27,5 +28,6 @@ pub use plane::*;
 pub use procedural::*;
 pub use quant::*;
 pub use register::*;
+pub use scales::*;
 pub use tma::*;
 pub use view::*;

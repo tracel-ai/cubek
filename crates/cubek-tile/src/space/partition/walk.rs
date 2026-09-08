@@ -7,9 +7,11 @@
 //! ([`region`](Walk::region)): decode the index as an odometer over the level's walked axes,
 //! last declared axis fastest, and add this instance's share on the distributed axes. It never
 //! iterates the instances themselves, the hardware does that, and it holds no current region:
-//! `for region in walk` is `for i in 0..total { region(i) }`. The only things a walk can be
-//! told are its order ([`reversed`](Walk::reversed)) and whether it unrolls
-//! ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering) is a
+//! `for region in walk` is `for i in 0..total { region(i) }`. What a walk can be told is its
+//! order ([`reversed`](Walk::reversed)), whether it unrolls ([`unrolled`](Walk::unrolled)), the
+//! run of the flat grid it takes ([`window`](Walk::window)), and one axis's coordinate outright
+//! ([`routed`](Walk::routed)), which is how a value the kernel read from data places a window
+//! that no loop coordinate could. Holding several regions at once (double buffering) is a
 //! schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
 //!
 //! Each region is a [`Region`], the path of levels from the space to that box; a [`Tile`]
@@ -18,8 +20,8 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand,
-    instance_count, instance_tiles, run_length,
+    Axis, Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand,
+    const_coords, instance_count, instance_tiles, run_length,
 };
 
 use super::walk_order::walk_index;
@@ -38,6 +40,15 @@ pub struct Walk {
     /// Per-axis spread factor combining a step with its position: the instance's tile
     /// share (`Contiguous`) or the instance count (`Interleaved`); `1` for `Sequential`.
     scales: Coords<usize>,
+    /// Per-axis coordinate the kernel routed rather than the odometer counted, `0` on every axis
+    /// it did not ([`routed`](Walk::routed)).
+    route: Coords<u32>,
+    /// Which axes [`route`](Self::route) speaks for, so the rest fold their digit as ever and
+    /// pay nothing. A routed axis takes that coordinate whole: an instance position folded in
+    /// would hand each lane of a distributed axis a different one, which is not what naming a
+    /// coordinate means.
+    #[cube(comptime)]
+    routed_at: Vec<usize>,
     /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
@@ -299,6 +310,8 @@ impl Walk {
             counts,
             positions,
             scales,
+            route: const_coords(comptime!(vec![0; rank])),
+            routed_at: comptime!(Vec::new()),
             base: 0usize,
             steps,
             parent,
@@ -309,12 +322,77 @@ impl Walk {
         }
     }
 
+    /// This walk taking one step along `axis`, at the coordinate `coord` states rather than the
+    /// one the odometer would have counted.
+    ///
+    /// What routing is: an operand's window on that axis is placed by a value the kernel read
+    /// (an expert per token, a physical page per logical one) instead of by a loop, and the axis
+    /// keeps the extent it truly has while the walk visits one coordinate of it. Everything below
+    /// reads the ordinary coordinate it is, so `at` is unchanged and no operand carries anything.
+    ///
+    /// The caller owns the coordinate, as it owns [`window`](Walk::window)'s range: a value past
+    /// the axis's extent windows past the buffer, and nothing here can check it.
+    pub fn routed(self, #[comptime] axis: Axis, coord: usize) -> Walk {
+        let rank = comptime!(self.space.rank());
+        let at = comptime!(self.space.position(axis));
+        comptime!(assert!(
+            self.space.contains(axis),
+            "Walk::routed: {axis:?} is not an axis of this walk's space, so it has no \
+             coordinate to state"
+        ));
+
+        let mut counts = Coords::<usize>::new();
+        let mut route = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            // One of it, so its digit folds to the constant `0` and the routed coordinate is
+            // the whole of what `resolve` pushes for this axis.
+            //
+            // Clamped to the tiles the axis has: the coordinate came from data, so it can name
+            // one it does not. Reading the wrong tile of this operand beats reading past its
+            // buffer, and a refusal is not available here (a panic inside a cube verb dies on a
+            // kernel-expansion worker thread, where no caller sees it).
+            if comptime!(p == at) {
+                // The axis's own tiles, not `counts`, which on a distributed axis is this
+                // instance's share of them and would clamp every lane to its first.
+                let last = comptime!(self.level.count(&self.space, axis) - 1).runtime();
+                counts.push(1usize);
+                route.push(coord.fmin(last).fcast::<u32>());
+            } else {
+                counts.push(self.counts.at(p));
+                route.push(self.route.at(p));
+            }
+        }
+        let steps = counts.fproduct(comptime!((0..rank).collect::<Vec<_>>()));
+
+        Walk {
+            counts,
+            positions: self.positions,
+            scales: self.scales,
+            route,
+            routed_at: comptime!({
+                let mut routed_at = self.routed_at.clone();
+                routed_at.push(at);
+                routed_at
+            }),
+            base: self.base,
+            steps,
+            parent: self.parent,
+            space: comptime!(self.space.clone()),
+            level: comptime!(self.level.clone()),
+            unroll: comptime!(self.unroll),
+            order: comptime!(self.order),
+        }
+    }
+
     /// This walk with its steps visited last to first.
     pub fn reversed(self) -> Walk {
         Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
+            route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base: self.base,
             steps: self.steps,
             parent: self.parent,
@@ -338,6 +416,8 @@ impl Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
+            route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base: self.base,
             steps: self.steps,
             parent: self.parent,
@@ -364,6 +444,8 @@ impl Walk {
             counts: self.counts,
             positions: self.positions,
             scales: self.scales,
+            route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base,
             steps,
             parent: self.parent,
@@ -397,7 +479,11 @@ impl Walk {
 
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
-            coords.push(self.fold(self.digit(idx, p), p).fcast::<u32>());
+            if comptime!(self.routed_at.contains(&p)) {
+                coords.push(self.route.at(p));
+            } else {
+                coords.push(self.fold(self.digit(idx, p), p).fcast::<u32>());
+            }
         }
         coords
     }
