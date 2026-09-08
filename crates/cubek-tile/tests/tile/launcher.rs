@@ -9,6 +9,7 @@ use cubek_tile::{
     Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
     PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec,
 };
+use cubek_tile::Blocks;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -206,6 +207,47 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     let off_the_tensor = launch.arg(tiled).subspace(&[M, K]).build();
 
     assert_eq!(off_the_tensor.spec.projection, stated.spec.projection);
+}
+
+/// A fragment load addresses its window as a base plus a row stride, which only describes a
+/// window lying inside one storage block. The launch is where the buffer's real extents and the
+/// leaf's edges are both known, so it settles which this operand is, and the kernel reads the
+/// answer rather than a boundary it cannot see.
+#[test]
+fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
+    let client = cubecl::test_device().client();
+
+    // Leaves are 8x8 with `leaf_k = 4`. Fragments of 16 (M) and 4 (K) hold whole leaf tiles.
+    let holds = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 8);
+        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+            .arg(binding(&client, &[4, 2, 16, 4]))
+            .subspace(&[M, K])
+            .tiling(StorageTiling::uniform(2, 1))
+            .build()
+    };
+    assert_eq!(holds.spec.blocks, Blocks::Hold);
+
+    // K's fragment of 6 does not: a leaf tile starting at k = 4 runs into the next block.
+    let splits = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 18);
+        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+            .arg(binding(&client, &[4, 3, 16, 6]))
+            .subspace(&[M, K])
+            .tiling(StorageTiling::uniform(2, 1))
+            .build()
+    };
+    assert_eq!(splits.spec.blocks, Blocks::Split);
+
+    // An untiled operand is one block over the whole buffer, whatever its extents.
+    let plain = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 18);
+        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+            .arg(binding(&client, &[64, 18]))
+            .subspace(&[M, K])
+            .build()
+    };
+    assert_eq!(plain.spec.blocks, Blocks::Hold);
 }
 
 /// A batch dim ahead of the tiled block: the metadata describes every logical dim, the operand's
