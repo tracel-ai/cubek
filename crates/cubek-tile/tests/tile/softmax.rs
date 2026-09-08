@@ -12,7 +12,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, MaskProbe, MemData, RowState, Space, StageStorage, TileArg, TileArgLaunch, TileSpec,
+    Axis, Level, MaskProbe, MemData, RowState, Space, StageStorage, TileArg, TileArgLaunch,
+    TileSpec,
 };
 
 const Q: Axis = Axis(0);
@@ -43,17 +44,20 @@ fn softmax_walk_kernel(
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
-    let kept_space = comptime!(Space::new(&[(Q, rows)]));
-    // One worker per row-slice, where a worker is a unit or a whole plane.
-    // `lanes == 1` is the unit arm, so everything below reads the same either
-    // way and the two differ in one call.
+    // One worker per row-slice, where a worker is a unit or a whole plane. A
+    // plane is handed its own window of the tiles (the leaf indexes no
+    // planes); a unit reads its rows off the whole tile. `lanes == 1` is the
+    // unit arm, so everything below reads the same either way.
+    let planes = comptime!(units / lanes);
+    let rpu = comptime!(rows.div_ceil(planes));
+    let kept_space = comptime!(Space::new(&[(Q, rpu)]));
     let mut state = match comptime!(lanes > 1) {
-        true => RowState::<f32>::over_planes(kept_space, units, lanes),
-        false => RowState::<f32>::new(kept_space, units),
+        true => RowState::<f32>::over_plane(kept_space, lanes),
+        false => RowState::<f32>::new(comptime!(Space::new(&[(Q, rows)])), units),
     };
-    let rpu = comptime!(state.share.rows());
     let lane = UNIT_POS_X as usize % lanes;
     let worker = UNIT_POS_X as usize / lanes;
+    let rows_level = comptime!(Level::walk(&[(Q, rpu), (S, cols)]));
     let mut acc = Array::<f32>::new(rpu);
     for ri in 0..rpu {
         acc[ri] = 0.0;
@@ -84,6 +88,7 @@ fn softmax_walk_kernel(
 
         let probe = MaskProbe {
             origin_q: 0,
+            row_origin: worker * rpu,
             origin_s: blk * cols,
             bound_q: rows,
             bound_s: bound_s as usize,
@@ -91,7 +96,23 @@ fn softmax_walk_kernel(
             causal,
             materialized,
         };
-        let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
+        let corr = if comptime!(lanes > 1) {
+            let mut score_w = score.at(&score.walk(comptime!(rows_level.clone())).region(worker));
+            let mut p_w = p.at(&p.walk(comptime!(rows_level.clone())).region(worker));
+            score_w.softmax::<f32>(&mut p_w, &mut state, &probe, &mask_tile, scale)
+        } else {
+            let probe = MaskProbe {
+                origin_q: 0,
+                row_origin: 0,
+                origin_s: blk * cols,
+                bound_q: rows,
+                bound_s: bound_s as usize,
+                q_rows: rows,
+                causal,
+                materialized,
+            };
+            score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale)
+        };
 
         // The block update `O = corr·O + P·V`, on a scalar accumulator.
         // Each lane sums the columns it owns and the plane closes it, which is
@@ -388,6 +409,7 @@ fn softmax_smem_acc_kernel(
 
         let probe = MaskProbe {
             origin_q: 0,
+            row_origin: 0,
             origin_s: blk * cols,
             bound_q: rows,
             bound_s: bound_s as usize,

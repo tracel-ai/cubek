@@ -3,15 +3,13 @@
 #![cfg(feature = "benchmarks")]
 
 use cubek_reduce::ReduceStrategy;
-use cubek_reduce::eval::benchmarks::{ReduceCorrectness, ReduceProblem};
+use cubek_reduce::eval::benchmarks::{
+    ReduceBenchPrecision, ReduceCorrectness, ReduceProblem, precisions, problems, strategies,
+};
+use cubek_reduce::eval::cpu_reference::comparison_epsilon;
 use cubek_test_utils::{CatalogEntry, Correctness, TestOutcome, assert_equals_approx};
 
 const SEEDS: [u64; 2] = [12, 34];
-
-/// f32 reductions over ~tens of millions of elements; some kernels accumulate
-/// noticeable noise. Tightened tolerances belong in the existing per-routine
-/// integration tests.
-const REDUCE_EPS: f32 = 1.0;
 
 fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
     entries
@@ -22,8 +20,6 @@ fn lookup<T>(entries: Vec<CatalogEntry<T>>, id: &str) -> T {
 }
 
 fn run(strategy_id: &str, problem_id: &str) {
-    use cubek_reduce::eval::benchmarks::{problems, strategies};
-
     let strategy: ReduceStrategy = lookup(strategies(), strategy_id);
     let problem: ReduceProblem = lookup(problems(), problem_id);
 
@@ -35,75 +31,68 @@ fn run(strategy_id: &str, problem_id: &str) {
         .reference_result(&problem, &SEEDS, None)
         .unwrap_or_else(|e| panic!("reference failed for {problem_id}: {e}"));
 
-    assert_equals_approx(&actual, &expected, REDUCE_EPS)
+    assert_equals_approx(&actual, &expected, comparison_epsilon(problem.config))
         .as_test_outcome()
         .enforce();
 }
 
-#[test]
-fn sum_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "sum_axis2_32x512x4095");
+/// Takes the f32 id and derives the f16 one, since the catalogue offers f16
+/// rows only where the device can fold them and there is nothing to look up
+/// otherwise.
+fn run_f16(strategy_id: &str, problem_id: &str) {
+    let f16 = ReduceBenchPrecision::F16;
+    if !precisions().contains(&f16) {
+        return;
+    }
+    run(strategy_id, &format!("{problem_id}{}", f16.suffix()));
 }
 
-#[test]
-fn sum_axis2_32x512x4095_plane_parallel() {
-    run("plane_parallel", "sum_axis2_32x512x4095");
+/// Each pair is checked at both precisions, under a module named for the shape
+/// so a second one does not collide. The list is a subset because one pair folds
+/// 67M elements against the host reference; what is missing has no check at all.
+macro_rules! bench_catalog {
+    ($shape:ident; $($problem:ident: [$($strategy:ident),+ $(,)?]),+ $(,)?) => {
+        mod $shape {
+            use super::*;
+
+            $(mod $problem {
+                use super::*;
+
+                $(mod $strategy {
+                    use super::*;
+
+                    const STRATEGY: &str = stringify!($strategy);
+                    const PROBLEM: &str = concat!(stringify!($problem), "_", stringify!($shape));
+
+                    #[test]
+                    fn f32() {
+                        run(STRATEGY, PROBLEM);
+                    }
+
+                    #[test]
+                    fn f16() {
+                        run_f16(STRATEGY, PROBLEM);
+                    }
+                })+
+            })+
+        }
+    };
 }
 
-#[test]
-fn arg_topk1_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "arg_topk1_axis2_32x512x4095");
-}
+bench_catalog! {
+    axis2_32x512x4095;
 
-#[test]
-fn arg_topk2_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "arg_topk2_axis2_32x512x4095");
-}
+    sum: [unit_parallel, plane_parallel],
+    arg_topk1: [unit_parallel],
+    arg_topk2: [unit_parallel],
+    arg_topk3: [unit_parallel],
 
-#[test]
-fn arg_topk3_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "arg_topk3_axis2_32x512x4095");
-}
-
-// The fused entries get timed against the two-launch ones, so they have to be
-// correct at the benchmark's own shape and strategy, not only at the small
-// shapes the integration tests cover.
-#[test]
-fn topk2_fused_axis2_32x512x4095_cube_serial() {
-    run("cube_serial", "topk2_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn topk3_fused_axis2_32x512x4095_cube_serial() {
-    run("cube_serial", "topk3_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn topk3_fused_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "topk3_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn topk3_two_launch_axis2_32x512x4095_cube_serial() {
-    run("cube_serial", "topk3_two_launch_axis2_32x512x4095");
-}
-
-#[test]
-fn max_fused_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "max_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn max_fused_axis2_32x512x4095_cube_serial() {
-    run("cube_serial", "max_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn min_fused_axis2_32x512x4095_unit_parallel() {
-    run("unit_parallel", "min_fused_axis2_32x512x4095");
-}
-
-#[test]
-fn min_fused_axis2_32x512x4095_cube_serial() {
-    run("cube_serial", "min_fused_axis2_32x512x4095");
+    // The fused entries get timed against the two-launch ones, so they have to be
+    // correct at the benchmark's own shape and strategy, not only at the small
+    // shapes the integration tests cover.
+    topk2_fused: [cube_serial],
+    topk3_fused: [unit_parallel, cube_serial],
+    topk3_two_launch: [cube_serial],
+    max_fused: [unit_parallel, cube_serial],
+    min_fused: [unit_parallel, cube_serial],
 }

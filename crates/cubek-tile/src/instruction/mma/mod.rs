@@ -3,4 +3,5 @@
 //! verb's, in `ops/matmul/lower.rs`.
 
 mod cmma;
+pub(crate) use cmma::rhs_layout;
 mod manual;

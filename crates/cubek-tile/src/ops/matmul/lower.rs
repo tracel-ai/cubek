@@ -229,7 +229,8 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Cmma(d) => {
-                strided_2d(lhs, rhs, out, transposed_fragment(rhs));
+                let transposed = transposed_rhs(lhs, rhs);
+                strided_2d(lhs, rhs, out, transposed);
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
@@ -315,18 +316,27 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
     ));
 }
 
-/// Whether `rhs` is a cmma fragment loaded col-major: a `(col, k)` window, the transpose of the
-/// role's own order, which the fragment reads as the same matrix ([`PlanePartition::store`]) and
-/// which is therefore the edge the contraction runs along, as it is for a folded register step.
+/// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)`
+/// window, the transpose of the role's own order, which the leaf reads as the same matrix
+/// ([`PlanePartition::store`], [`rhs_layout`](crate::instruction::rhs_layout)) and which is
+/// therefore the edge the contraction runs along, as it is for a folded register step.
 #[cube]
-fn transposed_fragment<ER: Numeric>(rhs: &Tile<ER>) -> comptime_type!(bool) {
+fn transposed_rhs<EL: Numeric, ER: Numeric>(
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+) -> comptime_type!(bool) {
     match &rhs.tile_kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
             PlaneTile::Mma(_) | PlaneTile::Register(_) => comptime!(false),
         },
+        // The contracted axis is the lhs's trailing one, as the leaf reads it: an axis the output
+        // lacks is not always contracted (a spanned leading axis is not).
+        TileKind::Smem(_) => comptime!(
+            crate::instruction::rhs_layout(&rhs.space, lhs.space.axis_at(lhs.space.rank() - 1))
+                == MatrixLayout::ColMajor
+        ),
         TileKind::Gmem(_)
-        | TileKind::Smem(_)
         | TileKind::PlanePartition(_)
         | TileKind::TmaGmem(_)
         | TileKind::Procedural(_) => comptime!(false),

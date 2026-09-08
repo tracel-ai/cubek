@@ -7,14 +7,14 @@ mod strategy;
 
 pub use benchmark::bench;
 pub use correctness::ReduceCorrectness;
-pub use problem::{ReduceBenchKind, ReduceProblem, problems};
+pub use problem::{ReduceBenchKind, ReduceBenchPrecision, ReduceProblem, precisions, problems};
 pub use strategy::strategies;
 
 use cubecl::benchmark::TimingMethod;
-use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use crate::ReduceStrategy;
+use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
 use crate::launch::ReduceDtypes;
 use crate::routines::ReduceCost;
 
@@ -50,7 +50,7 @@ impl cubek_test_utils::Category for Category {
     }
 
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::Device
+        cubek_test_utils::timing_method(TimingMethod::Device)
     }
 
     fn correctness(
@@ -64,7 +64,7 @@ impl cubek_test_utils::Category for Category {
     /// Scaled by the passes the harness makes over the cost model: a two-launch
     /// reduction reads and writes twice, which is the harness's doing.
     fn work(&self, problem: &ReduceProblem) -> Option<CategoryWork> {
-        let dtype = f32::elem_type_native();
+        let value_dtype = problem.precision.dtype();
         let input_elems: usize = problem.shape.iter().product();
         let reduce_len = problem.shape[problem.axis];
 
@@ -73,9 +73,9 @@ impl cubek_test_utils::Category for Category {
             reduce_count: input_elems / reduce_len,
             instruction: problem.config,
             dtypes: ReduceDtypes {
-                input: dtype,
-                output: dtype,
-                accumulation: dtype,
+                input: value_dtype,
+                output: output_dtype_for(&problem.config, value_dtype),
+                accumulation: accumulation_dtype(),
             },
         };
 
