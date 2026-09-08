@@ -57,7 +57,7 @@ fn conv_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -86,7 +86,7 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -113,7 +113,7 @@ fn conv_kernel_smem_padded<E: Numeric>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem_single_at(
         &walk,
         &input,
@@ -146,11 +146,11 @@ fn conv_kernel_two_levels<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for outer in space.level(comptime!(outer.clone())) {
+    for outer in space.over(&outer) {
         let out_outer = out.at(&outer);
         let input_outer = input.at(&outer);
         let weight_outer = weight.at(&outer);
-        for inner in outer.level(comptime!(inner.clone())) {
+        for inner in outer.over(&inner) {
             let mut out_inner = out_outer.at(&inner);
             out_inner.mm_with(
                 &input_outer.at(&inner),
@@ -179,12 +179,12 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(outer.clone()));
+    let walk = space.over(&outer);
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, depth);
     pipelined(walk, &mut ring, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
-            for inner in region.level(comptime!(inner.clone())) {
+            for inner in region.over(&inner) {
                 let mut out_inner = out_outer.at(&inner);
                 out_inner.mm_with(
                     &input.at(&inner),
@@ -1130,7 +1130,7 @@ fn conv_kernel_dynamic<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, Coords::new());
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1276,7 +1276,7 @@ fn conv_kernel_dynamic_padding<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1305,7 +1305,7 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), Coords::new(), offsets);
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -1338,7 +1338,7 @@ fn conv_kernel_all_dynamic<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),
@@ -1372,7 +1372,7 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out_region = out.at(region);
@@ -2397,7 +2397,7 @@ fn conv_mma_kernel<E: Numeric>(
     );
     acc.zero();
     // The walk selects fragments by coordinate, so it is unrolled.
-    let walk = space.level(comptime!(level.clone())).unrolled();
+    let walk = space.over(&level).unrolled();
     let mut ring = Ring::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut acc_region = acc.at(region);
@@ -2405,7 +2405,7 @@ fn conv_mma_kernel<E: Numeric>(
             acc_region.mma(input, weight, Semiring::SUM_PROD);
         });
     });
-    for r0 in out.level(comptime!(level.clone())).unrolled() {
+    for r0 in out.over(&level).unrolled() {
         let mut out_w = out.at(&r0);
         out_w.copy_cast_from(&acc.at(&r0));
     }
@@ -2826,7 +2826,7 @@ fn conv_kernel_rational_dynamic<E: Numeric>(
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_region = out.at(&region);
         out_region.mm_with(
             &input.at(&region),

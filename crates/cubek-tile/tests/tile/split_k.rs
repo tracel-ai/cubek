@@ -51,7 +51,7 @@ fn split_partials<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let partials = partials.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut partials_cube = partials.at(&region);
         partials_cube.mm_with(
             &a.at(&region),
@@ -73,7 +73,7 @@ fn reduce_splits<E: Numeric>(
 ) {
     let partials = partials.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -337,11 +337,11 @@ fn atomic_split_matmul<E: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }
@@ -658,7 +658,7 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_region = c.at(&region);
         c_region.mm_with(
             &a.at(&region),

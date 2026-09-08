@@ -1300,12 +1300,7 @@ impl<T: Numeric> MemData<T> {
     /// wherever the one before it ended and runs for however long it is. `until` arms
     /// [`Boundary::Zero`] on the axis, so the tail of a last tile that overruns the range reads
     /// zero rather than the next sequence's values.
-    pub(crate) fn within(
-        &self,
-        #[comptime] axis: Axis,
-        from: usize,
-        until: usize,
-    ) -> MemData<T> {
+    pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> MemData<T> {
         let proj = comptime!(self.projection.clone());
         comptime!(assert!(
             proj.untiled().is_direct() && !proj.is_tiled(),

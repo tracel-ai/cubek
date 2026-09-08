@@ -40,26 +40,17 @@ fn moe_kernel<E: Numeric>(
     space: Space,
     #[comptime] token: Level,
     #[comptime] expert: Level,
-    #[comptime] route: bool,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for tok in space.level(comptime!(token.clone())) {
-        let m = tok.coord(M);
-        let e = routes[m] as usize;
+    for tok in space.over(&token) {
+        let e = routes[tok.coord(M)] as usize;
 
         // The whole of it: the expert axis takes one step, at the coordinate the table named.
-        // `route` off walks the axis instead, which is the control the test breaks it with.
-        let experts = tok.level(comptime!(expert.clone()));
-        let experts = match comptime!(route) {
-            true => experts.routed(EXPERT, e),
-            false => experts,
-        };
-
-        for slab in experts {
+        for slab in tok.over(&expert).routed(EXPERT, e) {
             let mut o = out.at(&slab);
             o.mm_with(
                 &x.at(&slab),
@@ -87,7 +78,7 @@ fn w_values() -> Vec<f32> {
         .collect()
 }
 
-fn run(route: bool, routes: &[u32]) -> HostData {
+fn run(routes: &[u32]) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -97,12 +88,7 @@ fn run(route: bool, routes: &[u32]) -> HostData {
         Partitioning::new(
             // EXPERT at its true extent: the walk visits one of the three, the space still holds
             // three. Nothing here says a token uses one expert; the walk does.
-            Space::new(&[
-                (M, TOKENS),
-                (N, FEATURES),
-                (K, FEATURES),
-                (EXPERT, EXPERTS),
-            ]),
+            Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
             vec![Level::walk(&[(M, 1)]), Level::walk(&[(EXPERT, 1)])],
         ),
         KernelForm::Static,
@@ -112,13 +98,11 @@ fn run(route: bool, routes: &[u32]) -> HostData {
         .dtype(f32_ty)
         .custom(x_values())
         .generate_with_f32_host_data();
-    let (w_handle, _) = TestInput::builder(
-        client.clone(),
-        Shape::new([EXPERTS, FEATURES, FEATURES]),
-    )
-    .dtype(f32_ty)
-    .custom(w_values())
-    .generate_with_f32_host_data();
+    let (w_handle, _) =
+        TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
+            .dtype(f32_ty)
+            .custom(w_values())
+            .generate_with_f32_host_data();
     let routes_handle = TestInput::builder(client.clone(), Shape::new([TOKENS]))
         .dtype(u32_ty)
         .custom(routes.iter().map(|&r| r as f32).collect())
@@ -148,7 +132,6 @@ fn run(route: bool, routes: &[u32]) -> HostData {
         launcher.space_arg(),
         launcher.level(0),
         launcher.level(1),
-        route,
         f32_ty,
     );
 
@@ -165,8 +148,7 @@ fn expected(routes: &[u32]) -> Vec<Vec<f32>> {
                 .map(|n| {
                     (0..FEATURES)
                         .map(|k| {
-                            x[m * FEATURES + k]
-                                * w[e * FEATURES * FEATURES + k * FEATURES + n]
+                            x[m * FEATURES + k] * w[e * FEATURES * FEATURES + k * FEATURES + n]
                         })
                         .sum()
                 })
@@ -175,37 +157,24 @@ fn expected(routes: &[u32]) -> Vec<Vec<f32>> {
         .collect()
 }
 
+/// Two tables over the same weights: the answer follows the table. A route that did nothing
+/// could not, since it would fold every expert under both of them.
 #[test]
-fn a_routed_walk_contracts_each_token_against_its_own_expert() {
-    let got = run(true, &ROUTES);
-    let want = expected(&ROUTES);
-    for (m, row) in want.iter().enumerate() {
-        for (n, cell) in row.iter().enumerate() {
-            assert_eq!(
-                got.get_f32(&[m, n]),
-                *cell,
-                "token {m} feature {n}: expert {}",
-                ROUTES[m]
-            );
+fn a_routed_walk_contracts_each_token_against_the_expert_its_table_names() {
+    for routes in [ROUTES, [0, 0, 0, 0]] {
+        let got = run(&routes);
+        let want = expected(&routes);
+        for (m, row) in want.iter().enumerate() {
+            for (n, cell) in row.iter().enumerate() {
+                assert_eq!(
+                    got.get_f32(&[m, n]),
+                    *cell,
+                    "token {m} feature {n}: expert {}",
+                    routes[m]
+                );
+            }
         }
     }
-}
-
-/// Without the routed coordinate the same kernel walks all three experts and folds every one of
-/// them into the token, so the answer is a sum over experts rather than a pick of one. The
-/// mechanism is what the test above measures, not the arithmetic around it.
-#[test]
-fn without_the_route_the_walk_folds_every_expert() {
-    let got = run(false, &ROUTES);
-    let want = expected(&ROUTES);
-    let differs = (0..TOKENS)
-        .flat_map(|m| (0..FEATURES).map(move |n| (m, n)))
-        .any(|(m, n)| got.get_f32(&[m, n]) != want[m][n]);
-    assert!(
-        differs,
-        "dropping the route changed nothing, so the routed coordinate is not what places the \
-         weights window"
-    );
 }
 
 /// Counts the steps of a walk routed on `axis`, which the refusal test hands an axis the space
@@ -220,7 +189,7 @@ fn routed_axis_kernel(
 ) {
     let k = k.tile(comptime!(space.clone()));
     let mut steps = 0u32;
-    for _region in k.level(comptime!(level.clone())).routed(axis, 0usize) {
+    for _region in k.over(&level).routed(axis, 0usize) {
         steps += 1;
     }
     out[0] = f32::cast_from(steps);
@@ -282,7 +251,7 @@ fn routing_an_axis_of_the_space_is_the_only_case_checked_here() {
 fn a_route_past_the_last_expert_clamps_to_it() {
     const OVER: [u32; TOKENS] = [99, 0, 2, 1];
     const CLAMPED: [u32; TOKENS] = [(EXPERTS - 1) as u32, 0, 2, 1];
-    let got = run(true, &OVER);
+    let got = run(&OVER);
     let want = expected(&CLAMPED);
     for (m, row) in want.iter().enumerate() {
         for (n, cell) in row.iter().enumerate() {
@@ -370,9 +339,9 @@ fn moe_staged_kernel<E: Numeric>(
     let w = w.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for tok in space.level(comptime!(token.clone())) {
+    for tok in space.over(&token) {
         let e = routes[tok.coord(M)] as usize;
-        let experts = tok.level(comptime!(expert.clone())).routed(EXPERT, e);
+        let experts = tok.over(&expert).routed(EXPERT, e);
 
         let mut ring = Ring::smem_single(&experts, &w, StageStorage::Strided, 1usize);
         pipelined(experts, &mut ring, |slot, slab| {
@@ -396,12 +365,7 @@ fn a_routed_operand_stages_the_expert_the_table_named() {
     let launcher = Launcher::implied(
         &client,
         Partitioning::new(
-            Space::new(&[
-                (M, TOKENS),
-                (N, FEATURES),
-                (K, FEATURES),
-                (EXPERT, EXPERTS),
-            ]),
+            Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
             vec![Level::walk(&[(M, 1)]), Level::walk(&[(EXPERT, 1)])],
         ),
         KernelForm::Static,

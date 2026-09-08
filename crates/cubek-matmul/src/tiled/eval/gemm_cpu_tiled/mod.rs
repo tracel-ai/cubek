@@ -41,7 +41,8 @@ const EDGE: usize = 64;
 
 /// The binding saying for itself that both its matrix dims are stored `levels + 1` fragments deep.
 fn packed(mut binding: TensorBinding, levels: usize) -> TensorBinding {
-    binding.tiling = Tiling::new(&[levels + 1; 2]).expect("two matrix dims, at most four fragments");
+    binding.tiling =
+        Tiling::new(&[levels + 1; 2]).expect("two matrix dims, at most four fragments");
     binding
 }
 

@@ -278,11 +278,11 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in space.level(comptime!(level.clone())).unrolled() {
+    for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }
@@ -329,11 +329,11 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in space.level(comptime!(level.clone())).unrolled() {
+    for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }
@@ -380,11 +380,11 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     );
     acc.zero();
     // The K steps select the one fragment by comptime coordinate, so the walk unrolls.
-    for region in space.level(comptime!(level.clone())).unrolled() {
+    for region in space.over(&level).unrolled() {
         let mut acc_region = acc.at(&region);
         acc_region.mma(&a.at(&region), &b.at(&region), Semiring::SUM_PROD);
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }

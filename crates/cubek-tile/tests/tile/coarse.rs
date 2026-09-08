@@ -47,7 +47,7 @@ fn coarse_lhs_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),

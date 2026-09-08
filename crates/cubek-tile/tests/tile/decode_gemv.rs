@@ -48,21 +48,21 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let out = out.tile(comptime!(space.clone()));
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
-    for region in out.level(comptime!(cube.clone())) {
+    for region in out.over(&cube) {
         let mut out_w = out.at(&region);
         out_w.zero();
     }
-    for region in space.level(comptime!(cube.clone())) {
+    for region in space.over(&cube) {
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = scales.at(&region);
-        for region in region.level(comptime!(plane.clone())) {
+        for region in region.over(&plane) {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = scales_cube.at(&region);
-            for region in region.level(comptime!(lane.clone())) {
+            for region in region.over(&lane) {
                 let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&region),
@@ -113,17 +113,17 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in space.level(comptime!(cube.clone())) {
+    for region in space.over(&cube) {
         let acc_cube = acc.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
         let scales_cube = scales.at(&region);
-        for region in region.level(comptime!(plane.clone())) {
+        for region in region.over(&plane) {
             let acc_plane = acc_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
             let scales_plane = scales_cube.at(&region);
-            for region in region.level(comptime!(lane.clone())) {
+            for region in region.over(&lane) {
                 let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
                     &w_plane.at(&region),
@@ -134,9 +134,9 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             }
         }
     }
-    for r0 in out.level(comptime!(cube.clone())).unrolled() {
-        for r1 in r0.level(comptime!(plane.clone())).unrolled() {
-            for r2 in r1.level(comptime!(lane.clone())).unrolled() {
+    for r0 in out.over(&cube).unrolled() {
+        for r1 in r0.over(&plane).unrolled() {
+            for r2 in r1.over(&lane).unrolled() {
                 let mut out_w = out.at(&r2);
                 out_w.copy_cast_from(&acc.at(&r2));
             }

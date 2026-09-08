@@ -94,13 +94,13 @@ pub struct Run {
 /// verb checks the level it is handed: `for plane in stage.planes(level)` refuses a level that
 /// deals to cubes or steps an axis, so the header cannot say one thing while the value does
 /// another. A kernel generic over its levels, which cannot know the verb, says
-/// [`level`](Space::level).
+/// [`over`](Space::over).
 #[cube]
 impl Space {
-    /// The regions of `level` over this space, whatever verb the level is: what a kernel handed
+    /// The regions of `level` over this space, whatever scope the level is: what a kernel handed
     /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
-    pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(self, level, Region::root(self, 0usize))
+    pub fn over(&self, #[comptime] level: &Level) -> Walk {
+        Walk::of(self, comptime!(level.clone()), Region::root(self, 0usize))
     }
 
     /// Each cube's box of this space under `level`, which deals to the cube grid and steps
@@ -189,9 +189,9 @@ impl Region {
         )
     }
 
-    /// [`Space::level`] over this region's own box, one level further down the path.
-    pub fn level(&self, #[comptime] level: Level) -> Walk {
-        Walk::of(&self.child(), level, self.clone())
+    /// [`Space::over`] over this region's own box, one level further down the path.
+    pub fn over(&self, #[comptime] level: &Level) -> Walk {
+        Walk::of(&self.child(), comptime!(level.clone()), self.clone())
     }
 }
 
@@ -536,7 +536,7 @@ impl Walk {
                 .expect("Walk::run: this level deals no work as one; say `shared_by`")
         );
         let instances = comptime!(work.instances());
-        let stride = self.region(0).level(below).total();
+        let stride = self.region(0).over(&below).total();
         let steps = self.total() * stride;
         let pos = hardware_pos(comptime!(work.scope()));
         let start = pos * steps / instances;

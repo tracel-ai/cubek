@@ -63,7 +63,7 @@ fn packed_matmul<E: Numeric>(
     let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -95,7 +95,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     );
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -259,7 +259,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &x.at(&region),
@@ -290,7 +290,7 @@ fn native_matmul<E: Numeric>(
     let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &w.at(&region),
@@ -347,7 +347,7 @@ fn packed_gemv<E: Numeric, V: Size>(
                 Semiring::SUM_PROD,
             );
         }
-        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+        for r0 in c.over(&steps).unrolled() {
             let mut c_w = c.at(&r0);
             c_w.copy_cast_from(&acc.at(&r0));
         }
@@ -1753,7 +1753,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.level(comptime!(steps.clone())).unrolled() {
+        for r0 in c.over(&steps).unrolled() {
             let mut c_w = c.at(&r0);
             c_w.copy_cast_from(&acc.at(&r0));
         }

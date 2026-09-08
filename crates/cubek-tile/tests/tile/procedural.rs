@@ -42,7 +42,7 @@ fn materialize<E: Numeric>(
     #[comptime] level: Level,
 ) {
     let output = output.tile(comptime!(space.clone()));
-    for region in source.level(comptime!(level.clone())) {
+    for region in source.over(&level) {
         let mut output_region = output.at(&region);
         output_region.copy_from(&source.at(&region));
     }
@@ -104,7 +104,7 @@ fn product_kernel_staged<E: Float>(
         ),
     );
     let output = output.tile(comptime!(space.clone()));
-    let walk = source.level(comptime!(level.clone()));
+    let walk = source.over(&level);
     let mut ring = Ring::smem_single(&walk, &source, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut output_region = output.at(region);

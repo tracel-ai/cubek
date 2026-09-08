@@ -620,12 +620,16 @@ impl<T: Numeric> Tile<T> {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
-    /// [`Space::level`] over this tile's own box: its axes alone, so a loop over one operand's
+    /// [`Space::over`] over this tile's own box: its axes alone, so a loop over one operand's
     /// windows (each lane's rows of an output) steps nothing the operand does not span, where
     /// the kernel's space would. The regions sit one level below this tile's depth.
-    pub fn level(&self, #[comptime] level: Level) -> Walk {
+    pub fn over(&self, #[comptime] level: &Level) -> Walk {
         let space = self.runtime_space();
-        Walk::of(&space, level, Region::root(&space, comptime!(self.depth)))
+        Walk::of(
+            &space,
+            comptime!(level.clone()),
+            Region::root(&space, comptime!(self.depth)),
+        )
     }
 
     /// [`Space::cubes`] over this tile's own box.
@@ -931,7 +935,7 @@ impl<T: Numeric> TileExpand<T> {
 
 /// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
 /// [`witnesses`](Tile::witnesses) it, which is how an operation turns its comptime space into the
-/// runtime one [`Space::level`] walks. A fully-`Static` space short-circuits to no
+/// runtime one [`Space::over`] walks. A fully-`Static` space short-circuits to no
 /// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
 #[cube]
 pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(

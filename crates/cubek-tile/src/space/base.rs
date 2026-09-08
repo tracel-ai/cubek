@@ -159,7 +159,7 @@ impl SpaceExpand {
 impl Space {
     /// The runtime operation space: the comptime space plus the runtime `sizes` of its
     /// `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
-    /// [`Space::level`] reads them through [`Extents::count`].
+    /// [`Space::over`] reads them through [`Extents::count`].
     pub(crate) fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
         Space {
             extents: Extents {

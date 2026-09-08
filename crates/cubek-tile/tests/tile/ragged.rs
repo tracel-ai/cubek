@@ -35,7 +35,7 @@ fn ragged_sum_kernel<E: Numeric>(
     let packed = packed.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for sequence in space.level(comptime!(seq.clone())) {
+    for sequence in space.over(&seq) {
         let b = sequence.coord(B);
         let start = ends[b] as usize;
         let end = ends[b + 1] as usize;
@@ -45,7 +45,7 @@ fn ragged_sum_kernel<E: Numeric>(
 
         // The whole of it: the walk over the packed axis takes `end - start` steps from `start`,
         // so an empty sequence takes none and a short one never reads its neighbour's tokens.
-        let tokens = sequence.level(comptime!(token.clone())).window(start, end - start);
+        let tokens = sequence.over(&token).window(start, end - start);
         for pos in tokens {
             let mut cell = out.at(&pos);
             cell.reduce_axis_accumulate(&packed.at(&pos), comptime!(Monoid::Sum));
@@ -124,13 +124,13 @@ fn run() -> HostData {
 }
 
 /// The reference, folded on the host from the same cumulative lengths.
-fn expected() -> Vec<Vec<f32>> {
+fn expected(ends: &[u32]) -> Vec<Vec<f32>> {
     let values = packed_values();
     (0..SEQS)
         .map(|b| {
             (0..FEATURES)
                 .map(|d| {
-                    (ENDS[b] as usize..ENDS[b + 1] as usize)
+                    (ends[b] as usize..ends[b + 1] as usize)
                         .map(|p| values[p * FEATURES + d])
                         .sum()
                 })
@@ -142,7 +142,7 @@ fn expected() -> Vec<Vec<f32>> {
 #[test]
 fn a_windowed_walk_folds_each_sequence_over_its_own_tokens() {
     let got = run();
-    let want = expected();
+    let want = expected(&ENDS);
     for (b, row) in want.iter().enumerate() {
         for (d, cell) in row.iter().enumerate() {
             assert_eq!(
@@ -172,13 +172,12 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
     space: Space,
     #[comptime] seq: Level,
     #[comptime] token: Level,
-    #[comptime] place: bool,
     #[define(E)] _dtype: ElemType,
 ) {
     let packed = packed.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for sequence in space.level(comptime!(seq.clone())) {
+    for sequence in space.over(&seq) {
         let b = sequence.coord(B);
         let start = ends[b] as usize;
         let end = ends[b + 1] as usize;
@@ -186,15 +185,10 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
         let mut total = out.at(&sequence);
         total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
-        // `place` off leaves the operand where it lies, which the control test reads as the
-        // wrong sequence's tokens.
-        let seq_view = match comptime!(place) {
-            true => packed.within(P, start, end),
-            false => packed.within(P, 0usize, TOKENS.runtime()),
-        };
+        let seq_view = packed.within(P, start, end);
 
         for blk in sequence
-            .level(comptime!(token.clone()))
+            .over(&token)
             .window(0, (end - start).div_ceil(BLOCK))
         {
             let mut cell = out.at(&blk);
@@ -203,7 +197,7 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
     }
 }
 
-fn run_blocked(place: bool) -> HostData {
+fn run_blocked(ends: &[u32]) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -221,9 +215,9 @@ fn run_blocked(place: bool) -> HostData {
         .dtype(f32_ty)
         .custom(packed_values())
         .generate_with_f32_host_data();
-    let ends_handle = TestInput::builder(client.clone(), Shape::new([ENDS.len()]))
+    let ends_handle = TestInput::builder(client.clone(), Shape::new([ends.len()]))
         .dtype(u32_ty)
-        .custom(ENDS.iter().map(|&e| e as f32).collect())
+        .custom(ends.iter().map(|&e| e as f32).collect())
         .generate_without_host_data();
     let out_handle = TestInput::builder(client.clone(), Shape::new([SEQS, FEATURES]))
         .dtype(f32_ty)
@@ -246,42 +240,30 @@ fn run_blocked(place: bool) -> HostData {
         launcher.space_arg(),
         launcher.level(0),
         launcher.level(1),
-        place,
         f32_ty,
     );
 
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
 }
 
+/// Two sets of lengths over the same buffer, both with sequences starting off a block boundary
+/// and running past one. The answer follows the lengths, which it could not if the placement did
+/// nothing, since every sequence would fold from token zero under both.
 #[test]
 fn a_placed_window_folds_each_blocked_sequence_over_its_own_tokens() {
-    let got = run_blocked(true);
-    let want = expected();
-    for (b, row) in want.iter().enumerate() {
-        for (d, cell) in row.iter().enumerate() {
-            assert_eq!(
-                got.get_f32(&[b, d]),
-                *cell,
-                "sequence {b} feature {d}: tokens {}..{}",
-                ENDS[b],
-                ENDS[b + 1]
-            );
+    for ends in [ENDS, [0, 3, 3, 6, 10]] {
+        let got = run_blocked(&ends);
+        let want = expected(&ends);
+        for (b, row) in want.iter().enumerate() {
+            for (d, cell) in row.iter().enumerate() {
+                assert_eq!(
+                    got.get_f32(&[b, d]),
+                    *cell,
+                    "sequence {b} feature {d}: tokens {}..{}",
+                    ends[b],
+                    ends[b + 1]
+                );
+            }
         }
     }
-}
-
-/// Leaving the operand where it lies reads from token zero for every sequence, so a sequence that
-/// does not start there folds its neighbour's tokens. The placement is what the test above
-/// measures, not the arithmetic around it.
-#[test]
-fn without_the_placement_a_sequence_folds_from_token_zero() {
-    let got = run_blocked(false);
-    let want = expected();
-    let differs = (0..SEQS)
-        .flat_map(|b| (0..FEATURES).map(move |d| (b, d)))
-        .any(|(b, d)| got.get_f32(&[b, d]) != want[b][d]);
-    assert!(
-        differs,
-        "dropping the placement changed nothing, so it is not what places the sequence's window"
-    );
 }

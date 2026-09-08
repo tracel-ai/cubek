@@ -254,9 +254,13 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
-    /// `self[r, :] *= corr[r]` over the partition's rows, each tile bounced through the scratch
-    /// under plane syncs: stored, scaled a cell per lane, loaded back. A plane whose factors are
-    /// all one skips the bounce; `corr` is plane-uniform, so the skip is.
+    /// `self[r, :] *= corr[r]` over the partition's rows, each tile bounced through the scratch:
+    /// stored, scaled a cell per lane, loaded back.
+    ///
+    /// The syncs are cube-wide, as every other fragment bounce here is: a plane sync does not
+    /// order a fragment store against the lanes' own writes on every backend. They sit outside
+    /// the skip, so a plane whose factors are all one still reaches each one, and only its work
+    /// is skipped; `corr` is plane-uniform, so that skip is.
     pub(crate) fn rescale_rows(&self, corr: &Array<T>, #[comptime] lanes: usize) {
         let mut scratch = #[comptime]
         match &self.scratch {
@@ -275,16 +279,18 @@ impl<T: Numeric> PlanePartition<T> {
                 moved = true;
             }
         }
-        if moved {
-            let cells = comptime!(m * n);
-            let lane = UNIT_POS_X as usize % lanes;
+        let cells = comptime!(m * n);
+        let lane = UNIT_POS_X as usize % lanes;
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
-            for mi in 0..comptime!(self.m_tiles) {
-                #[unroll]
-                for ni in 0..comptime!(self.n_tiles) {
-                    let mut tile = self.at(mi, ni);
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut tile = self.at(mi, ni);
+                if moved {
                     tile.store_scratch(&scratch);
-                    sync_plane();
+                }
+                sync_cube();
+                if moved {
                     #[unroll]
                     for t in 0..comptime!(cells.div_ceil(lanes)) {
                         let cell = lane + t * lanes;
@@ -292,10 +298,12 @@ impl<T: Numeric> PlanePartition<T> {
                             scratch[cell] *= corr[mi * m + cell / n];
                         }
                     }
-                    sync_plane();
-                    tile.load_scratch(&scratch);
-                    sync_plane();
                 }
+                sync_cube();
+                if moved {
+                    tile.load_scratch(&scratch);
+                }
+                sync_cube();
             }
         }
     }
