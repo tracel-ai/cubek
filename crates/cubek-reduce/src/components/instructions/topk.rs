@@ -4,7 +4,7 @@ use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, OrderKey, SharedAccumulatorKind, SlotCount, Value,
+    Accumulator, AccumulatorFormat, DynamicSharedAccumulator, Item, OrderKey, SlotCount, Value,
     ValueExpand, ValueOrder, empty_order_key, lowest_coordinate_matching, order_key_coordinate,
     order_key_value, pack_order_key, packs_key, ranked_key_insert,
 };
@@ -12,7 +12,7 @@ use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
     components::instructions::{
         ReduceOutputMode, ReduceRequirements, ReduceStep, ReduceWithIndices,
-        ReduceWithIndicesFamily, SharedAccumulator,
+        ReduceWithIndicesFamily,
     },
 };
 use cubecl::frontend::Numeric;
@@ -90,88 +90,9 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
     }
 }
 
-/// The shared memory used by [`TopK`], in whichever of the two spellings the
-/// instruction accumulates in. Each arm holds `k` slices.
-#[derive(CubeType)]
-pub enum TopKSharedAccumulator<P: ReducePrecision> {
-    /// Value slices, beside coordinate slices when the instruction stages those
-    /// separately.
-    Unpacked {
-        elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
-        args: SharedAccumulatorKind<Vector<u32, P::SI>>,
-    },
-    /// Slices of keys, each a value packed with its coordinate.
-    Packed(SharedAccumulatorKind<Vector<OrderKey, P::SI>>),
-}
-
-#[cube]
-impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
-        let is_packed = packs_key::<P>(inst.output);
-        let has_coords = comptime!(inst.output.has_indices() && !is_packed);
-
-        // Every loop must be unrolled: a `Sequence` is built at expand time, so a
-        // runtime loop would run the body once and leave a single slice behind
-        // whatever `k` is, and `read`/`write` would then index past the end.
-        if comptime!(is_packed) {
-            let mut packed = Sequence::new();
-            #[unroll]
-            for _ in 0..inst.k {
-                packed.push(Shared::new_slice(length));
-            }
-
-            TopKSharedAccumulator::new_Packed(SharedAccumulatorKind::new_Multiple(packed))
-        } else {
-            let mut elements = Sequence::new();
-            #[unroll]
-            for _ in 0..inst.k {
-                elements.push(Shared::new_slice(length));
-            }
-
-            let args = if has_coords {
-                let mut args = Sequence::new();
-                #[unroll]
-                for _ in 0..inst.k {
-                    args.push(Shared::new_slice(length));
-                }
-                SharedAccumulatorKind::new_Multiple(args)
-            } else {
-                SharedAccumulatorKind::new_None()
-            };
-
-            TopKSharedAccumulator::new_Unpacked(SharedAccumulatorKind::new_Multiple(elements), args)
-        }
-    }
-
-    fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        match accumulator {
-            TopKSharedAccumulator::Packed(packed) => Accumulator::<P> {
-                elements: Value::new_None(),
-                args: Value::new_None(),
-                packed: packed.get(index),
-            },
-            TopKSharedAccumulator::Unpacked { elements, args } => Accumulator::<P> {
-                elements: elements.get(index),
-                args: args.get(index),
-                packed: Value::new_None(),
-            },
-        }
-    }
-
-    fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        match accumulator {
-            TopKSharedAccumulator::Packed(packed) => packed.set(index, item.packed),
-            TopKSharedAccumulator::Unpacked { elements, args } => {
-                elements.set(index, item.elements);
-                args.set(index, item.args);
-            }
-        }
-    }
-}
-
 #[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
-    type SharedAccumulator = TopKSharedAccumulator<P>;
+    type SharedAccumulator = DynamicSharedAccumulator<P>;
     type Config = TopKConfig;
 
     fn requirements(this: &Self) -> super::ReduceRequirements {

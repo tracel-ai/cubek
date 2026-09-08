@@ -58,9 +58,9 @@ impl ReduceOperationConfig {
         acc_elem_size: usize,
         vector_size: usize,
     ) -> usize {
-        // Index slices are `Vector<u32, SI>` for every instruction that has them
-        // (`ArgAccumulator` and `TopKSharedAccumulator`), so the index element is
-        // always u32. Revisit this if indices ever widen (e.g. u64 coordinates).
+        // Index slices are `Vector<u32, SI>` for every instruction that has them,
+        // so the index element is always u32. Revisit this if indices ever widen
+        // (e.g. u64 coordinates).
         let index_elem_size = core::mem::size_of::<u32>();
         let (value_slices, index_slices) = match self {
             ReduceOperationConfig::Sum
