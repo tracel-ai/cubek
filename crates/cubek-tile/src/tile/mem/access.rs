@@ -1226,6 +1226,94 @@ impl<T: Numeric> MemData<T> {
             init_from: comptime!(self.init_from),
         }
     }
+
+    /// This window placed at `from` on `axis` and reading no further than `until`, both counted
+    /// in that axis's own elements.
+    ///
+    /// Where a routed coordinate names a whole tile of an axis, this places the window at an
+    /// element and says where it stops, which a coordinate cannot: a packed sequence starts
+    /// wherever the one before it ended and runs for however long it is. `until` arms
+    /// [`Boundary::Zero`] on the axis, so the tail of a last tile that overruns the range reads
+    /// zero rather than the next sequence's values.
+    pub(crate) fn within(
+        &self,
+        #[comptime] axis: Axis,
+        from: usize,
+        until: usize,
+    ) -> MemData<T> {
+        let proj = comptime!(self.projection.clone());
+        comptime!(assert!(
+            proj.untiled().is_direct() && !proj.is_tiled(),
+            "MemData::within: placing a window at an element needs a direct, untiled mapping"
+        ));
+        let rank = comptime!(proj.physical_rank());
+        let at = comptime!(proj.position(axis));
+
+        let mut origin = Coords::<i32>::new();
+        let mut bound = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            if comptime!(p == at) {
+                origin.push(self.window.origin.at(p).fadd(from.fcast::<i32>()));
+                bound.push(self.window.bound.at(p).fmin(until.fcast::<u32>()));
+            } else {
+                origin.push(self.window.origin.at(p));
+                bound.push(self.window.bound.at(p));
+            }
+        }
+
+        // The line route, which `dense_lines` and the matrix view read, moves by the same
+        // elements: one axis step at edge `1`.
+        let start = self.window_start.fadd(from.fcast::<u32>().fmul(step_offset(
+            comptime!(self.layout.projection.clone()),
+            comptime!(Axis(at as u8)),
+            1usize,
+            &self.layout.physical_shape,
+            &self.layout.physical_strides,
+        )));
+
+        MemData::<T> {
+            store: Store::<T> {
+                backing: self.store.backing.clone(),
+                vector_size: comptime!(self.store.vector_size),
+                quant: self.store.quant.clone(),
+                packing: comptime!(self.store.packing),
+            },
+            layout: self.layout.clone(),
+            window: Window::new(
+                origin,
+                self.window.extent.clone(),
+                bound,
+                comptime!(self.window.signed),
+                comptime!({
+                    let mut boundaries = self.window.boundaries.clone();
+                    if boundaries.is_empty() {
+                        boundaries = (0..rank).map(|_| None).collect();
+                    }
+                    boundaries[at] = Some(Boundary::Zero);
+                    boundaries
+                }),
+            ),
+            projection: comptime!(proj),
+            source_window: self.source_window.clone(),
+            map: self.map.clone(),
+            offsets: self.offsets.clone(),
+            window_start: start,
+            // A placed window no longer covers the buffer, so the straight-through fill is off,
+            // and `until` is a runtime bound the launch could not have stated: reads past it are
+            // an overhang this tile did not have before, so it masks from here down.
+            access: comptime!(Access {
+                whole: false,
+                overhang: Overhang::Masked,
+                write: self.access.write,
+                units: self.access.units,
+            }),
+            lanes: self.lanes,
+            split_share: comptime!(self.split_share),
+            init_from: comptime!(self.init_from),
+        }
+    }
+
 }
 
 /// One gathered physical axis's descent into `region`: how far its window moves, the phase that

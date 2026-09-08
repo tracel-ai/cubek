@@ -155,3 +155,133 @@ fn a_windowed_walk_folds_each_sequence_over_its_own_tokens() {
         }
     }
 }
+
+/// Tokens in blocks of four, which is where a step count alone stops being enough: sequence 2
+/// starts at token 2 and sequence 3 at token 7, neither a block boundary, and both run a length
+/// no block edge lands on.
+const BLOCK: usize = 4;
+
+/// `out[b] = Σ packed[p]` again, but a block of tokens per step. [`Tile::within`] places the
+/// operand at the sequence's first token and stops its reads at the last, so the block that
+/// overruns reads zero instead of the next sequence.
+#[cube(launch)]
+fn blocked_ragged_sum_kernel<E: Numeric>(
+    packed: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    ends: &Tensor<u32>,
+    space: Space,
+    #[comptime] seq: Level,
+    #[comptime] token: Level,
+    #[comptime] place: bool,
+    #[define(E)] _dtype: ElemType,
+) {
+    let packed = packed.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+
+    for sequence in space.level(comptime!(seq.clone())) {
+        let b = sequence.coord(B);
+        let start = ends[b] as usize;
+        let end = ends[b + 1] as usize;
+
+        let mut total = out.at(&sequence);
+        total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
+
+        // `place` off leaves the operand where it lies, which the control test reads as the
+        // wrong sequence's tokens.
+        let seq_view = match comptime!(place) {
+            true => packed.within(P, start, end),
+            false => packed.within(P, 0usize, TOKENS.runtime()),
+        };
+
+        for blk in sequence
+            .level(comptime!(token.clone()))
+            .window(0, (end - start).div_ceil(BLOCK))
+        {
+            let mut cell = out.at(&blk);
+            cell.reduce_axis_accumulate(&seq_view.at(&blk), comptime!(Monoid::Sum));
+        }
+    }
+}
+
+fn run_blocked(place: bool) -> HostData {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+    let u32_ty = u32::elem_type_native();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
+            vec![Level::walk(&[(B, 1)]), Level::walk(&[(P, BLOCK)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let (packed_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+        .dtype(f32_ty)
+        .custom(packed_values())
+        .generate_with_f32_host_data();
+    let ends_handle = TestInput::builder(client.clone(), Shape::new([ENDS.len()]))
+        .dtype(u32_ty)
+        .custom(ENDS.iter().map(|&e| e as f32).collect())
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([SEQS, FEATURES]))
+        .dtype(f32_ty)
+        .custom(vec![-1.0; SEQS * FEATURES])
+        .generate_without_host_data();
+
+    blocked_ragged_sum_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            packed_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[P, D]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[B, D]),
+        ),
+        ends_handle.binding().into_tensor_arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        place,
+        f32_ty,
+    );
+
+    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
+}
+
+#[test]
+fn a_placed_window_folds_each_blocked_sequence_over_its_own_tokens() {
+    let got = run_blocked(true);
+    let want = expected();
+    for (b, row) in want.iter().enumerate() {
+        for (d, cell) in row.iter().enumerate() {
+            assert_eq!(
+                got.get_f32(&[b, d]),
+                *cell,
+                "sequence {b} feature {d}: tokens {}..{}",
+                ENDS[b],
+                ENDS[b + 1]
+            );
+        }
+    }
+}
+
+/// Leaving the operand where it lies reads from token zero for every sequence, so a sequence that
+/// does not start there folds its neighbour's tokens. The placement is what the test above
+/// measures, not the arithmetic around it.
+#[test]
+fn without_the_placement_a_sequence_folds_from_token_zero() {
+    let got = run_blocked(false);
+    let want = expected();
+    let differs = (0..SEQS)
+        .flat_map(|b| (0..FEATURES).map(move |d| (b, d)))
+        .any(|(b, d)| got.get_f32(&[b, d]) != want[b][d]);
+    assert!(
+        differs,
+        "dropping the placement changed nothing, so it is not what places the sequence's window"
+    );
+}
