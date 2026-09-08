@@ -11,7 +11,7 @@ use crate::{
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
-    tiled::{K, M, N, batch_axis, logical_dims},
+    tiled::{K, M, N, batch_axis, logical_dims, validate_stored_tile},
 };
 
 /// A strided matmul operand must be contiguous along one of its two innermost dims. Under storage
@@ -135,6 +135,11 @@ pub fn launch_ref(
     // on: geometry off the concrete extents, overhang checks derived per operand, a storage block
     // matched to its level, all inside the launcher.
     let space = Space::new(&extents);
+    // A storage-tiled operand's tile must be the tile of one of this routine's levels, said here
+    // on the host rather than by the launch on a worker thread.
+    let partitioning = blueprint.partitioning(&space, &batch_axes);
+    validate_stored_tile(lhs.data(), "lhs", &space, partitioning.levels(), (M, K))?;
+    validate_stored_tile(rhs.data(), "rhs", &space, partitioning.levels(), (K, N))?;
     let plane_size = client.properties().hardware.plane_size_max;
     let launch = Launcher::partitioned(
         client,
