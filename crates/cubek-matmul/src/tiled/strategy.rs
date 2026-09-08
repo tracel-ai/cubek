@@ -10,7 +10,7 @@ use crate::{
     routine::{BlueprintStrategy, into_contiguous_if_highly_permuted},
     tiled::{
         cmma::{self, CmmaRoutine},
-        cpu_gemm::{self, CpuGemmRoutine, WithLayout},
+        cpu_gemm::{self, CpuGemmRoutine},
     },
 };
 
@@ -53,9 +53,9 @@ impl Strategy {
             ),
             Strategy::CpuGemm(strategy) => cpu_gemm::launch_ref(
                 client,
-                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, lhs)?)?,
-                WithLayout::strided_input(into_contiguous_if_highly_permuted(client, rhs)?)?,
-                WithLayout::strided_output(out)?,
+                into_contiguous_if_highly_permuted(client, lhs)?,
+                into_contiguous_if_highly_permuted(client, rhs)?,
+                out,
                 strategy,
                 dtypes,
             ),
