@@ -12,6 +12,8 @@
 //! - Quantized inputs.
 //! - Operands not row-major contiguous (col-major needs a fragment-layout path not yet wired).
 //! - Shapes not divisible by the instruction (the cmma transport cannot mask an overhang).
+//! - A storage-tiled input under any delivery but [`CmmaDelivery::Tiled`], or whose storage tile is not
+//!   this plan's stage on its axes: the storage tile names the stage, the plan cannot disagree.
 
 use std::fmt::Display;
 
@@ -35,6 +37,10 @@ pub enum CmmaDelivery {
     #[default]
     Copy,
     Tma,
+    /// An input packed at load into storage tiles of exactly this plan's stage (the weight of a prefill
+    /// matmul), so each stage is one contiguous run of the buffer; the other input may stay
+    /// row-major. Refused for a storage tile that is not the stage.
+    Tiled,
 }
 
 impl CmmaDelivery {
@@ -79,8 +85,9 @@ pub struct CmmaBlueprint {
 }
 
 impl CmmaBlueprint {
-    /// The cube's stage edges along `m`/`n`.
-    pub(crate) fn stage(&self) -> (usize, usize) {
+    /// The cube's stage edges along `m`/`n`: with [`stage_k`](Self::stage_k), the storage tile a
+    /// storage-tiled input is packed to.
+    pub fn stage(&self) -> (usize, usize) {
         (
             self.planes.m * self.partition.m * self.instruction.m,
             self.planes.n * self.partition.n * self.instruction.n,
@@ -143,6 +150,12 @@ impl CmmaStrategy {
             delivery: CmmaDelivery::Tma,
         }
     }
+
+    pub fn tiled() -> Self {
+        CmmaStrategy {
+            delivery: CmmaDelivery::Tiled,
+        }
+    }
 }
 
 impl Display for CmmaStrategy {
@@ -150,6 +163,7 @@ impl Display for CmmaStrategy {
         match self.delivery {
             CmmaDelivery::Copy => Ok(()),
             CmmaDelivery::Tma => f.write_str("_tma"),
+            CmmaDelivery::Tiled => f.write_str("_tiled"),
         }
     }
 }

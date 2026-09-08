@@ -8,10 +8,11 @@ use cubecl::prelude::*;
 
 use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
+use cubecl::zspace::Tiling;
 
 use crate::{
-    Axis, Blocks, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Level, Packing, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Space, Storage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -37,8 +38,6 @@ struct TileSourceData<'a> {
     concrete: Option<(&'a Space, &'a [Axis])>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
-    /// How the subspace axes are storage-tiled in the binding; `None` is untiled.
-    tiling: Option<StorageTiling>,
     /// The operand's own affine mapping, when it states one ([`gathered`](StridedTileSource::gathered));
     /// `None` derives it from the labeled dims instead.
     projection: Option<Projection>,
@@ -48,10 +47,11 @@ struct TileSourceData<'a> {
     packing: Packing,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
-    /// The leaf tile's edge per axis; set by [`Launcher::arg`](crate::Launcher::arg). What settles
-    /// whether a storage-tiled operand's blocks hold a whole window ([`Blocks`]): the launch is the
-    /// one place the buffer's real extents and the leaf's edges are both in hand.
-    leaf: &'a [(Axis, usize)],
+    /// The kernel's levels, outermost first; set by [`Launcher::arg`](crate::Launcher::arg) for a
+    /// launch that states them. What a storage-tiled operand's storage tile is matched against
+    /// ([`Storage`]): the launch is the one place the buffer's real extents and the kernel's
+    /// levels are both in hand.
+    levels: &'a [Level],
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization>,
 }
@@ -87,13 +87,12 @@ impl<'a> StridedTileSource<'a, Unset, Unset, Unset> {
                 concrete: None,
                 subspace: &[],
                 batch_axes: &[],
-                tiling: None,
                 projection: None,
                 v: 1,
                 boundary: None,
                 packing: Packing::Plain,
                 units: 0,
-                leaf: &[],
+                levels: &[],
                 quant: None,
             },
             _state: PhantomData,
@@ -124,7 +123,8 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
 
     /// Sets an explicit affine [`Projection`] for a gathered operand (convolution, resample),
     /// mapping logical axes to buffer dimensions. Mutually exclusive with
-    /// [`subspace`](Self::subspace), [`batches`](Self::batches) and [`tiling`](Self::tiling).
+    /// [`subspace`](Self::subspace) and [`batches`](Self::batches), and refuses a storage-tiled
+    /// binding.
     ///
     /// Checking follows [`may_underflow`](Projection::may_underflow); a window off the buffer's
     /// *tail* is not detected, so a gather that overruns (a rational mapping's last window always
@@ -144,15 +144,6 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
     /// omits, and a size-1 dim drops out. Default none (unbatched).
     pub fn batches(mut self, axes: &'a [Axis]) -> Self {
         self.data.batch_axes = axes;
-        self
-    }
-
-    /// How this binding storage-tiles the [`subspace`](Self::subspace) axes: one fragment count
-    /// per subspace axis, laid out level-major behind the batch dims. Default untiled (one
-    /// physical dim per axis). Only labels the dims, so the tiling is read back off the
-    /// [`ConcreteLayout`](crate::ConcreteLayout) rather than declared twice.
-    pub fn tiling(mut self, tiling: StorageTiling) -> Self {
-        self.data.tiling = Some(tiling);
         self
     }
 
@@ -202,9 +193,9 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
         self
     }
 
-    /// The leaf tile's edge per axis; set by [`Launcher::arg`](crate::Launcher::arg).
-    pub(crate) fn leaf(mut self, leaf: &'a [(Axis, usize)]) -> Self {
-        self.data.leaf = leaf;
+    /// The kernel's levels, outermost first; set by [`Launcher::arg`](crate::Launcher::arg).
+    pub(crate) fn levels(mut self, levels: &'a [Level]) -> Self {
+        self.data.levels = levels;
         self
     }
 }
@@ -416,40 +407,40 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             concrete,
             batch_axes,
             subspace,
-            tiling,
             projection,
             v,
             boundary,
             packing,
             units,
-            leaf,
+            levels,
             quant,
         } = self.data;
         let space = space.unwrap();
 
-        // How the bound tensor says it is stored. An operand that named no tiling asks it rather
-        // than assuming the buffer is plain; an unbound one (a fused store) has none to ask.
+        // How the bound tensor says it is stored: the tiling is a fact of the tensor, read off
+        // its binding rather than stated at the launch. An unbound operand (a fused store) has
+        // none to ask. A gathered operand states its mapping outright and the arm below refuses a
+        // tiled binding, so it never carries one.
         let stored = binding.as_ref().map(|b| b.tiling).unwrap_or_default();
-
-        // The tiling the labeled derivation will run on: what the caller named, else what the
-        // tensor says. A gathered operand states its mapping outright and the arm below refuses a
-        // tiled binding, so it never carries one; `check_stated` still sees the caller's own
-        // `tiling` and complains about that.
         let resolved = match projection {
             Some(_) => None,
-            None => tiling.clone().or_else(|| {
-                stored
-                    .is_tiled()
-                    .then(|| StorageTiling::stored(stored, subspace.len(), geometry.rank()))
-            }),
+            None => stored
+                .is_tiled()
+                .then(|| StorageTiling::stored(stored, subspace.len(), geometry.rank())),
         };
-        let blocks = match &resolved {
-            Some(tiling) if tiling.is_tiled() => {
-                blocks_under_leaf(&geometry, subspace, tiling, leaf)
+        // A storage tile is the tile of one of the kernel's levels, or the operand is refused.
+        let storage = match &resolved {
+            Some(tiling) => {
+                let (concrete, _) = concrete.unwrap_or_else(|| {
+                    panic!(
+                        "StridedTileSource: a storage-tiled operand's storage tile is matched against the \
+                         kernel's levels on real extents, which only a Launcher states"
+                    )
+                });
+                storage_level(&geometry, subspace, tiling, concrete, levels)
             }
-            _ => Blocks::Hold,
+            None => Storage::Strided,
         };
-        let tiled_rank = stored.is_tiled().then(|| geometry.rank());
 
         // Use the explicit projection if gathered, or derive it from labeled axes.
         // `addressed` contains all logical axes used for bounds checking.
@@ -460,7 +451,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
                     "StridedTileSource::gathered: the mapping addresses the buffer's own dims, so \
                      a storage-tiled binding ({stored:?}) has no reading here"
                 );
-                check_stated(&geometry, space, &projection, subspace, batch_axes, &tiling);
+                check_stated(&geometry, space, &projection, subspace, batch_axes);
                 let addressed = projection.logical_axes().to_vec();
                 (projection, addressed)
             }
@@ -536,7 +527,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             .boundaries(&boundaries)
             .units(units)
             .packing(packing)
-            .blocks(blocks);
+            .storage(storage);
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
             assert!(
@@ -548,18 +539,22 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         }
         Realized {
             tensor: binding.map(|mut binding| {
-                // A `Tiling` counts fragments off the *leading* logical dims, so dropping one
-                // would shift every count onto the wrong dim and leave the shipped arg claiming
-                // a layout it no longer has.
-                assert!(
-                    tiled_rank.is_none_or(|rank| rank == geometry.rank()),
-                    "StridedTileSource: a storage-tiled operand dropped a broadcast batch dim, \
-                     which its tiling counts from"
-                );
-                // The derivation may have dropped broadcast batch dims; the arg
-                // ships the geometry it settled on, not the one it arrived with.
+                // The derivation may have dropped broadcast batch dims; the arg ships the
+                // geometry it settled on, not the one it arrived with, and its tiling restated
+                // over those dims: a `Tiling` counts fragments off the leading logical dims, so
+                // one counted from a dropped dim would claim a layout the arg no longer has.
                 binding.shape = geometry.shape().into();
                 binding.strides = geometry.strides().into();
+                binding.tiling = match &resolved {
+                    Some(tiling) => {
+                        let batch_dims = geometry.rank() - tiling.physical_rank();
+                        let mut fragments = vec![1; batch_dims];
+                        fragments.extend((0..tiling.rank()).map(|axis| tiling.fragments(axis)));
+                        Tiling::new(&fragments)
+                            .expect("the binding's own tiling fit, and this drops dims from it")
+                    }
+                    None => stored,
+                };
                 binding.into_tensor_arg()
             }),
             vector_size: v,
@@ -570,35 +565,81 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
     }
 }
 
-/// Whether every axis's innermost storage fragment holds a whole number of leaf tiles, which is
-/// what makes a window land inside one block: windows start on leaf edges, so an edge that divides
-/// the fragment never lets one straddle two. Axes the leaf does not cut carry no constraint, and
-/// a source built without a [`Launcher`](crate::Launcher) states no leaf at all, which leaves the
-/// contract where it has always been, with the caller.
-fn blocks_under_leaf(
+/// Which level of the kernel's nest a storage-tiled operand's storage tile is the tile of. A tensor
+/// stored tiles-of-tiles deep names one level per nesting, coarse to fine, and the innermost
+/// is the one [`at`](crate::Tile::at) descends into. Matched on the subspace axes alone: a batch
+/// dim is stored one physical dim each regardless, and the cube's slice of it lies inside that.
+///
+/// # Panics
+///
+/// When the launch states no levels, or when some nesting's storage tile is no level's tile: the space
+/// owns the storage tile's size, so a tensor that arrived disagreeing is refused here, on the caller's
+/// thread, rather than read across a storage tile boundary.
+fn storage_level(
     geometry: &Geometry,
     subspace: &[Axis],
     tiling: &StorageTiling,
-    leaf: &[(Axis, usize)],
-) -> Blocks {
-    let block = tiling.order(subspace);
-    let batch_dims = geometry.rank() - block.len();
-    let dims: Vec<(usize, usize)> = geometry.dims().collect();
-    for (i, &axis) in subspace.iter().enumerate() {
-        let Some(&(_, edge)) = leaf.iter().find(|&&(a, _)| a == axis) else {
-            continue;
-        };
-        // The innermost fragment is the last physical dim this axis labels.
-        let last = block
+    space: &Space,
+    levels: &[Level],
+) -> Storage {
+    assert!(
+        !levels.is_empty(),
+        "StridedTileSource: a storage-tiled operand's storage tile is the tile of one of the kernel's \
+         levels, which this launch does not state; launch it through Launcher::partitioned"
+    );
+    let order = tiling.order(subspace);
+    let batch_dims = geometry.rank() - order.len();
+    let dims = &geometry.shape()[batch_dims..];
+    // Each axis's fragment extents, coarsest first.
+    let fragments: Vec<Vec<usize>> = subspace
+        .iter()
+        .map(|&axis| {
+            order
+                .iter()
+                .zip(dims)
+                .filter(|&(&a, _)| a == axis)
+                .map(|(_, &extent)| extent)
+                .collect()
+        })
+        .collect();
+    let tile_of = |i: usize| -> Vec<(Axis, usize)> {
+        let child = space.leaf(&levels[..=i]);
+        subspace
             .iter()
-            .rposition(|&a| a == axis)
-            .expect("the order lists every subspace axis");
-        let (extent, _) = dims[batch_dims + last];
-        if tiling.fragments(i) > 1 && !extent.is_multiple_of(edge) {
-            return Blocks::Split;
-        }
+            .map(|&axis| (axis, child.extent(axis)))
+            .collect()
+    };
+    let mut innermost = None;
+    let mut from = 0;
+    for nesting in 0..tiling.max_fragments() - 1 {
+        // The storage tile at this nesting: what its finer fragments multiply to, per axis. An axis
+        // stored as one fragment is whole; one stored shallower than the nesting reaches has no
+        // storage tile here, and its edge of one matches no tile.
+        let tile: Vec<(Axis, usize)> = subspace
+            .iter()
+            .zip(&fragments)
+            .map(|(&axis, extents)| match extents.len() {
+                1 => (axis, space.extent(axis)),
+                _ => (
+                    axis,
+                    extents[(nesting + 1).min(extents.len())..].iter().product(),
+                ),
+            })
+            .collect();
+        let level = (from..levels.len())
+            .find(|&i| tile_of(i) == tile)
+            .unwrap_or_else(|| {
+                panic!(
+                    "StridedTileSource: this operand is stored in {tile:?} storage tiles, which is the \
+                     tile of no level of the kernel's nest (the levels cut it to {:?}); the space \
+                     owns the storage tile's size, so pack the tensor to one of its tiles",
+                    (from..levels.len()).map(tile_of).collect::<Vec<_>>()
+                )
+            });
+        innermost = Some(level);
+        from = level + 1;
     }
-    Blocks::Hold
+    Storage::Tiled(innermost.expect("a tiled operand has at least one nesting"))
 }
 
 /// Derives a [`Projection`] from labeled subspace and batch axes. Leading batch dims align with
@@ -656,19 +697,18 @@ fn labeled(
 }
 
 /// Validates an explicit gathered [`Projection`] against the tensor binding and iteration space.
-/// Ensures mutually exclusive labeling options (`subspace`, `batch_axes`, `tiling`) were not provided.
+/// Ensures mutually exclusive labeling options (`subspace`, `batch_axes`) were not provided.
 fn check_stated(
     geometry: &Geometry,
     space: &Space,
     projection: &Projection,
     subspace: &[Axis],
     batch_axes: &[Axis],
-    tiling: &Option<StorageTiling>,
 ) {
     assert!(
-        subspace.is_empty() && batch_axes.is_empty() && tiling.is_none(),
-        "StridedTileSource::gathered: the mapping is stated outright, so `subspace`, `batches` \
-         and `tiling` have nothing left to describe"
+        subspace.is_empty() && batch_axes.is_empty(),
+        "StridedTileSource::gathered: the mapping is stated outright, so `subspace` and \
+         `batches` have nothing left to describe"
     );
     assert_eq!(
         projection.physical_rank(),

@@ -1,6 +1,7 @@
 //! Inferred-blueprint smoke tests for the tile-DSL cmma routine: the port of the
 //! multi-level simple cyclic cmma matmul.
 
+use cubecl::prelude::*;
 use cubek_matmul::{
     routine::BlueprintStrategy,
     tiled::{Strategy as Tiled, cmma::CmmaStrategy},
@@ -210,4 +211,173 @@ fn cmma_rejects_input_register_type() {
         }
         other => panic!("expected a type rejection, got {other:?}"),
     }
+}
+
+/// The weight packed at load into blocks of exactly the plan's stage and launched under the
+/// Tiled delivery beside a row-major activation: the same product as the row-major run, read
+/// one contiguous block per stage. The pack is a copy through the two tiles' views, so the
+/// block layout the kernel reads is the one the tile engine itself describes.
+#[test]
+fn cmma_storage_tiled_weight_f16() {
+    use cubecl::frontend::Scalar;
+    storage_tiled_weight(half::f16::elem_type_native());
+}
+
+#[test]
+fn cmma_storage_tiled_weight_f32() {
+    use cubecl::frontend::Scalar;
+    storage_tiled_weight(f32::elem_type_native());
+}
+
+/// Copy every logical `(b, k, n)` element of `src` into `dst` through their views, whatever
+/// each buffer's physical layout: how a weight is packed to a block layout on the device.
+#[cube(launch)]
+fn pack_weight<E: Numeric>(
+    src: &cubek_tile::TileArg<'_, E, Const<1>>,
+    dst: &cubek_tile::TileArg<'_, E, Const<1>>,
+    space: cubek_tile::Space,
+    #[define(E)] _dtype: ElemType,
+) {
+    use cubecl::std::tensor::layout::CoordsDyn;
+    let src = src.tile(comptime!(space.clone()));
+    let mut dst = dst.tile(comptime!(space.clone()));
+    let r = src.view::<Const<1>>();
+    let mut w = dst.view_mut::<Const<1>>();
+    let shape = r.shape();
+    for b in 0..shape[0] {
+        for k in 0..shape[1] {
+            for n in 0..shape[2] {
+                let mut pos = CoordsDyn::new();
+                pos.push(b);
+                pos.push(k);
+                pos.push(n);
+                w.write(pos.clone(), r.read(pos));
+            }
+        }
+    }
+}
+
+fn storage_tiled_weight(dtype: ElemType) {
+    use cubecl::{
+        ir::FloatKind,
+        std::tensor::TensorHandle,
+        zspace::{Shape, Tiling},
+    };
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::cmma::{CmmaRoutine, launch_ref},
+    };
+    use cubek_std::InputBinding;
+    use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+    use cubek_tile::{
+        Axis, KernelForm, Launcher, Partitioning, Projection, Space, StorageTiling, TileArgLaunch,
+        TileSpec,
+    };
+
+    use crate::harness::assert_result;
+
+    const B: Axis = Axis(0);
+    const K: Axis = Axis(1);
+    const N: Axis = Axis(2);
+
+    let client = client();
+    let (m, n, k) = (128, 256, 384);
+    let dtypes = MatmulElems::from_single_dtype(dtype);
+    let problem = rect(m, n, k, dtypes.as_global_elems());
+
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(dtype)
+        .uniform(1234, -1., 1.)
+        .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(dtype)
+        .uniform(5678, -1., 1.)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(dtype)
+        .uniform(4242, 10., 100.)
+        .generate_without_host_data();
+
+    let mut elems = dtypes.clone();
+    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
+        let launch = || -> Result<(), MatmulSetupError> {
+            // The plan the selector picks for this problem, under the Tiled delivery: its stage
+            // is the block the weight is packed to.
+            let acc = match dtype {
+                ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
+                other => other,
+            };
+            let sz = dtype.size();
+            let device_settings = DeviceSettings {
+                client: c.clone(),
+                plane_dim: c.properties().hardware.plane_size_max,
+                vector_sizes: AvailableVectorSizes::from_type_sizes(c, sz, sz, sz).pick_max()?,
+                max_cube_count: c.properties().hardware.max_cube_count,
+            };
+            let blueprint = CmmaRoutine::blueprint(
+                &BlueprintStrategy::Inferred(CmmaStrategy::tiled()),
+                &problem,
+                &device_settings,
+                acc,
+            )?;
+            let (_, stage_n) = blueprint.stage();
+            let stage_k = blueprint.stage_k;
+
+            // The weight, packed: `[1, k / stage_k, n / stage_n, stage_k, stage_n]`, the binding
+            // saying its two matrix dims are stored two fragments deep.
+            let packed = TensorHandle::empty(
+                c,
+                Shape::from(vec![1, k / stage_k, n / stage_n, stage_k, stage_n]),
+                dtype,
+            );
+            let space = Space::new(&[(B, 1), (K, k), (N, n)]);
+            let launcher = Launcher::implied(
+                c,
+                Partitioning::new(space.clone(), vec![]),
+                KernelForm::Static,
+            );
+            let plain = TileArgLaunch::new(
+                rhs.clone().binding().into_tensor_arg(),
+                TileSpec::direct(&[B, K, N]),
+            );
+            let mut packed_binding = packed.clone().binding();
+            packed_binding.tiling = Tiling::new(&[1, 2, 2]).unwrap();
+            let blocked = TileArgLaunch::new(
+                packed_binding.clone().into_tensor_arg(),
+                TileSpec::new(Projection::tiled(
+                    &[B, K, N],
+                    StorageTiling::suffix(3, 1, 1),
+                )),
+            );
+            pack_weight::launch(
+                c,
+                CubeCount::new_single(),
+                CubeDim::new_single(),
+                plain,
+                blocked,
+                launcher.space_arg(),
+                dtype,
+            );
+
+            launch_ref(
+                c,
+                InputBinding::Normal(lhs.clone().binding(), dtype),
+                InputBinding::Normal(packed_binding, dtype),
+                out.clone().binding(),
+                &BlueprintStrategy::Forced(blueprint),
+                &elems,
+            )
+        };
+        launch().into()
+    });
+    elems.acc_global = dtype;
+
+    match outcome {
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    }
+    .enforce()
 }

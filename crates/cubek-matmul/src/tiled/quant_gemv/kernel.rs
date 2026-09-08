@@ -1,9 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{
-    Axis, Cut, Level, Partitioning, RegisterBlock, ScalesArg, Semiring, Space, TileArg,
-};
+use cubek_tile::{Cut, Level, Partitioning, RegisterBlock, ScalesArg, Semiring, Space, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -42,17 +40,6 @@ impl QuantGemvBlueprint {
     /// The space with the levels that cut it: what the leaf and the overhangs are read off.
     pub fn partitioning(&self, problem: &QuantGemvProblem) -> Partitioning {
         Partitioning::new(quant_gemv_space(problem), quant_gemv_levels(self, problem))
-    }
-
-    /// The tile every operand is cut to at the bottom: a lane's rows against one stored word.
-    pub fn leaf(&self, problem: &QuantGemvProblem) -> Vec<(Axis, usize)> {
-        self.partitioning(problem).leaf().extents()
-    }
-
-    /// The axes some tile reaches past the end of: none, the blueprint refuses a problem its
-    /// tiles do not divide.
-    pub fn overhangs(&self, problem: &QuantGemvProblem) -> Vec<Axis> {
-        self.partitioning(problem).overhanging()
     }
 
     /// The grid this launch runs on: a cube per strip of rows, a plane per group of them, every
@@ -102,7 +89,7 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 ///
 /// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_packed`]); the
 /// scales arrive as their own tensor at their own element type and fold in at the contraction
-/// ([`Tile::mma_scaled_with`]). Nothing here mentions a quantization scheme, a block size or a
+/// ([`cubek_tile::Tile::mma_scaled_with`]). Nothing here mentions a quantization scheme, a block size or a
 /// scale binding riding the weight: which values one scale covers is the scales operand's own
 /// axes, stated in the space.
 ///
