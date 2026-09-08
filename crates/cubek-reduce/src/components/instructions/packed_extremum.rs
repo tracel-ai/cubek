@@ -1,10 +1,7 @@
 use cubecl::prelude::*;
 
 use crate::components::{
-    instructions::{
-        Accumulator, Item, OrderKey, ReduceStep, Value, ValueOrder, empty_order_key, finalize_key,
-        key_insert, order_key_coordinate, order_key_value, pack_order_key,
-    },
+    instructions::{Accumulator, Item, OrderKey, OrderedKey, ReduceStep, Value},
     precision::ReducePrecision,
 };
 
@@ -17,8 +14,7 @@ use crate::components::{
 /// want `plane_min` here.
 #[derive(Debug, CubeType, Clone)]
 pub struct PackedExtremum {
-    #[cube(comptime)]
-    pub order: ValueOrder,
+    key: OrderedKey,
 }
 
 #[cube]
@@ -26,22 +22,21 @@ impl PackedExtremum {
     /// Ranks the largest value first, as max wants.
     pub fn descending() -> PackedExtremum {
         PackedExtremum {
-            order: ValueOrder::Descending,
+            key: OrderedKey::descending(),
         }
     }
 
     /// Ranks the smallest value first, as min wants.
     pub fn ascending() -> PackedExtremum {
         PackedExtremum {
-            order: ValueOrder::Ascending,
+            key: OrderedKey::ascending(),
         }
     }
 
     pub fn null_accumulator<P: ReducePrecision>(&self, identity: P::EA) -> Accumulator<P> {
-        Accumulator::new_Packed(Value::new_single(empty_order_key::<P::EA, P::SI>(
-            Vector::new(identity),
-            self.order,
-        )))
+        Accumulator::new_Packed(Value::new_single(
+            self.key.empty::<P::EA, P::SI>(Vector::new(identity)),
+        ))
     }
 
     pub fn reduce<P: ReducePrecision>(
@@ -50,18 +45,16 @@ impl PackedExtremum {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let key = pack_order_key::<P::EA, P::SI>(
-            Vector::cast_from(item.elements),
-            item.args.item(),
-            self.order,
-        );
+        let key = self
+            .key
+            .pack::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
 
         let candidate = match reduce_step {
             ReduceStep::Plane => plane_max(key),
             ReduceStep::Identity => key,
         };
 
-        key_insert::<P::SI>(keys, candidate);
+        OrderedKey::insert::<P::SI>(keys, candidate);
     }
 
     pub fn plane_reduce_inplace<P: ReducePrecision>(
@@ -77,21 +70,21 @@ impl PackedExtremum {
         keys: &mut Value<Vector<OrderKey, P::SI>>,
         other: Vector<OrderKey, P::SI>,
     ) {
-        key_insert::<P::SI>(keys, other);
+        OrderedKey::insert::<P::SI>(keys, other);
     }
 
     pub fn to_output_parallel<P: ReducePrecision, Out: Numeric, Idx: Numeric>(
         &self,
         keys: Vector<OrderKey, P::SI>,
     ) -> (Value<Out>, Value<Idx>) {
-        let key = Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(keys));
+        let key = Vector::<OrderKey, Const<1>>::new(OrderedKey::finalize::<P::SI>(keys));
 
         (
             Value::new_single(Out::cast_from(
-                order_key_value::<P::EA, Const<1>>(key, self.order).extract(0usize),
+                self.key.value::<P::EA, Const<1>>(key).extract(0usize),
             )),
             Value::new_single(Idx::cast_from(
-                order_key_coordinate::<Const<1>>(key).extract(0usize),
+                OrderedKey::coordinate::<Const<1>>(key).extract(0usize),
             )),
         )
     }
@@ -101,10 +94,8 @@ impl PackedExtremum {
         key: Vector<OrderKey, P::SI>,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         (
-            Value::new_single(Vector::cast_from(order_key_value::<P::EA, P::SI>(
-                key, self.order,
-            ))),
-            Value::new_single(Vector::cast_from(order_key_coordinate::<P::SI>(key))),
+            Value::new_single(Vector::cast_from(self.key.value::<P::EA, P::SI>(key))),
+            Value::new_single(Vector::cast_from(OrderedKey::coordinate::<P::SI>(key))),
         )
     }
 }

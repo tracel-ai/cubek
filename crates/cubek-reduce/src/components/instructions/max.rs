@@ -4,9 +4,9 @@ use super::{
 };
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorExpand, AccumulatorFormat, Item, PackedExtremum, ReduceOutputMode,
-        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, SlotCount,
-        Value, ValueExpand, packs_key,
+        Accumulator, AccumulatorExpand, AccumulatorFormat, Item, OrderedKey, PackedExtremum,
+        ReduceOutputMode, ReduceRequirements, ReduceStep, ReduceWithIndices,
+        ReduceWithIndicesFamily, SlotCount, Value, ValueExpand,
     },
     precision::ReducePrecision,
 };
@@ -88,7 +88,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packs = packs_key::<P>(this.output);
+        let packs = OrderedKey::packs::<P>(this.output);
 
         comptime!(if packs {
             AccumulatorFormat::Packed(SlotCount::Single)
@@ -106,7 +106,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packs = packs_key::<P>(this.output);
+        let packs = OrderedKey::packs::<P>(this.output);
 
         if comptime!(packs) {
             PackedExtremum::descending().null_accumulator::<P>(max_identity::<P::EA>())
