@@ -215,7 +215,11 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+        Launcher::implied(
+            &client,
+            Partitioning::new(space, levels),
+            KernelForm::Dynamic,
+        )
     };
 
     let stated = launch
@@ -243,7 +247,11 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
     // Leaves are 8x8 with `leaf_k = 4`. Fragments of 16 (M) and 4 (K) hold whole leaf tiles.
     let holds = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
-        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+        Launcher::implied(
+            &client,
+            Partitioning::new(space, levels),
+            KernelForm::Dynamic,
+        )
             .arg(binding(&client, &[4, 2, 16, 4]))
             .subspace(&[M, K])
             .tiling(StorageTiling::uniform(2, 1))
@@ -254,7 +262,11 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
     // K's fragment of 6 does not: a leaf tile starting at k = 4 runs into the next block.
     let splits = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+        Launcher::implied(
+            &client,
+            Partitioning::new(space, levels),
+            KernelForm::Dynamic,
+        )
             .arg(binding(&client, &[4, 3, 16, 6]))
             .subspace(&[M, K])
             .tiling(StorageTiling::uniform(2, 1))
@@ -265,7 +277,11 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
     // An untiled operand is one block over the whole buffer, whatever its extents.
     let plain = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+        Launcher::implied(
+            &client,
+            Partitioning::new(space, levels),
+            KernelForm::Dynamic,
+        )
             .arg(binding(&client, &[64, 18]))
             .subspace(&[M, K])
             .build()
@@ -280,7 +296,11 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(3, 1, 64, 64, 18);
-        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+        Launcher::implied(
+            &client,
+            Partitioning::new(space, levels),
+            KernelForm::Dynamic,
+        )
     };
 
     let mut tiled = binding(&client, &[3, 4, 3, 16, 6]);
