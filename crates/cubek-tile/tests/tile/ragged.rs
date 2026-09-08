@@ -143,11 +143,11 @@ fn expected() -> Vec<Vec<f32>> {
 fn a_windowed_walk_folds_each_sequence_over_its_own_tokens() {
     let got = run();
     let want = expected();
-    for b in 0..SEQS {
-        for d in 0..FEATURES {
+    for (b, row) in want.iter().enumerate() {
+        for (d, cell) in row.iter().enumerate() {
             assert_eq!(
                 got.get_f32(&[b, d]),
-                want[b][d],
+                *cell,
                 "sequence {b} feature {d}: tokens {}..{}",
                 ENDS[b],
                 ENDS[b + 1]

@@ -204,6 +204,29 @@ impl MaskProbe {
         masked
     }
 
+    /// How many key positions this tile's rows can read: past it every score is masked, so a
+    /// walk stops there rather than contracting blocks whose scores it will discard.
+    ///
+    /// The operand's bound and the causal limit are one statement, differing only in where
+    /// they come from: the first is how much of the axis is real, the second how much of it
+    /// this tile's largest query may see. A materialized mask is not one of them, since an
+    /// arbitrary mask leaves no suffix that is masked throughout; it stays an element
+    /// predicate, and this stays an upper bound that is correct with or without it.
+    pub fn keys(&self) -> usize {
+        let mut keys = self.bound_s;
+        if comptime!(self.causal) {
+            keys = keys.fmin(self.origin_q.fadd(comptime!(self.q_rows).runtime()));
+        }
+        keys
+    }
+
+    /// [`keys`](Self::keys) counted in whole blocks of `block`: what a walk over the reduced
+    /// axis takes as its step count, the partial last block included since its own rows still
+    /// mask per element.
+    pub fn blocks(&self, #[comptime] block: usize) -> usize {
+        self.keys().div_ceil(block)
+    }
+
     /// The query position of score row `r` (see `q_rows`).
     pub(crate) fn row_q(&self, r: usize) -> usize {
         let q_rows = comptime!(self.q_rows);
@@ -212,7 +235,7 @@ impl MaskProbe {
 
     /// The probe advanced `offset` along the reduced axis: how a walk hands
     /// each region its own origin.
-    pub(crate) fn step_s(&self, offset: usize) -> MaskProbe {
+    pub fn step_s(&self, offset: usize) -> MaskProbe {
         MaskProbe {
             origin_q: self.origin_q,
             origin_s: self.origin_s + offset,

@@ -78,8 +78,24 @@ fn attention_fold_kernel<W: Size>(
     let bound_s = bound as usize;
     sync_cube();
 
+    // The probe states the masking once, and the walk takes it as its bound: a block every row
+    // masks throughout is one the walk never steps to. Its rows still mask per element, for the
+    // last block's tail and its diagonal.
+    let probe = MaskProbe {
+        origin_q: 0,
+        origin_s: 0,
+        bound_q: q_rows.runtime(),
+        bound_s,
+        q_rows,
+        causal,
+        materialized: false,
+    };
+
     // The fold: one S block per region.
-    for region in k.level(comptime!(blocks.clone())) {
+    for region in k
+        .level(comptime!(blocks.clone()))
+        .window(0, probe.blocks(block))
+    {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -89,15 +105,7 @@ fn attention_fold_kernel<W: Size>(
         score.score_columns(&q_s, &kb, cols_bound, config);
         sync_cube();
 
-        let probe = MaskProbe {
-            origin_q: 0,
-            origin_s: s0,
-            bound_q: q_rows.runtime(),
-            bound_s,
-            q_rows,
-            causal,
-            materialized: false,
-        };
+        let probe = probe.step_s(s0);
         if comptime!(in_place) {
             let corr = score.softmax_in_place(&mut state, &probe, &mask_tile, scale);
             acc.rescale_rows(&corr, share);
@@ -381,7 +389,24 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for region in k.level(comptime!(blocks.clone())) {
+    // The probe states the masking once, and the walk takes it as its bound: a block every row
+    // masks throughout is one the walk never steps to, rather than two contractions whose scores
+    // the softmax then discards. Its rows still mask per element, for the last block's tail and
+    // its diagonal.
+    let probe = MaskProbe {
+        origin_q: 0,
+        origin_s: 0,
+        bound_q: rows.runtime(),
+        bound_s,
+        q_rows: rows,
+        causal,
+        materialized: false,
+    };
+
+    for region in k
+        .level(comptime!(blocks.clone()))
+        .window(0, probe.blocks(block))
+    {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -401,15 +426,7 @@ fn attention_fold_cmma_kernel<E: Float>(
         );
         sync_cube();
 
-        let probe = MaskProbe {
-            origin_q: 0,
-            origin_s: s0,
-            bound_q: rows.runtime(),
-            bound_s,
-            q_rows: rows,
-            causal,
-            materialized: false,
-        };
+        let probe = probe.step_s(s0);
         if comptime!(in_place) {
             let corr = score.softmax_in_place(&mut state, &probe, &mask_tile, scale);
             acc.rescale_rows(&corr, share);
@@ -1026,8 +1043,19 @@ fn attention_fold_split_kernel<W: Size>(
     // Interleaved split walk: team t folds blocks t, t + splits, …; every
     // team runs every round (the barriers must stay uniform), an out-of-range
     // block just skips its compute.
+    let probe = MaskProbe {
+        origin_q: 0,
+        origin_s: 0,
+        bound_q: q_rows.runtime(),
+        bound_s,
+        q_rows,
+        causal,
+        materialized: false,
+    };
     let k_walk = k.level(comptime!(blocks.clone()));
-    let blocks = bound_s.div_ceil(block);
+    // The same bound the plain fold walks to, so a causal split runs the rounds its rows can
+    // read rather than every round the axis holds.
+    let blocks = probe.blocks(block);
     let rounds = blocks.div_ceil(splits);
     for round in 0..rounds {
         let blk = round * splits + t;
@@ -1043,15 +1071,7 @@ fn attention_fold_split_kernel<W: Size>(
         sync_cube();
 
         if live {
-            let probe = MaskProbe {
-                origin_q: 0,
-                origin_s: s0,
-                bound_q: q_rows.runtime(),
-                bound_s,
-                q_rows,
-                causal,
-                materialized: false,
-            };
+            let probe = probe.step_s(s0);
             let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
             acc.rescale_rows(&corr, share);
         }
@@ -1470,4 +1490,103 @@ fn stream_fold_single_split_scalar() {
 #[test]
 fn stream_fold_idle_teams() {
     run_stream((4, 2, 16, 8, 8), 10, 1);
+}
+
+/// What the probe's bound decides, measured rather than inferred from a result the per-element
+/// masking would make right either way: the walk's own step count, written out.
+#[cube(launch)]
+fn visited_blocks_kernel(
+    k: &TileArg<'_, f32, Const<1>>,
+    out: &mut Tensor<f32>,
+    bound: u32,
+    space: Space,
+    #[comptime] blocks: Level,
+    #[comptime] block: usize,
+    #[comptime] q_rows: usize,
+    #[comptime] causal: bool,
+) {
+    let k = k.tile(comptime!(space.clone()));
+    let probe = MaskProbe {
+        origin_q: 0,
+        origin_s: 0,
+        bound_q: comptime!(q_rows).runtime(),
+        bound_s: bound as usize,
+        q_rows,
+        causal,
+        materialized: false,
+    };
+    let mut visited = 0u32;
+    for _region in k
+        .level(comptime!(blocks.clone()))
+        .window(0, probe.blocks(block))
+    {
+        visited += 1;
+    }
+    out[0] = f32::cast_from(visited);
+}
+
+/// `S` total, in blocks of `BLOCK`: four blocks to skip out of.
+const VISIT_S: usize = 16;
+const VISIT_BLOCK: usize = 4;
+const VISIT_D: usize = 4;
+
+fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(S, VISIT_S), (D, VISIT_D)]),
+            vec![Level::walk(&[(S, VISIT_BLOCK)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let (k_handle, _) = TestInput::builder(client.clone(), Shape::new([VISIT_S, VISIT_D]))
+        .dtype(f32_ty)
+        .custom(vec![0.0; VISIT_S * VISIT_D])
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([1]))
+        .dtype(f32_ty)
+        .custom(vec![999.0])
+        .generate_without_host_data();
+
+    visited_blocks_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            k_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[S, D]),
+        ),
+        out_handle.clone().binding().into_tensor_arg(),
+        bound_s as u32,
+        launcher.space_arg(),
+        launcher.level(0),
+        VISIT_BLOCK,
+        q_rows,
+        causal,
+    );
+
+    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32).get_f32(&[0]) as usize
+}
+
+/// A block every row masks throughout is never stepped to. Without the bound each case walks all
+/// four blocks and the softmax throws the extra scores away, which is what this measures the
+/// absence of.
+#[test]
+fn the_probe_bounds_the_walk_to_the_blocks_its_rows_can_read() {
+    // Nothing masked: the whole axis, so the bound costs nothing.
+    assert_eq!(visited_blocks(VISIT_S, VISIT_S, false), 4);
+    // Causal with four query rows: only the first block holds a key any row may see.
+    assert_eq!(visited_blocks(VISIT_S, 4, true), 1);
+    // Causal with eight: two blocks.
+    assert_eq!(visited_blocks(VISIT_S, 8, true), 2);
+    // A ragged bound alone, no causality: six keys is two blocks, the second partial.
+    assert_eq!(visited_blocks(6, VISIT_S, false), 2);
+    // Both, the tighter one deciding.
+    assert_eq!(visited_blocks(6, 4, true), 1);
+    // Nothing to read: the walk takes no steps at all.
+    assert_eq!(visited_blocks(0, VISIT_S, true), 0);
 }
