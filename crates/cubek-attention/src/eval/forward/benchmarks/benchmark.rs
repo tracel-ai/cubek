@@ -39,7 +39,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::System)
+        .run(cubek_test_utils::timing_method(TimingMethod::System))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -147,10 +147,6 @@ impl<AP: AttentionPrecision> Benchmark for AttentionBench<AP> {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .profile(|| self.execute(args), "attention-bench")
-            .map_err(|e| format!("{e:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "attention-bench", || self.execute(args))
     }
 }

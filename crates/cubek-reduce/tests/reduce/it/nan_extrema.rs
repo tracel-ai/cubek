@@ -1,7 +1,6 @@
 use cubecl::{
     config::autotune::AutotuneLevel,
-    features::{Plane, TypeUsage},
-    prelude::Scalar,
+    features::Plane,
     zspace::{Shape, Strides},
 };
 use cubek_reduce::{
@@ -18,8 +17,7 @@ fn supports_plane() -> bool {
 }
 
 fn supports_f16_arithmetic() -> bool {
-    let client = cubecl::test_device().client();
-    half::f16::supported_uses(&client).contains(TypeUsage::Arithmetic)
+    cubek_test_utils::supports_f16_arithmetic(&cubecl::test_device().client())
 }
 
 fn run_extrema(case: TestCase, data: Vec<f32>) {
