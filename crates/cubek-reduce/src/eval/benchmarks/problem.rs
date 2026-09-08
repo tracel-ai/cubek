@@ -24,6 +24,18 @@ pub struct ReduceProblem {
     pub kind: ReduceBenchKind,
 }
 
+/// Whether `CUBEK_BENCH_TIER` asks for more than the default sweep, as it does
+/// for interpolate. Unset or `light` keeps the cheap catalogue.
+fn extended_tier() -> bool {
+    !matches!(
+        std::env::var("CUBEK_BENCH_TIER")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str(),
+        "" | "light"
+    )
+}
+
 pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
     let shape = || vec![32, 512, 4095];
 
@@ -109,12 +121,17 @@ pub fn problems() -> Vec<CatalogEntry<ReduceProblem>> {
     }
 
     // Large `k`, where the selection network's `O(reduce_len * k)` shape shows.
-    // The catalogue stopped at `k = 5`, which is why the cost of large `k` went
-    // unnoticed: on a 5090 these run 0.18 ms at `k = 8` and 370 ms at `k = 256`.
-    // `k = 32` is the interesting point — it is the largest that still fits the
-    // unroll budget, and it is 5.8x faster for it. Fused only: what is being
-    // measured is the accumulator, not the launch pattern.
-    for k in [16, 32, 64, 128, 256] {
+    // `k = 32` is the largest that still fits the unroll budget, and 5.8x faster
+    // for it. Fused only: this measures the accumulator, not the launch pattern.
+    let mut large_k = vec![16, 32, 64];
+
+    // A `k = 128` launch costs about a second, and reduce top-k stops being the
+    // right algorithm near `k = 10`, so the tail is only swept when asked for.
+    if extended_tier() {
+        large_k.extend([128, 256]);
+    }
+
+    for k in large_k {
         entries.push(CatalogEntry::new(
             format!("topk{k}_fused_axis2_32x512x4095"),
             format!("TopK({k}) values+indices, 1 fused launch, axis=2 (32x512x4095)"),
