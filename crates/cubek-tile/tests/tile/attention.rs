@@ -424,11 +424,10 @@ fn attention_fold_cmma_kernel<E: Float>(
         let k_cells = k_w.walk(comptime!(Level::walk(&[(S, frag), (D, frag)])));
         let v_cells = v_w.walk(comptime!(Level::walk(&[(S, frag), (V, frag)])));
 
-        // The probe states the masking once, for every block's step.
-        //
-        // It does not bound this walk, as it does the register fold's: a dynamic step count
-        // makes this kernel read wrong rows on four planes, whatever the count is, so the walk
-        // keeps the static one its level states and the softmax discards the masked scores.
+        // The probe states the masking once, and the walk takes it as its bound: a block every
+        // row masks throughout is one the walk never steps to, rather than two contractions
+        // whose scores the softmax then discards. Its rows still mask per element, for the last
+        // block's tail and its diagonal.
         let probe = MaskProbe {
             origin_q: 0,
             row_origin,
@@ -440,7 +439,10 @@ fn attention_fold_cmma_kernel<E: Float>(
             materialized: false,
         };
 
-        for region in k.walk(comptime!(blocks.clone())) {
+        for region in k
+            .walk(comptime!(blocks.clone()))
+            .window(0, probe.blocks(block))
+        {
             let s0 = region.coord(S) * block;
             let cols_bound = max(bound_s, s0) - s0;
             // Every plane is through the previous block before its stages are overwritten.
