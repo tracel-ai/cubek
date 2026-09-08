@@ -373,7 +373,7 @@ fn attention_fold_cmma_kernel<E: Float>(
         0usize,
     );
     // The block's window of K and of V, staged by the cube and read by every plane.
-    let k_walk = k.walk(comptime!(blocks.clone()));
+    let k_walk = k.over(&blocks);
     let k_probe = k.at(&k_walk.region(0usize));
     let v_probe = v.at(&k_walk.region(0usize));
     let mut k_stage = MemData::<E>::smem(
@@ -439,10 +439,7 @@ fn attention_fold_cmma_kernel<E: Float>(
             materialized: false,
         };
 
-        for region in k
-            .walk(comptime!(blocks.clone()))
-            .window(0, probe.blocks(block))
-        {
+        for region in k.over(&blocks).window(0, probe.blocks(block)) {
             let s0 = region.coord(S) * block;
             let cols_bound = max(bound_s, s0) - s0;
             // Every plane is through the previous block before its stages are overwritten.
