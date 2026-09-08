@@ -68,7 +68,7 @@ name = "gemm_cpu"
 
 [[bench]]
 harness = false
-name = "gemm_block"
+name = "gemm_storage"
 
 [[bench]]
 harness = false

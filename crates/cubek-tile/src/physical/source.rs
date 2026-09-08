@@ -11,8 +11,8 @@ use cubecl::std::tensor::layout::linear::linear_view;
 use cubecl::zspace::Tiling;
 
 use crate::{
-    Axis, Blocks, Boundary, ConcreteLayout, DequantAt, Geometry, Level, Packing, PhysicalAxis,
-    Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Level, Packing, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Space, Storage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -48,8 +48,8 @@ struct TileSourceData<'a> {
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
     /// The kernel's levels, outermost first; set by [`Launcher::arg`](crate::Launcher::arg) for a
-    /// launch that states them. What a storage-tiled operand's block is matched against
-    /// ([`Blocks`]): the launch is the one place the buffer's real extents and the kernel's
+    /// launch that states them. What a storage-tiled operand's storage tile is matched against
+    /// ([`Storage`]): the launch is the one place the buffer's real extents and the kernel's
     /// levels are both in hand.
     levels: &'a [Level],
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
@@ -428,18 +428,18 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
                 .is_tiled()
                 .then(|| StorageTiling::stored(stored, subspace.len(), geometry.rank())),
         };
-        // A storage block is the tile of one of the kernel's levels, or the operand is refused.
-        let blocks = match &resolved {
+        // A storage tile is the tile of one of the kernel's levels, or the operand is refused.
+        let storage = match &resolved {
             Some(tiling) => {
                 let (concrete, _) = concrete.unwrap_or_else(|| {
                     panic!(
-                        "StridedTileSource: a storage-tiled operand's block is matched against the \
+                        "StridedTileSource: a storage-tiled operand's storage tile is matched against the \
                          kernel's levels on real extents, which only a Launcher states"
                     )
                 });
-                block_level(&geometry, subspace, tiling, concrete, levels)
+                storage_level(&geometry, subspace, tiling, concrete, levels)
             }
-            None => Blocks::Whole,
+            None => Storage::Strided,
         };
 
         // Use the explicit projection if gathered, or derive it from labeled axes.
@@ -527,7 +527,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             .boundaries(&boundaries)
             .units(units)
             .packing(packing)
-            .blocks(blocks);
+            .storage(storage);
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
             assert!(
@@ -565,26 +565,26 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
     }
 }
 
-/// Which level of the kernel's nest a storage-tiled operand's block is the tile of. A tensor
-/// stored blocks-of-blocks deep names one level per nesting, coarse to fine, and the innermost
+/// Which level of the kernel's nest a storage-tiled operand's storage tile is the tile of. A tensor
+/// stored tiles-of-tiles deep names one level per nesting, coarse to fine, and the innermost
 /// is the one [`at`](crate::Tile::at) descends into. Matched on the subspace axes alone: a batch
 /// dim is stored one physical dim each regardless, and the cube's slice of it lies inside that.
 ///
 /// # Panics
 ///
-/// When the launch states no levels, or when some nesting's block is no level's tile: the space
-/// owns the block size, so a tensor that arrived disagreeing is refused here, on the caller's
-/// thread, rather than read across a block boundary.
-fn block_level(
+/// When the launch states no levels, or when some nesting's storage tile is no level's tile: the space
+/// owns the storage tile's size, so a tensor that arrived disagreeing is refused here, on the caller's
+/// thread, rather than read across a storage tile boundary.
+fn storage_level(
     geometry: &Geometry,
     subspace: &[Axis],
     tiling: &StorageTiling,
     space: &Space,
     levels: &[Level],
-) -> Blocks {
+) -> Storage {
     assert!(
         !levels.is_empty(),
-        "StridedTileSource: a storage-tiled operand's block is the tile of one of the kernel's \
+        "StridedTileSource: a storage-tiled operand's storage tile is the tile of one of the kernel's \
          levels, which this launch does not state; launch it through Launcher::partitioned"
     );
     let order = tiling.order(subspace);
@@ -612,10 +612,10 @@ fn block_level(
     let mut innermost = None;
     let mut from = 0;
     for nesting in 0..tiling.max_fragments() - 1 {
-        // The block at this nesting: what its finer fragments multiply to, per axis. An axis
+        // The storage tile at this nesting: what its finer fragments multiply to, per axis. An axis
         // stored as one fragment is whole; one stored shallower than the nesting reaches has no
-        // block here, and its edge of one matches no tile.
-        let block: Vec<(Axis, usize)> = subspace
+        // storage tile here, and its edge of one matches no tile.
+        let tile: Vec<(Axis, usize)> = subspace
             .iter()
             .zip(&fragments)
             .map(|(&axis, extents)| match extents.len() {
@@ -627,19 +627,19 @@ fn block_level(
             })
             .collect();
         let level = (from..levels.len())
-            .find(|&i| tile_of(i) == block)
+            .find(|&i| tile_of(i) == tile)
             .unwrap_or_else(|| {
                 panic!(
-                    "StridedTileSource: this operand is stored in {block:?} blocks, which is the \
+                    "StridedTileSource: this operand is stored in {tile:?} storage tiles, which is the \
                      tile of no level of the kernel's nest (the levels cut it to {:?}); the space \
-                     owns the block size, so pack the tensor to one of its tiles",
+                     owns the storage tile's size, so pack the tensor to one of its tiles",
                     (from..levels.len()).map(tile_of).collect::<Vec<_>>()
                 )
             });
         innermost = Some(level);
         from = level + 1;
     }
-    Blocks::Above(innermost.expect("a tiled operand has at least one nesting"))
+    Storage::Tiled(innermost.expect("a tiled operand has at least one nesting"))
 }
 
 /// Derives a [`Projection`] from labeled subspace and batch axes. Leading batch dims align with

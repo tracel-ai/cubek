@@ -1,7 +1,7 @@
-//! The Cmma routine on a block-stored weight vs the same plan on a row-major one.
+//! The Cmma routine on a storage-tiled weight vs the same plan on a row-major one.
 //!
 //! The hypothesis under test: a `[stage_k x stage_n]` stage read from a row-major weight touches
-//! `stage_k` short runs, half of every cache line wasted at a narrow stage; packed into blocks of
+//! `stage_k` short runs, half of every cache line wasted at a narrow stage; packed into storage tiles of
 //! exactly the plan's stage, the stage is one contiguous run. Prefill shapes only (a tall `M`
 //! against a square-ish weight): decode is already at the bandwidth slope.
 //!
@@ -43,7 +43,7 @@ impl Precision {
 }
 
 #[derive(Clone, Copy)]
-pub struct BlockProblem {
+pub struct StorageProblem {
     m: usize,
     n: usize,
     k: usize,
@@ -52,17 +52,17 @@ pub struct BlockProblem {
 
 /// How the weight is stored, which is the only thing a strategy varies.
 #[derive(Clone, Copy)]
-pub enum Storage {
+pub enum Weight {
     /// Plain `[k, n]`, the strided delivery.
     RowMajor,
-    /// `[k / stage_k, n / stage_n, stage_k, stage_n]`, blocks of exactly the plan's stage, the
-    /// Block delivery.
-    Block,
+    /// `[k / stage_k, n / stage_n, stage_k, stage_n]`, storage tiles of exactly the plan's stage, the
+    /// Tiled delivery.
+    Tiled,
 }
 
 #[derive(Clone, Copy)]
-pub struct BlockStrategy {
-    storage: Storage,
+pub struct StorageStrategy {
+    weight: Weight,
 }
 
 /// The plan the selector picks for `problem` under `strategy`'s delivery: the same geometry
@@ -95,21 +95,21 @@ fn plan(
     .map_err(|e| format!("{e:?}"))
 }
 
-struct BlockBench {
-    problem: BlockProblem,
-    storage: Storage,
+struct StorageBench {
+    problem: StorageProblem,
+    weight: Weight,
     blueprint: CmmaBlueprint,
     client: Client,
     dtypes: MatmulElems,
     samples: usize,
 }
 
-impl Benchmark for BlockBench {
+impl Benchmark for StorageBench {
     type Input = (TensorHandle, TensorHandle);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
-        let BlockProblem { m, n, k, precision } = self.problem;
+        let StorageProblem { m, n, k, precision } = self.problem;
         let dtype = precision.dtype();
         let lhs = TestInput::builder(self.client.clone(), shape![m, k])
             .dtype(dtype)
@@ -119,9 +119,9 @@ impl Benchmark for BlockBench {
         let (stage_m, stage_n) = self.blueprint.stage();
         let _ = stage_m;
         let stage_k = self.blueprint.stage_k;
-        let rhs_dims = match self.storage {
-            Storage::RowMajor => vec![k, n],
-            Storage::Block => vec![k / stage_k, n / stage_n, stage_k, stage_n],
+        let rhs_dims = match self.weight {
+            Weight::RowMajor => vec![k, n],
+            Weight::Tiled => vec![k / stage_k, n / stage_n, stage_k, stage_n],
         };
         let rhs = TestInput::builder(self.client.clone(), Shape::from(rhs_dims))
             .dtype(dtype)
@@ -131,11 +131,11 @@ impl Benchmark for BlockBench {
     }
 
     fn execute(&self, (lhs, rhs): Self::Input) -> Result<Self::Output, String> {
-        let BlockProblem { m, n, .. } = self.problem;
+        let StorageProblem { m, n, .. } = self.problem;
         let dtype = self.problem.precision.dtype();
         let out = TensorHandle::empty(&self.client, shape![m, n], dtype);
         let mut rhs = rhs.binding();
-        if let Storage::Block = self.storage {
+        if let Weight::Tiled = self.weight {
             rhs.tiling = Tiling::new(&[2, 2]).expect("two matrix dims, two fragments each");
         }
         launch_ref(
@@ -155,17 +155,17 @@ impl Benchmark for BlockBench {
     }
 
     fn name(&self) -> String {
-        let storage = match self.storage {
-            Storage::RowMajor => "rowmajor",
-            Storage::Block => "block",
+        let storage = match self.weight {
+            Weight::RowMajor => "rowmajor",
+            Weight::Tiled => "tiled",
         };
-        let BlockProblem { m, n, k, precision } = self.problem;
+        let StorageProblem { m, n, k, precision } = self.problem;
         let precision = match precision {
             Precision::F32 => "f32",
             Precision::F16 => "f16",
         };
         format!(
-            "{}-gemm-block-{storage}-{m}x{n}x{k}-{precision}",
+            "{}-gemm-storage-{storage}-{m}x{n}x{k}-{precision}",
             self.client.name()
         )
         .to_lowercase()
@@ -176,13 +176,13 @@ impl Benchmark for BlockBench {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        cubek_test_utils::profile_launch(&self.client, "gemm-block-bench", || self.execute(args))
+        cubek_test_utils::profile_launch(&self.client, "gemm-storage-bench", || self.execute(args))
     }
 }
 
 pub fn bench(
-    strategy: &BlockStrategy,
-    problem: &BlockProblem,
+    strategy: &StorageStrategy,
+    problem: &StorageProblem,
     num_samples: usize,
 ) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
@@ -203,15 +203,15 @@ pub fn bench(
         elems.as_global_elems(),
         cubecl::ir::AddressType::U32,
     );
-    let delivery = match strategy.storage {
-        Storage::RowMajor => CmmaStrategy::default(),
-        Storage::Block => CmmaStrategy::block(),
+    let delivery = match strategy.weight {
+        Weight::RowMajor => CmmaStrategy::default(),
+        Weight::Tiled => CmmaStrategy::tiled(),
     };
     let blueprint = plan(&client, &matmul, dtype, delivery)?;
 
-    let bench = BlockBench {
+    let bench = StorageBench {
         problem: *problem,
-        storage: strategy.storage,
+        weight: strategy.weight,
         blueprint,
         client: client.clone(),
         dtypes: elems,
@@ -261,7 +261,7 @@ const SHAPES: &[(&str, &str, usize, usize, usize)] = &[
 
 const PRECISIONS: &[(&str, Precision)] = &[("f16", Precision::F16), ("f32", Precision::F32)];
 
-pub fn problems() -> Vec<CatalogEntry<BlockProblem>> {
+pub fn problems() -> Vec<CatalogEntry<StorageProblem>> {
     SHAPES
         .iter()
         .flat_map(|&(tag, label, m, n, k)| {
@@ -269,36 +269,36 @@ pub fn problems() -> Vec<CatalogEntry<BlockProblem>> {
                 CatalogEntry::new(
                     format!("{tag}_{suffix}"),
                     format!("{label} [{suffix}]"),
-                    BlockProblem { m, n, k, precision },
+                    StorageProblem { m, n, k, precision },
                 )
             })
         })
         .collect()
 }
 
-/// Row-major, block-stored, row-major again: the two readings of the row-major plan bracket the
-/// machine's drift over the run, which is what the block-stored row is read against.
-pub fn strategies() -> Vec<CatalogEntry<BlockStrategy>> {
+/// Row-major, storage-tiled, row-major again: the two readings of the row-major plan bracket the
+/// machine's drift over the run, which is what the storage-tiled row is read against.
+pub fn strategies() -> Vec<CatalogEntry<StorageStrategy>> {
     vec![
         CatalogEntry::new(
             "rowmajor",
             "Cmma, row-major weight",
-            BlockStrategy {
-                storage: Storage::RowMajor,
+            StorageStrategy {
+                weight: Weight::RowMajor,
             },
         ),
         CatalogEntry::new(
-            "block",
+            "tiled",
             "Cmma, weight packed to the stage",
-            BlockStrategy {
-                storage: Storage::Block,
+            StorageStrategy {
+                weight: Weight::Tiled,
             },
         ),
         CatalogEntry::new(
             "rowmajor_again",
             "Cmma, row-major weight (control, second reading)",
-            BlockStrategy {
-                storage: Storage::RowMajor,
+            StorageStrategy {
+                weight: Weight::RowMajor,
             },
         ),
     ]
@@ -307,35 +307,35 @@ pub fn strategies() -> Vec<CatalogEntry<BlockStrategy>> {
 pub struct Category;
 
 impl cubek_test_utils::Category for Category {
-    type Problem = BlockProblem;
-    type Strategy = BlockStrategy;
+    type Problem = StorageProblem;
+    type Strategy = StorageStrategy;
 
     fn id(&self) -> &'static str {
-        "gemm_block"
+        "gemm_storage"
     }
 
     fn label(&self) -> &'static str {
-        "GEMM (cmma, block-stored weight)"
+        "GEMM (cmma, storage-tiled weight)"
     }
 
-    fn problems(&self) -> Vec<CatalogEntry<BlockProblem>> {
+    fn problems(&self) -> Vec<CatalogEntry<StorageProblem>> {
         problems()
     }
 
-    fn strategies(&self) -> Vec<CatalogEntry<BlockStrategy>> {
+    fn strategies(&self) -> Vec<CatalogEntry<StorageStrategy>> {
         strategies()
     }
 
     fn bench(
         &self,
-        strategy: &BlockStrategy,
-        problem: &BlockProblem,
+        strategy: &StorageStrategy,
+        problem: &StorageProblem,
         num_samples: usize,
     ) -> Result<RunSamples, String> {
         bench(strategy, problem, num_samples)
     }
 
-    fn work(&self, problem: &BlockProblem) -> Option<CategoryWork> {
+    fn work(&self, problem: &StorageProblem) -> Option<CategoryWork> {
         let dtype = problem.precision.dtype();
         let cost = MatmulCost {
             batches: 1,

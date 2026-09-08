@@ -30,7 +30,7 @@ pub(crate) fn logical_dims(binding: &TensorBinding) -> (Vec<usize>, usize, usize
     (dims[..split].to_vec(), dims[split], dims[split + 1])
 }
 
-/// The storage block a matrix operand's binding is stored in, `(rows, cols)`, when it is
+/// The storage tile a matrix operand's binding is stored in, `(rows, cols)`, when it is
 /// storage-tiled: one nesting on both matrix dims, whose tile fragments are the buffer's two
 /// innermost dims. `None` for a plain buffer.
 ///
@@ -38,7 +38,7 @@ pub(crate) fn logical_dims(binding: &TensorBinding) -> (Vec<usize>, usize, usize
 ///
 /// A tiling this routine cannot read: a batch dim stored in fragments, or the matrix dims
 /// stored to different depths or deeper than one nesting.
-pub(crate) fn storage_block(
+pub(crate) fn storage_tile(
     binding: &TensorBinding,
     name: &str,
 ) -> Result<Option<(usize, usize)>, MatmulSetupError> {
@@ -54,7 +54,7 @@ pub(crate) fn storage_block(
     let (batches, matrix) = fragments.split_at(logical_rank - 2);
     if batches.iter().any(|&n| n != 1) || matrix != [2, 2] {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "{name}: a block-stored operand stores both matrix dims one nesting deep and its \
+            "{name}: a storage-tiled operand stores both matrix dims one nesting deep and its \
              batch dims plain, got {fragments:?} fragments"
         ))));
     }

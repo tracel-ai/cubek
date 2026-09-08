@@ -14,28 +14,28 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// What a storage block is to the window an operand is read through.
+/// What a storage tile is to the window an operand is read through.
 ///
-/// A storage-tiled tensor's block corresponds to a tile of the kernel's space, a level of its
+/// A storage-tiled tensor's storage tile corresponds to a tile of the kernel's space, a level of its
 /// nest, the way a scale block is an axis of a scaled matmul: the space owns the block size, so
-/// a window that descended through that level lies inside one block by construction rather than
+/// a window that descended through that level lies inside one storage tile by construction rather than
 /// by a divisibility check. Settled by the launch, the one place the buffer's real extents and
-/// the kernel's levels are both in hand, which refuses a tensor whose block is no level's tile.
+/// the kernel's levels are both in hand, which refuses a tensor whose storage tile is no level's tile.
 /// Read in the kernel as the comptime fact it is; [`at`](crate::Tile::at) turns
-/// [`Above`](Blocks::Above) into [`Held`](Blocks::Held) on the way down.
+/// [`Above`](Storage::Tiled) into [`Held`](Storage::Contiguous) on the way down.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Blocks {
-    /// Untiled storage: the whole buffer is one block, addressed by its strides, and every
+pub enum Storage {
+    /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
     /// window lies inside it.
-    Whole,
-    /// Storage-tiled, the block being the tile of level `i` of the kernel's nest; this window
-    /// sits above that level and spans several blocks, so only a layout walk addresses its
-    /// cells. Descending through level `i` makes it [`Held`](Blocks::Held).
-    Above(usize),
-    /// Storage-tiled and inside one block: one contiguous run from its origin, addressed
-    /// affinely by the block's own strides, which is what a fragment load and a stage fill
+    Strided,
+    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this window
+    /// sits above that level and spans several storage tiles, so only a layout walk addresses its
+    /// cells. Descending through level `i` makes it [`Held`](Storage::Contiguous).
+    Tiled(usize),
+    /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
+    /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
     /// want.
-    Held,
+    Contiguous,
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
@@ -57,10 +57,10 @@ pub struct TileSpec {
     /// stored element and a `u32` says nothing about the values inside it. Stated by
     /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
     pub packing: Packing,
-    /// What this operand's storage blocks are to the windows it is read through. Settled by
-    /// the launch; [`Whole`](Blocks::Whole) for every untiled operand, which is every operand
+    /// What this operand's storage tiles are to the windows it is read through. Settled by
+    /// the launch; [`Whole`](Storage::Strided) for every untiled operand, which is every operand
     /// that does not say otherwise.
-    pub blocks: Blocks,
+    pub storage: Storage,
 }
 
 impl TileSpec {
@@ -74,7 +74,7 @@ impl TileSpec {
             boundaries: SmallVec::new(),
             units: 0,
             packing: Packing::Plain,
-            blocks: Blocks::Whole,
+            storage: Storage::Strided,
         }
     }
 
@@ -104,10 +104,10 @@ impl TileSpec {
         self
     }
 
-    /// What this operand's storage blocks are to the windows it is read through; settled by
-    /// the launch, [`Whole`](Blocks::Whole) by default (which is what every untiled operand is).
-    pub fn blocks(mut self, blocks: Blocks) -> Self {
-        self.blocks = blocks;
+    /// What this operand's storage tiles are to the windows it is read through; settled by
+    /// the launch, [`Whole`](Storage::Strided) by default (which is what every untiled operand is).
+    pub fn storage(mut self, storage: Storage) -> Self {
+        self.storage = storage;
         self
     }
 

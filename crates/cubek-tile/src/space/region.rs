@@ -17,8 +17,8 @@ pub struct Step {
     pub(crate) space: Space,
     #[cube(comptime)]
     pub(crate) level: Level,
-    /// Where `level` sits in the nest, outermost `0`: what a storage block's level is matched
-    /// against on the way down ([`Blocks`](crate::Blocks)).
+    /// Where `level` sits in the nest, outermost `0`: what a storage tile's level is matched
+    /// against on the way down ([`Storage`](crate::Storage)).
     #[cube(comptime)]
     pub(crate) depth: usize,
 }

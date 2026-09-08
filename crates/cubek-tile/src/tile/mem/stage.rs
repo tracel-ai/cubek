@@ -357,8 +357,8 @@ impl<T: Numeric> MemData<T> {
                     overhang: Overhang::Never,
                     write: Write::Replace,
                     units: meta.units,
-                    // A stage is allocated here, whole: one block over the buffer.
-                    blocks: Blocks::Whole,
+                    // A stage is allocated here, whole: one storage tile over the buffer.
+                    storage: Storage::Strided,
                 }),
                 lanes: comptime!(Lanes {
                     share: LaneShare::Whole,

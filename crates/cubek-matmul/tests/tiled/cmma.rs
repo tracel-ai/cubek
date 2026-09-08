@@ -214,19 +214,19 @@ fn cmma_rejects_input_register_type() {
 }
 
 /// The weight packed at load into blocks of exactly the plan's stage and launched under the
-/// Block delivery beside a row-major activation: the same product as the row-major run, read
+/// Tiled delivery beside a row-major activation: the same product as the row-major run, read
 /// one contiguous block per stage. The pack is a copy through the two tiles' views, so the
 /// block layout the kernel reads is the one the tile engine itself describes.
 #[test]
-fn cmma_block_stored_weight_f16() {
+fn cmma_storage_tiled_weight_f16() {
     use cubecl::frontend::Scalar;
-    block_stored_weight(half::f16::elem_type_native());
+    storage_tiled_weight(half::f16::elem_type_native());
 }
 
 #[test]
-fn cmma_block_stored_weight_f32() {
+fn cmma_storage_tiled_weight_f32() {
     use cubecl::frontend::Scalar;
-    block_stored_weight(f32::elem_type_native());
+    storage_tiled_weight(f32::elem_type_native());
 }
 
 /// Copy every logical `(b, k, n)` element of `src` into `dst` through their views, whatever
@@ -257,7 +257,7 @@ fn pack_weight<E: Numeric>(
     }
 }
 
-fn block_stored_weight(dtype: ElemType) {
+fn storage_tiled_weight(dtype: ElemType) {
     use cubecl::{
         ir::FloatKind,
         std::tensor::TensorHandle,
@@ -302,7 +302,7 @@ fn block_stored_weight(dtype: ElemType) {
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
         let launch = || -> Result<(), MatmulSetupError> {
-            // The plan the selector picks for this problem, under the Block delivery: its stage
+            // The plan the selector picks for this problem, under the Tiled delivery: its stage
             // is the block the weight is packed to.
             let acc = match dtype {
                 ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
@@ -316,7 +316,7 @@ fn block_stored_weight(dtype: ElemType) {
                 max_cube_count: c.properties().hardware.max_cube_count,
             };
             let blueprint = CmmaRoutine::blueprint(
-                &BlueprintStrategy::Inferred(CmmaStrategy::block()),
+                &BlueprintStrategy::Inferred(CmmaStrategy::tiled()),
                 &problem,
                 &device_settings,
                 acc,

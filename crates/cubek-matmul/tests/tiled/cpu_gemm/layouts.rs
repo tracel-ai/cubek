@@ -323,12 +323,12 @@ fn all_tiled() {
     );
 }
 
-/// A storage block is the tile of one of the kernel's levels, and a block of blocks names one
+/// A storage tile is the tile of one of the kernel's levels, and a tile of tiles names one
 /// level per nesting. CpuGemm's leaf is the `4 x 4 x 4` instruction, so a tensor stored in
 /// `4 x 4` blocks of `2 x 2` names a tile no level cuts, and the launch refuses it rather than
 /// reading across the inner block.
 #[test]
-fn nested_blocks_below_the_leaf_are_refused() {
+fn nested_storage_tiles_below_the_leaf_are_refused() {
     let client = cubecl::test_device().client();
     if skip_unless_cpu(&client) {
         return;

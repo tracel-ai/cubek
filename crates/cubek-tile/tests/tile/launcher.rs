@@ -6,8 +6,8 @@ use cubecl::{
     zspace::Tiling,
 };
 use cubek_tile::{
-    Axis, Blocks, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
-    Partitioning, PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec,
+    Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
+    Partitioning, PhysicalAxisMap, Projection, Scale, Space, Storage, StorageTiling, TileSpec,
 };
 
 const M: Axis = Axis(0);
@@ -233,11 +233,11 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     );
 }
 
-/// A storage block is the tile of one of the kernel's levels: the space owns the block size,
+/// A storage tile is the tile of one of the kernel's levels: the space owns the block size,
 /// so the launch names that level and the kernel descends into the block rather than checking
 /// a boundary it cannot see. An untiled operand is one block over the whole buffer.
 #[test]
-fn arg_matches_a_storage_block_to_the_level_it_is_the_tile_of() {
+fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
@@ -248,32 +248,32 @@ fn arg_matches_a_storage_block_to_the_level_it_is_the_tile_of() {
         )
     };
 
-    // Blocks of (8, 4) are the leaf, the third level's tile.
-    let mut leaf_blocks = binding(&client, &[8, 2, 8, 4]);
-    leaf_blocks.tiling = Tiling::new(&[2, 2]).unwrap();
-    let leaf = launch.arg(leaf_blocks).subspace(&[M, K]).build();
-    assert_eq!(leaf.spec.blocks, Blocks::Above(2));
+    // Storage of (8, 4) are the leaf, the third level's tile.
+    let mut leaf_tiles = binding(&client, &[8, 2, 8, 4]);
+    leaf_tiles.tiling = Tiling::new(&[2, 2]).unwrap();
+    let leaf = launch.arg(leaf_tiles).subspace(&[M, K]).build();
+    assert_eq!(leaf.spec.storage, Storage::Tiled(2));
 
-    // Blocks of (16, K whole) are the cube's tile, the first level's: an axis stored as one
+    // Storage of (16, K whole) are the cube's tile, the first level's: an axis stored as one
     // fragment is whole, and a level that leaves it whole matches it. Level-major, the whole
     // K dim sits between M's grid and tile fragments.
-    let mut cube_blocks = binding(&client, &[4, 8, 16]);
-    cube_blocks.tiling = Tiling::new(&[2, 1]).unwrap();
-    let cube = launch.arg(cube_blocks).subspace(&[M, K]).build();
-    assert_eq!(cube.spec.blocks, Blocks::Above(0));
+    let mut cube_tiles = binding(&client, &[4, 8, 16]);
+    cube_tiles.tiling = Tiling::new(&[2, 1]).unwrap();
+    let cube = launch.arg(cube_tiles).subspace(&[M, K]).build();
+    assert_eq!(cube.spec.storage, Storage::Tiled(0));
 
     let plain = launch
         .arg(binding(&client, &[64, 8]))
         .subspace(&[M, K])
         .build();
-    assert_eq!(plain.spec.blocks, Blocks::Whole);
+    assert_eq!(plain.spec.storage, Storage::Strided);
 }
 
 /// A tensor whose block is no level's tile is refused at the launch, on the caller's thread:
 /// (16, 4) is the cube's M with the leaf's K, which no level cuts to.
 #[test]
 #[should_panic(expected = "the tile of no level")]
-fn arg_refuses_a_storage_block_that_is_no_level() {
+fn arg_refuses_a_storage_tile_that_is_no_level() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
@@ -313,7 +313,7 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
 
     assert_eq!(arg.spec.projection.physical_rank(), 5);
     assert_eq!(arg.spec.projection.coordinate_rank(), 3);
-    assert_eq!(arg.spec.blocks, Blocks::Above(2));
+    assert_eq!(arg.spec.storage, Storage::Tiled(2));
 }
 
 #[test]

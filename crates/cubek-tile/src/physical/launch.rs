@@ -27,8 +27,8 @@ pub enum KernelForm<'a> {
 /// project from the kernel-form one.
 ///
 /// A launch that states its levels too ([`partitioned`](Launcher::partitioned)) can bind a
-/// block-stored operand: its storage block has to be the tile of one of them
-/// ([`Blocks`](crate::Blocks)). A kernel with no blueprint (a test, a benchmark mapping) is
+/// storage-tiled operand: its storage tile has to be the tile of one of them
+/// ([`Storage`](crate::Storage)). A kernel with no blueprint (a test, a benchmark mapping) is
 /// [`implied`](Launcher::implied) by its levels instead, and keeps them to hand its loops one
 /// each.
 #[derive(Clone)]
@@ -42,8 +42,8 @@ pub struct Launcher {
     leaf: Vec<(Axis, usize)>,
     /// The axes some tile reaches past the end of, whose accesses are masked.
     overhangs: Vec<Axis>,
-    /// The kernel's levels, outermost first, when the launch states them; what a block-stored
-    /// operand's block is matched against. Empty for a launch that states only its leaf.
+    /// The kernel's levels, outermost first, when the launch states them; what a storage-tiled
+    /// operand's storage tile is matched against. Empty for a launch that states only its leaf.
     levels: Vec<Level>,
 }
 
@@ -105,7 +105,7 @@ impl Launcher {
 
     /// [`new`](Launcher::new) over the kernel's whole `partitioning`: the leaf and the overhangs
     /// read off its levels rather than stated beside them, and the levels kept, which is what
-    /// lets a block-stored operand find the level its block is the tile of. The grid is still
+    /// lets a storage-tiled operand find the level its storage tile is the tile of. The grid is still
     /// the blueprint's statement.
     pub fn partitioned(
         client: &Client,

@@ -7,7 +7,7 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand},
 };
 use cubek_tile::{
-    Axis, Block, Geometry, KernelForm, Launcher, Space, Strided, TensorDelivery, Tma,
+    Axis, Geometry, KernelForm, Launcher, Space, StorageTiled, Strided, TensorDelivery, Tma,
     TmaTileArgLaunch,
 };
 
@@ -21,7 +21,7 @@ use crate::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
         kernel::cmma_kernel,
     },
-    tiled::{K, M, N, batch_axis, logical_dims, storage_block},
+    tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
 };
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
@@ -57,32 +57,32 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
-/// A block-stored input names the stage: its block must be this plan's stage on its axes, and
-/// only the [`Block`](CmmaDelivery::Block) delivery moves it. A plain input passes.
+/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes, and
+/// only the [`Tiled`](CmmaDelivery::Tiled) delivery moves it. A plain input passes.
 #[allow(clippy::result_large_err)]
-fn validate_block_stored(
+fn validate_storage_tiled(
     blueprint: &CmmaBlueprint,
     name: &str,
     binding: &TensorBinding,
     stage: (usize, usize),
 ) -> Result<(), MatmulSetupError> {
-    let Some(block) = storage_block(binding, name)? else {
+    let Some(tile) = storage_tile(binding, name)? else {
         return Ok(());
     };
     match blueprint.delivery {
-        CmmaDelivery::Block => {}
+        CmmaDelivery::Tiled => {}
         CmmaDelivery::Copy | CmmaDelivery::Tma => {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma: {name} arrived block-stored, which only the Block delivery moves, not \
+                "Cmma: {name} arrived storage-tiled, which only the Tiled delivery moves, not \
                  {:?}",
                 blueprint.delivery
             ))));
         }
     }
-    if block != stage {
+    if tile != stage {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "Cmma: {name} is stored in {block:?} blocks but the plan stages {stage:?}; the block \
-             names the stage, so pack the tensor to the plan's stage or plan for the block"
+            "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
+             tile names the stage, so pack the tensor to the plan's stage or plan for the tile"
         ))));
     }
     Ok(())
@@ -115,7 +115,7 @@ fn setup(
     validate_single_type(dtypes, MatmulIdent::Lhs)?;
     validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
-    // Logical dims off each operand, folded off a block-stored one's fragments: trailing two
+    // Logical dims off each operand, folded off a storage-tiled one's fragments: trailing two
     // axes are the matrix, leading dims its own (possibly broadcast) batch shape.
     let (lhs_batches, m, k) = logical_dims(lhs.data());
     let (rhs_batches, _, n) = logical_dims(rhs.data());
@@ -155,8 +155,8 @@ fn setup(
 
     let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc)?;
     let (stage_m, stage_n) = blueprint.stage();
-    validate_block_stored(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
-    validate_block_stored(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
+    validate_storage_tiled(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
+    validate_storage_tiled(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -212,7 +212,7 @@ pub fn launch_ref(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
     // The kernel's own levels, stated for the grid and the geometry over this launch's extents,
-    // and what a block-stored input's block is the tile of.
+    // and what a storage-tiled input's storage tile is the tile of.
     let space = Space::new(&extents);
     let plane_size = client.properties().hardware.plane_size_max;
     let launch = Launcher::partitioned(
@@ -249,7 +249,7 @@ pub fn launch_ref(
             out,
             &out_batch_axes,
         ),
-        CmmaDelivery::Block => launch_strided::<Block>(
+        CmmaDelivery::Tiled => launch_strided::<StorageTiled>(
             client,
             &launch,
             cube_count,
@@ -290,8 +290,8 @@ struct Elems {
     acc: ElemType,
 }
 
-/// The tensor-bound path, strided or block-stored (`D` says which, and the [`Block`] family
-/// serves a plain operand beside a block-stored one): each operand lined at the widest width
+/// The tensor-bound path, strided or storage-tiled (`D` says which, and the [`Tiled`] family
+/// serves a plain operand beside a storage-tiled one): each operand lined at the widest width
 /// the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
 #[allow(clippy::too_many_arguments)]

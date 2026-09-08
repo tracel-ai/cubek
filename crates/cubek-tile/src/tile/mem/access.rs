@@ -610,20 +610,20 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window as a view over its own coordinates (`pos` relative to the origin), served at
-    /// `T` grouped `W` wide. Inside one storage block ([`Held`](Blocks::Held)) that is the run
-    /// from the origin addressed by the block's own strides, no digit to split; otherwise the
+    /// `T` grouped `W` wide. Inside one storage tile ([`Held`](Storage::Contiguous)) that is the run
+    /// from the origin addressed by the storage tile's own strides, no digit to split; otherwise the
     /// layout walk through the window, under `guard`.
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
-        match comptime!(self.access.blocks) {
-            Blocks::Held => {
+        match comptime!(self.access.storage) {
+            Storage::Contiguous => {
                 let start = self.window_start.fcast::<usize>();
                 let all = self.lines::<W>();
-                all.slice(start, all.len()).view(self.block_layout())
+                all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Blocks::Whole => self
+            Storage::Strided => self
                 .read_view::<W>(self.base())
                 .view(self.window().with_guard(guard)),
-            Blocks::Above(_) => self
+            Storage::Tiled(_) => self
                 .read_view::<W>(self.base())
                 .view(self.window().with_guard(guard)),
         }
@@ -635,31 +635,31 @@ impl<T: Numeric> MemData<T> {
         &self,
         #[comptime] guard: Guard,
     ) -> View<'_, Vector<I, WP>, CoordsDyn> {
-        match comptime!(self.access.blocks) {
-            Blocks::Held => {
+        match comptime!(self.access.storage) {
+            Storage::Contiguous => {
                 let start = self.window_start.fcast::<usize>();
                 let all = self.lines_storage::<I, WP>();
-                all.slice(start, all.len()).view(self.block_layout())
+                all.slice(start, all.len()).view(self.contiguous_layout())
             }
-            Blocks::Whole => self
+            Storage::Strided => self
                 .lines_storage::<I, WP>()
                 .view(self.base())
                 .view(self.window().with_guard(guard)),
-            Blocks::Above(_) => self
+            Storage::Tiled(_) => self
                 .lines_storage::<I, WP>()
                 .view(self.base())
                 .view(self.window().with_guard(guard)),
         }
     }
 
-    /// The layout of a window inside one storage block, relative to its origin: its own extent,
+    /// The layout of a window inside one storage tile, relative to its origin: its own extent,
     /// each coordinate addressed by the stride of its innermost fragment, no digit to split. Sits
     /// over the run from [`window_offset`](MemData::window_offset) on, like a fragment load.
-    fn block_layout(&self) -> GmemLayout {
+    fn contiguous_layout(&self) -> GmemLayout {
         comptime!(assert!(
             !self.access.overhang.masks(),
-            "MemData: a window inside one storage block reads unmasked; a block-stored tensor is \
-             padded to whole blocks"
+            "MemData: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
+             padded to whole storage tiles"
         ));
         let positional = comptime!(self.layout.projection.clone());
         let rank = comptime!(positional.coordinate_rank());
@@ -757,21 +757,21 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
-    /// one contiguous region, so on a tiled store it must lie inside one storage block, which is
-    /// what [`Blocks`] says of it.
+    /// one contiguous region, so on a tiled store it must lie inside one storage tile, which is
+    /// what [`Storage`] says of it.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.access.overhang.masks(),
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
-        // Reading a window above its block from a base and a row stride would walk straight
-        // through a block boundary and return another block's cells, silently. The layout walk
+        // Reading a window above its storage tile from a base and a row stride would walk straight
+        // through a storage tile boundary and return another tile's cells, silently. The layout walk
         // addresses them correctly; a fragment load cannot, and says so.
-        match comptime!(self.access.blocks) {
-            Blocks::Whole => {}
-            Blocks::Held => {}
-            Blocks::Above(level) => panic!(
-                "MemData::window_offset: this window sits above its storage block (the tile of \
+        match comptime!(self.access.storage) {
+            Storage::Strided => {}
+            Storage::Contiguous => {}
+            Storage::Tiled(level) => panic!(
+                "MemData::window_offset: this window sits above its storage tile (the tile of \
                  level {level}), spanning several, so it is not one contiguous region; descend \
                  through that level first, or read the operand through its layout"
             ),
@@ -1276,7 +1276,7 @@ impl<T: Numeric> MemData<T> {
                 overhang: self.access.overhang,
                 write: self.access.write,
                 units: self.access.units,
-                blocks: blocks_below(self.access.blocks, step.depth, &step.level, &space),
+                storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
             lanes: comptime!(Lanes {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
@@ -1293,31 +1293,32 @@ impl<T: Numeric> MemData<T> {
     }
 }
 
-/// What the storage blocks are to the window one level down: descending through the block's
-/// own level puts the window inside one block, where it stays. The launch matched the block to
+/// What the storage tiles are to the window one level down: descending through the storage tile's
+/// own level puts the window inside one storage tile, where it stays. The launch matched the tile to
 /// that level on real extents; here the level is only asked to hand every axis down static, as
-/// a block is, and never to be skipped past.
-fn blocks_below(blocks: Blocks, depth: usize, level: &Level, space: &Space) -> Blocks {
-    match blocks {
-        Blocks::Whole => Blocks::Whole,
-        Blocks::Held => Blocks::Held,
-        Blocks::Above(block) => {
+/// a storage tile is, and never to be skipped past.
+fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -> Storage {
+    match storage {
+        Storage::Strided => Storage::Strided,
+        Storage::Contiguous => Storage::Contiguous,
+        Storage::Tiled(tiled_at) => {
             assert!(
-                depth <= block,
-                "MemData::at: this window is above its storage block, the tile of level {block}, \
-                 yet the descent is at depth {depth}; the block's level was skipped past"
+                depth <= tiled_at,
+                "MemData::at: this window is above its storage tile, the tile of level \
+                 {tiled_at}, yet the descent is at depth {depth}; the storage tile's level was \
+                 skipped past"
             );
-            if depth < block {
-                return Blocks::Above(block);
+            if depth < tiled_at {
+                return Storage::Tiled(tiled_at);
             }
             for axis in space.axes() {
                 assert!(
                     matches!(level.edge_in(space, axis), Extent::Static(_)),
-                    "MemData::at: level {block} hands {axis:?} down dynamic, so its tile is no \
-                     storage block"
+                    "MemData::at: level {tiled_at} hands {axis:?} down dynamic, so its tile is \
+                     no storage tile"
                 );
             }
-            Blocks::Held
+            Storage::Contiguous
         }
     }
 }
