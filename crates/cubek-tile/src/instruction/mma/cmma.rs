@@ -34,7 +34,10 @@ impl<A: Numeric> CmmaData<A> {
                 // read col-major.
                 let m = comptime!(lhs.space.extent_at(lhs.space.rank() - 2));
                 let k = comptime!(lhs.space.extent_at(lhs.space.rank() - 1));
-                let layout = comptime!(rhs_layout(&lhs.space, &rhs.space));
+                let layout = comptime!(rhs_layout(
+                    &rhs.space,
+                    lhs.space.axis_at(lhs.space.rank() - 1)
+                ));
                 let n = comptime!(match layout {
                     MatrixLayout::RowMajor => rhs.space.extent_at(rhs.space.rank() - 1),
                     MatrixLayout::ColMajor => rhs.space.extent_at(rhs.space.rank() - 2),
@@ -57,10 +60,10 @@ impl<A: Numeric> CmmaData<A> {
     }
 }
 
-/// How the rhs window is read: col-major when its trailing axis is the contracted one (the
-/// lhs's trailing axis), the matrix then being the window's transpose; row-major otherwise.
-pub(crate) fn rhs_layout(lhs: &Space, rhs: &Space) -> MatrixLayout {
-    let contracted = lhs.axis_at(lhs.rank() - 1);
+/// How a rhs window is read: col-major when its trailing axis is `contracted`, the matrix
+/// then being the window's transpose; row-major otherwise. The rule
+/// [`PlanePartition::store`](crate::PlanePartition::store) loads a `B` fragment by.
+pub(crate) fn rhs_layout(rhs: &Space, contracted: Axis) -> MatrixLayout {
     match rhs.axis_at(rhs.rank() - 1) == contracted {
         true => MatrixLayout::ColMajor,
         false => MatrixLayout::RowMajor,

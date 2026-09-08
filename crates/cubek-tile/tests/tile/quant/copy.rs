@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, DequantAt, KernelForm, Launcher, Level, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
-    TileArgLaunch, TileSpec,
+    Axis, DequantAt, KernelForm, Launcher, Level, Partitioning, QuantTileArg, QuantTileArgLaunch,
+    Space, TileArg, TileArgLaunch, TileSpec,
 };
 
 const M: Axis = Axis(0);
@@ -54,8 +54,10 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
     let client = cubecl::test_device().client();
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n)]),
-        vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n)]),
+            vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
+        ),
         KernelForm::Static,
     );
     let space = launch.space().clone();
@@ -195,7 +197,11 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
     let space = Space::new(&[(M, m), (N, n)]);
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Static);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(space.clone(), vec![]),
+        KernelForm::Static,
+    );
     let input_op = launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -262,7 +268,11 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         .arange();
     let output = TileInput::builder(&client, space.clone()).untiled().zeros();
 
-    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Static);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(space.clone(), vec![]),
+        KernelForm::Static,
+    );
     let input_op = launcher
         .arg(input.tile.handle().binding())
         .subspace(&[M, N])
@@ -668,7 +678,11 @@ fn two_level_without_global_scale_refused_by_the_builder() {
         .generate_without_host_data();
 
     let space = Space::new(&[(M, m), (N, n)]);
-    let launcher = Launcher::implied(&client, space.clone(), vec![], KernelForm::Dynamic);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(space.clone(), vec![]),
+        KernelForm::Dynamic,
+    );
     launcher
         .arg(input.binding())
         .subspace(&[M, N])
@@ -718,8 +732,10 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
     // A nest that tiles into `bm×bn` blocks, one cube walking them.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n)]),
-        vec![Level::walk(&[(M, bm), (N, bn)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n)]),
+            vec![Level::walk(&[(M, bm), (N, bn)])],
+        ),
         KernelForm::Static,
     );
     // A partial last block overhangs its tile, so reads/writes past the tensor must be masked.

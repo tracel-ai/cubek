@@ -1,7 +1,9 @@
 //! The CpuGemm kernel: the space it runs over and the walk written out, level by level.
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Cut, Fragments, Level, Monoid, RegisterBlock, Semiring, Space, TileArg};
+use cubek_tile::{
+    Axis, Cut, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+};
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 
@@ -19,18 +21,19 @@ pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
 }
 
 impl CpuGemmBlueprint {
+    /// The space with the levels that cut it: what the leaf and the overhangs are read off.
+    pub fn partitioning(&self, space: &Space, batch: &[Axis]) -> Partitioning {
+        Partitioning::new(space.clone(), cpu_gemm_levels(self, batch))
+    }
+
     /// The tile every operand is cut to at the bottom: the instruction's.
     pub fn leaf(&self, space: &Space, batch: &[Axis]) -> Vec<(Axis, usize)> {
-        space.leaf(&cpu_gemm_levels(self, batch)).extents()
+        self.partitioning(space, batch).leaf().extents()
     }
 
     /// The axes some tile reaches past the end of.
     pub fn overhangs(&self, space: &Space, batch: &[Axis]) -> Vec<Axis> {
-        let levels = cpu_gemm_levels(self, batch);
-        space
-            .axes()
-            .filter(|&axis| space.overhangs(&levels, axis))
-            .collect()
+        self.partitioning(space, batch).overhanging()
     }
 
     /// The grid this launch runs on: a cube per box of the output and per batch, the blueprint's

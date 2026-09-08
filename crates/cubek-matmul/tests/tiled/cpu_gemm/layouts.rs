@@ -4,16 +4,18 @@ use super::inner_layout::InnerLayout;
 use cubecl::std::tensor::{TensorHandle, layout::CoordsDyn};
 use cubecl::{
     CubeCount, CubeDim, client::Client, frontend::Scalar, ir::AddressType, prelude::*,
-    zspace::Shape, zspace::shape,
+    zspace::Shape, zspace::Tiling, zspace::shape,
 };
 use cubek_matmul::{
     definition::{MatmulElems, MatmulProblem},
     routine::BlueprintStrategy,
-    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, launch_ref},
 };
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
-use cubek_tile::{Axis, KernelForm, Launcher, Projection, Space, TileArg, TileArgLaunch, TileSpec};
+use cubek_tile::{
+    Axis, KernelForm, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+};
 
 use super::Dims;
 use crate::harness::assert_result;
@@ -116,8 +118,10 @@ impl Operand {
             layout,
             launcher: Launcher::implied(
                 &cubecl::test_device().client(),
-                Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
-                vec![],
+                Partitioning::new(
+                    Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
+                    vec![],
+                ),
                 KernelForm::Static,
             ),
             batch,
@@ -142,10 +146,16 @@ fn copy(client: &Client, src: &Operand, dst: &Operand) {
     );
 }
 
-/// The operand's binding with the layout's physical strides realized on its buffer.
+/// The operand's binding with the layout's physical strides realized on its buffer, saying for
+/// itself how deep its matrix dims are stored.
 fn physical_binding(op: &Operand) -> TensorBinding {
     let mut binding = op.handle.clone().binding();
     binding.strides = op.layout.physical_strides(&[op.batch], op.rows, op.cols)[..].into();
+    let levels = op.layout.levels();
+    let batches = binding.shape.len() - 2 * (levels + 1);
+    let mut fragments = vec![1; batches];
+    fragments.extend([levels + 1; 2]);
+    binding.tiling = Tiling::new(&fragments).expect("at most four fragments a dim");
     binding
 }
 
@@ -232,22 +242,13 @@ fn run(lhs_layout: InnerLayout, rhs_layout: InnerLayout, out_layout: InnerLayout
         &rhs,
     );
 
-    // Drive the production launch path, imposing each operand's inner layout via
-    // `WithLayout`: this is where tiled (higher-rank) operands flow through `launch_ref`.
+    // Drive the production launch path. Each operand's binding states its own storage, so a
+    // tiled (higher-rank) one flows through `launch_ref` saying so for itself.
     launch_ref(
         &client,
-        WithLayout {
-            binding: InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
-            levels: lhs.layout.levels(),
-        },
-        WithLayout {
-            binding: InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
-            levels: rhs.layout.levels(),
-        },
-        WithLayout {
-            binding: physical_binding(&out),
-            levels: out.layout.levels(),
-        },
+        InputBinding::Normal(physical_binding(&lhs), dtypes.lhs_global),
+        InputBinding::Normal(physical_binding(&rhs), dtypes.rhs_global),
+        physical_binding(&out),
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile,

@@ -8,8 +8,9 @@
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, RegisterBlock,
-    RowState, Semiring, Space, StageStorage, StreamFold, TileArg, TileArgLaunch, TileSpec,
+    Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, Partitioning,
+    RegisterBlock, RowState, Semiring, Space, StageStorage, StreamFold, TileArg, TileArgLaunch,
+    TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -184,24 +185,26 @@ fn run(
     // walk cuts S into blocks; every other axis rides whole.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (G, g),
-            (QP, qp),
-            (S, s_total),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ]),
-        vec![Level::walk(&[
-            (G, g),
-            (QP, qp),
-            (S, block),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (G, g),
+                (QP, qp),
+                (S, s_total),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ]),
+            vec![Level::walk(&[
+                (G, g),
+                (QP, qp),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -602,24 +605,26 @@ fn run_cmma<E: Float + CubeElement>(
     // The launch walks `S` in blocks and nothing else; the planes' cut on `QP` is the kernel's.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (G, 1),
-            (QP, rows),
-            (S, s_total),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ]),
-        vec![Level::walk(&[
-            (G, 1),
-            (QP, rows),
-            (S, block),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (G, 1),
+                (QP, rows),
+                (S, s_total),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ]),
+            vec![Level::walk(&[
+                (G, 1),
+                (QP, rows),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ])],
+        ),
         KernelForm::Static,
     );
     let (k_axes, v_axes): (&[Axis], &[Axis]) = if spanned {
@@ -997,24 +1002,26 @@ fn run_split_at(
     // The one attention nest, as in [`run`].
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[
-            (G, g),
-            (QP, qp),
-            (S, s_total),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ]),
-        vec![Level::walk(&[
-            (G, g),
-            (QP, qp),
-            (S, block),
-            (D, d),
-            (V, val_dim),
-            (R, 1),
-            (C, 1),
-        ])],
+        Partitioning::new(
+            Space::new(&[
+                (G, g),
+                (QP, qp),
+                (S, s_total),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ]),
+            vec![Level::walk(&[
+                (G, g),
+                (QP, qp),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+                (R, 1),
+                (C, 1),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -1211,14 +1218,16 @@ fn run_stream(
     // The one attention space: q/k/v/out project their axes out of it.
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
-        vec![Level::walk(&[
-            (G, g),
-            (QP, 1),
-            (S, block),
-            (D, d),
-            (V, val_dim),
-        ])],
+        Partitioning::new(
+            Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
+            vec![Level::walk(&[
+                (G, g),
+                (QP, 1),
+                (S, block),
+                (D, d),
+                (V, val_dim),
+            ])],
+        ),
         KernelForm::Static,
     );
 

@@ -4,6 +4,7 @@
 //!
 //! The [`Semiring`] states the accumulation's algebra once, at the call that runs the steps.
 
+use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
 use crate::instruction::registers::contract;
@@ -228,11 +229,8 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Cmma(d) => {
-                let along_k = comptime!(
-                    crate::instruction::rhs_layout(&lhs.space, &rhs.space)
-                        == cubecl::cmma::MatrixLayout::ColMajor
-                );
-                strided_2d(lhs, rhs, out, along_k);
+                let transposed = transposed_rhs(lhs, rhs);
+                strided_2d(lhs, rhs, out, transposed);
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
@@ -316,6 +314,33 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
          leaf, or an unpromoted Gmem/Smem accumulator, whose software instruction is the \
          `contract::memory` arm of `mma_leaf`"
     ));
+}
+
+/// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)`
+/// window, the transpose of the role's own order, which the leaf reads as the same matrix
+/// ([`PlanePartition::store`], [`rhs_layout`](crate::instruction::rhs_layout)) and which is
+/// therefore the edge the contraction runs along, as it is for a folded register step.
+#[cube]
+fn transposed_rhs<EL: Numeric, ER: Numeric>(
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
+) -> comptime_type!(bool) {
+    match &rhs.tile_kind {
+        TileKind::PlaneTile(t) => match t {
+            PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => comptime!(false),
+        },
+        // The contracted axis is the lhs's trailing one, as the leaf reads it: an axis the output
+        // lacks is not always contracted (a spanned leading axis is not).
+        TileKind::Smem(_) => comptime!(
+            crate::instruction::rhs_layout(&rhs.space, lhs.space.axis_at(lhs.space.rank() - 1))
+                == MatrixLayout::ColMajor
+        ),
+        TileKind::Gmem(_)
+        | TileKind::PlanePartition(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_) => comptime!(false),
+    }
 }
 
 /// Asserts that operands contract their shared axes in the same order.

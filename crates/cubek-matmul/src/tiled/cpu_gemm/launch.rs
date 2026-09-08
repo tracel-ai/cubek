@@ -1,8 +1,12 @@
 //! Launch wiring for the CpuGemm routine.
 
-use cubecl::{client::Client, prelude::*};
+use cubecl::{
+    client::Client,
+    prelude::*,
+    zspace::{Tiling, metadata::Metadata},
+};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, StorageTiling};
+use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space};
 
 use crate::{
     definition::{
@@ -14,35 +18,9 @@ use crate::{
     tiled::{K, M, N, batch_axis},
 };
 
-/// A binding together with its storage-tiling depth: `levels` nested `[grid…, leaf]` splits per
-/// matrix axis (`0` = a plain strided buffer). It's the one piece of physical layout that the
-/// binding's own shape/strides don't reveal: a tiled buffer just looks like a higher-rank strided
-/// one, so it's all production carries; row-vs-col-major rides in the strides, and the per-operand
-/// layout is derived at launch by [`cubek_tile::StridedTileSource`].
-pub struct WithLayout<B> {
-    pub binding: B,
-    pub levels: usize,
-}
-
-impl WithLayout<InputBinding> {
-    /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
-    #[allow(clippy::result_large_err)]
-    pub fn strided_input(binding: InputBinding) -> Result<Self, MatmulSetupError> {
-        validate_strided(&binding.data().strides)?;
-        Ok(Self { binding, levels: 0 })
-    }
-}
-
-impl WithLayout<TensorBinding> {
-    /// A plain strided operand (`levels = 0`). Errors on a binding contiguous in neither matrix axis.
-    #[allow(clippy::result_large_err)]
-    pub fn strided_output(binding: TensorBinding) -> Result<Self, MatmulSetupError> {
-        validate_strided(&binding.strides)?;
-        Ok(Self { binding, levels: 0 })
-    }
-}
-
-/// A strided matmul operand must be contiguous along one of its two matrix axes.
+/// A strided matmul operand must be contiguous along one of its two innermost dims. Under storage
+/// tiling those are the innermost fragments, which is the pair a leaf tile is read through, so the
+/// same rule reads the same way on a tiled buffer.
 #[allow(clippy::result_large_err)]
 fn validate_strided(strides: &[usize]) -> Result<(), MatmulSetupError> {
     let n = strides.len();
@@ -76,35 +54,33 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
-/// Fold a physical shape back to logical `(batches, rows, cols)` given its storage-tiling `levels`:
-/// the trailing `2·(levels + 1)` dims are the matrix's level-major `[row, col]` factors (their
-/// products are `rows`/`cols`), everything before them is the batch shape.
-fn fold_logical(shape: &[usize], levels: usize) -> (Vec<usize>, usize, usize) {
-    let split = shape.len() - 2 * (levels + 1);
-    let (mut rows, mut cols) = (1, 1);
-    for (i, &d) in shape[split..].iter().enumerate() {
-        if i % 2 == 0 {
-            rows *= d;
-        } else {
-            cols *= d;
-        }
-    }
-    (shape[..split].to_vec(), rows, cols)
+/// Logical `(batches, rows, cols)` off a buffer that may be storage-tiled: the tensor states how
+/// it is stored, so its own metadata folds the fragments back and nothing here has to be told.
+fn fold_logical(shape: &[usize], strides: &[usize], tiling: Tiling) -> (Vec<usize>, usize, usize) {
+    let logical = Metadata::new(shape.to_vec(), strides.to_vec())
+        .with_tiling(tiling)
+        .expect("a binding's tiling describes its own rank")
+        .logical_shape()
+        .expect("a binding's tiling describes its own rank");
+    let dims = logical.as_slice();
+    let split = dims.len() - 2;
+    (dims[..split].to_vec(), dims[split], dims[split + 1])
 }
 
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
     client: &Client,
-    lhs: WithLayout<InputBinding>,
-    rhs: WithLayout<InputBinding>,
-    out: WithLayout<TensorBinding>,
+    lhs: InputBinding,
+    rhs: InputBinding,
+    out: TensorBinding,
     strategy: &BlueprintStrategy<(), CpuGemmRoutine>,
     dtypes: &MatmulElems,
 ) -> Result<(), MatmulSetupError> {
-    let (lhs, lhs_levels) = (lhs.binding, lhs.levels);
-    let (rhs, rhs_levels) = (rhs.binding, rhs.levels);
-    let (out, out_levels) = (out.binding, out.levels);
     let sz = dtypes.acc_global.size();
+
+    validate_strided(&lhs.data().strides)?;
+    validate_strided(&rhs.data().strides)?;
+    validate_strided(&out.strides)?;
 
     if matches!(lhs, InputBinding::Quantized { .. })
         || matches!(rhs, InputBinding::Quantized { .. })
@@ -120,8 +96,8 @@ pub fn launch_ref(
     // Logical dims folded from each operand's physical shape (it may be a higher-rank tiled
     // buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own (possibly
     // broadcast) batch shape.
-    let (lhs_batches, m, k) = fold_logical(lhs.shape(), lhs_levels);
-    let (rhs_batches, _, n) = fold_logical(rhs.shape(), rhs_levels);
+    let (lhs_batches, m, k) = fold_logical(lhs.shape(), &lhs.data().strides, lhs.data().tiling);
+    let (rhs_batches, _, n) = fold_logical(rhs.shape(), &rhs.data().strides, rhs.data().tiling);
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "CpuGemm: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -208,20 +184,17 @@ pub fn launch_ref(
         .arg(lhs.into_data())
         .subspace(&[M, K])
         .batches(&out_batch_axes)
-        .tiling(StorageTiling::uniform(2, lhs_levels))
         .build();
     let b = launch
         .arg(rhs)
         .subspace(&[K, N])
         .batches(&out_batch_axes)
-        .tiling(StorageTiling::uniform(2, rhs_levels))
         .vectorize(v)
         .build();
     let c = launch
         .arg(out)
         .subspace(&[M, N])
         .batches(&out_batch_axes)
-        .tiling(StorageTiling::uniform(2, out_levels))
         .vectorize(v)
         .build();
     cpu_gemm_kernel::launch(

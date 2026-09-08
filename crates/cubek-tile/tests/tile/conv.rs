@@ -407,13 +407,15 @@ impl Conv1d {
     ) {
         let launcher = Launcher::implied(
             &cubecl::test_device().client(),
-            Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![Level::walk(&[
-                (OH, tile_oh),
-                (CO, tile_co),
-                (RH, self.rh),
-                (CI, self.ci),
-            ])],
+            Partitioning::new(
+                Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
+                vec![Level::walk(&[
+                    (OH, tile_oh),
+                    (CO, tile_co),
+                    (RH, self.rh),
+                    (CI, self.ci),
+                ])],
+            ),
             KernelForm::Static,
         );
 
@@ -555,8 +557,10 @@ fn conv1d_padded_underflow_masks_to_zero() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 
@@ -632,8 +636,10 @@ fn conv1d_padded_underflow_clamps_to_edge() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 
@@ -705,8 +711,10 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 
@@ -875,13 +883,15 @@ impl Conv1d {
 
         let launcher = Launcher::implied(
             &client,
-            Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![Level::walk(&[
-                (OH, tile_oh),
-                (CO, tile_co),
-                (RH, self.rh),
-                (CI, self.ci),
-            ])],
+            Partitioning::new(
+                Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
+                vec![Level::walk(&[
+                    (OH, tile_oh),
+                    (CO, tile_co),
+                    (RH, self.rh),
+                    (CI, self.ci),
+                ])],
+            ),
             KernelForm::Static,
         );
 
@@ -912,14 +922,12 @@ impl Conv1d {
         let launch = match dynamic {
             Some(axes) => Launcher::implied(
                 &client,
-                launcher.space().clone(),
-                launcher.levels().to_vec(),
+                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
                 KernelForm::DynamicAlong(axes),
             ),
             None => Launcher::implied(
                 &client,
-                launcher.space().clone(),
-                launcher.levels().to_vec(),
+                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
                 KernelForm::Dynamic,
             ),
         };
@@ -1143,13 +1151,15 @@ impl Conv1d {
 
         let launcher = Launcher::implied(
             &client,
-            Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![Level::walk(&[
-                (OH, tile_oh),
-                (CO, tile_co),
-                (RH, self.rh),
-                (CI, self.ci),
-            ])],
+            Partitioning::new(
+                Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
+                vec![Level::walk(&[
+                    (OH, tile_oh),
+                    (CO, tile_co),
+                    (RH, self.rh),
+                    (CI, self.ci),
+                ])],
+            ),
             KernelForm::Static,
         );
 
@@ -1420,13 +1430,15 @@ impl Conv1d {
 
         let launcher = Launcher::implied(
             &client,
-            Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            vec![Level::walk(&[
-                (OH, tile_oh),
-                (CO, tile_co),
-                (RH, self.rh),
-                (CI, self.ci),
-            ])],
+            Partitioning::new(
+                Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
+                vec![Level::walk(&[
+                    (OH, tile_oh),
+                    (CO, tile_co),
+                    (RH, self.rh),
+                    (CI, self.ci),
+                ])],
+            ),
             KernelForm::Static,
         );
 
@@ -1663,22 +1675,24 @@ impl Conv2d {
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
         let launcher = Launcher::implied(
             &cubecl::test_device().client(),
-            Space::new(&[
-                (OH, self.oh),
-                (OW, self.ow),
-                (CO, self.co),
-                (RH, self.rh),
-                (RW, self.rw),
-                (CI, self.ci),
-            ]),
-            vec![Level::walk(&[
-                (OH, tile_oh),
-                (OW, tile_ow),
-                (CO, tile_co),
-                (RH, self.rh),
-                (RW, self.rw),
-                (CI, self.ci),
-            ])],
+            Partitioning::new(
+                Space::new(&[
+                    (OH, self.oh),
+                    (OW, self.ow),
+                    (CO, self.co),
+                    (RH, self.rh),
+                    (RW, self.rw),
+                    (CI, self.ci),
+                ]),
+                vec![Level::walk(&[
+                    (OH, tile_oh),
+                    (OW, tile_ow),
+                    (CO, tile_co),
+                    (RH, self.rh),
+                    (RW, self.rw),
+                    (CI, self.ci),
+                ])],
+            ),
             KernelForm::Static,
         );
 
@@ -2183,14 +2197,16 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-        vec![Level::walk(&[
-            (OH, oh),
-            (OW, ow),
-            (RH, rh),
-            (RW, rw),
-            (CI, ci),
-        ])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
+            vec![Level::walk(&[
+                (OH, oh),
+                (OW, ow),
+                (RH, rh),
+                (RW, rw),
+                (CI, ci),
+            ])],
+        ),
         KernelForm::Static,
     );
 
@@ -2436,8 +2452,10 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 
@@ -2557,8 +2575,10 @@ impl Resize1d {
             .collect();
         Launcher::implied(
             &cubecl::test_device().client(),
-            Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-            levels,
+            Partitioning::new(
+                Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
+                levels,
+            ),
             KernelForm::Static,
         )
     }
@@ -2992,8 +3012,10 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 
@@ -3067,8 +3089,10 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-        vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        Partitioning::new(
+            Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
+            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+        ),
         KernelForm::Static,
     );
 

@@ -110,8 +110,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
     let split_space = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
-        vec![Level::cubes(&[(KB, 1)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
+            vec![Level::cubes(&[(KB, 1)])],
+        ),
         KernelForm::Static,
     );
 
@@ -152,8 +154,10 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
 
     let fold_space = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (KB, splits)]),
-        vec![Level::cubes(&[(M, 1)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (KB, splits)]),
+            vec![Level::cubes(&[(M, 1)])],
+        ),
         KernelForm::Static,
     );
 
@@ -367,8 +371,10 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::cubes(&[(K, k / splits)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::cubes(&[(K, k / splits)])],
+        ),
         KernelForm::Static,
     );
 
@@ -505,11 +511,13 @@ fn an_atomic_drain_with_lanes_of_their_own() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::cubes(&[(K, k / splits)]),
-            Level::lanes(&[Cut::new(N, per_lane).across(plane_size)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::cubes(&[(K, k / splits)]),
+                Level::lanes(&[Cut::new(N, per_lane).across(plane_size)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -588,8 +596,10 @@ fn an_atomic_drain_folds_across_planes() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::planes(&[(K, k / num_planes)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::planes(&[(K, k / num_planes)])],
+        ),
         KernelForm::Static,
     );
 
@@ -693,8 +703,10 @@ fn a_folding_output_contracts_in_place() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::cubes(&[(K, k / splits)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::cubes(&[(K, k / splits)])],
+        ),
         KernelForm::Static,
     );
 

@@ -380,8 +380,10 @@ impl Harness {
             dtype: f32::elem_type_native(),
             launcher: Launcher::implied(
                 &cubecl::test_device().client(),
-                Space::new(&[(ROW, ROWS), (COL, COLS)]),
-                vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+                Partitioning::new(
+                    Space::new(&[(ROW, ROWS), (COL, COLS)]),
+                    vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+                ),
                 KernelForm::Static,
             ),
         }
@@ -687,8 +689,10 @@ fn direct_copy_masks_the_trailing_partial_tile() {
     let dtype = f32::elem_type_native();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(ROW, ROWS), (COL, COLS)]),
-        vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+        Partitioning::new(
+            Space::new(&[(ROW, ROWS), (COL, COLS)]),
+            vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+        ),
         KernelForm::Static,
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
@@ -717,8 +721,10 @@ fn divided_direct_copy_preserves_the_parent_bound() {
     let dtype = f32::elem_type_native();
     let launch = Launcher::implied(
         &client,
-        Space::new(&[(ROW, ROWS), (COL, COLS)]),
-        vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+        Partitioning::new(
+            Space::new(&[(ROW, ROWS), (COL, COLS)]),
+            vec![Level::walk(&[(ROW, 2), (COL, 4)])],
+        ),
         KernelForm::DynamicAlong(&[ROW]),
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])

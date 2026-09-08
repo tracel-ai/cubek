@@ -231,8 +231,10 @@ fn run(
 fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, tm), (N, tn), (K, k)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, tm), (N, tn), (K, k)])],
+        ),
         KernelForm::Static,
     );
     run(
@@ -250,8 +252,10 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
 fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K, k)])],
+        Partitioning::new(
+            Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K, k)])],
+        ),
         KernelForm::Static,
     );
     run(
@@ -290,8 +294,10 @@ fn split_k_whole_reduce_at_leaf() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
-        vec![Level::walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
+            vec![Level::walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        ),
         KernelForm::Static,
     );
 
@@ -316,8 +322,10 @@ fn split_k_major_half_walked() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
-        vec![Level::walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
+            vec![Level::walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)])],
+        ),
         KernelForm::Static,
     );
 
@@ -342,8 +350,10 @@ fn split_k_with_a_batch_axis() {
 
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]),
-        vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        Partitioning::new(
+            Space::new(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]),
+            vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)])],
+        ),
         KernelForm::Static,
     );
 
@@ -407,8 +417,10 @@ fn run_reduce_staged(
 fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoid: Monoid) {
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
     // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
@@ -505,8 +517,10 @@ fn test_reduce_axis_sum_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -530,8 +544,10 @@ fn test_reduce_axis_sum_walked_levels() {
     let (m, k, tm, tk) = (8, 16, 4, 4);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -555,8 +571,10 @@ fn test_reduce_axis_max_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -582,8 +600,10 @@ fn test_reduce_axis_min_2d_to_1d() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -609,8 +629,10 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
     let (b, m, k) = (3, 4, 8);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(B, b), (M, m), (K, k)]),
-        vec![Level::walk(&[(B, 1), (M, 2), (K, 4)])],
+        Partitioning::new(
+            Space::new(&[(B, b), (M, m), (K, k)]),
+            vec![Level::walk(&[(B, 1), (M, 2), (K, 4)])],
+        ),
         KernelForm::Static,
     );
 
@@ -671,8 +693,10 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -700,8 +724,10 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -733,8 +759,10 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -812,8 +840,10 @@ fn run_reduce_checked(
 fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, m), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, m), (K, tk)])],
+        ),
         KernelForm::Static,
     )
 }
@@ -1015,8 +1045,10 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1048,8 +1080,10 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1083,8 +1117,10 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::walk(&[(M, tm), (K, tk)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::walk(&[(M, tm), (K, tk)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1115,8 +1151,10 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
     let (b, m, k) = (3, 4, 16);
     let launcher = Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(B, b), (M, m), (K, k)]),
-        vec![Level::walk(&[(B, 1), (M, 2), (K, 8)])],
+        Partitioning::new(
+            Space::new(&[(B, b), (M, m), (K, k)]),
+            vec![Level::walk(&[(B, 1), (M, 2), (K, 8)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1158,8 +1196,10 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
     let k = plane_size * kr;
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1191,8 +1231,10 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
     let k = plane_size * kr;
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1226,8 +1268,10 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
     let k = plane_size * kr;
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (K, k)]),
-        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (K, k)]),
+            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1303,8 +1347,10 @@ fn resident_max_over_lane_split_k() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+        ),
         KernelForm::Static,
     );
 
@@ -1373,11 +1419,13 @@ fn resident_max_over_lane_group_k() {
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::lanes(&[
-            Cut::new(M, 1).across(groups),
-            Cut::new(K, kr).across(group_lanes).interleaved(),
-        ])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::lanes(&[
+                Cut::new(M, 1).across(groups),
+                Cut::new(K, kr).across(group_lanes).interleaved(),
+            ])],
+        ),
         KernelForm::Static,
     );
 

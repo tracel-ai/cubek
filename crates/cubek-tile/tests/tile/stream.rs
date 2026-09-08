@@ -93,8 +93,10 @@ impl Harness {
             dtype: f32::elem_type_native(),
             launcher: Launcher::implied(
                 &cubecl::test_device().client(),
-                Space::new(&[(ROW, ROWS), (COL, COLS)]),
-                vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+                Partitioning::new(
+                    Space::new(&[(ROW, ROWS), (COL, COLS)]),
+                    vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+                ),
                 KernelForm::Static,
             ),
         }
@@ -377,11 +379,13 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
 
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(MM, m), (NN, n), (KK, k)]),
-        vec![
-            Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
-            Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(MM, m), (NN, n), (KK, k)]),
+            vec![
+                Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+                Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
@@ -580,11 +584,13 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
 
         let launcher = Launcher::implied(
             &client,
-            Space::new(&[(MM, m), (NN, n), (KK, k)]),
-            vec![
-                Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
-                Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
-            ],
+            Partitioning::new(
+                Space::new(&[(MM, m), (NN, n), (KK, k)]),
+                vec![
+                    Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
+                    Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
+                ],
+            ),
             KernelForm::Static,
         );
 
