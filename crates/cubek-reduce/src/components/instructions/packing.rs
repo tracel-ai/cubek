@@ -5,17 +5,17 @@ use super::extrema::numeric_is_nan;
 use crate::components::instructions::{ReduceOutputMode, Value};
 use crate::components::precision::ReducePrecision;
 
-/// A candidate's value and coordinate folded into one unsigned integer whose
-/// unsigned order is the pair's order: the value in the packed's [`ValueOrder`],
-/// and the lower coordinate where two values are equal.
-pub(crate) type PackedCandidate = u64;
+/// A value and its coordinate folded into one unsigned integer, so that one
+/// unsigned comparison ranks the pair: by value in a [`ValueOrder`], and by the
+/// lower coordinate where two values are equal.
+pub(crate) type Packed = u64;
 
 const SIGN: u32 = 0x8000_0000;
 
-/// Which end of the value range an [`PackedCandidate`] ranks first.
+/// Which end of the value range a [`Packed`] ranks first.
 ///
 /// A NaN outranks every number in both, so neither is the other's reverse and a
-/// packed built for one cannot be read as the other.
+/// value packed for one cannot be read back as the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ValueOrder {
     /// Largest value first, as top-k and max rank.
@@ -24,12 +24,12 @@ pub(crate) enum ValueOrder {
     Ascending,
 }
 
-/// The codec between a value and coordinate pair and the [`PackedCandidate`] ranking
-/// them, in one [`ValueOrder`].
+/// Packs a value and its coordinate into a [`Packed`], and reads them back, in
+/// one [`ValueOrder`].
 ///
-/// Building or reading a packed needs the order; comparing two of them does not,
-/// since a packed already carries it. That is what separates the methods taking
-/// `&self` here from the associated ones that do not.
+/// Packing and unpacking need the order; comparing two packed values does not,
+/// since each already carries it. That is what separates the methods taking
+/// `&self` from the associated ones that do not.
 #[derive(Debug, CubeType, Clone)]
 pub(crate) struct Packing {
     #[cube(comptime)]
@@ -52,7 +52,7 @@ impl Packing {
         }
     }
 
-    /// Whether a coordinate-tracking reduction packs into a packed on this device.
+    /// Whether a coordinate-tracking reduction packs on this device.
     pub fn packs<P: ReducePrecision>(#[comptime] output: ReduceOutputMode) -> comptime_type!(bool) {
         let tracks_coordinates = comptime!(output.has_indices());
         let packs = Packing::packs_into::<P::EA>();
@@ -82,40 +82,35 @@ impl Packing {
         &self,
         value: Vector<N, S>,
         coordinate: Vector<u32, S>,
-    ) -> Vector<PackedCandidate, S> {
+    ) -> Vector<Packed, S> {
         // Inverted, so that a lower coordinate makes a larger packed and wins a tie.
         let rank = Vector::new(u32::MAX) - coordinate;
 
-        (Vector::<PackedCandidate, S>::cast_from(self.order_bits::<N, S>(value))
-            << Vector::new(32u64))
-            | Vector::<PackedCandidate, S>::cast_from(rank)
+        (Vector::<Packed, S>::cast_from(self.order_bits::<N, S>(value)) << Vector::new(32u64))
+            | Vector::<Packed, S>::cast_from(rank)
     }
 
-    /// What a slot that has taken no candidate holds: `last`, the value the
-    /// unpacked accumulator starts from, at coordinate `u32::MAX`, so a row with
-    /// nothing to rank reports the same value and index either way.
+    /// What a slot that has taken nothing holds: `last`, the value the unpacked
+    /// accumulator starts from, at coordinate `u32::MAX`, so a row with nothing
+    /// to rank reports the same value and index either way.
     ///
     /// That coordinate's rank is zero, and it is written as zero rather than
     /// computed: the subtraction of a constant from itself is folded by the WGSL
     /// optimizer into a constant it cannot build for a vector type.
-    pub fn empty<N: Numeric, S: Size>(&self, last: Vector<N, S>) -> Vector<PackedCandidate, S> {
-        Vector::<PackedCandidate, S>::cast_from(self.order_bits::<N, S>(last)) << Vector::new(32u64)
+    pub fn empty<N: Numeric, S: Size>(&self, last: Vector<N, S>) -> Vector<Packed, S> {
+        Vector::<Packed, S>::cast_from(self.order_bits::<N, S>(last)) << Vector::new(32u64)
     }
 
-    pub fn value<N: Numeric, S: Size>(&self, packed: Vector<PackedCandidate, S>) -> Vector<N, S> {
+    pub fn value<N: Numeric, S: Size>(&self, packed: Vector<Packed, S>) -> Vector<N, S> {
         self.value_from_order_bits::<N, S>(Vector::cast_from(packed >> Vector::new(32u64)))
     }
 
-    pub fn coordinate<S: Size>(packed: Vector<PackedCandidate, S>) -> Vector<u32, S> {
+    pub fn coordinate<S: Size>(packed: Vector<Packed, S>) -> Vector<u32, S> {
         Vector::new(u32::MAX) - Vector::cast_from(packed & Vector::new(0xFFFF_FFFFu64))
     }
 
-    /// Replace a single-slot accumulator's candidate with whichever of it and
-    /// `candidate` ranks better.
-    pub fn insert<S: Size>(
-        packed: &mut Value<Vector<PackedCandidate, S>>,
-        candidate: Vector<PackedCandidate, S>,
-    ) {
+    /// Keep whichever of the slot and `candidate` ranks better.
+    pub fn insert<S: Size>(packed: &mut Value<Vector<Packed, S>>, candidate: Vector<Packed, S>) {
         let winning = Packing::better::<S>(packed.item(), candidate);
         packed.assign(&Value::new_single(winning));
     }
@@ -127,8 +122,8 @@ impl Packing {
     /// times asks for `unrolled`, since the budget it is priced against is the
     /// `k * k` of that nest rather than this loop's `k`.
     pub fn insert_ranked<S: Size>(
-        packed: &mut Array<Vector<PackedCandidate, S>>,
-        insert: Vector<PackedCandidate, S>,
+        packed: &mut Array<Vector<Packed, S>>,
+        insert: Vector<Packed, S>,
         #[comptime] k: usize,
         #[comptime] unrolled: bool,
     ) {
@@ -143,8 +138,8 @@ impl Packing {
         }
     }
 
-    /// Collapse a vectorized accumulator's lanes down to the one winning candidate.
-    pub fn finalize<S: Size>(packed: Vector<PackedCandidate, S>) -> PackedCandidate {
+    /// Collapse a vectorized accumulator's lanes down to the one that wins.
+    pub fn finalize<S: Size>(packed: Vector<Packed, S>) -> Packed {
         let vector_size = packed.vector_size().comptime();
         let mut winning = packed.extract(0usize);
 
@@ -158,9 +153,9 @@ impl Packing {
     }
 
     fn better<S: Size>(
-        current: Vector<PackedCandidate, S>,
-        candidate: Vector<PackedCandidate, S>,
-    ) -> Vector<PackedCandidate, S> {
+        current: Vector<Packed, S>,
+        candidate: Vector<Packed, S>,
+    ) -> Vector<Packed, S> {
         select_many(current.greater_than(&candidate), current, candidate)
     }
 

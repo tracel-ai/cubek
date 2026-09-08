@@ -3,7 +3,7 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorExpand, AccumulatorFormat, Item, PackedCandidate, ReduceOutputMode,
+    Accumulator, AccumulatorExpand, AccumulatorFormat, Item, Packed, ReduceOutputMode,
     SharedAccumulatorKind, SlotCount, TopK,
 };
 use crate::{
@@ -51,7 +51,7 @@ pub enum ReduceOperationConfig {
 
 impl ReduceOperationConfig {
     /// Shared-memory bytes one accumulator slot uses (`acc_elem_size` is `P::EA`'s
-    /// size, `vector_size` the input vectorization). A packed key slice is counted
+    /// size, `vector_size` the input vectorization). A packed slice is counted
     /// as the value+index pair it replaces, accurate only while both stay 4 bytes.
     pub fn shared_memory_bytes_per_accumulator(
         &self,
@@ -176,14 +176,14 @@ pub enum DynamicSharedAccumulator<P: ReducePrecision> {
         args: SharedAccumulatorKind<Vector<u32, P::SI>>,
     },
     /// Slices of packed, each a value packed with its coordinate.
-    Packed(SharedAccumulatorKind<Vector<PackedCandidate, P::SI>>),
+    Packed(SharedAccumulatorKind<Vector<Packed, P::SI>>),
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
-    pub packed: Value<Vector<PackedCandidate, P::SI>>,
+    pub packed: Value<Vector<Packed, P::SI>>,
 }
 
 #[cube]

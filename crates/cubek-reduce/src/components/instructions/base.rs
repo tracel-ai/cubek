@@ -1,4 +1,4 @@
-use crate::components::{instructions::PackedCandidate, precision::ReducePrecision};
+use crate::components::{instructions::Packed, precision::ReducePrecision};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -63,7 +63,7 @@ pub enum SlotCount {
 }
 
 /// Whether an accumulator stores each slot's value and coordinate separately or
-/// folded into one [`PackedCandidate`](super::PackedCandidate).
+/// folded into one [`Packed`](super::Packed).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Unpacked(SlotCount),
@@ -300,7 +300,7 @@ pub enum Accumulator<P: ReducePrecision> {
         args: Value<Vector<u32, P::SI>>,
     },
     /// Each value packed with its coordinate into one candidate.
-    Packed(Value<Vector<PackedCandidate, P::SI>>),
+    Packed(Value<Vector<Packed, P::SI>>),
 }
 
 #[cube]
@@ -369,7 +369,7 @@ pub enum ArgAccumulator<P: ReducePrecision> {
         args: SharedAccumulatorKind<Vector<u32, P::SI>>,
     },
     /// A slice of packed, each a value packed with its coordinate.
-    Packed(Shared<[Vector<PackedCandidate, P::SI>]>),
+    Packed(Shared<[Vector<Packed, P::SI>]>),
 }
 
 /// For a single reduce step whether we need to do plane reduction

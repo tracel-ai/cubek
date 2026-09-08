@@ -1,7 +1,7 @@
 use cubecl::prelude::*;
 
 use crate::components::{
-    instructions::{Accumulator, Item, PackedCandidate, Packing, ReduceStep, Value},
+    instructions::{Accumulator, Item, Packed, Packing, ReduceStep, Value},
     precision::ReducePrecision,
 };
 
@@ -41,7 +41,7 @@ impl PackedExtremum {
 
     pub fn reduce<P: ReducePrecision>(
         &self,
-        packed: &mut Value<Vector<PackedCandidate, P::SI>>,
+        packed: &mut Value<Vector<Packed, P::SI>>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
@@ -59,7 +59,7 @@ impl PackedExtremum {
 
     pub fn plane_reduce_inplace<P: ReducePrecision>(
         &self,
-        packed: &mut Value<Vector<PackedCandidate, P::SI>>,
+        packed: &mut Value<Vector<Packed, P::SI>>,
     ) {
         let winning = plane_max(packed.item());
         packed.assign(&Value::new_single(winning));
@@ -67,35 +67,39 @@ impl PackedExtremum {
 
     pub fn fuse_accumulators<P: ReducePrecision>(
         &self,
-        packed: &mut Value<Vector<PackedCandidate, P::SI>>,
-        other: Vector<PackedCandidate, P::SI>,
+        packed: &mut Value<Vector<Packed, P::SI>>,
+        other: Vector<Packed, P::SI>,
     ) {
         Packing::insert::<P::SI>(packed, other);
     }
 
     pub fn to_output_parallel<P: ReducePrecision, Out: Numeric, Idx: Numeric>(
         &self,
-        packed: Vector<PackedCandidate, P::SI>,
+        packed: Vector<Packed, P::SI>,
     ) -> (Value<Out>, Value<Idx>) {
-        let key = Vector::<PackedCandidate, Const<1>>::new(Packing::finalize::<P::SI>(packed));
+        let candidate = Vector::<Packed, Const<1>>::new(Packing::finalize::<P::SI>(packed));
 
         (
             Value::new_single(Out::cast_from(
-                self.packing.value::<P::EA, Const<1>>(key).extract(0usize),
+                self.packing
+                    .value::<P::EA, Const<1>>(candidate)
+                    .extract(0usize),
             )),
             Value::new_single(Idx::cast_from(
-                Packing::coordinate::<Const<1>>(key).extract(0usize),
+                Packing::coordinate::<Const<1>>(candidate).extract(0usize),
             )),
         )
     }
 
     pub fn to_output_perpendicular<P: ReducePrecision, Out: Numeric, Idx: Numeric>(
         &self,
-        key: Vector<PackedCandidate, P::SI>,
+        candidate: Vector<Packed, P::SI>,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         (
-            Value::new_single(Vector::cast_from(self.packing.value::<P::EA, P::SI>(key))),
-            Value::new_single(Vector::cast_from(Packing::coordinate::<P::SI>(key))),
+            Value::new_single(Vector::cast_from(
+                self.packing.value::<P::EA, P::SI>(candidate),
+            )),
+            Value::new_single(Vector::cast_from(Packing::coordinate::<P::SI>(candidate))),
         )
     }
 }
