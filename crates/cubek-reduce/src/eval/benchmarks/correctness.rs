@@ -11,12 +11,8 @@ use crate::eval::cpu_reference::{
 pub struct ReduceCorrectness;
 
 impl ReduceCorrectness {
-    /// A strategy that computes the wrong answer would still time fast, so every
-    /// strategy proves itself on a small shape before it is measured. The proof
-    /// launch compiles a kernel the timed run doesn't reuse (its shape differs),
-    /// but that cost is trivial next to a timed run over the real, much larger
-    /// shape, and the alternative is a benchmark whose fast time comes from a
-    /// wrong kernel.
+    /// Proves `strategy` correct on a small shape before it's timed, so a wrong
+    /// kernel can't win a benchmark by being fast.
     pub fn verify(strategy: &ReduceStrategy, problem: &ReduceProblem) -> Result<(), String> {
         let client = cubecl::test_device().client();
         let proof = ReduceProblem {
@@ -89,13 +85,10 @@ impl ReduceCorrectness {
     }
 }
 
-/// The shape a strategy proves itself on: [`RAMP_MAX_ELEMS`] split between the
-/// axes, all of it on the reduced one, so that axis stays long enough for a
-/// plane or cube routine to actually fold. Axes fill up with 2 until the
-/// running product would exceed `RAMP_MAX_ELEMS`; past that point they get 1,
-/// so the total stays a power of two no larger than `RAMP_MAX_ELEMS`
-/// regardless of rank, rather than the reduced axis silently underflowing to
-/// zero once `rank` exceeds `RAMP_MAX_ELEMS`'s bit width.
+/// At most [`RAMP_MAX_ELEMS`] elements, all on the reduced axis so a plane or
+/// cube routine has enough to fold. Padding other axes with 2 keeps the total
+/// a power of two at any rank, instead of the reduced axis underflowing to
+/// zero once rank exceeds `RAMP_MAX_ELEMS`'s bit width.
 fn proof_shape(rank: usize, axis: usize) -> Vec<usize> {
     let mut shape = vec![1; rank];
     let mut budget = RAMP_MAX_ELEMS;
@@ -150,8 +143,6 @@ mod proof_shape_tests {
     use super::proof_shape;
     use crate::eval::cpu_reference::RAMP_MAX_ELEMS;
 
-    /// Every rank must produce a shape whose element count `ramp` can accept:
-    /// a power of two no larger than `RAMP_MAX_ELEMS`, and never zero.
     #[test]
     fn stays_within_ramp_bounds_at_every_rank() {
         for rank in 1..=16 {

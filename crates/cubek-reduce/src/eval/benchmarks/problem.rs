@@ -55,10 +55,9 @@ impl ReduceBenchPrecision {
     }
 }
 
-/// The precisions this device can actually reduce in, so a runtime without f16
-/// yields no f16 rows rather than a catalogue of failures. Computed once: the
-/// device's f16 support can't change over the process's life, and every
-/// catalogue listing and every generated `f16()` test otherwise re-queries it.
+/// The precisions this device can reduce in, so a runtime without f16 yields
+/// no f16 rows. Computed once: a device's f16 support can't change, and every
+/// catalogue listing and generated `f16()` test would otherwise re-query it.
 static PRECISIONS: LazyLock<Vec<ReduceBenchPrecision>> = LazyLock::new(|| {
     let client = cubecl::test_device().client();
     let mut precisions = vec![ReduceBenchPrecision::F32];

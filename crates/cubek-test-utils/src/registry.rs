@@ -38,9 +38,8 @@ pub fn timing_method(default: TimingMethod) -> TimingMethod {
     TIMING_OVERRIDE.unwrap_or(default)
 }
 
-/// Whether `client`'s device can carry out `f16` arithmetic, not just storage.
-/// A category benchmarking a narrower dtype checks this before adding rows a
-/// runtime without hardware or software f16 support would only fail on.
+/// Whether `client`'s device does real f16 arithmetic, not just storage, so a
+/// category can skip f16 rows the device would only fail on.
 pub fn supports_f16_arithmetic(client: &Client) -> bool {
     half::f16::supported_uses(client).contains(TypeUsage::Arithmetic)
 }
