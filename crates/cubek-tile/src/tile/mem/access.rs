@@ -696,13 +696,25 @@ impl<T: Numeric> MemData<T> {
         self.store.buffer_mut().slice_mut(offset, end)
     }
 
-    /// Line offset of the window origin: the accumulated `window_start`. On a tiled
-    /// store the window must lie within one storage tile.
+    /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
+    /// one contiguous region, so on a tiled store it must lie within one storage block, which is
+    /// what [`Blocks`] settled at the launch.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.access.overhang.masks(),
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
+        // Reading a split window from a base and a row stride would walk straight through a block
+        // boundary and return another block's cells, silently. The layout walk addresses them
+        // correctly; a fragment load cannot, and says so.
+        match comptime!(self.access.blocks) {
+            Blocks::Hold => {}
+            Blocks::Split => panic!(
+                "MemData::window_offset: this window crosses a storage block, so it is not one \
+                 contiguous region; size the storage block to a whole number of leaf tiles, or \
+                 read the operand through its layout"
+            ),
+        }
         // A raw window serves the buffer at the element it was erased to, so a quantized store
         // would hand its stored bytes over as served values. Every other door refuses the same way.
         if comptime!(self.store.packing != Packing::Plain) {
@@ -1212,6 +1224,7 @@ impl<T: Numeric> MemData<T> {
                 overhang: self.access.overhang,
                 write: self.access.write,
                 units: self.access.units,
+                blocks: self.access.blocks,
             }),
             lanes: comptime!(Lanes {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),

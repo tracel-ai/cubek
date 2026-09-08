@@ -179,6 +179,7 @@ impl Launcher {
             .space(&self.kernel)
             .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
+            .leaf(&self.leaf)
     }
 
     /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
@@ -197,6 +198,7 @@ impl Launcher {
             .space(&self.kernel)
             .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
+            .leaf(&self.leaf)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for

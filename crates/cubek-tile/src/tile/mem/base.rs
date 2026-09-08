@@ -179,6 +179,9 @@ pub struct Access {
     /// The launch's cube size (units per cube), `0` when unknown: a stage filled from this tile
     /// emits its fill straight-line when it knows how many units share it.
     pub units: usize,
+    /// Whether a storage block holds a whole window here. Rides [`at`](crate::Tile::at) down
+    /// unchanged: windowing narrows what is addressed, never how the buffer is laid out.
+    pub blocks: Blocks,
 }
 
 /// What a write to a store does to the cell it lands on.

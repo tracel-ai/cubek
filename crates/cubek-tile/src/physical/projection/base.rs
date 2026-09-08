@@ -458,15 +458,10 @@ impl Projection {
     /// If the fragments of `axes` do not add up to the buffer's rank: the
     /// caller binding the wrong operand to the wrong buffer.
     pub fn stored(axes: &[Axis], meta: &Metadata) -> Self {
-        let fragments = meta.tiling.fragments(axes.len());
-        assert_eq!(
-            fragments.iter().sum::<usize>(),
-            meta.rank(),
-            "Projection::stored: {} axes stored as {fragments:?} fragments for a buffer of rank {}",
-            axes.len(),
-            meta.rank()
-        );
-        Projection::tiled(axes, StorageTiling::per_axis(&fragments))
+        Projection::tiled(
+            axes,
+            StorageTiling::stored(meta.tiling, axes.len(), meta.rank()),
+        )
     }
 }
 
@@ -499,7 +494,7 @@ mod stored_tests {
     }
 
     #[test]
-    #[should_panic(expected = "fragments for a buffer of rank")]
+    #[should_panic(expected = "the buffer stands for")]
     fn stored_refuses_axes_whose_fragments_miss_the_rank() {
         let meta = Metadata::new([4, 4, 4, 4], [64, 16, 4, 1])
             .with_tiling(Tiling::new(&[2, 2]).unwrap())

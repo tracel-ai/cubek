@@ -858,7 +858,7 @@ fn cpu_gemm_rejects_input_register_type() {
     };
     use cubek_matmul::{
         definition::MatmulSetupError,
-        tiled::cpu_gemm::{WithLayout, launch_ref},
+        tiled::cpu_gemm::launch_ref,
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::TestInput;
@@ -880,9 +880,9 @@ fn cpu_gemm_rejects_input_register_type() {
 
     match launch_ref(
         &client,
-        WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f32t)).unwrap(),
-        WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f32t)).unwrap(),
-        WithLayout::strided_output(out.binding()).unwrap(),
+        InputBinding::Normal(lhs.binding(), f32t),
+        InputBinding::Normal(rhs.binding(), f32t),
+        out.binding(),
         &Default::default(),
         &dtypes,
     ) {
@@ -909,7 +909,7 @@ fn accumulator_holds_steps_the_output_element_cannot() {
     use cubecl::prelude::*;
     use cubek_matmul::{
         definition::MatmulGlobalElems as Globals,
-        tiled::cpu_gemm::{WithLayout, launch_ref},
+        tiled::cpu_gemm::launch_ref,
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{HostData, HostDataType, HostDataVec, TestInput};
@@ -937,9 +937,9 @@ fn accumulator_holds_steps_the_output_element_cannot() {
 
     launch_ref(
         &client,
-        WithLayout::strided_input(InputBinding::Normal(lhs.binding(), f16t)).unwrap(),
-        WithLayout::strided_input(InputBinding::Normal(rhs.binding(), f16t)).unwrap(),
-        WithLayout::strided_output(out.clone().binding()).unwrap(),
+        InputBinding::Normal(lhs.binding(), f16t),
+        InputBinding::Normal(rhs.binding(), f16t),
+        out.clone().binding(),
         &BlueprintStrategy::Forced(CpuGemmBlueprint {
             instruction: InstructionShape {
                 m: tile,
