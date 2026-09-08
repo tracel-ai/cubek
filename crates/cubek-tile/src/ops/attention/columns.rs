@@ -1,8 +1,8 @@
 //! Attention's matmul leaves at column ownership, the arm the software instruction runs: each
 //! unit owns every `CUBE_DIM_X`-th column of the output, so a K or V block streamed along that
 //! axis is read from gmem once per team. Split teams sit on the cube's y dim; a cube with y = 1
-//! is one team spanning every unit. The hardware twin, where the worker is a plane and the visit
-//! a fragment, is [`fragments`](super::fragments).
+//! is one team spanning every unit. The hardware form is the general contraction on a
+//! plane-resident accumulator ([`cmma_accumulator`](crate::Tile::cmma_accumulator)).
 //!
 //! Called by name from the kernel, which picks the arm. Trailing-two-axes convention
 //! (matmul's): leading degenerate axes ride the flat index.

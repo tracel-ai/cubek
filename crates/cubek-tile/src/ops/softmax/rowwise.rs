@@ -217,7 +217,6 @@ impl<EA: Float> Tile<EA> {
     /// `{1, rows}`, the same cells as a plain `{rows}`.
     pub fn store_rows(&mut self, values: &Array<EA>, #[comptime] share: RowShare) {
         let rpu = comptime!(share.rows());
-        let lanes = comptime!(share.lanes());
         let rows = comptime!(self.space.tile_size());
         comptime!(assert!(
             (0..self.space.rank())
@@ -231,12 +230,11 @@ impl<EA: Float> Tile<EA> {
         let mut view = self.flat_mut::<W>();
 
         // One writer per row: the owning unit, or the owning plane's first
-        // lane — every other lane holds the same value and writing it again
-        // would be a race for nothing.
-        let writer = (UNIT_POS_X as usize).is_multiple_of(lanes);
+        // lane, every other lane holding the same value.
+        let writer = owned_lane(share) == 0;
         #[unroll]
         for ri in 0..rpu {
-            let r = (UNIT_POS_X as usize / lanes) * rpu + ri;
+            let r = owned_row(share, ri);
             if r < rows && writer {
                 view.write(r, Vector::cast_from(values[ri]));
             }
@@ -248,7 +246,30 @@ impl<EA: Float> Tile<EA> {
     /// that hands the accumulator to the value matmul. The correction is the worker's own
     /// register — no factors tile, no cube-wide sweep, no barrier of its own. Under
     /// [`Plane`](RowShare::Plane) the lanes split the row's lines.
+    ///
+    /// A plane-resident accumulator ([`cmma_accumulator`](Tile::cmma_accumulator)) is scaled
+    /// where it sits, one tile at a time through the scratch it was opened with
+    /// ([`with_scratch`](Tile::with_scratch)); its owner is the plane, so `share` is its plane
+    /// share and the rows are the accumulator's own.
     pub fn rescale_rows(&mut self, corr: &Array<EA>, #[comptime] share: RowShare) {
+        match &self.tile_kind {
+            TileKind::Gmem(_) | TileKind::Smem(_) => self.rescale_rows_in_memory(corr, share),
+            TileKind::PlanePartition(p) => {
+                let lanes = comptime!(match share {
+                    RowShare::Plane { rows: _, lanes } => lanes,
+                    RowShare::Unit { rows: _ } => {
+                        panic!("rescale_rows: a plane-resident accumulator is owned by its plane")
+                    }
+                });
+                p.rescale_rows(corr, lanes)
+            }
+            TileKind::PlaneTile(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+                panic!("rescale_rows: a memory tile or a plane-resident accumulator")
+            }
+        }
+    }
+
+    fn rescale_rows_in_memory(&mut self, corr: &Array<EA>, #[comptime] share: RowShare) {
         let rank = comptime!(self.space.rank());
         let rows = comptime!(self.space.extent_at(rank - 2));
         let cols = comptime!(self.space.extent_at(rank - 1));
@@ -257,12 +278,11 @@ impl<EA: Float> Tile<EA> {
         let lines = comptime!(cols / w);
         let rpw = comptime!(share.rows());
         let lanes = comptime!(share.lanes());
-        let lane = UNIT_POS_X as usize % lanes;
-        let worker = UNIT_POS_X as usize / lanes;
+        let lane = owned_lane(share);
         let mut view = self.flat_mut::<W>();
         #[unroll]
         for ri in 0..rpw {
-            let r = worker * rpw + ri;
+            let r = owned_row(share, ri);
             if r < rows {
                 let factor = Vector::<EA, W>::cast_from(corr[ri]);
                 #[unroll]

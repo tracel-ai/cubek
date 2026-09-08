@@ -228,7 +228,11 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Cmma(d) => {
-                strided_2d(lhs, rhs, out, false);
+                let along_k = comptime!(
+                    crate::instruction::rhs_layout(&lhs.space, &rhs.space)
+                        == cubecl::cmma::MatrixLayout::ColMajor
+                );
+                strided_2d(lhs, rhs, out, along_k);
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }

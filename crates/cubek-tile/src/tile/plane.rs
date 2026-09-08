@@ -88,6 +88,36 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    /// The tile's `(m, n)`.
+    pub(crate) fn shape(&self) -> comptime_type!((usize, usize)) {
+        match self {
+            PlaneTile::Cmma(d) => comptime!(d.shape),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::shape: only a cmma tile bounces through a scratch")
+            }
+        }
+    }
+
+    /// Store this tile, row-major, into `scratch` (one tile's cells).
+    pub(crate) fn store_scratch(&self, scratch: &Shared<[T]>) {
+        match self {
+            PlaneTile::Cmma(d) => d.store_scratch(scratch),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::store_scratch: only a cmma tile bounces through a scratch")
+            }
+        }
+    }
+
+    /// Load this tile back from `scratch`.
+    pub(crate) fn load_scratch(&mut self, scratch: &Shared<[T]>) {
+        match self {
+            PlaneTile::Cmma(d) => d.load_scratch(scratch),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::load_scratch: only a cmma tile bounces through a scratch")
+            }
+        }
+    }
+
     pub(crate) fn zero(&mut self) {
         match self {
             PlaneTile::Cmma(d) => d.zero(),
@@ -170,6 +200,10 @@ pub struct PlanePartition<T: Numeric> {
     pub m_tiles: usize,
     #[cube(comptime)]
     pub n_tiles: usize,
+    /// This plane's window of shared memory, one tile wide, that a row-wise op bounces a tile
+    /// through: a tile's cells are not addressable in registers. Opened by
+    /// [`with_scratch`](Tile::with_scratch); a partition without one contracts and drains only.
+    pub scratch: ComptimeOption<Shared<[T]>>,
 }
 
 #[cube]
@@ -214,6 +248,53 @@ impl<T: Numeric> PlanePartition<T> {
             frags,
             m_tiles,
             n_tiles,
+            scratch: self.scratch.clone(),
+        }
+    }
+
+    /// `self[r, :] *= corr[r]` over the partition's rows, each tile bounced through the scratch
+    /// under plane syncs: stored, scaled a cell per lane, loaded back. A plane whose factors are
+    /// all one skips the bounce; `corr` is plane-uniform, so the skip is.
+    pub(crate) fn rescale_rows(&self, corr: &Array<T>, #[comptime] lanes: usize) {
+        let mut scratch = #[comptime]
+        match &self.scratch {
+            ComptimeOption::Some(scratch) => scratch.clone(),
+            ComptimeOption::None => panic!(
+                "PlanePartition::rescale_rows: a row-wise op on a plane-resident accumulator \
+                 bounces through a scratch; open the accumulator with `with_scratch`"
+            ),
+        };
+        let (m, n) = self.at(0usize, 0usize).shape();
+        let rows = comptime!(self.m_tiles * m);
+        let mut moved = false;
+        #[unroll]
+        for r in 0..rows {
+            if corr[r] != T::from_int(1) {
+                moved = true;
+            }
+        }
+        if moved {
+            let cells = comptime!(m * n);
+            let lane = UNIT_POS_X as usize % lanes;
+            #[unroll]
+            for mi in 0..comptime!(self.m_tiles) {
+                #[unroll]
+                for ni in 0..comptime!(self.n_tiles) {
+                    let mut tile = self.at(mi, ni);
+                    tile.store_scratch(&scratch);
+                    sync_plane();
+                    #[unroll]
+                    for t in 0..comptime!(cells.div_ceil(lanes)) {
+                        let cell = lane + t * lanes;
+                        if comptime!(cells.is_multiple_of(lanes)) || cell < cells {
+                            scratch[cell] *= corr[mi * m + cell / n];
+                        }
+                    }
+                    sync_plane();
+                    tile.load_scratch(&scratch);
+                    sync_plane();
+                }
+            }
         }
     }
 
@@ -255,6 +336,7 @@ impl<T: Numeric> PlanePartition<T> {
                 frags,
                 m_tiles,
                 n_tiles,
+                scratch: ComptimeOption::new_None(),
             }),
             // The space of the tile it mirrors: what the levels below it cut, as they cut it.
             // The fragments were sized from the statement alone, so a `Dynamic` extent here is
@@ -307,6 +389,7 @@ impl<T: Numeric> PlanePartition<T> {
                 frags,
                 m_tiles: t0,
                 n_tiles: t1,
+                scratch: ComptimeOption::new_None(),
             }),
             space: comptime!(window),
             depth,
