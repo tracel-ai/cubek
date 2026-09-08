@@ -4,7 +4,7 @@ use super::{
 };
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorExpand, AccumulatorFormat, Item, OrderedKey, PackedExtremum,
+        Accumulator, AccumulatorExpand, AccumulatorFormat, Item, PackedExtremum, Packing,
         ReduceOutputMode, ReduceRequirements, ReduceStep, ReduceWithIndices,
         ReduceWithIndicesFamily, SlotCount, Value, ValueExpand,
     },
@@ -88,7 +88,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packs = OrderedKey::packs::<P>(this.output);
+        let packs = Packing::packs::<P>(this.output);
 
         comptime!(if packs {
             AccumulatorFormat::Packed(SlotCount::Single)
@@ -106,7 +106,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packs = OrderedKey::packs::<P>(this.output);
+        let packs = Packing::packs::<P>(this.output);
 
         if comptime!(packs) {
             PackedExtremum::ascending().null_accumulator::<P>(min_identity::<P::EA>())
@@ -131,8 +131,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         #[comptime] reduce_step: ReduceStep,
     ) {
         match accumulator {
-            Accumulator::Packed(keys) => {
-                PackedExtremum::ascending().reduce::<P>(keys, item, reduce_step)
+            Accumulator::Packed(packed) => {
+                PackedExtremum::ascending().reduce::<P>(packed, item, reduce_step)
             }
             Accumulator::Unpacked { elements, args } => {
                 let (candidate, candidate_coord) = match reduce_step {
@@ -152,8 +152,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
         match accumulator {
-            Accumulator::Packed(keys) => {
-                PackedExtremum::ascending().plane_reduce_inplace::<P>(keys)
+            Accumulator::Packed(packed) => {
+                PackedExtremum::ascending().plane_reduce_inplace::<P>(packed)
             }
             Accumulator::Unpacked { elements, args } => {
                 let (candidate, candidate_coord) = plane_min_candidate(elements.item(), &*args);
@@ -164,8 +164,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
 
     fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
         match (accumulator, other) {
-            (Accumulator::Packed(keys), Accumulator::Packed(other_keys)) => {
-                PackedExtremum::ascending().fuse_accumulators::<P>(keys, other_keys.item())
+            (Accumulator::Packed(packed), Accumulator::Packed(other_packed)) => {
+                PackedExtremum::ascending().fuse_accumulators::<P>(packed, other_packed.item())
             }
             (
                 Accumulator::Unpacked { elements, args },
@@ -188,8 +188,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
         match accumulator {
-            Accumulator::Packed(keys) => {
-                PackedExtremum::ascending().to_output_parallel::<P, Out, Idx>(keys.item())
+            Accumulator::Packed(packed) => {
+                PackedExtremum::ascending().to_output_parallel::<P, Out, Idx>(packed.item())
             }
             Accumulator::Unpacked { elements, args } => match args {
                 Value::None => {
@@ -226,8 +226,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         match accumulator {
-            Accumulator::Packed(keys) => {
-                PackedExtremum::ascending().to_output_perpendicular::<P, Out, Idx>(keys.item())
+            Accumulator::Packed(packed) => {
+                PackedExtremum::ascending().to_output_perpendicular::<P, Out, Idx>(packed.item())
             }
             Accumulator::Unpacked { elements, args } => {
                 let values = Value::new_single(Vector::cast_from(elements.item()));

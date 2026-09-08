@@ -3,7 +3,7 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorExpand, AccumulatorFormat, Item, OrderKey, ReduceOutputMode,
+    Accumulator, AccumulatorExpand, AccumulatorFormat, Item, PackedCandidate, ReduceOutputMode,
     SharedAccumulatorKind, SlotCount, TopK,
 };
 use crate::{
@@ -175,15 +175,15 @@ pub enum DynamicSharedAccumulator<P: ReducePrecision> {
         elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
         args: SharedAccumulatorKind<Vector<u32, P::SI>>,
     },
-    /// Slices of keys, each a value packed with its coordinate.
-    Packed(SharedAccumulatorKind<Vector<OrderKey, P::SI>>),
+    /// Slices of packed, each a value packed with its coordinate.
+    Packed(SharedAccumulatorKind<Vector<PackedCandidate, P::SI>>),
 }
 
 #[derive(CubeType)]
 pub struct DynamicAccumulator<P: ReducePrecision> {
     pub elements: Value<Vector<P::EA, P::SI>>,
     pub args: Value<Vector<u32, P::SI>>,
-    pub packed: Value<Vector<OrderKey, P::SI>>,
+    pub packed: Value<Vector<PackedCandidate, P::SI>>,
 }
 
 #[cube]
@@ -232,13 +232,13 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                 SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
             ),
             AccumulatorFormat::Packed(SlotCount::Multiple(len)) => {
-                let mut keys = Sequence::new();
+                let mut packed = Sequence::new();
                 #[unroll]
                 for _ in 0..len {
-                    keys.push(Shared::new_slice(length));
+                    packed.push(Shared::new_slice(length));
                 }
 
-                DynamicSharedAccumulator::new_Packed(SharedAccumulatorKind::new_Multiple(keys))
+                DynamicSharedAccumulator::new_Packed(SharedAccumulatorKind::new_Multiple(packed))
             }
         }
     }
@@ -254,8 +254,8 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         match accumulator {
-            DynamicSharedAccumulator::Packed(packed) => match item {
-                Accumulator::Packed(keys) => packed.set(index, keys),
+            DynamicSharedAccumulator::Packed(slots) => match item {
+                Accumulator::Packed(candidate) => slots.set(index, candidate),
                 Accumulator::Unpacked { .. } => {
                     panic!("a packed slot takes a packed accumulator")
                 }

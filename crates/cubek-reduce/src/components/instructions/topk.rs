@@ -4,8 +4,8 @@ use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::{
-    Accumulator, AccumulatorExpand, AccumulatorFormat, DynamicSharedAccumulator, Item, OrderKey,
-    OrderedKey, SlotCount, Value, ValueExpand, lowest_coordinate_matching,
+    Accumulator, AccumulatorExpand, AccumulatorFormat, DynamicSharedAccumulator, Item,
+    PackedCandidate, Packing, SlotCount, Value, ValueExpand, lowest_coordinate_matching,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -101,7 +101,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packed = OrderedKey::packs::<P>(this.output);
+        let packed = Packing::packs::<P>(this.output);
         let k = comptime!(this.k);
 
         comptime!(if packed {
@@ -123,19 +123,19 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packed = OrderedKey::packs::<P>(this.output);
+        let packed = Packing::packs::<P>(this.output);
 
         if comptime!(packed) {
             let empty =
-                OrderedKey::descending().empty::<P::EA, P::SI>(Vector::new(P::EA::min_value()));
+                Packing::descending().empty::<P::EA, P::SI>(Vector::new(P::EA::min_value()));
 
-            let mut keys = Array::new(comptime!(this.k));
+            let mut packed = Array::new(comptime!(this.k));
             #[unroll]
             for i in 0..this.k {
-                keys[i] = empty;
+                packed[i] = empty;
             }
 
-            Accumulator::new_Packed(Value::new_Multiple(keys))
+            Accumulator::new_Packed(Value::new_Multiple(packed))
         } else {
             let mut elements = Array::new(comptime!(this.k));
             #[unroll]
@@ -166,14 +166,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     ) {
         match accumulator {
             Accumulator::Packed(packed) => {
-                let key = OrderedKey::descending()
+                let key = Packing::descending()
                     .pack::<P::EA, P::SI>(Vector::cast_from(item.elements), item.args.item());
-                let keys = packed.multiple_mut();
+                let packed = packed.multiple_mut();
 
                 match reduce_step {
-                    ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(keys, key, this.k),
+                    ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(packed, key, this.k),
                     ReduceStep::Identity => {
-                        OrderedKey::insert_ranked::<P::SI>(keys, key, this.k, false)
+                        Packing::insert_ranked::<P::SI>(packed, key, this.k, false)
                     }
                 }
             }
@@ -218,11 +218,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
         match (accumulator, other) {
             (Accumulator::Packed(packed), Accumulator::Packed(other_packed)) => {
-                let keys = packed.multiple_mut();
-                let other_keys = other_packed.multiple();
+                let packed = packed.multiple_mut();
+                let other_packed = other_packed.multiple();
 
                 for i in 0..this.k {
-                    OrderedKey::insert_ranked::<P::SI>(keys, other_keys[i], this.k, false);
+                    Packing::insert_ranked::<P::SI>(packed, other_packed[i], this.k, false);
                 }
             }
             (
@@ -260,20 +260,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     ) -> (Value<Out>, Value<Idx>) {
         match accumulator {
             Accumulator::Packed(packed) => {
-                let keys = topk_finalize_keys::<P>(packed.multiple(), this.k);
+                let packed = topk_finalize_keys::<P>(packed.multiple(), this.k);
 
                 let mut out_values = Array::new(this.k);
                 let mut out_indices = Array::new(this.k);
                 #[unroll]
                 for i in 0..this.k {
-                    let key = Vector::<OrderKey, P::SI>::new(keys[i]);
+                    let key = Vector::<PackedCandidate, P::SI>::new(packed[i]);
                     out_values[i] = Out::cast_from(
-                        OrderedKey::descending()
+                        Packing::descending()
                             .value::<P::EA, P::SI>(key)
                             .extract(0usize),
                     );
                     out_indices[i] =
-                        Idx::cast_from(OrderedKey::coordinate::<P::SI>(key).extract(0usize));
+                        Idx::cast_from(Packing::coordinate::<P::SI>(key).extract(0usize));
                 }
 
                 (
@@ -314,15 +314,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         match accumulator {
             Accumulator::Packed(packed) => {
-                let keys = packed.multiple();
+                let packed = packed.multiple();
 
                 let mut out_values = Array::new(this.k);
                 let mut out_indices = Array::new(this.k);
                 #[unroll]
                 for i in 0..this.k {
                     out_values[i] =
-                        Vector::cast_from(OrderedKey::descending().value::<P::EA, P::SI>(keys[i]));
-                    out_indices[i] = Vector::cast_from(OrderedKey::coordinate::<P::SI>(keys[i]));
+                        Vector::cast_from(Packing::descending().value::<P::EA, P::SI>(packed[i]));
+                    out_indices[i] = Vector::cast_from(Packing::coordinate::<P::SI>(packed[i]));
                 }
 
                 (
@@ -454,15 +454,15 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
     (topk_vals, topk_coords)
 }
 
-/// [`topk_finalize_with_coords`] over packed keys, for the parallel layout.
+/// [`topk_finalize_with_coords`] over packed packed, for the parallel layout.
 #[cube]
 fn topk_finalize_keys<P: ReducePrecision>(
-    keys: &Array<Vector<OrderKey, P::SI>>,
+    packed: &Array<Vector<PackedCandidate, P::SI>>,
     #[comptime] k: usize,
-) -> Array<OrderKey> {
-    let vector_size = keys[0].vector_size().comptime();
+) -> Array<PackedCandidate> {
+    let vector_size = packed[0].vector_size().comptime();
 
-    let empty = OrderedKey::descending()
+    let empty = Packing::descending()
         .empty::<P::EA, P::SI>(Vector::new(P::EA::min_value()))
         .extract(0usize);
 
@@ -476,7 +476,7 @@ fn topk_finalize_keys<P: ReducePrecision>(
     for i in 0..k {
         #[unroll]
         for j in 0..vector_size {
-            let mut key = keys[i].extract(j);
+            let mut key = packed[i].extract(j);
 
             #[unroll(k * k * vector_size <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
             for slot in 0..k {
@@ -619,8 +619,8 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
 /// lanes cannot hold the same key, since the coordinate is part of it.
 #[cube]
 pub fn plane_topk_key_insert<N: Numeric, S: Size>(
-    keys: &mut Array<Vector<OrderKey, S>>,
-    item: Vector<OrderKey, S>,
+    packed: &mut Array<Vector<PackedCandidate, S>>,
+    item: Vector<PackedCandidate, S>,
     #[comptime] k: usize,
 ) {
     let mut local_best = item;
@@ -628,8 +628,8 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning = plane_max(local_best);
-        OrderedKey::insert_ranked::<S>(
-            keys,
+        Packing::insert_ranked::<S>(
+            packed,
             winning,
             k,
             comptime!(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET),
@@ -638,7 +638,7 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
         let is_winner = local_best.equal(&winning);
         local_best = select_many(
             is_winner,
-            OrderedKey::descending().empty::<N, S>(Vector::new(N::min_value())),
+            Packing::descending().empty::<N, S>(Vector::new(N::min_value())),
             local_best,
         );
     }
@@ -647,7 +647,7 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
 /// Plane-cooperative merge of per-lane packed-key accumulators.
 #[cube]
 pub fn plane_topk_key_merge<N: Numeric, S: Size>(
-    keys: &mut Array<Vector<OrderKey, S>>,
+    packed: &mut Array<Vector<PackedCandidate, S>>,
     #[comptime] k: usize,
 ) {
     let mut final_keys = Array::new(k);
@@ -656,12 +656,12 @@ pub fn plane_topk_key_merge<N: Numeric, S: Size>(
 
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for i in 0..k {
-        let mut local = OrderedKey::descending().empty::<N, S>(Vector::new(N::min_value()));
+        let mut local = Packing::descending().empty::<N, S>(Vector::new(N::min_value()));
 
         #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
         for j in 0..k {
             let is_pointed = cursor.equal(&Vector::new(j as u32));
-            local = select_many(is_pointed, keys[j], local);
+            local = select_many(is_pointed, packed[j], local);
         }
 
         let winning = plane_max(local);
@@ -675,7 +675,7 @@ pub fn plane_topk_key_merge<N: Numeric, S: Size>(
 
     #[unroll]
     for i in 0..k {
-        keys[i] = final_keys[i];
+        packed[i] = final_keys[i];
     }
 }
 

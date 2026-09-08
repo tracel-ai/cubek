@@ -1,4 +1,4 @@
-use crate::components::{instructions::OrderKey, precision::ReducePrecision};
+use crate::components::{instructions::PackedCandidate, precision::ReducePrecision};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -63,7 +63,7 @@ pub enum SlotCount {
 }
 
 /// Whether an accumulator stores each slot's value and coordinate separately or
-/// folded into one [`OrderKey`](super::OrderKey).
+/// folded into one [`PackedCandidate`](super::PackedCandidate).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Unpacked(SlotCount),
@@ -299,8 +299,8 @@ pub enum Accumulator<P: ReducePrecision> {
         elements: Value<Vector<P::EA, P::SI>>,
         args: Value<Vector<u32, P::SI>>,
     },
-    /// Each value packed with its coordinate into one key.
-    Packed(Value<Vector<OrderKey, P::SI>>),
+    /// Each value packed with its coordinate into one candidate.
+    Packed(Value<Vector<PackedCandidate, P::SI>>),
 }
 
 #[cube]
@@ -368,8 +368,8 @@ pub enum ArgAccumulator<P: ReducePrecision> {
         elements: Shared<[Vector<P::EA, P::SI>]>,
         args: SharedAccumulatorKind<Vector<u32, P::SI>>,
     },
-    /// A slice of keys, each a value packed with its coordinate.
-    Packed(Shared<[Vector<OrderKey, P::SI>]>),
+    /// A slice of packed, each a value packed with its coordinate.
+    Packed(Shared<[Vector<PackedCandidate, P::SI>]>),
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -416,8 +416,8 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         match accumulator {
-            ArgAccumulator::Packed(packed) => match item {
-                Accumulator::Packed(keys) => packed[index] = keys.item(),
+            ArgAccumulator::Packed(slots) => match item {
+                Accumulator::Packed(candidate) => slots[index] = candidate.item(),
                 Accumulator::Unpacked { .. } => panic!("a packed slot takes a packed accumulator"),
             },
             ArgAccumulator::Unpacked {
