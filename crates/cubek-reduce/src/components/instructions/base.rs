@@ -337,15 +337,15 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
 /// The shared memory used by [`Max`](super::Max) and [`Min`](super::Min), in
 /// whichever of the two spellings the instruction accumulates in.
 #[derive(CubeType)]
-pub struct ArgAccumulator<P: ReducePrecision> {
-    /// Empty when the accumulator is packed into `packed`.
-    pub elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
-    /// Empty unless the instruction stages coordinates beside the values; its
-    /// length is the single source of truth for whether they are (see
-    /// `read`/`write`).
-    pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
-    /// Empty unless the instruction packs each value with its coordinate.
-    pub packed: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
+pub enum ArgAccumulator<P: ReducePrecision> {
+    /// A slice of values, beside a slice of coordinates when the instruction
+    /// stages those separately.
+    Unpacked {
+        elements: Shared<[Vector<P::EA, P::SI>]>,
+        args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    },
+    /// A slice of keys, each a value packed with its coordinate.
+    Packed(Shared<[Vector<OrderKey, P::SI>]>),
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -366,63 +366,42 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
             AccumulatorFormat::Packed(SlotCount::Single)
         ));
 
-        let mut elements = Sequence::new();
-        let mut args = Sequence::new();
-        let mut packed = Sequence::new();
-
         if comptime!(is_packed) {
-            packed.push(Shared::new_slice(length));
+            ArgAccumulator::new_Packed(Shared::new_slice(length))
         } else {
-            elements.push(Shared::new_slice(length));
-            if coordinate {
-                args.push(Shared::new_slice(length));
-            }
-        }
+            let args = if coordinate {
+                SharedAccumulatorKind::new_Single(Shared::new_slice(length))
+            } else {
+                SharedAccumulatorKind::new_None()
+            };
 
-        ArgAccumulator::<P> {
-            elements,
-            args,
-            packed,
+            ArgAccumulator::new_Unpacked(Shared::new_slice(length), args)
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_keys = comptime!(accumulator.packed.len());
-        if comptime!(num_keys != 0) {
-            Accumulator::<P> {
+        match accumulator {
+            ArgAccumulator::Packed(packed) => Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                packed: Value::new_single(accumulator.packed[0][index]),
-            }
-        } else {
-            let num_args = comptime!(accumulator.args.len());
-            let args = if comptime!(num_args != 0) {
-                Value::new_single(accumulator.args[0][index])
-            } else {
-                Value::new_None()
-            };
-
-            Accumulator::<P> {
-                elements: Value::new_single(accumulator.elements[0][index]),
-                args,
+                packed: Value::new_single(packed[index]),
+            },
+            ArgAccumulator::Unpacked { elements, args } => Accumulator::<P> {
+                elements: Value::new_single(elements[index]),
+                args: args.get(index),
                 packed: Value::new_None(),
-            }
+            },
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        let num_keys = comptime!(accumulator.packed.len());
-        if comptime!(num_keys != 0) {
-            let shared_keys = &mut accumulator.packed[0];
-            shared_keys[index] = item.packed.item();
-        } else {
-            let shared_elements = &mut accumulator.elements[0];
-            shared_elements[index] = item.elements.item();
-
-            let num_args = comptime!(accumulator.args.len());
-            if comptime!(num_args != 0) {
-                let shared_args = &mut accumulator.args[0];
-                shared_args[index] = item.args.item();
+        match accumulator {
+            ArgAccumulator::Packed(packed) => {
+                packed[index] = item.packed.item();
+            }
+            ArgAccumulator::Unpacked { elements, args } => {
+                elements[index] = item.elements.item();
+                args.set(index, item.args);
             }
         }
     }

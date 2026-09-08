@@ -168,10 +168,15 @@ impl ReduceFamily for ReduceOperation {
 }
 
 #[derive(CubeType)]
-pub struct DynamicSharedAccumulator<P: ReducePrecision> {
-    pub elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
-    pub args: SharedAccumulatorKind<Vector<u32, P::SI>>,
-    pub packed: SharedAccumulatorKind<Vector<OrderKey, P::SI>>,
+pub enum DynamicSharedAccumulator<P: ReducePrecision> {
+    /// Value slices, beside coordinate slices when the instruction stages those
+    /// separately.
+    Unpacked {
+        elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
+        args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    },
+    /// Slices of keys, each a value packed with its coordinate.
+    Packed(SharedAccumulatorKind<Vector<OrderKey, P::SI>>),
 }
 
 #[derive(CubeType)]
@@ -189,19 +194,16 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
         let format = I::accumulator_format(inst);
         match comptime!(format) {
             AccumulatorFormat::Unpacked(SlotCount::Single) => {
-                let elements = Shared::new_slice(length);
-                // TODO how to put multiple?
                 let args = if coordinate {
-                    let args = Shared::new_slice(length);
-                    SharedAccumulatorKind::new_Single(args)
+                    SharedAccumulatorKind::new_Single(Shared::new_slice(length))
                 } else {
                     SharedAccumulatorKind::new_None()
                 };
-                DynamicSharedAccumulator::<P> {
-                    elements: SharedAccumulatorKind::new_Single(elements),
+
+                DynamicSharedAccumulator::new_Unpacked(
+                    SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
                     args,
-                    packed: SharedAccumulatorKind::new_None(),
-                }
+                )
             }
             AccumulatorFormat::Unpacked(SlotCount::Multiple(len)) => {
                 let mut elements = Sequence::new();
@@ -210,30 +212,25 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     elements.push(Shared::new_slice(length));
                 }
 
-                if comptime!(!coordinate) {
-                    DynamicSharedAccumulator::<P> {
-                        elements: SharedAccumulatorKind::new_Multiple(elements),
-                        args: SharedAccumulatorKind::new_None(),
-                        packed: SharedAccumulatorKind::new_None(),
-                    }
-                } else {
+                let args = if comptime!(coordinate) {
                     let mut args = Sequence::new();
                     #[unroll]
                     for _ in 0..len {
                         args.push(Shared::new_slice(length));
                     }
-                    DynamicSharedAccumulator::<P> {
-                        elements: SharedAccumulatorKind::new_Multiple(elements),
-                        args: SharedAccumulatorKind::new_Multiple(args),
-                        packed: SharedAccumulatorKind::new_None(),
-                    }
-                }
+                    SharedAccumulatorKind::new_Multiple(args)
+                } else {
+                    SharedAccumulatorKind::new_None()
+                };
+
+                DynamicSharedAccumulator::new_Unpacked(
+                    SharedAccumulatorKind::new_Multiple(elements),
+                    args,
+                )
             }
-            AccumulatorFormat::Packed(SlotCount::Single) => DynamicSharedAccumulator::<P> {
-                elements: SharedAccumulatorKind::new_None(),
-                args: SharedAccumulatorKind::new_None(),
-                packed: SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
-            },
+            AccumulatorFormat::Packed(SlotCount::Single) => DynamicSharedAccumulator::new_Packed(
+                SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
+            ),
             AccumulatorFormat::Packed(SlotCount::Multiple(len)) => {
                 let mut keys = Sequence::new();
                 #[unroll]
@@ -241,31 +238,34 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     keys.push(Shared::new_slice(length));
                 }
 
-                DynamicSharedAccumulator::<P> {
-                    elements: SharedAccumulatorKind::new_None(),
-                    args: SharedAccumulatorKind::new_None(),
-                    packed: SharedAccumulatorKind::new_Multiple(keys),
-                }
+                DynamicSharedAccumulator::new_Packed(SharedAccumulatorKind::new_Multiple(keys))
             }
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let elements = accumulator.elements.get(index);
-        let args = accumulator.args.get(index);
-        let packed = accumulator.packed.get(index);
-
-        Accumulator::<P> {
-            elements,
-            args,
-            packed,
+        match accumulator {
+            DynamicSharedAccumulator::Packed(packed) => Accumulator::<P> {
+                elements: Value::new_None(),
+                args: Value::new_None(),
+                packed: packed.get(index),
+            },
+            DynamicSharedAccumulator::Unpacked { elements, args } => Accumulator::<P> {
+                elements: elements.get(index),
+                args: args.get(index),
+                packed: Value::new_None(),
+            },
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator.elements.set(index, item.elements);
-        accumulator.args.set(index, item.args);
-        accumulator.packed.set(index, item.packed);
+        match accumulator {
+            DynamicSharedAccumulator::Packed(packed) => packed.set(index, item.packed),
+            DynamicSharedAccumulator::Unpacked { elements, args } => {
+                elements.set(index, item.elements);
+                args.set(index, item.args);
+            }
+        }
     }
 }
 

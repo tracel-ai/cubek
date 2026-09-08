@@ -4,9 +4,9 @@ use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, OrderKey, SlotCount, Value, ValueExpand, ValueOrder,
-    empty_order_key, lowest_coordinate_matching, order_key_coordinate, order_key_value,
-    pack_order_key, packs_key, ranked_key_insert,
+    Accumulator, AccumulatorFormat, Item, OrderKey, SharedAccumulatorKind, SlotCount, Value,
+    ValueExpand, ValueOrder, empty_order_key, lowest_coordinate_matching, order_key_coordinate,
+    order_key_value, pack_order_key, packs_key, ranked_key_insert,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -90,18 +90,18 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
     }
 }
 
+/// The shared memory used by [`TopK`], in whichever of the two spellings the
+/// instruction accumulates in. Each arm holds `k` slices.
 #[derive(CubeType)]
-pub struct TopKSharedAccumulator<P: ReducePrecision> {
-    /// Empty when the accumulator is packed into `packed`.
-    elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
-    /// Empty unless the instruction tracks coordinates in a separate slice; its
-    /// length is the single source of truth for whether coordinates are staged
-    /// (see `read`/`write`).
-    args: Sequence<Shared<[Vector<u32, P::SI>]>>,
-    /// Empty unless the instruction packs each value with its coordinate.
-    packed: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
-    #[cube(comptime)]
-    k: usize,
+pub enum TopKSharedAccumulator<P: ReducePrecision> {
+    /// Value slices, beside coordinate slices when the instruction stages those
+    /// separately.
+    Unpacked {
+        elements: SharedAccumulatorKind<Vector<P::EA, P::SI>>,
+        args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    },
+    /// Slices of keys, each a value packed with its coordinate.
+    Packed(SharedAccumulatorKind<Vector<OrderKey, P::SI>>),
 }
 
 #[cube]
@@ -113,107 +113,57 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
         // Every loop must be unrolled: a `Sequence` is built at expand time, so a
         // runtime loop would run the body once and leave a single slice behind
         // whatever `k` is, and `read`/`write` would then index past the end.
-        let mut elements = Sequence::new();
-        if comptime!(!is_packed) {
-            #[unroll]
-            for _ in 0..inst.k {
-                elements.push(Shared::new_slice(length));
-            }
-        }
-
-        let mut args = Sequence::new();
-        if has_coords {
-            #[unroll]
-            for _ in 0..inst.k {
-                args.push(Shared::new_slice(length));
-            }
-        }
-
-        let mut packed = Sequence::new();
-        if is_packed {
+        if comptime!(is_packed) {
+            let mut packed = Sequence::new();
             #[unroll]
             for _ in 0..inst.k {
                 packed.push(Shared::new_slice(length));
             }
-        }
 
-        TopKSharedAccumulator::<P> {
-            elements,
-            args,
-            packed,
-            k: inst.k,
+            TopKSharedAccumulator::new_Packed(SharedAccumulatorKind::new_Multiple(packed))
+        } else {
+            let mut elements = Sequence::new();
+            #[unroll]
+            for _ in 0..inst.k {
+                elements.push(Shared::new_slice(length));
+            }
+
+            let args = if has_coords {
+                let mut args = Sequence::new();
+                #[unroll]
+                for _ in 0..inst.k {
+                    args.push(Shared::new_slice(length));
+                }
+                SharedAccumulatorKind::new_Multiple(args)
+            } else {
+                SharedAccumulatorKind::new_None()
+            };
+
+            TopKSharedAccumulator::new_Unpacked(SharedAccumulatorKind::new_Multiple(elements), args)
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_keys = comptime!(accumulator.packed.len());
-        if comptime!(num_keys != 0) {
-            let mut keys = Array::new(accumulator.k);
-            #[unroll]
-            for i in 0..accumulator.k {
-                keys[i] = accumulator.packed[i][index];
-            }
-
-            Accumulator::<P> {
+        match accumulator {
+            TopKSharedAccumulator::Packed(packed) => Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                packed: Value::new_Multiple(keys),
-            }
-        } else {
-            let mut values = Array::new(accumulator.k);
-            #[unroll]
-            for i in 0..accumulator.k {
-                values[i] = accumulator.elements[i][index];
-            }
-
-            let num_args = comptime!(accumulator.args.len());
-            let args = if comptime!(num_args != 0) {
-                let mut args = Array::new(accumulator.k);
-                #[unroll]
-                for i in 0..accumulator.k {
-                    args[i] = accumulator.args[i][index];
-                }
-                Value::new_Multiple(args)
-            } else {
-                Value::new_None()
-            };
-
-            Accumulator::<P> {
-                elements: Value::new_Multiple(values),
-                args,
+                packed: packed.get(index),
+            },
+            TopKSharedAccumulator::Unpacked { elements, args } => Accumulator::<P> {
+                elements: elements.get(index),
+                args: args.get(index),
                 packed: Value::new_None(),
-            }
+            },
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        let num_keys = comptime!(accumulator.packed.len());
-        if comptime!(num_keys != 0) {
-            let keys = item.packed.multiple();
-            #[unroll]
-            for i in 0..accumulator.k {
-                let key = keys[i];
-                let shared_keys = &mut accumulator.packed[i];
-                shared_keys[index] = key;
-            }
-        } else {
-            let values = item.elements.multiple();
-            #[unroll]
-            for i in 0..accumulator.k {
-                let acc = values[i];
-                let shared_acc = &mut accumulator.elements[i];
-                shared_acc[index] = acc;
-            }
-
-            let num_args = comptime!(accumulator.args.len());
-            if comptime!(num_args != 0) {
-                let args = item.args.multiple();
-                #[unroll]
-                for i in 0..accumulator.k {
-                    let arg = args[i];
-                    let shared_arg_acc = &mut accumulator.args[i];
-                    shared_arg_acc[index] = arg;
-                }
+        match accumulator {
+            TopKSharedAccumulator::Packed(packed) => packed.set(index, item.packed),
+            TopKSharedAccumulator::Unpacked { elements, args } => {
+                elements.set(index, item.elements);
+                args.set(index, item.args);
             }
         }
     }
