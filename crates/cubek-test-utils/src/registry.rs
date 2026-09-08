@@ -23,14 +23,13 @@ use crate::{HostData, Progress};
 
 /// `CUBEK_BENCH_TIMING`'s override, read once: it can't change over a
 /// process's life, and every category consults it once per row.
-static TIMING_OVERRIDE: LazyLock<Option<TimingMethod>> = LazyLock::new(|| {
-    match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
+static TIMING_OVERRIDE: LazyLock<Option<TimingMethod>> =
+    LazyLock::new(|| match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
         Ok("device") => Some(TimingMethod::Device),
         Ok("system") => Some(TimingMethod::System),
         Ok(other) => panic!("CUBEK_BENCH_TIMING takes 'device' or 'system', not {other:?}"),
         Err(_) => None,
-    }
-});
+    });
 
 /// The timing method a category measures with, overridden for a whole run by
 /// `CUBEK_BENCH_TIMING`. Device timestamps leave the launch out, so a row that
