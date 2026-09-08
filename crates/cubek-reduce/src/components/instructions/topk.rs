@@ -3,14 +3,10 @@ use cubecl::cube;
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::components::instructions::{AccumulatorFormat, SlotCount};
-
-use crate::components::instructions::plane_topk_insert;
-use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{
-    Accumulator, Item, OrderKey, Value, ValueExpand, ValueOrder, empty_order_key,
-    order_key_coordinate, order_key_value, pack_order_key, packs_key, plane_topk_key_insert,
-    plane_topk_key_merge, ranked_key_insert,
+    Accumulator, AccumulatorFormat, Item, OrderKey, SlotCount, Value, ValueExpand, ValueOrder,
+    empty_order_key, lowest_coordinate_matching, order_key_coordinate, order_key_value,
+    pack_order_key, packs_key, ranked_key_insert,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -96,14 +92,14 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
 
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
-    /// Empty when the accumulator is packed into `keys`.
+    /// Empty when the accumulator is packed into `packed`.
     elements: Sequence<Shared<[Vector<P::EA, P::SI>]>>,
     /// Empty unless the instruction tracks coordinates in a separate slice; its
     /// length is the single source of truth for whether coordinates are staged
     /// (see `read`/`write`).
     args: Sequence<Shared<[Vector<u32, P::SI>]>>,
-    /// Empty unless the instruction packs its coordinates into its values.
-    keys: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
+    /// Empty unless the instruction packs each value with its coordinate.
+    packed: Sequence<Shared<[Vector<OrderKey, P::SI>]>>,
     #[cube(comptime)]
     k: usize,
 }
@@ -111,14 +107,14 @@ pub struct TopKSharedAccumulator<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
-        let packed = packs_key::<P>(inst.output);
-        let has_coords = comptime!(inst.output.has_indices() && !packed);
+        let is_packed = packs_key::<P>(inst.output);
+        let has_coords = comptime!(inst.output.has_indices() && !is_packed);
 
         // Every loop must be unrolled: a `Sequence` is built at expand time, so a
         // runtime loop would run the body once and leave a single slice behind
         // whatever `k` is, and `read`/`write` would then index past the end.
         let mut elements = Sequence::new();
-        if comptime!(!packed) {
+        if comptime!(!is_packed) {
             #[unroll]
             for _ in 0..inst.k {
                 elements.push(Shared::new_slice(length));
@@ -133,35 +129,35 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             }
         }
 
-        let mut keys = Sequence::new();
-        if packed {
+        let mut packed = Sequence::new();
+        if is_packed {
             #[unroll]
             for _ in 0..inst.k {
-                keys.push(Shared::new_slice(length));
+                packed.push(Shared::new_slice(length));
             }
         }
 
         TopKSharedAccumulator::<P> {
             elements,
             args,
-            keys,
+            packed,
             k: inst.k,
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_keys = comptime!(accumulator.keys.len());
+        let num_keys = comptime!(accumulator.packed.len());
         if comptime!(num_keys != 0) {
             let mut keys = Array::new(accumulator.k);
             #[unroll]
             for i in 0..accumulator.k {
-                keys[i] = accumulator.keys[i][index];
+                keys[i] = accumulator.packed[i][index];
             }
 
             Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                keys: Value::new_Multiple(keys),
+                packed: Value::new_Multiple(keys),
             }
         } else {
             let mut values = Array::new(accumulator.k);
@@ -185,19 +181,19 @@ impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P>
             Accumulator::<P> {
                 elements: Value::new_Multiple(values),
                 args,
-                keys: Value::new_None(),
+                packed: Value::new_None(),
             }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        let num_keys = comptime!(accumulator.keys.len());
+        let num_keys = comptime!(accumulator.packed.len());
         if comptime!(num_keys != 0) {
-            let keys = item.keys.multiple();
+            let keys = item.packed.multiple();
             #[unroll]
             for i in 0..accumulator.k {
                 let key = keys[i];
-                let shared_keys = &mut accumulator.keys[i];
+                let shared_keys = &mut accumulator.packed[i];
                 shared_keys[index] = key;
             }
         } else {
@@ -274,7 +270,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                keys: Value::new_Multiple(keys),
+                packed: Value::new_Multiple(keys),
             }
         } else {
             let mut elements = Array::new(comptime!(this.k));
@@ -297,7 +293,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
             Accumulator::<P> {
                 elements: Value::new_Multiple(elements),
                 args,
-                keys: Value::new_None(),
+                packed: Value::new_None(),
             }
         }
     }
@@ -316,7 +312,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                 item.args.item(),
                 ValueOrder::Descending,
             );
-            let keys = accumulator.keys.multiple_mut();
+            let keys = accumulator.packed.multiple_mut();
 
             match reduce_step {
                 ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(keys, key, this.k),
@@ -352,7 +348,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
-            plane_topk_key_merge::<P::EA, P::SI>(accumulator.keys.multiple_mut(), this.k);
+            plane_topk_key_merge::<P::EA, P::SI>(accumulator.packed.multiple_mut(), this.k);
         } else {
             plane_topk_merge::<P::EA, P::SI>(
                 accumulator.elements.multiple_mut(),
@@ -366,8 +362,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
-            let keys = accumulator.keys.multiple_mut();
-            let other_keys = other.keys.multiple();
+            let keys = accumulator.packed.multiple_mut();
+            let other_keys = other.packed.multiple();
 
             for i in 0..this.k {
                 ranked_key_insert::<P::SI>(keys, other_keys[i], this.k);
@@ -400,7 +396,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
-            let keys = topk_finalize_keys::<P>(accumulator.keys.multiple(), this.k);
+            let keys = topk_finalize_keys::<P>(accumulator.packed.multiple(), this.k);
 
             let mut out_values = Array::new(this.k);
             let mut out_indices = Array::new(this.k);
@@ -452,7 +448,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
-            let keys = accumulator.keys.multiple();
+            let keys = accumulator.packed.multiple();
 
             let mut out_values = Array::new(this.k);
             let mut out_indices = Array::new(this.k);
@@ -625,4 +621,279 @@ fn topk_finalize_keys<P: ReducePrecision>(
     }
 
     topk
+}
+
+/// How much fully-unrolled top-k selection work is worth emitting, counted in
+/// copies of a loop body.
+///
+/// The selection networks below are `k`-by-`k`: every candidate walks all `k`
+/// accumulator slots. Unrolling both levels keeps the accumulator in registers
+/// with constant slot indices, which is worth a lot — rolled, the slots move to
+/// scratch memory and every step becomes a load/store. Measured on a
+/// `32x512x4095` `ArgTopK` (device timing, RTX 5090 / Vulkan), unrolling is
+/// worth 5.8x at `k = 32` and 2.2x at `k = 64`.
+///
+/// But the emitted kernel grows with the product, so a flat cap on `k` prices
+/// the three nest shapes wrong: `topk_finalize_*` is `k * k * vector_size`, not
+/// `k * k`, and is the first to become unaffordable. Budgeting the product
+/// instead lets the square nests unroll further than the cubic one, and stops
+/// all of them before the backend compiler does: past this budget the same
+/// selection runs as a plain runtime loop whose kernel size does not depend on
+/// `k` at all.
+pub(crate) const TOPK_UNROLL_BUDGET: usize = 1024;
+
+/// Plane-cooperative top-k insertion; the candidate's coordinate decides which
+/// algorithm runs, since winners are identified by their coordinate when one
+/// rides along and by lane id otherwise.
+#[cube]
+pub fn plane_topk_insert<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Value<Vector<u32, S>>,
+    item: Vector<N, S>,
+    coord: &Value<Vector<u32, S>>,
+    #[comptime] k: usize,
+) {
+    match coord {
+        Value::None => plane_topk_insert_values(elements, item, k),
+        Value::Single(coord) => plane_topk_insert_with_coords(
+            elements,
+            coordinates.multiple_mut(),
+            item,
+            coord.unwrap(),
+            k,
+        ),
+        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
+    }
+}
+
+#[cube]
+fn plane_topk_insert_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    item: Vector<N, S>,
+    coord: Vector<u32, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best_val = item;
+    let mut local_best_coord = coord;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning_val = plane_max(local_best_val);
+        let winning_coord =
+            lowest_coordinate_matching(winning_val, local_best_val, local_best_coord);
+
+        let mut insert_val = winning_val;
+        let mut insert_coord = winning_coord;
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let to_keep = select_many(
+                elements[j].equal(&insert_val),
+                coordinates[j].less_than(&insert_coord),
+                elements[j].greater_than(&insert_val),
+            );
+
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+
+            let next_coord = select_many(to_keep, insert_coord, coordinates[j]);
+            coordinates[j] = select_many(to_keep, coordinates[j], insert_coord);
+            insert_coord = next_coord;
+        }
+
+        // Winner masking logic
+        let is_winner = local_best_val
+            .equal(&winning_val)
+            .vec_and(local_best_coord.equal(&winning_coord));
+        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+        local_best_coord = select_many(is_winner, Vector::new(u32::MAX), local_best_coord);
+    }
+}
+
+#[cube]
+fn plane_topk_insert_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    item: Vector<N, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best_val = item;
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning_val = plane_max(local_best_val);
+        let is_match = local_best_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_match, lane_id, Vector::new(u32::MAX)));
+
+        let mut insert_val = winning_val;
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let to_keep = elements[j].greater_than(&insert_val);
+            let next_val = select_many(to_keep, insert_val, elements[j]);
+            elements[j] = select_many(to_keep, elements[j], insert_val);
+            insert_val = next_val;
+        }
+
+        // Winner masking logic
+        let is_winner = lane_id.equal(&winning_lane);
+        local_best_val = select_many(is_winner, Vector::new(N::min_value()), local_best_val);
+    }
+}
+
+/// Plane-cooperative insertion of one packed-key candidate per lane.
+///
+/// A key already carries the tie-break, so the plane's winner is a plain
+/// [`plane_max`] and the lane holding it is the lane whose key equals it: two
+/// lanes cannot hold the same key, since the coordinate is part of it.
+#[cube]
+pub fn plane_topk_key_insert<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<OrderKey, S>>,
+    item: Vector<OrderKey, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best = item;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning = plane_max(local_best);
+        ranked_key_insert::<S>(keys, winning, k);
+
+        let is_winner = local_best.equal(&winning);
+        local_best = select_many(
+            is_winner,
+            empty_order_key::<N, S>(Vector::new(N::min_value()), ValueOrder::Descending),
+            local_best,
+        );
+    }
+}
+
+/// Plane-cooperative merge of per-lane packed-key accumulators.
+#[cube]
+pub fn plane_topk_key_merge<N: Numeric, S: Size>(
+    keys: &mut Array<Vector<OrderKey, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_keys = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local =
+            empty_order_key::<N, S>(Vector::new(N::min_value()), ValueOrder::Descending);
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local = select_many(is_pointed, keys[j], local);
+        }
+
+        let winning = plane_max(local);
+        final_keys[i] = winning;
+
+        let is_cand = local.equal(&winning);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        keys[i] = final_keys[i];
+    }
+}
+
+/// Plane-cooperative merge of per-lane top-k candidates; the accumulator's
+/// coordinates decide which algorithm runs, as in [`plane_topk_insert`].
+#[cube]
+pub fn plane_topk_merge<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Value<Vector<u32, S>>,
+    #[comptime] k: usize,
+) {
+    match coordinates {
+        Value::None => plane_topk_merge_values(elements, k),
+        Value::Multiple(coordinates) => plane_topk_merge_with_coords(elements, coordinates, k),
+        Value::Single(_) => panic!("top-k accumulator coordinates are one slice per slot"),
+    }
+}
+
+#[cube]
+fn plane_topk_merge_with_coords<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    coordinates: &mut Array<Vector<u32, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_elements = Array::new(k);
+    let mut final_coords = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local_val = Vector::new(N::min_value());
+        let mut local_coord = Vector::new(u32::MAX);
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local_val = select_many(is_pointed, elements[j], local_val);
+            local_coord = select_many(is_pointed, coordinates[j], local_coord);
+        }
+
+        let winning_val = plane_max(local_val);
+        let best_c = lowest_coordinate_matching(winning_val, local_val, local_coord);
+        final_coords[i] = best_c;
+        let is_cand = local_val
+            .equal(&winning_val)
+            .vec_and(local_coord.equal(&best_c));
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+
+        final_elements[i] = winning_val;
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        elements[i] = final_elements[i];
+        coordinates[i] = final_coords[i];
+    }
+}
+
+#[cube]
+fn plane_topk_merge_values<N: Numeric, S: Size>(
+    elements: &mut Array<Vector<N, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_elements = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local_val = Vector::new(N::min_value());
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local_val = select_many(is_pointed, elements[j], local_val);
+        }
+
+        let winning_val = plane_max(local_val);
+        let is_cand = local_val.equal(&winning_val);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+
+        final_elements[i] = winning_val;
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        elements[i] = final_elements[i];
+    }
 }

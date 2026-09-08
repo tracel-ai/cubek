@@ -113,7 +113,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
             Accumulator::<P> {
                 elements: Value::new_None(),
                 args: Value::new_None(),
-                keys: Value::new_single(empty_order_key::<P::EA, P::SI>(
+                packed: Value::new_single(empty_order_key::<P::EA, P::SI>(
                     Vector::new(max_identity::<P::EA>()),
                     ValueOrder::Descending,
                 )),
@@ -128,7 +128,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
             Accumulator::<P> {
                 elements: Value::new_single(Vector::empty().fill(max_identity::<P::EA>())),
                 args,
-                keys: Value::new_None(),
+                packed: Value::new_None(),
             }
         }
     }
@@ -152,7 +152,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
                 ReduceStep::Identity => key,
             };
 
-            key_insert::<P::SI>(&mut accumulator.keys, candidate);
+            key_insert::<P::SI>(&mut accumulator.packed, candidate);
         } else {
             let (candidate, candidate_coord) = match reduce_step {
                 ReduceStep::Plane => plane_max_candidate(item.elements, &item.args),
@@ -172,8 +172,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            let winning = plane_max(accumulator.keys.item());
-            accumulator.keys.assign(&Value::new_single(winning));
+            let winning = plane_max(accumulator.packed.item());
+            accumulator.packed.assign(&Value::new_single(winning));
         } else {
             let (candidate, candidate_coord) =
                 plane_max_candidate(accumulator.elements.item(), &accumulator.args);
@@ -191,7 +191,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            key_insert::<P::SI>(&mut accumulator.keys, other.keys.item());
+            key_insert::<P::SI>(&mut accumulator.packed, other.packed.item());
         } else {
             max_insert(
                 &mut accumulator.elements,
@@ -215,7 +215,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
 
         if comptime!(packs) {
             let key =
-                Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(accumulator.keys.item()));
+                Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(accumulator.packed.item()));
 
             (
                 Value::new_single(Out::cast_from(
@@ -263,7 +263,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            let key = accumulator.keys.item();
+            let key = accumulator.packed.item();
 
             (
                 Value::new_single(Vector::cast_from(order_key_value::<P::EA, P::SI>(
