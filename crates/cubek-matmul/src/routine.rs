@@ -20,7 +20,18 @@ pub(crate) fn into_contiguous_if_highly_permuted(
     binding: InputBinding,
 ) -> Result<InputBinding, MatmulSetupError> {
     match matrix_batch_layout(&binding.data().strides, binding.scheme()) {
-        MatrixBatchLayout::HighlyPermuted => Ok(binding.into_contiguous(client)?),
+        MatrixBatchLayout::HighlyPermuted => {
+            // A contiguous copy is a plain row-major buffer, so it would drop the storage tiles
+            // the binding states rather than carry them: the caller packs a plain tensor.
+            if binding.data().tiling.is_tiled() {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(
+                    "a storage-tiled operand arrived highly permuted; making it contiguous would \
+                     drop its storage tiles, so unpack it, or pack a row-major tensor"
+                        .to_string(),
+                )));
+            }
+            Ok(binding.into_contiguous(client)?)
+        }
         _ => Ok(binding),
     }
 }
