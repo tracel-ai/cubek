@@ -13,6 +13,7 @@ mod matmul;
 mod packed;
 mod procedural;
 mod quant;
+mod ragged;
 mod recursive;
 mod reduce;
 mod references;
