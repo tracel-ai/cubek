@@ -32,17 +32,6 @@ const NI: Axis = Axis(5);
 /// The register block every contraction here runs under.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
-/// Every scale level windowed to `region`.
-#[cube]
-fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
-    let mut at = Sequence::new();
-    #[unroll]
-    for k in 0..scales.len() {
-        at.push(scales.index(k).at(region));
-    }
-    at
-}
-
 /// A packed operand copied into a plain one: the words unpack at the read, and nothing in the
 /// kernel, the spec or the launch mentions a scale.
 #[cube(launch)]
@@ -71,8 +60,7 @@ fn packed_matmul<E: Numeric>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -80,7 +68,7 @@ fn packed_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -101,9 +89,10 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(blocks.tile(comptime!(space.clone())));
-    scales.push(global.tile(comptime!(space.clone())));
+    let scales = Scales::block_under(
+        blocks.tile(comptime!(space.clone())),
+        global.tile(comptime!(space.clone())),
+    );
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -111,7 +100,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -267,8 +256,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -276,7 +264,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
         c_r.mma_scaled_with(
             &x.at(&region),
             &w.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -299,8 +287,7 @@ fn native_matmul<E: Numeric>(
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -308,7 +295,7 @@ fn native_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -331,13 +318,12 @@ fn packed_gemv<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     for cube in space.cubes(comptime!(cubes.clone())) {
         let x = x.at(&cube);
         let w = w.at(&cube);
-        let scales = at_all(&scales, &cube);
+        let scales = scales.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
         let mut acc = c.block_accumulator::<E, E, E>(
@@ -357,7 +343,7 @@ fn packed_gemv<E: Numeric, V: Size>(
             acc_s.mma_scaled(
                 &x.at(&step),
                 &w.at(&step),
-                &at_all(&scales, &step),
+                &scales.at(&step),
                 Semiring::SUM_PROD,
             );
         }

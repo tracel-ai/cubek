@@ -28,17 +28,6 @@ const KI: Axis = Axis(3);
 /// The register block the contractions here run under, but for the wide-lhs one.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
-/// Every scale level windowed to `region`.
-#[cube]
-fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
-    let mut at = Sequence::new();
-    #[unroll]
-    for k in 0..scales.len() {
-        at.push(scales.index(k).at(region));
-    }
-    at
-}
-
 /// `c = (a ⊗ s) · b`, with `s` at whatever granularity its own projection states.
 #[cube(launch)]
 fn scaled_matmul<E: Numeric, S: Numeric>(
@@ -52,8 +41,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -61,7 +49,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -82,8 +70,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E, E>(
         &a,
@@ -102,7 +89,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         acc_r.mma_scaled(
             &a.at(&region),
             &b.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             Semiring::SUM_PROD,
         );
     }
@@ -126,11 +113,12 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    // The list is the hierarchy: block scales first, then the level that covers a tile of their
-    // tiles. Nothing states a scheme, a depth, or which level is which.
-    let mut scales = Sequence::new();
-    scales.push(blocks.tile(comptime!(space.clone())));
-    scales.push(global.tile(comptime!(space.clone())));
+    // The operand is the hierarchy: block scales, under the factor that covers a tile of their
+    // tiles. Nothing states a scheme.
+    let scales = Scales::block_under(
+        blocks.tile(comptime!(space.clone())),
+        global.tile(comptime!(space.clone())),
+    );
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -138,7 +126,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -148,9 +136,9 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
 /// **Two scale levels, applied in order.** `nvfp4`'s shape: a scale per block of the contraction,
 /// under one factor for the whole tensor.
 ///
-/// The second level is not a special case of anything. It is an operand like the first, spanning
-/// the same axes and distinguishing fewer of them, and it takes its place in the list. Nothing in
-/// the kernel says "two", and nothing says "per tensor".
+/// The second level is an operand like the first, spanning the same axes and distinguishing
+/// fewer of them, and it rides the same [`Scales`] as the block level. Nothing in the kernel
+/// counts levels: it windows `scales` and hands it to the leaf.
 #[test]
 fn two_levels_fold_in_order() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
@@ -1167,8 +1155,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E, E>(
         &a,
@@ -1187,7 +1174,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         acc_r.mma_scaled(
             &a.at(&region),
             &b.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             Semiring::SUM_PROD,
         );
     }
@@ -1322,8 +1309,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.level(comptime!(level.clone())) {
@@ -1331,7 +1317,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &at_all(&scales, &region),
+            &scales.at(&region),
             comptime!(RegisterBlock::new(64).lane_fanout()),
             Semiring::SUM_PROD,
         );

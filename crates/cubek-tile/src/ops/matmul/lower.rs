@@ -56,7 +56,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Sequence<Tile<S>>,
+        scales: &Scales<S>,
         #[comptime] semiring: Semiring,
     ) {
         self.init_identity(comptime!(semiring.add()));
@@ -68,10 +68,10 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Sequence<Tile<S>>,
+        scales: &Scales<S>,
         #[comptime] semiring: Semiring,
     ) {
-        mma_leaf_scaled(self, lhs, rhs, scales, semiring)
+        mma_leaf_scaled(self, lhs, rhs, &scales.levels(), semiring)
     }
 }
 
@@ -126,14 +126,20 @@ impl<Acc: Numeric> Tile<Acc> {
         &mut self,
         lhs: &Tile<Lhs>,
         rhs: &Tile<Rhs>,
-        scales: &Sequence<Tile<S>>,
+        scales: &Scales<S>,
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(
-                g, lhs, rhs, scales, space, config, semiring,
+                g,
+                lhs,
+                rhs,
+                &scales.levels(),
+                space,
+                config,
+                semiring,
             ),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
