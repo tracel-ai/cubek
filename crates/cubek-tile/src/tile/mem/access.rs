@@ -27,8 +27,7 @@ impl<T: Numeric> Tile<T> {
                          (Tile::copy_from, Tile::matrix_transparent)"
                     )
                 }
-                let base = g.base();
-                g.read_view::<W>(base).view(g.window())
+                g.window_view::<W>(comptime!(Guard::Checked))
             }
             TileKind::TmaGmem(_) => panic!("Tile::view: a tma source has no element view"),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -44,9 +43,7 @@ impl<T: Numeric> Tile<T> {
                 if comptime!(g.store.quant.is_some()) {
                     panic!("Tile::view_mut: writing a quantized tile requires requantization")
                 }
-                let base = g.base();
-                let window = g.window();
-                g.write_view::<W>(base).view_mut(window)
+                g.window_view_mut::<W>(comptime!(Guard::Checked))
             }
             TileKind::TmaGmem(_) => panic!("Tile::view_mut: a tma source has no element view"),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
@@ -652,6 +649,36 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// The mutable twin of [`window_view`](MemData::window_view): inside one storage tile the run
+    /// from the origin under the storage tile's own strides, no digit to split; otherwise the
+    /// layout walk through the window, under `guard`. A window inside a storage tile is always a
+    /// buffer (it came off a binding's tiling), so the run is sliced where an erased destination
+    /// could not be.
+    fn window_view_mut<W: Size>(
+        &mut self,
+        #[comptime] guard: Guard,
+    ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+        match comptime!(self.access.storage) {
+            Storage::Contiguous => {
+                let start = self.window_start.fcast::<usize>();
+                let layout = self.contiguous_layout();
+                let all = self.lines_mut::<W>();
+                let len = all.len();
+                all.slice_mut(start, len).view_mut(layout)
+            }
+            Storage::Strided => {
+                let base = self.base();
+                let window = self.window().with_guard(guard);
+                self.write_view::<W>(base).view_mut(window)
+            }
+            Storage::Tiled(_) => {
+                let base = self.base();
+                let window = self.window().with_guard(guard);
+                self.write_view::<W>(base).view_mut(window)
+            }
+        }
+    }
+
     /// The layout of a window inside one storage tile, relative to its origin: its own extent,
     /// each coordinate addressed by the stride of its innermost fragment, no digit to split. Sits
     /// over the run from [`window_offset`](MemData::window_offset) on, like a fragment load.
@@ -840,11 +867,10 @@ impl<T: Numeric> MemData<T> {
         if comptime!(self.store.packing != Packing::Plain) {
             panic!("Tile::matrix_mut: writing a packed tile requires repacking")
         }
-        let base = self.base();
-        let window = self.window();
         let check = self.write_check();
         MaskedViewMut::new(
-            self.write_view::<W>(base).view_mut(window).view_mut(layout),
+            self.window_view_mut::<W>(comptime!(Guard::Checked))
+                .view_mut(layout),
             check,
         )
     }
@@ -1016,13 +1042,10 @@ impl<T: Numeric> MemData<T> {
         if comptime!(self.store.packing != Packing::Plain) {
             panic!("Tile::flat_mut: writing a packed tile requires repacking")
         }
-        let base = self.base();
-        let window = self.window();
         let extent = self.window.extent.clone();
         let check = self.write_check();
         FlatViewMut::new(
-            self.write_view::<W>(base)
-                .view_mut(window)
+            self.window_view_mut::<W>(comptime!(Guard::Checked))
                 .view_mut(FlatLayout::new(extent)),
             check,
         )
