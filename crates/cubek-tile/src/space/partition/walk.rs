@@ -7,9 +7,11 @@
 //! ([`region`](Walk::region)): decode the index as an odometer over the level's walked axes,
 //! last declared axis fastest, and add this instance's share on the distributed axes. It never
 //! iterates the instances themselves, the hardware does that, and it holds no current region:
-//! `for region in walk` is `for i in 0..total { region(i) }`. The only things a walk can be
-//! told are its order ([`reversed`](Walk::reversed)) and whether it unrolls
-//! ([`unrolled`](Walk::unrolled)). Holding several regions at once (double buffering) is a
+//! `for region in walk` is `for i in 0..total { region(i) }`. What a walk can be told is its
+//! order ([`reversed`](Walk::reversed)), whether it unrolls ([`unrolled`](Walk::unrolled)), the
+//! run of the flat grid it takes ([`window`](Walk::window)), and one axis's coordinate outright
+//! ([`routed`](Walk::routed)), which is how a value the kernel read from data places a window
+//! that no loop coordinate could. Holding several regions at once (double buffering) is a
 //! schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
 //!
 //! Each region is a [`Region`], the path of levels from the space to that box; a [`Tile`]

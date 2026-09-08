@@ -12,7 +12,11 @@
 //! ([`Fragments`], [`Tile::block_accumulator`], [`Tile::cmma_accumulator`]), the fragments it
 //! loads ([`PlanePartition::cmma_fragments`]), the zero of what it holds where it holds it, the
 //! instruction at the leaf ([`Tile::mm_with`], [`Tile::mma`]), and the store of each fragment
-//! to its window of the output ([`Tile::copy_cast_from`]), one more loop over the cells. A
+//! to its window of the output ([`Tile::copy_cast_from`]), one more loop over the cells. Where
+//! data decides what a loop reaches, the kernel says that too: [`Walk::routed`] gives an axis
+//! the coordinate a table named (an expert per token, a physical page per logical one), and
+//! [`Tile::within`] places an operand's window at an element and says where its reads stop (a
+//! sequence packed among others). A
 //! [`Region`] is the path those loops took from the space, so the root tile and any window of
 //! it read one region alike. The launch ([`Launcher`]) reads the grid off the same levels the
 //! kernel's loops state, listed by the blueprint, and binds the tensors to the same extents.

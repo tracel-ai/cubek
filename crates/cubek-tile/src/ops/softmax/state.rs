@@ -220,7 +220,7 @@ impl MaskProbe {
         keys
     }
 
-    /// [`keys`](Self::keys) counted in whole blocks of `block`: what a walk over the reduced
+    /// [`keys`](MaskProbe::keys) counted in whole blocks of `block`: what a walk over the reduced
     /// axis takes as its step count, the partial last block included since its own rows still
     /// mask per element.
     pub fn blocks(&self, #[comptime] block: usize) -> usize {
