@@ -352,3 +352,112 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         );
     }
 }
+
+/// The routed weights staged in shared memory rather than read where they lie: the ring is built
+/// over the routed walk, so what it fills is the expert the table named.
+#[cube(launch)]
+fn moe_staged_kernel<E: Numeric>(
+    x: &TileArg<'_, E, Const<1>>,
+    w: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    routes: &Tensor<u32>,
+    space: Space,
+    #[comptime] token: Level,
+    #[comptime] expert: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+
+    for tok in space.level(comptime!(token.clone())) {
+        let e = routes[tok.coord(M)] as usize;
+        let experts = tok.level(comptime!(expert.clone())).routed(EXPERT, e);
+
+        let mut ring = Ring::smem_single(&experts, &w, StageStorage::Strided, 1usize);
+        pipelined(experts, &mut ring, |slot, slab| {
+            let mut o = out.at(slab);
+            slot.consume(|w_s| {
+                o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            });
+        });
+    }
+}
+
+/// Staging under a routed coordinate: the stage is filled from the expert the route named, not
+/// from the first one and then reused. Samuel's design owed a refusal here, because its window
+/// displacement lived on the operand and a staged operand inherited it; here the coordinate is
+/// the walk's, and the stage is filled per region like any other.
+#[test]
+fn a_routed_operand_stages_the_expert_the_table_named() {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[
+                (M, TOKENS),
+                (N, FEATURES),
+                (K, FEATURES),
+                (EXPERT, EXPERTS),
+            ]),
+            vec![Level::walk(&[(M, 1)]), Level::walk(&[(EXPERT, 1)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let (x_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+        .dtype(f32_ty)
+        .custom(x_values())
+        .generate_with_f32_host_data();
+    let (w_handle, _) =
+        TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
+            .dtype(f32_ty)
+            .custom(w_values())
+            .generate_with_f32_host_data();
+    let routes_handle = TestInput::builder(client.clone(), Shape::new([TOKENS]))
+        .dtype(u32::elem_type_native())
+        .custom(ROUTES.iter().map(|&r| r as f32).collect())
+        .generate_without_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+        .dtype(f32_ty)
+        .custom(vec![-1.0; TOKENS * FEATURES])
+        .generate_without_host_data();
+
+    moe_staged_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            x_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            w_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[EXPERT, K, N]),
+        ),
+        TileArgLaunch::new(
+            out_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        routes_handle.binding().into_tensor_arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        f32_ty,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    let want = expected(&ROUTES);
+    for (m, row) in want.iter().enumerate() {
+        for (n, cell) in row.iter().enumerate() {
+            assert_eq!(
+                got.get_f32(&[m, n]),
+                *cell,
+                "token {m} feature {n}: expert {}",
+                ROUTES[m]
+            );
+        }
+    }
+}
