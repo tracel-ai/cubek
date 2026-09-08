@@ -4,6 +4,7 @@
 //!
 //! The [`Semiring`] states the accumulation's algebra once, at the call that runs the steps.
 
+use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
 use crate::instruction::registers::contract;
@@ -228,7 +229,7 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         match self {
             PlaneTile::Cmma(d) => {
-                strided_2d(lhs, rhs, out, false);
+                strided_2d(lhs, rhs, out, transposed_fragment(rhs));
                 hardware_semiring(semiring);
                 d.mma(lhs, rhs)
             }
@@ -312,6 +313,24 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
          leaf, or an unpromoted Gmem/Smem accumulator, whose software instruction is the \
          `contract::memory` arm of `mma_leaf`"
     ));
+}
+
+/// Whether `rhs` is a cmma fragment loaded col-major: a `(col, k)` window, the transpose of the
+/// role's own order, which the fragment reads as the same matrix ([`PlanePartition::store`]) and
+/// which is therefore the edge the contraction runs along, as it is for a folded register step.
+#[cube]
+fn transposed_fragment<ER: Numeric>(rhs: &Tile<ER>) -> comptime_type!(bool) {
+    match &rhs.tile_kind {
+        TileKind::PlaneTile(t) => match t {
+            PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => comptime!(false),
+        },
+        TileKind::Gmem(_)
+        | TileKind::Smem(_)
+        | TileKind::PlanePartition(_)
+        | TileKind::TmaGmem(_)
+        | TileKind::Procedural(_) => comptime!(false),
+    }
 }
 
 /// Asserts that operands contract their shared axes in the same order.
