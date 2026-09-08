@@ -200,6 +200,39 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     }
 }
 
+/// [`Scales`] as one launch argument. `V` is the block level's served width; the global level
+/// is one scalar, and `'static` because a comptime-optional launch argument has to be.
+#[derive(CubeType, CubeLaunch)]
+pub struct ScalesArg<'a, S: Numeric, V: Size> {
+    pub block: TileArg<'a, S, V>,
+    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
+}
+
+impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
+    pub fn block(block: TileArgLaunch<'static, S, V>) -> Self {
+        ScalesArgLaunch::new(block, ComptimeOptionArgs::None)
+    }
+
+    pub fn block_under(
+        block: TileArgLaunch<'static, S, V>,
+        global: TileArgLaunch<'static, S, Const<1>>,
+    ) -> Self {
+        ScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
+    }
+}
+
+#[cube]
+impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
+    pub fn tile(&self, #[comptime] space: Space) -> Scales<S> {
+        let block = self.block.tile(comptime!(space.clone()));
+        #[comptime]
+        match &self.global {
+            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
+            ComptimeOption::None => Scales::<S>::block(block),
+        }
+    }
+}
+
 /// One quantized operand as a single launch argument: the storage-typed values tensor, its scales,
 /// and the comptime spec + scheme. A quantized tensor is one thing, so its pieces travel together;
 /// [`TileArg`] is its plain twin. The kernel's one [`Space`] arrives separately and

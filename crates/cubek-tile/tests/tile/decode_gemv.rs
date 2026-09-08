@@ -25,17 +25,6 @@ const N: Axis = Axis(1);
 const KB: Axis = Axis(2);
 const KI: Axis = Axis(3);
 
-/// Every scale level windowed to `region`.
-#[cube]
-fn at_all<S: Numeric>(scales: &Sequence<Tile<S>>, region: &Region) -> Sequence<Tile<S>> {
-    let mut at = Sequence::new();
-    #[unroll]
-    for k in 0..scales.len() {
-        at.push(scales.index(k).at(region));
-    }
-    at
-}
-
 /// The partials fold through the sink's element between `K` steps. Three levels: this cube's
 /// strip of rows, this plane's group of rows, this lane's rows against its share of the
 /// contraction, the leaf running under a block of `budget` scalars.
@@ -55,8 +44,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let out = out.tile(comptime!(space.clone()));
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
@@ -68,18 +56,18 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         let out_cube = out.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
-        let scales_cube = at_all(&scales, &region);
+        let scales_cube = scales.at(&region);
         for region in region.level(comptime!(plane.clone())) {
             let out_plane = out_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
-            let scales_plane = at_all(&scales_cube, &region);
+            let scales_plane = scales_cube.at(&region);
             for region in region.level(comptime!(lane.clone())) {
                 let mut out_lane = out_plane.at(&region);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&region),
                     &x_plane.at(&region),
-                    &at_all(&scales_plane, &region),
+                    &scales_plane.at(&region),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -111,8 +99,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let mut scales = Sequence::new();
-    scales.push(scale.tile(comptime!(space.clone())));
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let out = out.tile(comptime!(space.clone()));
     let mut acc = out.block_accumulator::<E, E, E>(
         &w,
@@ -130,18 +117,18 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         let acc_cube = acc.at(&region);
         let w_cube = w.at(&region);
         let x_cube = x.at(&region);
-        let scales_cube = at_all(&scales, &region);
+        let scales_cube = scales.at(&region);
         for region in region.level(comptime!(plane.clone())) {
             let acc_plane = acc_cube.at(&region);
             let w_plane = w_cube.at(&region);
             let x_plane = x_cube.at(&region);
-            let scales_plane = at_all(&scales_cube, &region);
+            let scales_plane = scales_cube.at(&region);
             for region in region.level(comptime!(lane.clone())) {
                 let mut acc_lane = acc_plane.at(&region);
                 acc_lane.mma_scaled(
                     &w_plane.at(&region),
                     &x_plane.at(&region),
-                    &at_all(&scales_plane, &region),
+                    &scales_plane.at(&region),
                     Semiring::SUM_PROD,
                 );
             }
@@ -159,15 +146,27 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 
 #[test]
 fn the_serving_geometry_computes_the_decode_gemv() {
-    serving_geometry(false);
+    serving_geometry(false, true);
 }
 
 #[test]
 fn a_promoted_accumulator_spans_the_whole_decode_walk() {
-    serving_geometry(true);
+    serving_geometry(true, true);
 }
 
-fn serving_geometry(promoted: bool) {
+/// **A lane level that cuts nothing is a loop of one.** Every lane of the plane is handed the
+/// plane's own box, and the leaf runs on all of them alike: the plan of a kernel whose planes own
+/// their cells and deal nothing further down, written with the same three loops as the plan
+/// that does. What the walk hands each lane is the whole box, not an empty one, and the answer
+/// is the same as under a real lane cut.
+#[test]
+fn a_lane_level_that_cuts_nothing_hands_every_lane_the_plane() {
+    serving_geometry(false, false);
+}
+
+/// `promoted`: where the accumulator lives. `lanes_cut`: whether the lane level deals rows and
+/// words to the lanes, or names no axis and hands every lane the plane's box.
+fn serving_geometry(promoted: bool, lanes_cut: bool) {
     let field = QuantValue::Q8S;
     let bits = field.size_bits();
     let factor = 32 / bits;
@@ -231,10 +230,14 @@ fn serving_geometry(promoted: bool) {
             vec![
                 Level::cubes(&[(M, rows_per_cube)]),
                 Level::planes(&[(M, rows_per_plane)]),
-                Level::lanes(&[
-                    Cut::new(M, rows_per_lane).across(groups),
-                    Cut::new(KI, factor).across(group_lanes).interleaved(),
-                ]),
+                if lanes_cut {
+                    Level::lanes(&[
+                        Cut::new(M, rows_per_lane).across(groups),
+                        Cut::new(KI, factor).across(group_lanes).interleaved(),
+                    ])
+                } else {
+                    Level::lanes(&[])
+                },
                 Level::walk(&[(KB, 1)]),
             ],
         ),
