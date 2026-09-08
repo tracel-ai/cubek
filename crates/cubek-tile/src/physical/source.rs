@@ -415,15 +415,31 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         } = self.data;
         let space = space.unwrap();
 
+        // How the bound tensor says it is stored. An operand that named no tiling asks it rather
+        // than assuming the buffer is plain; an unbound one (a fused store) has none to ask.
+        let stored = binding.as_ref().map(|b| b.tiling).unwrap_or_default();
+
         // Use the explicit projection if gathered, or derive it from labeled axes.
         // `addressed` contains all logical axes used for bounds checking.
         let (projection, addressed) = match projection {
             Some(projection) => {
+                assert!(
+                    !stored.is_tiled(),
+                    "StridedTileSource::gathered: the mapping addresses the buffer's own dims, so \
+                     a storage-tiled binding ({stored:?}) has no reading here"
+                );
                 check_stated(&geometry, space, &projection, subspace, batch_axes, &tiling);
                 let addressed = projection.logical_axes().to_vec();
                 (projection, addressed)
             }
-            None => labeled(&mut geometry, subspace, batch_axes, tiling),
+            None => {
+                let tiling = tiling.or_else(|| {
+                    stored
+                        .is_tiled()
+                        .then(|| StorageTiling::stored(stored, subspace.len(), geometry.rank()))
+                });
+                labeled(&mut geometry, subspace, batch_axes, tiling)
+            }
         };
 
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.

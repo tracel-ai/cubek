@@ -183,6 +183,53 @@ fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
     );
 }
 
+/// The tiling is a fact of the tensor, so a binding that states one derives the same operand as a
+/// caller naming it by hand. This is the whole point of carrying it on the binding: no launch has
+/// to be told how its own inputs are stored.
+#[test]
+fn arg_reads_the_storage_tiling_off_the_binding() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(1, 1, 64, 64, 18);
+        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+    };
+
+    let stated = launch
+        .arg(binding(&client, &[4, 3, 16, 6]))
+        .subspace(&[M, K])
+        .tiling(StorageTiling::uniform(2, 1))
+        .build();
+
+    // The same buffer, saying for itself that both its dims are stored two fragments deep.
+    let mut tiled = binding(&client, &[4, 3, 16, 6]);
+    tiled.tiling = Tiling::new(&[2, 2]).unwrap();
+    let off_the_tensor = launch.arg(tiled).subspace(&[M, K]).build();
+
+    assert_eq!(off_the_tensor.spec.projection, stated.spec.projection);
+}
+
+/// A batch dim ahead of the tiled block: the metadata describes every logical dim, the operand's
+/// subspace only the inner two, and the leading one carries through as a plain batch dim.
+#[test]
+fn arg_reads_a_tiling_stated_over_batch_dims_too() {
+    let client = cubecl::test_device().client();
+    let launch = {
+        let (space, levels) = batched_space(3, 1, 64, 64, 18);
+        Launcher::implied(&client, space, levels, KernelForm::Dynamic)
+    };
+
+    let mut tiled = binding(&client, &[3, 4, 3, 16, 6]);
+    tiled.tiling = Tiling::new(&[1, 2, 2]).unwrap();
+    let arg = launch
+        .arg(tiled)
+        .subspace(&[M, K])
+        .batches(&[B0, B1])
+        .build();
+
+    assert_eq!(arg.spec.projection.physical_rank(), 5);
+    assert_eq!(arg.spec.projection.coordinate_rank(), 3);
+}
+
 #[test]
 fn arg_right_aligns_batches_and_drops_size_one() {
     let client = cubecl::test_device().client();
