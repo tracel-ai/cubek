@@ -1,7 +1,7 @@
 //! How many physical fragments each of an operand's logical axes is split across: the whole
 //! description of storage tiling, and the order it lays a buffer's physical axes out in.
 
-use cubecl::zspace::SmallVec;
+use cubecl::zspace::{SmallVec, Tiling};
 
 use crate::{Axis, MAX_AXES};
 
@@ -40,6 +40,35 @@ impl StorageTiling {
                 .map(|i| if i < start_axis { 1 } else { levels + 1 })
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// The tiling a tensor's own metadata states, over the `subspace_len` inner axes of a buffer
+    /// of `physical_rank` dims. The one place a stored [`Tiling`] becomes a [`StorageTiling`]:
+    /// a metadata describes every logical dim, batches first, while this describes the subspace
+    /// block alone, since [`labeled`](crate::physical::source) gives a batch dim its own physical
+    /// dim regardless.
+    ///
+    /// # Panics
+    ///
+    /// When the tiling does not fit the rank, when the buffer holds fewer logical dims than the
+    /// subspace names, or when it tiles a batch dim, which the block order cannot express.
+    pub fn stored(tiling: Tiling, subspace_len: usize, physical_rank: usize) -> Self {
+        let logical_rank = tiling
+            .logical_rank(physical_rank)
+            .unwrap_or_else(|e| panic!("StorageTiling::stored: {e:?}"));
+        assert!(
+            logical_rank >= subspace_len,
+            "StorageTiling::stored: the buffer stands for {logical_rank} dims but the subspace \
+             names {subspace_len}"
+        );
+        let fragments = tiling.fragments(logical_rank);
+        let (batches, block) = fragments.split_at(logical_rank - subspace_len);
+        assert!(
+            batches.iter().all(|&n| n == 1),
+            "StorageTiling::stored: batch dims are stored one physical dim each, so {batches:?} \
+             fragments over them cannot be laid out"
+        );
+        StorageTiling::per_axis(block)
     }
 
     /// An explicit fragment count per axis, in the operand's axis order.

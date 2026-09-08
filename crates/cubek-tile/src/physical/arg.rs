@@ -14,6 +14,26 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
+/// Whether a storage block holds a whole window, or a window crosses several.
+///
+/// A fragment load addresses its window as a base plus a row stride
+/// ([`window_slice`](crate::MemData::window_slice)), which only describes a region lying inside
+/// one storage block. Untiled storage is one block over the whole buffer, so every window
+/// [`Hold`](Blocks::Hold)s; a storage-tiled buffer does only when its innermost fragment holds a
+/// whole number of leaf tiles along every axis.
+///
+/// Settled by the launch, which is the one place the buffer's real extents and the leaf's edges
+/// are both known, and read in the kernel as the comptime fact it is. `Split` is not an error:
+/// the layout walk addresses those cells correctly, one at a time. It is only the fragment loads
+/// that cannot, and they say so rather than reading a block boundary as if it were not there.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Blocks {
+    /// Every window this operand is read through lands inside one storage block.
+    Hold,
+    /// A window can cross a block boundary, so only a layout walk addresses its cells.
+    Split,
+}
+
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
 /// how they address its physical axes ([`Projection`], carrying the storage tiling in its own
 /// repetition). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space, which `of`
@@ -33,6 +53,10 @@ pub struct TileSpec {
     /// stored element and a `u32` says nothing about the values inside it. Stated by
     /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
     pub packing: Packing,
+    /// How this operand's storage blocks fall under the windows it is read through. Settled by
+    /// the launch; [`Hold`](Blocks::Hold) for every untiled operand, which is every operand that
+    /// does not say otherwise.
+    pub blocks: Blocks,
 }
 
 impl TileSpec {
@@ -46,6 +70,7 @@ impl TileSpec {
             boundaries: SmallVec::new(),
             units: 0,
             packing: Packing::Plain,
+            blocks: Blocks::Hold,
         }
     }
 
@@ -72,6 +97,13 @@ impl TileSpec {
     /// derivation does.
     pub fn packing(mut self, packing: Packing) -> Self {
         self.packing = packing;
+        self
+    }
+
+    /// How this operand's storage blocks fall under the windows it is read through; settled by
+    /// the launch, [`Hold`](Blocks::Hold) by default (which is what every untiled operand is).
+    pub fn blocks(mut self, blocks: Blocks) -> Self {
+        self.blocks = blocks;
         self
     }
 

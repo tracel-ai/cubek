@@ -18,6 +18,9 @@ pub struct CmmaData<T: Numeric> {
     pub ident: MatrixIdent,
     #[cube(comptime)]
     pub layout: MatrixLayout,
+    /// The whole MMA tile's `(m, n)`, whatever the role.
+    #[cube(comptime)]
+    pub shape: (usize, usize),
 }
 
 #[cube]
@@ -37,7 +40,26 @@ impl<T: Numeric> CmmaData<T> {
             matrix,
             ident,
             layout,
+            shape: comptime!((m, n)),
         }
+    }
+
+    /// The whole MMA tile's `(m, n)`.
+    pub(crate) fn shape(&self) -> comptime_type!((usize, usize)) {
+        comptime!(self.shape)
+    }
+
+    /// Store this tile row-major into `scratch`, one tile's cells from its start.
+    pub(crate) fn store_scratch(&self, scratch: &Shared<[T]>) {
+        let n = comptime!(self.shape.1 as u32);
+        let mut window = scratch.clone();
+        cmma::store(&mut window, &self.matrix, n, MatrixLayout::RowMajor)
+    }
+
+    /// Load this tile back from `scratch`.
+    pub(crate) fn load_scratch(&mut self, scratch: &Shared<[T]>) {
+        let n = comptime!(self.shape.1 as u32);
+        cmma::load_with_layout(&mut self.matrix, scratch, n, MatrixLayout::RowMajor)
     }
 
     /// An uninitialized fragment presented as a `Cmma` tile. `m`/`n`/`k` are the whole
@@ -56,6 +78,7 @@ impl<T: Numeric> CmmaData<T> {
                 matrix,
                 ident,
                 layout,
+                shape: comptime!((m, n)),
             })),
             space: comptime!(space),
             depth: comptime!(0usize),

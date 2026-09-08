@@ -2,6 +2,10 @@
 //! always a resident fragment; the operands arrive as fragments or as staged smem
 //! windows (row-major by construction), the latter loaded into transient `A`/`B`
 //! fragments here. A gmem window's layout is unchecked, so it must be staged first.
+//!
+//! The rhs window is `{k, n}` as stored, or `{n, k}` when its trailing axis is the one
+//! contracted: that window is read as a col-major `B`, so `a · bᵀ` needs no transposed
+//! copy ([`rhs_layout`]).
 
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
@@ -26,24 +30,42 @@ impl<A: Numeric> CmmaData<A> {
             },
             (TileKind::Smem(a), TileKind::Smem(b)) => {
                 // The tile is `m × k` on lhs and `k × n` on rhs (trailing two axes; any
-                // leading batch axes are extent-1 at a final tile).
+                // leading batch axes are extent-1 at a final tile), or `n × k` on a rhs
+                // read col-major.
                 let m = comptime!(lhs.space.extent_at(lhs.space.rank() - 2));
                 let k = comptime!(lhs.space.extent_at(lhs.space.rank() - 1));
-                let n = comptime!(rhs.space.extent_at(rhs.space.rank() - 1));
+                let layout = comptime!(rhs_layout(
+                    &rhs.space,
+                    lhs.space.axis_at(lhs.space.rank() - 1)
+                ));
+                let n = comptime!(match layout {
+                    MatrixLayout::RowMajor => rhs.space.extent_at(rhs.space.rank() - 1),
+                    MatrixLayout::ColMajor => rhs.space.extent_at(rhs.space.rank() - 2),
+                    MatrixLayout::Undefined => unreachable!(),
+                });
 
                 // The rendezvous with the stage fill belongs to the schedule that filled it.
                 let mut a_frag = unsafe {
                     Matrix::<L>::uninitialized(MatrixIdent::A, m, n, k, MatrixLayout::RowMajor)
                 };
                 cmma::load(&mut a_frag, a.window_slice(), a.row_stride());
-                let mut b_frag = unsafe {
-                    Matrix::<R>::uninitialized(MatrixIdent::B, m, n, k, MatrixLayout::RowMajor)
-                };
+                let mut b_frag =
+                    unsafe { Matrix::<R>::uninitialized(MatrixIdent::B, m, n, k, layout) };
                 cmma::load(&mut b_frag, b.window_slice(), b.row_stride());
 
                 cmma::execute(&a_frag, &b_frag, &self.matrix, &self.matrix);
             }
             _ => panic!("cmma operands must be fragments or staged smem windows"),
         }
+    }
+}
+
+/// How a rhs window is read: col-major when its trailing axis is `contracted`, the matrix
+/// then being the window's transpose; row-major otherwise. The rule
+/// [`PlanePartition::store`](crate::PlanePartition::store) loads a `B` fragment by.
+pub(crate) fn rhs_layout(rhs: &Space, contracted: Axis) -> MatrixLayout {
+    match rhs.axis_at(rhs.rank() - 1) == contracted {
+        true => MatrixLayout::ColMajor,
+        false => MatrixLayout::RowMajor,
     }
 }

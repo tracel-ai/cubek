@@ -59,6 +59,28 @@ impl RowShare {
     }
 }
 
+/// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
+///
+/// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit along the cube's
+/// x dim. A plane owns every row of the tile it is handed: the kernel windows the tile per plane
+/// before the call, so no leaf indexes planes.
+#[cube]
+pub fn owned_row(#[comptime] share: RowShare, ri: usize) -> usize {
+    match comptime!(share) {
+        RowShare::Unit { rows } => UNIT_POS_X as usize * rows + ri,
+        RowShare::Plane { rows: _, lanes: _ } => ri,
+    }
+}
+
+/// This unit's lane within its worker: its position in the plane, or zero for a unit.
+#[cube]
+pub fn owned_lane(#[comptime] share: RowShare) -> usize {
+    match comptime!(share) {
+        RowShare::Unit { rows: _ } => 0usize,
+        RowShare::Plane { rows: _, lanes } => UNIT_POS_X as usize % lanes,
+    }
+}
+
 /// Per-row running state `(m, l)` of the online softmax, in the owning
 /// worker's registers. Its space is the softmax's kept axes; the score axis it
 /// omits is the reduced one. Allocated once before the walk, threaded through
@@ -104,13 +126,10 @@ impl<E: Float> RowState<E> {
     /// (`plane_size_min == plane_size_max`, and plane ops offered); one lane is
     /// the degenerate case and gives back [`new`](RowState::new)'s arm, which is
     /// what a CPU runtime gets.
-    pub fn over_planes(
-        #[comptime] space: Space,
-        #[comptime] units: usize,
-        #[comptime] lanes: usize,
-    ) -> RowState<E> {
-        let planes = comptime!(units.div_ceil(lanes));
-        let rows = comptime!(space.tile_size().div_ceil(planes));
+    /// The state of a plane owning every row of `space`, its window of the score rows, `lanes`
+    /// wide.
+    pub fn over_plane(#[comptime] space: Space, #[comptime] lanes: usize) -> RowState<E> {
+        let rows = comptime!(space.tile_size());
         RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
     }
 
@@ -174,6 +193,9 @@ impl<E: Float> RowState<E> {
 #[derive(CubeType)]
 pub struct MaskProbe {
     pub origin_q: usize,
+    /// The score row the probed tile's first row is, in the rows `q_rows` maps to positions:
+    /// zero for a whole score tile, a plane's first row for its window of one.
+    pub row_origin: usize,
     pub origin_s: usize,
     pub bound_q: usize,
     pub bound_s: usize,
@@ -230,7 +252,7 @@ impl MaskProbe {
     /// The query position of score row `r` (see `q_rows`).
     pub(crate) fn row_q(&self, r: usize) -> usize {
         let q_rows = comptime!(self.q_rows);
-        self.origin_q + r % q_rows
+        self.origin_q + (self.row_origin + r) % q_rows
     }
 
     /// The probe advanced `offset` along the reduced axis: how a walk hands
@@ -238,6 +260,7 @@ impl MaskProbe {
     pub fn step_s(&self, offset: usize) -> MaskProbe {
         MaskProbe {
             origin_q: self.origin_q,
+            row_origin: self.row_origin,
             origin_s: self.origin_s + offset,
             bound_q: self.bound_q,
             bound_s: self.bound_s,

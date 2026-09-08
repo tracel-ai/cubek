@@ -19,7 +19,7 @@ use cubecl::{
     future,
     prelude::*,
     std::tensor::TensorHandle,
-    zspace::Shape,
+    zspace::{Shape, Tiling},
 };
 use cubek_std::InputBinding;
 use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
@@ -27,7 +27,7 @@ use cubek_test_utils::{CatalogEntry, RunSamples, TestInput};
 use crate::{
     definition::MatmulElems,
     routine::BlueprintStrategy,
-    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, WithLayout, launch_ref},
+    tiled::cpu_gemm::{CpuGemmBlueprint, InstructionShape, PlaneGrid, launch_ref},
 };
 
 /// The register-fit leaf shared by every strategy: the optimized `2 × 32 × 64` instruction (no
@@ -38,6 +38,12 @@ const LEAF: InstructionShape = InstructionShape { m: 2, n: 32, k: 64 };
 /// that divide every benchmarked shape. A sweep of 16²→256² was flat, so one representative edge is
 /// enough (see the module doc).
 const EDGE: usize = 64;
+
+/// The binding saying for itself that both its matrix dims are stored `levels + 1` fragments deep.
+fn packed(mut binding: TensorBinding, levels: usize) -> TensorBinding {
+    binding.tiling = Tiling::new(&[levels + 1; 2]).expect("two matrix dims, at most four fragments");
+    binding
+}
 
 /// How an operand's matrix axes are physically stored.
 #[derive(Clone, Copy)]
@@ -134,18 +140,9 @@ impl Benchmark for TiledBench {
 
         launch_ref(
             &self.client,
-            WithLayout {
-                binding: InputBinding::Normal(lhs.binding(), self.dtypes.lhs_global),
-                levels,
-            },
-            WithLayout {
-                binding: InputBinding::Normal(rhs.binding(), self.dtypes.rhs_global),
-                levels,
-            },
-            WithLayout {
-                binding: out.binding(),
-                levels,
-            },
+            InputBinding::Normal(packed(lhs.binding(), levels), self.dtypes.lhs_global),
+            InputBinding::Normal(packed(rhs.binding(), levels), self.dtypes.rhs_global),
+            packed(out.binding(), levels),
             &BlueprintStrategy::Forced(CpuGemmBlueprint {
                 instruction: LEAF,
                 planes: self.strategy.planes,

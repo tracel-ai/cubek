@@ -10,7 +10,7 @@ use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
+    Axis, Blocks, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
     QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
@@ -48,6 +48,10 @@ struct TileSourceData<'a> {
     packing: Packing,
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     units: usize,
+    /// The leaf tile's edge per axis; set by [`Launcher::arg`](crate::Launcher::arg). What settles
+    /// whether a storage-tiled operand's blocks hold a whole window ([`Blocks`]): the launch is the
+    /// one place the buffer's real extents and the leaf's edges are both in hand.
+    leaf: &'a [(Axis, usize)],
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization>,
 }
@@ -89,6 +93,7 @@ impl<'a> StridedTileSource<'a, Unset, Unset, Unset> {
                 boundary: None,
                 packing: Packing::Plain,
                 units: 0,
+                leaf: &[],
                 quant: None,
             },
             _state: PhantomData,
@@ -194,6 +199,12 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
     /// The launch's cube size (units per cube); set by [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn cube_units(mut self, units: usize) -> Self {
         self.data.units = units;
+        self
+    }
+
+    /// The leaf tile's edge per axis; set by [`Launcher::arg`](crate::Launcher::arg).
+    pub(crate) fn leaf(mut self, leaf: &'a [(Axis, usize)]) -> Self {
+        self.data.leaf = leaf;
         self
     }
 }
@@ -411,19 +422,49 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             boundary,
             packing,
             units,
+            leaf,
             quant,
         } = self.data;
         let space = space.unwrap();
+
+        // How the bound tensor says it is stored. An operand that named no tiling asks it rather
+        // than assuming the buffer is plain; an unbound one (a fused store) has none to ask.
+        let stored = binding.as_ref().map(|b| b.tiling).unwrap_or_default();
+
+        // The tiling the labeled derivation will run on: what the caller named, else what the
+        // tensor says. A gathered operand states its mapping outright and the arm below refuses a
+        // tiled binding, so it never carries one; `check_stated` still sees the caller's own
+        // `tiling` and complains about that.
+        let resolved = match projection {
+            Some(_) => None,
+            None => tiling.clone().or_else(|| {
+                stored
+                    .is_tiled()
+                    .then(|| StorageTiling::stored(stored, subspace.len(), geometry.rank()))
+            }),
+        };
+        let blocks = match &resolved {
+            Some(tiling) if tiling.is_tiled() => {
+                blocks_under_leaf(&geometry, subspace, tiling, leaf)
+            }
+            _ => Blocks::Hold,
+        };
+        let tiled_rank = stored.is_tiled().then(|| geometry.rank());
 
         // Use the explicit projection if gathered, or derive it from labeled axes.
         // `addressed` contains all logical axes used for bounds checking.
         let (projection, addressed) = match projection {
             Some(projection) => {
+                assert!(
+                    !stored.is_tiled(),
+                    "StridedTileSource::gathered: the mapping addresses the buffer's own dims, so \
+                     a storage-tiled binding ({stored:?}) has no reading here"
+                );
                 check_stated(&geometry, space, &projection, subspace, batch_axes, &tiling);
                 let addressed = projection.logical_axes().to_vec();
                 (projection, addressed)
             }
-            None => labeled(&mut geometry, subspace, batch_axes, tiling),
+            None => labeled(&mut geometry, subspace, batch_axes, resolved.clone()),
         };
 
         // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
@@ -494,7 +535,8 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         let spec = TileSpec::new(projection)
             .boundaries(&boundaries)
             .units(units)
-            .packing(packing);
+            .packing(packing)
+            .blocks(blocks);
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
             assert!(
@@ -506,6 +548,14 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         }
         Realized {
             tensor: binding.map(|mut binding| {
+                // A `Tiling` counts fragments off the *leading* logical dims, so dropping one
+                // would shift every count onto the wrong dim and leave the shipped arg claiming
+                // a layout it no longer has.
+                assert!(
+                    tiled_rank.is_none_or(|rank| rank == geometry.rank()),
+                    "StridedTileSource: a storage-tiled operand dropped a broadcast batch dim, \
+                     which its tiling counts from"
+                );
                 // The derivation may have dropped broadcast batch dims; the arg
                 // ships the geometry it settled on, not the one it arrived with.
                 binding.shape = geometry.shape().into();
@@ -518,6 +568,37 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             geometry,
         }
     }
+}
+
+/// Whether every axis's innermost storage fragment holds a whole number of leaf tiles, which is
+/// what makes a window land inside one block: windows start on leaf edges, so an edge that divides
+/// the fragment never lets one straddle two. Axes the leaf does not cut carry no constraint, and
+/// a source built without a [`Launcher`](crate::Launcher) states no leaf at all, which leaves the
+/// contract where it has always been, with the caller.
+fn blocks_under_leaf(
+    geometry: &Geometry,
+    subspace: &[Axis],
+    tiling: &StorageTiling,
+    leaf: &[(Axis, usize)],
+) -> Blocks {
+    let block = tiling.order(subspace);
+    let batch_dims = geometry.rank() - block.len();
+    let dims: Vec<(usize, usize)> = geometry.dims().collect();
+    for (i, &axis) in subspace.iter().enumerate() {
+        let Some(&(_, edge)) = leaf.iter().find(|&&(a, _)| a == axis) else {
+            continue;
+        };
+        // The innermost fragment is the last physical dim this axis labels.
+        let last = block
+            .iter()
+            .rposition(|&a| a == axis)
+            .expect("the order lists every subspace axis");
+        let (extent, _) = dims[batch_dims + last];
+        if tiling.fragments(i) > 1 && !extent.is_multiple_of(edge) {
+            return Blocks::Split;
+        }
+    }
+    Blocks::Hold
 }
 
 /// Derives a [`Projection`] from labeled subspace and batch axes. Leading batch dims align with
