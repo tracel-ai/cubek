@@ -5,9 +5,9 @@ use super::{
 use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, ReduceRequirements,
-        ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand, ValueOrder,
-        better_order_key, empty_order_key, order_key_coordinate, order_key_value, pack_order_key,
-        packs_into_key,
+        ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, SlotCount, Value, ValueExpand,
+        ValueOrder, empty_order_key, finalize_key, key_insert, order_key_coordinate,
+        order_key_value, pack_order_key, packs_key,
     },
     precision::ReducePrecision,
 };
@@ -30,18 +30,6 @@ impl ReduceFamily for Max {
 impl ReduceWithIndicesFamily for Max {
     type Instruction<P: ReducePrecision> = Self;
     type Config = ReduceOutputMode;
-}
-
-/// Whether this reduction carries its coordinate inside a packed key.
-///
-/// Only a coordinate-tracking max has anything to pack, and only a device with
-/// 64-bit integers can compare one.
-#[cube]
-fn packs_key<P: ReducePrecision>(this: &Max) -> comptime_type!(bool) {
-    let tracks_coordinates = comptime!(this.output.has_indices());
-    let packs = packs_into_key::<P::EA>();
-
-    comptime!(tracks_coordinates && packs)
 }
 
 /// Fold `candidate` into the accumulator, keeping the larger item per vector
@@ -70,17 +58,6 @@ fn max_insert<T: Numeric, N: Size>(
         }
         Value::Multiple(_) => panic!("a max candidate carries at most one coordinate"),
     }
-}
-
-/// [`max_insert`] over a packed key: the NaN precedence, the ordering and the
-/// tie-break all ride the one unsigned comparison.
-#[cube]
-fn max_key_insert<P: ReducePrecision>(
-    keys: &mut Value<Vector<OrderKey, P::SI>>,
-    candidate: Vector<OrderKey, P::SI>,
-) {
-    let winning = better_order_key::<P::SI>(keys.item(), candidate);
-    keys.assign(&Value::new_single(winning));
 }
 
 /// Reduce `item` across the plane to one winning candidate, with its lowest
@@ -112,12 +89,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         comptime!(if packs {
-            AccumulatorFormat::SingleKey
+            AccumulatorFormat::Packed(SlotCount::Single)
         } else {
-            AccumulatorFormat::Single
+            AccumulatorFormat::Unpacked(SlotCount::Single)
         })
     }
 
@@ -130,7 +107,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
             Accumulator::<P> {
@@ -162,7 +139,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
             let key = pack_order_key::<P::EA, P::SI>(
@@ -175,7 +152,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
                 ReduceStep::Identity => key,
             };
 
-            max_key_insert::<P>(&mut accumulator.keys, candidate);
+            key_insert::<P::SI>(&mut accumulator.keys, candidate);
         } else {
             let (candidate, candidate_coord) = match reduce_step {
                 ReduceStep::Plane => plane_max_candidate(item.elements, &item.args),
@@ -192,7 +169,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
             let winning = plane_max(accumulator.keys.item());
@@ -211,10 +188,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
-            max_key_insert::<P>(&mut accumulator.keys, other.keys.item());
+            key_insert::<P::SI>(&mut accumulator.keys, other.keys.item());
         } else {
             max_insert(
                 &mut accumulator.elements,
@@ -234,11 +211,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
             let key =
-                Vector::<OrderKey, Const<1>>::new(max_finalize_key::<P>(accumulator.keys.item()));
+                Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(accumulator.keys.item()));
 
             (
                 Value::new_single(Out::cast_from(
@@ -283,7 +260,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let packs = packs_key::<P>(this);
+        let packs = packs_key::<P>(this.output);
 
         if comptime!(packs) {
             let key = accumulator.keys.item();
@@ -310,22 +287,6 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
 }
 
 impl<P: ReducePrecision> ReduceWithIndices<P> for Max {}
-
-/// Collapse the vectorized accumulator lanes down to the one winning key, for
-/// the parallel layout.
-#[cube]
-fn max_finalize_key<P: ReducePrecision>(keys: Vector<OrderKey, P::SI>) -> OrderKey {
-    let vector_size = keys.vector_size().comptime();
-    let mut winning = keys.extract(0usize);
-
-    #[unroll]
-    for k in 1..vector_size {
-        let candidate = keys.extract(k);
-        winning = select(winning > candidate, winning, candidate);
-    }
-
-    winning
-}
 
 /// Collapse the vectorized accumulator lanes down to the final maximum and its
 /// coordinate, for the parallel layout.

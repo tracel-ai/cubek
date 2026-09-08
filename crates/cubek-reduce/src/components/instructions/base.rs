@@ -1,5 +1,7 @@
 use crate::components::{
-    instructions::{OrderKey, ValueOrder, empty_order_key, lowest_coordinate_matching},
+    instructions::{
+        OrderKey, ValueOrder, empty_order_key, lowest_coordinate_matching, ranked_key_insert,
+    },
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -56,22 +58,34 @@ pub struct ReduceRequirements {
     pub coordinates: bool,
 }
 
+/// How many slots an accumulator keeps, which decides whether it holds a scalar
+/// or an array: [`Single`](SlotCount::Single) is not `Multiple(1)`, it skips the
+/// array and its indexing entirely.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
+pub enum SlotCount {
+    Single,
+    Multiple(usize),
+}
+
+/// Whether an accumulator stores each slot's value and coordinate separately or
+/// folded into one [`OrderKey`](super::OrderKey).
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
-    Multiple(usize),
-    /// Slots holding an [`OrderKey`](super::OrderKey) each, so the values and the
-    /// coordinates share one storage rather than two.
-    Keys(usize),
-    /// One [`OrderKey`](super::OrderKey), for the extrema that keep a single slot.
-    SingleKey,
-    Single,
+    Unpacked(SlotCount),
+    Packed(SlotCount),
 }
 
 impl AccumulatorFormat {
-    pub fn len(&self) -> usize {
+    pub fn slots(&self) -> SlotCount {
         match self {
-            AccumulatorFormat::Multiple(k) | AccumulatorFormat::Keys(k) => *k,
-            AccumulatorFormat::Single | AccumulatorFormat::SingleKey => 1,
+            AccumulatorFormat::Unpacked(slots) | AccumulatorFormat::Packed(slots) => *slots,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.slots() {
+            SlotCount::Single => 1,
+            SlotCount::Multiple(k) => k,
         }
     }
 
@@ -293,15 +307,7 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning = plane_max(local_best);
-        let mut insert = winning;
-
-        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
-        for j in 0..k {
-            let to_keep = keys[j].greater_than(&insert);
-            let next = select_many(to_keep, insert, keys[j]);
-            keys[j] = select_many(to_keep, keys[j], insert);
-            insert = next;
-        }
+        ranked_key_insert::<S>(keys, winning, k);
 
         let is_winner = local_best.equal(&winning);
         local_best = select_many(
@@ -635,7 +641,10 @@ pub enum ReduceStep {
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, inst: &I) -> Self {
         let format = I::accumulator_format(inst);
-        let packed = comptime!(matches!(format, AccumulatorFormat::SingleKey));
+        let packed = comptime!(matches!(
+            format,
+            AccumulatorFormat::Packed(SlotCount::Single)
+        ));
 
         let mut elements = Sequence::new();
         let mut args = Sequence::new();

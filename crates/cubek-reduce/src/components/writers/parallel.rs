@@ -2,7 +2,9 @@ use crate::{
     ReduceInstruction, ReducePrecision,
     components::{
         args::NumericVector,
-        instructions::{Accumulator, AccumulatorFormat, ReduceOutputMode, Value, ValueExpand},
+        instructions::{
+            Accumulator, AccumulatorFormat, ReduceOutputMode, SlotCount, Value, ValueExpand,
+        },
         writers::build_reduce_output_layout,
     },
 };
@@ -40,13 +42,9 @@ impl<'a, Out: NumericVector> ParallelWriter<'a, Out> {
 
         ParallelWriter::<'a, Out> {
             output: output.view_mut(layout),
-            buffer: match accumulator_format {
-                AccumulatorFormat::Single | AccumulatorFormat::SingleKey => {
-                    Value::new_single(Vector::empty())
-                }
-                AccumulatorFormat::Multiple(length) | AccumulatorFormat::Keys(length) => {
-                    Value::new_Multiple(Array::new(length))
-                }
+            buffer: match accumulator_format.slots() {
+                SlotCount::Single => Value::new_single(Vector::empty()),
+                SlotCount::Multiple(length) => Value::new_Multiple(Array::new(length)),
             },
             axis_size: input.shape(reduce_axis),
             write_index,

@@ -1,6 +1,8 @@
 use super::{ReduceFamily, ReduceInstruction, ReduceRequirements};
 use crate::components::{
-    instructions::{Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceStep, Value},
+    instructions::{
+        Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceStep, SlotCount, Value,
+    },
     precision::ReducePrecision,
 };
 use cubecl::prelude::*;
@@ -23,7 +25,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     }
 
     fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
-        AccumulatorFormat::Single
+        comptime!(AccumulatorFormat::Unpacked(SlotCount::Single))
     }
 
     fn from_config(_config: Self::Config) -> Self {

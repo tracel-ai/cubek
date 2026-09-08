@@ -2,14 +2,12 @@ use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 
 use super::extrema::numeric_is_nan;
+use crate::components::instructions::{ReduceOutputMode, Value};
+use crate::components::precision::ReducePrecision;
 
 /// A candidate's value and coordinate folded into one unsigned integer whose
 /// unsigned order is the pair's order: the value in the key's [`ValueOrder`],
 /// and the lower coordinate where two values are equal.
-///
-/// An unpacked pair pays its tie-break and its coordinate swap on every element;
-/// the key pays neither, because both ride the single comparison the value
-/// already needed.
 pub(crate) type OrderKey = u64;
 
 const SIGN: u32 = 0x8000_0000;
@@ -26,11 +24,9 @@ pub(crate) enum ValueOrder {
     Ascending,
 }
 
-/// Whether an accumulation type packs into an [`OrderKey`] on this device.
-///
-/// The key needs the whole value beside a `u32` coordinate, so a wider
-/// accumulation element has nowhere to go, and a backend without 64-bit integer
-/// arithmetic (WGSL) cannot compare one at all.
+/// Whether an accumulation type packs into an [`OrderKey`] on this device: it
+/// must leave room for a `u32` coordinate beside it, and the device must be
+/// able to compare the resulting 64-bit integer (WGSL cannot).
 #[cube]
 pub(crate) fn packs_into_key<N: Numeric>() -> comptime_type!(bool) {
     let elem = elem_type_of::<N>();
@@ -45,6 +41,17 @@ pub(crate) fn packs_into_key<N: Numeric>() -> comptime_type!(bool) {
                 .type_usage(u64::elem_type_native())
                 .contains(TypeUsage::Arithmetic)
     )
+}
+
+/// Whether a coordinate-tracking reduction packs into an [`OrderKey`] on this device.
+#[cube]
+pub(crate) fn packs_key<P: ReducePrecision>(
+    #[comptime] output: ReduceOutputMode,
+) -> comptime_type!(bool) {
+    let tracks_coordinates = comptime!(output.has_indices());
+    let packs = packs_into_key::<P::EA>();
+
+    comptime!(tracks_coordinates && packs)
 }
 
 #[cube]
@@ -82,6 +89,53 @@ pub(crate) fn better_order_key<S: Size>(
     candidate: Vector<OrderKey, S>,
 ) -> Vector<OrderKey, S> {
     select_many(current.greater_than(&candidate), current, candidate)
+}
+
+/// Replace a single-slot accumulator's key with whichever of it and `candidate`
+/// ranks better, whichever [`ValueOrder`] built them.
+#[cube]
+pub(crate) fn key_insert<S: Size>(
+    keys: &mut Value<Vector<OrderKey, S>>,
+    candidate: Vector<OrderKey, S>,
+) {
+    let winning = better_order_key::<S>(keys.item(), candidate);
+    keys.assign(&Value::new_single(winning));
+}
+
+/// Insert a candidate into `keys`, held in ranked order, dropping the last.
+///
+/// The ordering and the tie-break ride one comparison, and one selected pair
+/// swaps both halves of a slot.
+#[cube]
+pub(crate) fn ranked_key_insert<S: Size>(
+    keys: &mut Array<Vector<OrderKey, S>>,
+    insert_key: Vector<OrderKey, S>,
+    #[comptime] k: usize,
+) {
+    let mut insert_key = insert_key;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for j in 0..k {
+        let to_keep = keys[j].greater_than(&insert_key);
+        let next_key = select_many(to_keep, insert_key, keys[j]);
+        keys[j] = select_many(to_keep, keys[j], insert_key);
+        insert_key = next_key;
+    }
+}
+
+/// Collapse a vectorized accumulator's lanes down to the one winning key.
+#[cube]
+pub(crate) fn finalize_key<S: Size>(keys: Vector<OrderKey, S>) -> OrderKey {
+    let vector_size = keys.vector_size().comptime();
+    let mut winning = keys.extract(0usize);
+
+    #[unroll]
+    for k in 1..vector_size {
+        let candidate = keys.extract(k);
+        winning = select(winning > candidate, winning, candidate);
+    }
+
+    winning
 }
 
 #[cube]

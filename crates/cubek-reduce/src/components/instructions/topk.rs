@@ -3,14 +3,14 @@ use cubecl::cube;
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::components::instructions::AccumulatorFormat;
+use crate::components::instructions::{AccumulatorFormat, SlotCount};
 
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
 use crate::components::instructions::{
     Accumulator, Item, OrderKey, Value, ValueExpand, ValueOrder, empty_order_key,
-    order_key_coordinate, order_key_value, pack_order_key, packs_into_key, plane_topk_key_insert,
-    plane_topk_key_merge,
+    order_key_coordinate, order_key_value, pack_order_key, packs_key, plane_topk_key_insert,
+    plane_topk_key_merge, ranked_key_insert,
 };
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -44,18 +44,6 @@ impl ReduceFamily for TopK {
 impl ReduceWithIndicesFamily for TopK {
     type Instruction<P: ReducePrecision> = Self;
     type Config = TopKConfig;
-}
-
-/// Whether this reduction carries its coordinates inside packed keys.
-///
-/// Only a coordinate-tracking top-k has anything to pack, and only a device
-/// with 64-bit integers can compare one.
-#[cube]
-fn packs_keys<P: ReducePrecision>(this: &TopK) -> comptime_type!(bool) {
-    let tracks_coordinates = comptime!(this.output.has_indices());
-    let packs = packs_into_key::<P::EA>();
-
-    comptime!(tracks_coordinates && packs)
 }
 
 /// Insert `insert_val` into the descending-sorted `elements` (and its
@@ -106,24 +94,6 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
     }
 }
 
-/// [`topk_insert`] over packed keys: the ordering and the tie-break ride one
-/// comparison, and one selected pair swaps both halves of a slot.
-#[cube]
-pub(crate) fn topk_key_insert<S: Size>(
-    keys: &mut Array<Vector<OrderKey, S>>,
-    insert_key: Vector<OrderKey, S>,
-    #[comptime] k: usize,
-) {
-    let mut insert_key = insert_key;
-
-    for j in 0..k {
-        let to_keep = keys[j].greater_than(&insert_key);
-        let next_key = select_many(to_keep, insert_key, keys[j]);
-        keys[j] = select_many(to_keep, keys[j], insert_key);
-        insert_key = next_key;
-    }
-}
-
 #[derive(CubeType)]
 pub struct TopKSharedAccumulator<P: ReducePrecision> {
     /// Empty when the accumulator is packed into `keys`.
@@ -141,7 +111,7 @@ pub struct TopKSharedAccumulator<P: ReducePrecision> {
 #[cube]
 impl<P: ReducePrecision> SharedAccumulator<P, TopK> for TopKSharedAccumulator<P> {
     fn allocate(#[comptime] length: usize, #[comptime] _coordinate: bool, inst: &TopK) -> Self {
-        let packed = packs_keys::<P>(inst);
+        let packed = packs_key::<P>(inst.output);
         let has_coords = comptime!(inst.output.has_indices() && !packed);
 
         // Every loop must be unrolled: a `Sequence` is built at expand time, so a
@@ -265,13 +235,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
         let k = comptime!(this.k);
 
         comptime!(if packed {
-            AccumulatorFormat::Keys(k)
+            AccumulatorFormat::Packed(SlotCount::Multiple(k))
         } else {
-            AccumulatorFormat::Multiple(k)
+            AccumulatorFormat::Unpacked(SlotCount::Multiple(k))
         })
     }
 
@@ -287,7 +257,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             let empty = empty_order_key::<P::EA, P::SI>(
@@ -338,7 +308,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             let key = pack_order_key::<P::EA, P::SI>(
@@ -350,7 +320,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
 
             match reduce_step {
                 ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(keys, key, this.k),
-                ReduceStep::Identity => topk_key_insert::<P::SI>(keys, key, this.k),
+                ReduceStep::Identity => ranked_key_insert::<P::SI>(keys, key, this.k),
             }
         } else {
             let elements = accumulator.elements.multiple_mut();
@@ -379,7 +349,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn plane_reduce_inplace(this: &Self, accumulator: &mut Accumulator<P>) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             plane_topk_key_merge::<P::EA, P::SI>(accumulator.keys.multiple_mut(), this.k);
@@ -393,14 +363,14 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn fuse_accumulators(this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             let keys = accumulator.keys.multiple_mut();
             let other_keys = other.keys.multiple();
 
             for i in 0..this.k {
-                topk_key_insert::<P::SI>(keys, other_keys[i], this.k);
+                ranked_key_insert::<P::SI>(keys, other_keys[i], this.k);
             }
         } else {
             let elements = accumulator.elements.multiple_mut();
@@ -427,7 +397,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             let keys = topk_finalize_keys::<P>(accumulator.keys.multiple(), this.k);
@@ -479,7 +449,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let packed = packs_keys::<P>(this);
+        let packed = packs_key::<P>(this.output);
 
         if comptime!(packed) {
             let keys = accumulator.keys.multiple();

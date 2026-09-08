@@ -2,7 +2,7 @@ use super::{ReduceFamily, ReduceInstruction};
 use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
-        Value,
+        SlotCount, Value,
     },
     precision::ReducePrecision,
 };
@@ -26,7 +26,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Prod {
     }
 
     fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
-        AccumulatorFormat::Single
+        comptime!(AccumulatorFormat::Unpacked(SlotCount::Single))
     }
 
     fn from_config(_config: Self::Config) -> Self {

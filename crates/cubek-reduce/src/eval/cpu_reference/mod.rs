@@ -270,12 +270,9 @@ pub(super) fn should_replace_min(current: f32, candidate: f32) -> bool {
     !current.is_nan() && (candidate.is_nan() || candidate < current)
 }
 
-/// The order top-k ranks candidates in, best first: the same rule
-/// [`should_replace_max`] states, made total by breaking every tie, NaN against
-/// NaN included, towards the lower coordinate.
-///
-/// `partial_cmp` cannot express it: it calls a NaN equal to everything, so the
-/// resulting order is not transitive and the selected set depends on the sort.
+/// The order top-k ranks candidates in, best first: [`should_replace_max`]'s
+/// rule, made total by breaking every tie (NaN against NaN included) towards
+/// the lower coordinate, since `partial_cmp`'s NaN-is-equal-to-everything isn't transitive.
 pub(super) fn max_rank(candidate: (f32, u32), other: (f32, u32)) -> Ordering {
     if should_replace_max(other.0, candidate.0) {
         Ordering::Less

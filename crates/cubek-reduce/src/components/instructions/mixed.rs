@@ -3,7 +3,8 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, SharedAccumulatorKind, TopK,
+    Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, SharedAccumulatorKind,
+    SlotCount, TopK,
 };
 use crate::{
     ReduceDtypes,
@@ -49,12 +50,9 @@ pub enum ReduceOperationConfig {
 }
 
 impl ReduceOperationConfig {
-    /// Shared-memory bytes one accumulator slot uses (total usage is this times the
-    /// slot count). `acc_elem_size` is the accumulation element size (`P::EA`),
-    /// `vector_size` the input vectorization. Mirrors each instruction's
-    /// `SharedAccumulator` layout: one value slice, plus a `u32` index slice for
-    /// `Arg*`, scaled by `k` for top-k. A packed key slice replaces that pair and
-    /// is exactly as wide, so the count holds whichever spelling is emitted.
+    /// Shared-memory bytes one accumulator slot uses (`acc_elem_size` is `P::EA`'s
+    /// size, `vector_size` the input vectorization). A packed key slice is counted
+    /// as the value+index pair it replaces, accurate only while both stay 4 bytes.
     pub fn shared_memory_bytes_per_accumulator(
         &self,
         acc_elem_size: usize,
@@ -190,7 +188,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, inst: &I) -> Self {
         let format = I::accumulator_format(inst);
         match comptime!(format) {
-            AccumulatorFormat::Single => {
+            AccumulatorFormat::Unpacked(SlotCount::Single) => {
                 let elements = Shared::new_slice(length);
                 // TODO how to put multiple?
                 let args = if coordinate {
@@ -205,7 +203,7 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     keys: SharedAccumulatorKind::new_None(),
                 }
             }
-            AccumulatorFormat::Multiple(len) => {
+            AccumulatorFormat::Unpacked(SlotCount::Multiple(len)) => {
                 let mut elements = Sequence::new();
                 #[unroll]
                 for _ in 0..len {
@@ -231,12 +229,12 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
                     }
                 }
             }
-            AccumulatorFormat::SingleKey => DynamicSharedAccumulator::<P> {
+            AccumulatorFormat::Packed(SlotCount::Single) => DynamicSharedAccumulator::<P> {
                 elements: SharedAccumulatorKind::new_None(),
                 args: SharedAccumulatorKind::new_None(),
                 keys: SharedAccumulatorKind::new_Single(Shared::new_slice(length)),
             },
-            AccumulatorFormat::Keys(len) => {
+            AccumulatorFormat::Packed(SlotCount::Multiple(len)) => {
                 let mut keys = Sequence::new();
                 #[unroll]
                 for _ in 0..len {
