@@ -83,3 +83,60 @@ fn reported_m_broadcast() {
         "reported M-broadcast repro gave {outcome:?}"
     );
 }
+
+/// A storage-tiled operand is a fact of the data: `Auto` sends it to the tiled cmma routine,
+/// which stages to its tiles, whichever architecture it would have picked for the shape.
+#[cfg(feature = "tiled")]
+#[test]
+fn auto_sends_a_packed_weight_to_the_tiled_cmma() {
+    use cubecl::prelude::*;
+    use cubek_matmul::{
+        definition::{MatmulElems, MatmulSetupError},
+        launch::launch_ref,
+        tiled::pack::pack,
+    };
+    use cubek_std::InputBinding;
+    use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+
+    use crate::harness::assert_result;
+
+    let client = client();
+    let dtype = f32::elem_type_native();
+    let dtypes = MatmulElems::from_single_dtype(dtype);
+    let problem = rect(64, 512, 256, dtypes.as_global_elems());
+    let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+        .dtype(dtype)
+        .uniform(1234, -1., 1.)
+        .generate_with_f32_host_data();
+    let (rhs, rhs_data) = TestInput::builder(client.clone(), problem.rhs_shape.clone())
+        .dtype(dtype)
+        .uniform(5678, -1., 1.)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+        .dtype(dtype)
+        .uniform(4242, 10., 100.)
+        .generate_without_host_data();
+    let packed = pack(&client, rhs.binding(), dtype, (32, 64)).unwrap();
+
+    let mut elems = dtypes.clone();
+    let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
+        let mut launch = || -> Result<(), MatmulSetupError> {
+            launch_ref(
+                &Strategy::Auto,
+                c,
+                InputBinding::Normal(lhs.clone().binding(), dtype),
+                InputBinding::Normal(packed.clone().binding(), dtype),
+                out.clone().binding(),
+                &mut elems,
+            )
+        };
+        launch().into()
+    });
+    match outcome {
+        ExecutionOutcome::Executed => {
+            assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes).as_test_outcome()
+        }
+        ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+    }
+    .enforce()
+}

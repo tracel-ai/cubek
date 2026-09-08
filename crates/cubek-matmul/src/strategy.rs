@@ -67,7 +67,9 @@ impl Strategy {
     }
 }
 
-/// Accelerated first, falling back to the routine that needs no accelerator.
+/// Accelerated first, falling back to the routine that needs no accelerator. A storage-tiled
+/// operand is a fact of the data, not a knob: it was packed for the tiled cmma routine, which
+/// stages to its tiles, so it goes there (the multi-level routines refuse it).
 #[cfg(feature = "multi-level")]
 fn auto(
     client: &Client,
@@ -76,6 +78,10 @@ fn auto(
     out: TensorBinding,
     dtypes: &mut MatmulElems,
 ) -> Result<(), MatmulSetupError> {
+    #[cfg(feature = "tiled")]
+    if lhs.data().tiling.is_tiled() || rhs.data().tiling.is_tiled() {
+        return tiled::Strategy::Cmma(Default::default()).launch_ref(client, lhs, rhs, out, dtypes);
+    }
     if let Err(err) = multi_level::Strategy::SimpleCyclicCmma(Default::default()).launch_ref(
         client,
         lhs.clone(),
