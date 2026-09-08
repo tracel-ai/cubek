@@ -340,9 +340,15 @@ impl Walk {
         for p in 0..rank {
             // One of it, so its digit folds to the constant `0` and the routed coordinate is
             // the whole of what `resolve` pushes for this axis.
+            //
+            // Clamped to the tiles the axis has: the coordinate came from data, so it can name
+            // one it does not. Reading the wrong tile of this operand beats reading past its
+            // buffer, and a refusal is not available here (a panic inside a cube verb dies on a
+            // kernel-expansion worker thread, where no caller sees it).
             if comptime!(p == at) {
+                let last = self.counts.at(p).fsub(1usize);
                 counts.push(1usize);
-                route.push(coord.fcast::<u32>());
+                route.push(coord.fmin(last).fcast::<u32>());
             } else {
                 counts.push(self.counts.at(p));
                 route.push(self.route.at(p));

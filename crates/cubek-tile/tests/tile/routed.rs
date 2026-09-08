@@ -87,7 +87,7 @@ fn w_values() -> Vec<f32> {
         .collect()
 }
 
-fn run(route: bool) -> HostData {
+fn run(route: bool, routes: &[u32]) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -121,7 +121,7 @@ fn run(route: bool) -> HostData {
     .generate_with_f32_host_data();
     let routes_handle = TestInput::builder(client.clone(), Shape::new([TOKENS]))
         .dtype(u32_ty)
-        .custom(ROUTES.iter().map(|&r| r as f32).collect())
+        .custom(routes.iter().map(|&r| r as f32).collect())
         .generate_without_host_data();
     let out_handle = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
         .dtype(f32_ty)
@@ -156,11 +156,11 @@ fn run(route: bool) -> HostData {
 }
 
 /// The reference: each token against its own expert, folded on the host.
-fn expected() -> Vec<Vec<f32>> {
+fn expected(routes: &[u32]) -> Vec<Vec<f32>> {
     let (x, w) = (x_values(), w_values());
     (0..TOKENS)
         .map(|m| {
-            let e = ROUTES[m] as usize;
+            let e = routes[m] as usize;
             (0..FEATURES)
                 .map(|n| {
                     (0..FEATURES)
@@ -177,8 +177,8 @@ fn expected() -> Vec<Vec<f32>> {
 
 #[test]
 fn a_routed_walk_contracts_each_token_against_its_own_expert() {
-    let got = run(true);
-    let want = expected();
+    let got = run(true, &ROUTES);
+    let want = expected(&ROUTES);
     for (m, row) in want.iter().enumerate() {
         for (n, cell) in row.iter().enumerate() {
             assert_eq!(
@@ -196,8 +196,8 @@ fn a_routed_walk_contracts_each_token_against_its_own_expert() {
 /// mechanism is what the test above measures, not the arithmetic around it.
 #[test]
 fn without_the_route_the_walk_folds_every_expert() {
-    let got = run(false);
-    let want = expected();
+    let got = run(false, &ROUTES);
+    let want = expected(&ROUTES);
     let differs = (0..TOKENS)
         .flat_map(|m| (0..FEATURES).map(move |n| (m, n)))
         .any(|(m, n)| got.get_f32(&[m, n]) != want[m][n]);
@@ -272,4 +272,21 @@ fn launch_routed_on(axis: Axis) -> f32 {
 #[test]
 fn routing_an_axis_of_the_space_is_the_only_case_checked_here() {
     assert_eq!(launch_routed_on(EXPERT), 1.0);
+}
+
+/// A routing table names a tile the axis does not have. The coordinate came from data, so this is
+/// not a mistake the caller can be told about: a refusal inside a cube verb dies on a worker
+/// thread. The walk clamps instead, so the read stays inside the weights and lands on the last
+/// expert rather than past the buffer.
+#[test]
+fn a_route_past_the_last_expert_clamps_to_it() {
+    const OVER: [u32; TOKENS] = [99, 0, 2, 1];
+    const CLAMPED: [u32; TOKENS] = [(EXPERTS - 1) as u32, 0, 2, 1];
+    let got = run(true, &OVER);
+    let want = expected(&CLAMPED);
+    for (m, row) in want.iter().enumerate() {
+        for (n, cell) in row.iter().enumerate() {
+            assert_eq!(got.get_f32(&[m, n]), *cell, "token {m} feature {n}");
+        }
+    }
 }
