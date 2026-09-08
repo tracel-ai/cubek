@@ -1,7 +1,6 @@
 use cubecl::{
     config::autotune::AutotuneLevel,
     features::Plane,
-    prelude::Scalar,
     zspace::{Shape, Strides},
 };
 use cubek_reduce::{

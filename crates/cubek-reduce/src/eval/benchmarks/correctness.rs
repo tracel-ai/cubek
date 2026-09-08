@@ -110,33 +110,6 @@ fn proof_shape(rank: usize, axis: usize) -> Vec<usize> {
     shape
 }
 
-#[cfg(test)]
-mod proof_shape_tests {
-    use super::proof_shape;
-    use crate::eval::cpu_reference::RAMP_MAX_ELEMS;
-
-    /// Every rank must produce a shape whose element count `ramp` can accept:
-    /// a power of two no larger than `RAMP_MAX_ELEMS`, and never zero.
-    #[test]
-    fn stays_within_ramp_bounds_at_every_rank() {
-        for rank in 1..=16 {
-            for axis in 0..rank {
-                let shape = proof_shape(rank, axis);
-                let elems: usize = shape.iter().product();
-                assert!(
-                    elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
-                    "rank {rank} axis {axis}: {shape:?} has {elems} elements"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn matches_ramp_max_elems_below_its_bit_width() {
-        assert_eq!(proof_shape(3, 2), vec![2, 2, 512]);
-    }
-}
-
 impl cubek_test_utils::Correctness for ReduceCorrectness {
     type Problem = ReduceProblem;
     type Strategy = ReduceStrategy;
@@ -169,5 +142,32 @@ impl cubek_test_utils::Correctness for ReduceCorrectness {
             ReduceInput::uniform(problem.precision.dtype(), seeds[0]),
             progress,
         )
+    }
+}
+
+#[cfg(test)]
+mod proof_shape_tests {
+    use super::proof_shape;
+    use crate::eval::cpu_reference::RAMP_MAX_ELEMS;
+
+    /// Every rank must produce a shape whose element count `ramp` can accept:
+    /// a power of two no larger than `RAMP_MAX_ELEMS`, and never zero.
+    #[test]
+    fn stays_within_ramp_bounds_at_every_rank() {
+        for rank in 1..=16 {
+            for axis in 0..rank {
+                let shape = proof_shape(rank, axis);
+                let elems: usize = shape.iter().product();
+                assert!(
+                    elems.is_power_of_two() && elems <= RAMP_MAX_ELEMS,
+                    "rank {rank} axis {axis}: {shape:?} has {elems} elements"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn matches_ramp_max_elems_below_its_bit_width() {
+        assert_eq!(proof_shape(3, 2), vec![2, 2, 512]);
     }
 }
