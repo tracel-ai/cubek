@@ -22,12 +22,15 @@ pub enum KernelForm<'a> {
 }
 
 /// One launch: a space, the grid the selector chose, the tiles the operands are cut to and the
-/// axes that overhang, bound to a client. Every one of those is the blueprint's statement; no
-/// level crosses here. Geometry and divisibility are read off the concrete (real-extent) space,
-/// and tile arguments project from the kernel-form one.
+/// axes that overhang, bound to a client. Every one of those is the blueprint's statement.
+/// Geometry and divisibility are read off the concrete (real-extent) space, and tile arguments
+/// project from the kernel-form one.
 ///
-/// A kernel with no blueprint (a test, a benchmark mapping) is [`implied`](Launcher::implied)
-/// by its levels instead, and keeps them to hand its loops one each.
+/// A launch that states its levels too ([`partitioned`](Launcher::partitioned)) can bind a
+/// storage-tiled operand: its storage tile has to be the tile of one of them
+/// ([`Storage`](crate::Storage)). A kernel with no blueprint (a test, a benchmark mapping) is
+/// [`implied`](Launcher::implied) by its levels instead, and keeps them to hand its loops one
+/// each.
 #[derive(Clone)]
 pub struct Launcher {
     client: Client,
@@ -39,7 +42,8 @@ pub struct Launcher {
     leaf: Vec<(Axis, usize)>,
     /// The axes some tile reaches past the end of, whose accesses are masked.
     overhangs: Vec<Axis>,
-    /// The levels an implied launch was read from; empty for a stated one.
+    /// The kernel's levels, outermost first, when the launch states them; what a storage-tiled
+    /// operand's storage tile is matched against. Empty for a launch that states only its leaf.
     levels: Vec<Level>,
 }
 
@@ -99,9 +103,29 @@ impl Launcher {
         self
     }
 
+    /// [`new`](Launcher::new) over the kernel's whole `partitioning`: the leaf and the overhangs
+    /// read off its levels rather than stated beside them, and the levels kept, which is what
+    /// lets a storage-tiled operand find the level its storage tile is the tile of. The grid is still
+    /// the blueprint's statement.
+    pub fn partitioned(
+        client: &Client,
+        partitioning: Partitioning,
+        grid: (CubeCount, CubeDim),
+        form: KernelForm<'_>,
+    ) -> Self {
+        let leaf = partitioning.leaf().extents();
+        let overhangs = partitioning.overhanging();
+        let (space, levels) = partitioning.into_parts();
+        let mut launch = Launcher::new(client, space, grid, form)
+            .leaf(&leaf)
+            .overhanging(&overhangs);
+        launch.levels = levels;
+        launch
+    }
+
     /// The launch `partitioning` implies, for a kernel with no blueprint to state one: as many
     /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they
-    /// overhang. A second constructor, not `new`: a launch is stated, and this one reads off
+    /// overhang. A third constructor, not `new`: a launch is stated, and this one reads off
     /// the levels what a blueprint would have stated, which only a test or a benchmark mapping
     /// wants.
     pub fn implied(client: &Client, partitioning: Partitioning, form: KernelForm<'_>) -> Self {
@@ -113,14 +137,7 @@ impl Launcher {
              got {lanes}"
         );
         let grid = (partitioning.cube_count(), partitioning.cube_dim(plane_size));
-        let leaf = partitioning.leaf().extents();
-        let overhangs = partitioning.overhanging();
-        let (space, levels) = partitioning.into_parts();
-        let mut launch = Launcher::new(client, space, grid, form)
-            .leaf(&leaf)
-            .overhanging(&overhangs);
-        launch.levels = levels;
-        launch
+        Launcher::partitioned(client, partitioning, grid, form)
     }
 
     pub fn cube_count(&self) -> CubeCount {
@@ -155,19 +172,19 @@ impl Launcher {
         self.kernel.launch_arg(&self.concrete)
     }
 
-    /// The levels an implied launch was read from, outermost first.
+    /// The levels a partitioned or implied launch states, outermost first.
     pub fn levels(&self) -> &[Level] {
         &self.levels
     }
 
-    /// The partitioning an implied launch was read from: its concrete space with those levels.
-    /// A launch that stated its grid has no levels, so this is its space uncut.
+    /// The partitioning this launch states: its concrete space with those levels. A launch that
+    /// stated only its leaf has no levels, so this is its space uncut.
     pub fn partitioning(&self) -> Partitioning {
         Partitioning::new(self.concrete.clone(), self.levels.clone())
     }
 
-    /// Level `i` of an implied launch, outermost first: what a kernel states its `i`-th loop
-    /// with.
+    /// Level `i` of a partitioned or implied launch, outermost first: what a kernel states its
+    /// `i`-th loop with.
     pub fn level(&self, i: usize) -> Level {
         self.levels[i].clone()
     }
@@ -179,7 +196,7 @@ impl Launcher {
             .space(&self.kernel)
             .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
-            .leaf(&self.leaf)
+            .levels(&self.levels)
     }
 
     /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
@@ -198,7 +215,7 @@ impl Launcher {
             .space(&self.kernel)
             .concrete(&self.concrete, &self.overhangs)
             .cube_units(self.cube_dim().num_elems() as usize)
-            .leaf(&self.leaf)
+            .levels(&self.levels)
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for

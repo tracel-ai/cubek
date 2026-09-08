@@ -89,11 +89,16 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// How this operand's bytes reach a stage: a strided copy, a bulk tensor-map transaction, or
-    /// a cooperative evaluation. A plane fragment has no bytes to move and panics here.
+    /// How this operand's bytes reach a stage: a strided copy, the copy of one storage tile, a
+    /// bulk tensor-map transaction, or a cooperative evaluation. A plane fragment has no bytes
+    /// to move and panics here.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => comptime!(Delivery::Copy),
+            TileKind::Gmem(g) => comptime!(match g.access.storage {
+                Storage::Strided => Delivery::Copy,
+                Storage::Tiled(_) | Storage::Contiguous => Delivery::Tiled,
+            }),
+            TileKind::Smem(_) => comptime!(Delivery::Copy),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::delivery: a resident fragment is not a stage source")

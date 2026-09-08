@@ -45,7 +45,7 @@ pub fn bench(
     };
 
     let durations = bench
-        .run(TimingMethod::Device)
+        .run(cubek_test_utils::timing_method(TimingMethod::Device))
         .map_err(|e| format!("benchmark failed: {e}"))?
         .durations;
 
@@ -123,11 +123,6 @@ impl<E: Float> Benchmark for UnaryBench<E> {
     }
 
     fn profile(&self, args: Self::Input) -> Result<ProfileDuration, String> {
-        let (launched, duration) = self
-            .client
-            .clone()
-            .profile(|| self.execute(args), "unary-bench")
-            .map_err(|it| format!("{it:?}"))?;
-        launched.map(|_| duration)
+        cubek_test_utils::profile_launch(&self.client, "unary-bench", || self.execute(args))
     }
 }

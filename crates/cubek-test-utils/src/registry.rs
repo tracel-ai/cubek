@@ -10,8 +10,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use cubecl::benchmark::TimingMethod;
+use cubecl::benchmark::{ProfileDuration, TimingMethod};
 use cubecl::client::Client;
+use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
@@ -19,6 +20,46 @@ use cubecl::throughput::{
 };
 
 use crate::{HostData, Progress};
+
+/// `CUBEK_BENCH_TIMING`'s override, read once: it can't change over a
+/// process's life, and every category consults it once per row.
+static TIMING_OVERRIDE: LazyLock<Option<TimingMethod>> =
+    LazyLock::new(|| match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
+        Ok("device") => Some(TimingMethod::Device),
+        Ok("system") => Some(TimingMethod::System),
+        Ok(other) => panic!("CUBEK_BENCH_TIMING takes 'device' or 'system', not {other:?}"),
+        Err(_) => None,
+    });
+
+/// The timing method a category measures with, overridden for a whole run by
+/// `CUBEK_BENCH_TIMING`. Device timestamps leave the launch out, so a row that
+/// beats its ceiling is checked by measuring it again on the wall clock.
+pub fn timing_method(default: TimingMethod) -> TimingMethod {
+    TIMING_OVERRIDE.unwrap_or(default)
+}
+
+/// Whether `client`'s device does real f16 arithmetic, not just storage, so a
+/// category can skip f16 rows the device would only fail on.
+pub fn supports_f16_arithmetic(client: &Client) -> bool {
+    half::f16::supported_uses(client).contains(TypeUsage::Arithmetic)
+}
+
+/// Times one launch on the device, failing the row when the launch itself failed.
+///
+/// Categories override [`Benchmark::profile`](cubecl::benchmark::Benchmark::profile) only to
+/// name their profiling scope. Writing that override by hand invites keeping the duration and
+/// dropping the launch result, which reports the time a failure took as a measurement.
+pub fn profile_launch<O: Send + 'static>(
+    client: &Client,
+    scope: &str,
+    launch: impl FnOnce() -> Result<O, String> + Send,
+) -> Result<ProfileDuration, String> {
+    let (launched, duration) = client
+        .profile(launch, scope)
+        .map_err(|err| format!("{err:?}"))?;
+
+    launched.map(|_| duration)
+}
 
 /// The client every category scores against: `measure_peak_throughput` is
 /// always run on `cubecl::test_device()`, so the
@@ -389,7 +430,7 @@ pub trait Category: Sync {
     /// running on the device timing method (unary/contiguous/memcpy_async)
     /// override this.
     fn timing_method(&self) -> TimingMethod {
-        TimingMethod::System
+        crate::timing_method(TimingMethod::System)
     }
 
     /// Override to expose seeded `kernel_result` / `reference_result`. Decoupled

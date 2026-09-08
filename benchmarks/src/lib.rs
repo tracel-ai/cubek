@@ -11,6 +11,7 @@ pub use cubek_matmul::eval::benchmarks::gemm_cpu;
 pub use cubek_matmul::multi_level::eval::gemv;
 pub use cubek_matmul::multi_level::eval::quantized_matmul;
 pub use cubek_matmul::tiled::eval::gemm_cpu_tiled;
+pub use cubek_matmul::tiled::eval::gemm_storage;
 pub use cubek_matmul::tiled::eval::split_cubes;
 pub use cubek_matmul::tiled::eval::split_k;
 pub use cubek_matmul::tiled::eval::tile_quant_stage;
@@ -36,6 +37,7 @@ pub fn all() -> &'static [&'static dyn BenchmarkCategory] {
         &crate::depthwise::Category,
         &crate::fft::Category,
         &crate::gemm::Category,
+        &crate::gemm_storage::Category,
         &crate::gemm_cpu::Category,
         &crate::gemm_cpu_tiled::Category,
         &crate::gemv::Category,
@@ -82,6 +84,10 @@ fn selects(filter: &[String], id: &str) -> bool {
 /// `CUBEK_BENCH_PROBLEMS` and `CUBEK_BENCH_STRATEGIES` take a comma-separated
 /// list of substrings and run only the ids that contain one. `gemm` alone is
 /// 184 problems against 27 strategies.
+///
+/// `CUBEK_BENCH_TIMING` takes `device` or `system` and overrides what every
+/// category measures with. A device timestamp leaves the launch out, so the two
+/// disagreeing by more than that overhead says the timer misses part of the work.
 pub fn run_category(category: &dyn BenchmarkCategory) {
     use cubecl::benchmark::BenchmarkDurations;
 
@@ -185,7 +191,7 @@ pub fn run_category(category: &dyn BenchmarkCategory) {
 
     if any_over_peak {
         println!(
-            "note: \"over peak\" rows beat the measured ceiling. The memory probes stream cold, so a working set that stays in cache can exceed them."
+            "note: \"over peak\" rows beat the measured ceiling, which nothing moving the traffic its cost model declares can do. Either the working set stays in cache where the probe streamed cold, or the kernel is not making the pass the model counts. A problem far larger than last-level cache rules the first out and leaves the second, which is a bug in the kernel or in the model, not a fast row."
         );
     }
 }

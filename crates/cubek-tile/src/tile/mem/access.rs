@@ -310,16 +310,12 @@ impl<T: Numeric> MemData<T> {
         if comptime!(sw == w) {
             let s = if comptime!(steps.is_empty()) {
                 MaskedView::new(
-                    src.lines_storage::<I2, WP2>()
-                        .view(src.base())
-                        .view(src.window()),
+                    src.window_view_storage::<I2, WP2>(comptime!(Guard::Checked)),
                     check,
                 )
             } else {
                 MaskedView::new(
-                    src.lines_storage::<I2, WP2>()
-                        .view(src.base())
-                        .view(src.window())
+                    src.window_view_storage::<I2, WP2>(comptime!(Guard::Checked))
                         .view(StepUp::new(shape.clone(), comptime!(steps))),
                     check,
                 )
@@ -330,16 +326,12 @@ impl<T: Numeric> MemData<T> {
         } else {
             let s = if comptime!(steps.is_empty()) {
                 MaskedView::new(
-                    src.lines_storage::<I2, Const<1>>()
-                        .view(src.base())
-                        .view(src.window()),
+                    src.window_view_storage::<I2, Const<1>>(comptime!(Guard::Checked)),
                     check,
                 )
             } else {
                 MaskedView::new(
-                    src.lines_storage::<I2, Const<1>>()
-                        .view(src.base())
-                        .view(src.window())
+                    src.window_view_storage::<I2, Const<1>>(comptime!(Guard::Checked))
                         .view(StepUp::new(
                             widened_shape(&shape, comptime!(plen), comptime!(w)),
                             comptime!(steps),
@@ -617,6 +609,74 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// The window as a view over its own coordinates (`pos` relative to the origin), served at
+    /// `T` grouped `W` wide. Inside one storage tile ([`Held`](Storage::Contiguous)) that is the run
+    /// from the origin addressed by the storage tile's own strides, no digit to split; otherwise the
+    /// layout walk through the window, under `guard`.
+    fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
+        match comptime!(self.access.storage) {
+            Storage::Contiguous => {
+                let start = self.window_start.fcast::<usize>();
+                let all = self.lines::<W>();
+                all.slice(start, all.len()).view(self.contiguous_layout())
+            }
+            Storage::Strided => self
+                .read_view::<W>(self.base())
+                .view(self.window().with_guard(guard)),
+            Storage::Tiled(_) => self
+                .read_view::<W>(self.base())
+                .view(self.window().with_guard(guard)),
+        }
+    }
+
+    /// [`window_view`](MemData::window_view) at the storage element `I` the buffer truly holds,
+    /// grouped `WP` wide ([`lines_storage`](MemData::lines_storage)). Buffers only.
+    fn window_view_storage<I: Numeric, WP: Size>(
+        &self,
+        #[comptime] guard: Guard,
+    ) -> View<'_, Vector<I, WP>, CoordsDyn> {
+        match comptime!(self.access.storage) {
+            Storage::Contiguous => {
+                let start = self.window_start.fcast::<usize>();
+                let all = self.lines_storage::<I, WP>();
+                all.slice(start, all.len()).view(self.contiguous_layout())
+            }
+            Storage::Strided => self
+                .lines_storage::<I, WP>()
+                .view(self.base())
+                .view(self.window().with_guard(guard)),
+            Storage::Tiled(_) => self
+                .lines_storage::<I, WP>()
+                .view(self.base())
+                .view(self.window().with_guard(guard)),
+        }
+    }
+
+    /// The layout of a window inside one storage tile, relative to its origin: its own extent,
+    /// each coordinate addressed by the stride of its innermost fragment, no digit to split. Sits
+    /// over the run from [`window_offset`](MemData::window_offset) on, like a fragment load.
+    fn contiguous_layout(&self) -> GmemLayout {
+        comptime!(assert!(
+            !self.access.overhang.masks(),
+            "MemData: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
+             padded to whole storage tiles"
+        ));
+        let positional = comptime!(self.layout.projection.clone());
+        let rank = comptime!(positional.coordinate_rank());
+        let mut strides = Coords::<u32>::new();
+        #[unroll]
+        for c in 0..rank {
+            let axis = comptime!(positional.logical_axes()[c]);
+            let inner = comptime!(*positional.carriers(axis).last().unwrap());
+            strides.push(self.layout.physical_strides.at(inner));
+        }
+        GmemLayout {
+            physical_shape: self.window.extent.clone(),
+            physical_strides: strides,
+            projection: comptime!(Projection::direct(positional.logical_axes())),
+        }
+    }
+
     /// [`lines`](MemData::lines) with the buffer re-typed to the quantized storage
     /// element `I` it truly holds (see [`QuantInfo`]).
     fn lines_storage<I: Numeric, W: Size>(&self) -> &[Vector<I, W>] {
@@ -697,22 +757,23 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
-    /// one contiguous region, so on a tiled store it must lie within one storage block, which is
-    /// what [`Blocks`] settled at the launch.
+    /// one contiguous region, so on a tiled store it must lie inside one storage tile, which is
+    /// what [`Storage`] says of it.
     fn window_offset(&self) -> usize {
         comptime!(assert!(
             !self.access.overhang.masks(),
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
-        // Reading a split window from a base and a row stride would walk straight through a block
-        // boundary and return another block's cells, silently. The layout walk addresses them
-        // correctly; a fragment load cannot, and says so.
-        match comptime!(self.access.blocks) {
-            Blocks::Hold => {}
-            Blocks::Split => panic!(
-                "MemData::window_offset: this window crosses a storage block, so it is not one \
-                 contiguous region; size the storage block to a whole number of leaf tiles, or \
-                 read the operand through its layout"
+        // Reading a window above its storage tile from a base and a row stride would walk straight
+        // through a storage tile boundary and return another tile's cells, silently. The layout walk
+        // addresses them correctly; a fragment load cannot, and says so.
+        match comptime!(self.access.storage) {
+            Storage::Strided => {}
+            Storage::Contiguous => {}
+            Storage::Tiled(level) => panic!(
+                "MemData::window_offset: this window sits above its storage tile (the tile of \
+                 level {level}), spanning several, so it is not one contiguous region; descend \
+                 through that level first, or read the operand through its layout"
             ),
         }
         // A raw window serves the buffer at the element it was erased to, so a quantized store
@@ -751,9 +812,7 @@ impl<T: Numeric> MemData<T> {
             )
         }
         MaskedView::new(
-            self.read_view::<W>(self.base())
-                .view(self.window().with_guard(guard))
-                .view(layout),
+            self.window_view::<W>(guard).view(layout),
             comptime!(guard.checks() && self.access.overhang.masks()),
         )
     }
@@ -794,8 +853,7 @@ impl<T: Numeric> MemData<T> {
     /// carrying the `check` flag so a flat scan masks the overhang without being asked.
     pub(crate) fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
         FlatView::new(
-            self.read_view::<W>(self.base())
-                .view(self.window())
+            self.window_view::<W>(comptime!(Guard::Checked))
                 .view(FlatLayout::new(self.window.extent.clone())),
             comptime!(self.access.overhang.masks()),
         )
@@ -813,9 +871,7 @@ impl<T: Numeric> MemData<T> {
                 // The storage view groups at the *physical* width: a packed buffer holds
                 // `W / num_quants` elements per served line.
                 let values = self
-                    .lines_storage::<I, WP>()
-                    .view(self.base())
-                    .view(self.window())
+                    .window_view_storage::<I, WP>(comptime!(Guard::Checked))
                     .view(FlatLayout::new(self.window.extent.clone()));
                 let scales = info
                     .buffer
@@ -861,9 +917,7 @@ impl<T: Numeric> MemData<T> {
                 // The storage view groups at the *physical* width: a packed buffer holds
                 // `W / num_quants` elements per served line.
                 let values = self
-                    .lines_storage::<I, WP>()
-                    .view(self.base())
-                    .view(self.window().with_guard(guard))
+                    .window_view_storage::<I, WP>(guard)
                     .view(layout.clone());
                 // The scales over this same window: `ScaleLayout` resolves a window coordinate
                 // to its block's scale, addressed by the same `layout` as the values, so both
@@ -906,9 +960,7 @@ impl<T: Numeric> MemData<T> {
             ),
             Packing::Packed { field } => {
                 let words = self
-                    .lines_storage::<u32, WP>()
-                    .view(self.base())
-                    .view(self.window())
+                    .window_view_storage::<u32, WP>(comptime!(Guard::Checked))
                     .view(layout);
                 let values = PackedView::<WP, T, W, C>::new(words, comptime!(field));
                 MaskedView::new(
@@ -1224,7 +1276,7 @@ impl<T: Numeric> MemData<T> {
                 overhang: self.access.overhang,
                 write: self.access.write,
                 units: self.access.units,
-                blocks: self.access.blocks,
+                storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
             lanes: comptime!(Lanes {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
@@ -1315,11 +1367,41 @@ impl<T: Numeric> MemData<T> {
                 overhang: Overhang::Masked,
                 write: self.access.write,
                 units: self.access.units,
-                blocks: self.access.blocks,
+                storage: self.access.storage,
             }),
             lanes: self.lanes,
             split_share: comptime!(self.split_share),
             init_from: comptime!(self.init_from),
+        }
+    }
+}
+
+/// What the storage tiles are to the window one level down: descending through the storage tile's
+/// own level puts the window inside one storage tile, where it stays. The launch matched the tile to
+/// that level on real extents; here the level is only asked to hand every axis down static, as
+/// a storage tile is, and never to be skipped past.
+fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -> Storage {
+    match storage {
+        Storage::Strided => Storage::Strided,
+        Storage::Contiguous => Storage::Contiguous,
+        Storage::Tiled(tiled_at) => {
+            assert!(
+                depth <= tiled_at,
+                "MemData::at: this window is above its storage tile, the tile of level \
+                 {tiled_at}, yet the descent is at depth {depth}; the storage tile's level was \
+                 skipped past"
+            );
+            if depth < tiled_at {
+                return Storage::Tiled(tiled_at);
+            }
+            for axis in space.axes() {
+                assert!(
+                    matches!(level.edge_in(space, axis), Extent::Static(_)),
+                    "MemData::at: level {tiled_at} hands {axis:?} down dynamic, so its tile is \
+                     no storage tile"
+                );
+            }
+            Storage::Contiguous
         }
     }
 }

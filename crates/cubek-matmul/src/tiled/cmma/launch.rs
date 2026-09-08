@@ -6,7 +6,10 @@ use cubek_std::{
     InputBinding, MatrixLayout,
     launch::tma::{stride_align_bits, tma_operand},
 };
-use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space, Strided, Tma, TmaTileArgLaunch};
+use cubek_tile::{
+    Axis, Geometry, KernelForm, Launcher, Space, StorageTiled, Strided, TensorDelivery, Tma,
+    TmaTileArgLaunch,
+};
 
 use crate::{
     definition::{
@@ -18,7 +21,7 @@ use crate::{
         base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
         kernel::cmma_kernel,
     },
-    tiled::{K, M, N, batch_axis},
+    tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
 };
 
 /// A cmma operand must be row-major contiguous: the transport addresses each window
@@ -54,6 +57,37 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
+/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes, and
+/// only the [`Tiled`](CmmaDelivery::Tiled) delivery moves it. A plain input passes.
+#[allow(clippy::result_large_err)]
+fn validate_storage_tiled(
+    blueprint: &CmmaBlueprint,
+    name: &str,
+    binding: &TensorBinding,
+    stage: (usize, usize),
+) -> Result<(), MatmulSetupError> {
+    let Some(tile) = storage_tile(binding, name)? else {
+        return Ok(());
+    };
+    match blueprint.delivery {
+        CmmaDelivery::Tiled => {}
+        CmmaDelivery::Copy | CmmaDelivery::Tma => {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: {name} arrived storage-tiled, which only the Tiled delivery moves, not \
+                 {:?}",
+                blueprint.delivery
+            ))));
+        }
+    }
+    if tile != stage {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
+             tile names the stage, so pack the tensor to the plan's stage or plan for the tile"
+        ))));
+    }
+    Ok(())
+}
+
 /// The derivation both entries share: reject what the routine can't run, build the
 /// [`MatmulProblem`], and resolve the [`CmmaBlueprint`]. Returns the problem, the
 /// plan, and the output's broadcast batch shape.
@@ -81,14 +115,10 @@ fn setup(
     validate_single_type(dtypes, MatmulIdent::Lhs)?;
     validate_single_type(dtypes, MatmulIdent::Rhs)?;
 
-    // Logical dims off each strided operand: trailing two axes are the matrix, leading
-    // dims its own (possibly broadcast) batch shape.
-    let split = |shape: &[usize]| {
-        let r = shape.len();
-        (shape[..r - 2].to_vec(), shape[r - 2], shape[r - 1])
-    };
-    let (lhs_batches, m, k) = split(lhs.shape());
-    let (rhs_batches, _, n) = split(rhs.shape());
+    // Logical dims off each operand, folded off a storage-tiled one's fragments: trailing two
+    // axes are the matrix, leading dims its own (possibly broadcast) batch shape.
+    let (lhs_batches, m, k) = logical_dims(lhs.data());
+    let (rhs_batches, _, n) = logical_dims(rhs.data());
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -124,6 +154,9 @@ fn setup(
     };
 
     let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc)?;
+    let (stage_m, stage_n) = blueprint.stage();
+    validate_storage_tiled(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
+    validate_storage_tiled(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -178,17 +211,16 @@ pub fn launch_ref(
         .copied()
         .chain([(M, m), (N, n), (K, k)])
         .collect();
-    // The kernel's own levels, listed for the grid and the geometry over this launch's extents.
+    // The kernel's own levels, stated for the grid and the geometry over this launch's extents,
+    // and what a storage-tiled input's storage tile is the tile of.
     let space = Space::new(&extents);
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::new(
+    let launch = Launcher::partitioned(
         client,
-        space.clone(),
+        blueprint.partitioning(&space, &batch_axes),
         blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
-    )
-    .leaf(&blueprint.leaf(&space, &batch_axes))
-    .overhanging(&blueprint.overhangs(&space, &batch_axes));
+    );
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
@@ -202,9 +234,22 @@ pub fn launch_ref(
     };
 
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
-    // Either path runs the same kernel body and never branches on the delivery again.
+    // Every path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided(
+        CmmaDelivery::Copy => launch_strided::<Strided>(
+            client,
+            &launch,
+            cube_count,
+            cube_dim,
+            &blueprint,
+            &batch_axes,
+            elems,
+            lhs,
+            rhs,
+            out,
+            &out_batch_axes,
+        ),
+        CmmaDelivery::Tiled => launch_strided::<StorageTiled>(
             client,
             &launch,
             cube_count,
@@ -245,11 +290,12 @@ struct Elems {
     acc: ElemType,
 }
 
-/// The strided path: each operand lined at the widest width the launcher's gate allows,
-/// bound to its [`Operand`](cubek_tile::Operand) by the shared
+/// The tensor-bound path, strided or storage-tiled (`D` says which, and the [`Tiled`] family
+/// serves a plain operand beside a storage-tiled one): each operand lined at the widest width
+/// the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
 #[allow(clippy::too_many_arguments)]
-fn launch_strided(
+fn launch_strided<D>(
     client: &Client,
     launch: &Launcher,
     cube_count: CubeCount,
@@ -261,7 +307,9 @@ fn launch_strided(
     rhs: TensorBinding,
     out: TensorBinding,
     out_batch_axes: &[Axis],
-) {
+) where
+    D: TensorDelivery,
+{
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
     let a = launch
         .arg(lhs)
@@ -283,15 +331,15 @@ fn launch_strided(
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
-    cmma_kernel::launch::<Strided>(
+    cmma_kernel::launch::<D>(
         client,
         cube_count,
         cube_dim,
         a.vector_size,
         b.vector_size,
         c.vector_size,
-        a.arg(),
-        b.arg(),
+        D::operand(a),
+        D::operand(b),
         c.arg(),
         launch.space_arg(),
         blueprint.clone(),

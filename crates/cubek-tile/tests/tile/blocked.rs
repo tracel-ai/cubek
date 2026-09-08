@@ -66,8 +66,7 @@ fn scaled_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut scales = Sequence::new();
-        scales.push(scale.at(&region));
+        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
             &a.at(&region),
@@ -628,8 +627,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut scales = Sequence::new();
-        scales.push(scale.at(&region));
+        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
             &a.at(&region),
@@ -887,8 +885,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     );
     acc.zero();
     for region in space.over(&level).unrolled() {
-        let mut scales = Sequence::new();
-        scales.push(scale.at(&region));
+        let scales = Scales::block(scale.at(&region));
         let mut acc_region = acc.at(&region);
         acc_region.mma_scaled(&a.at(&region), &b.at(&region), &scales, Semiring::SUM_PROD);
     }
@@ -1008,8 +1005,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let mut scales = Sequence::new();
-        scales.push(scale.at(&region));
+        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
             &a.at(&region),

@@ -14,24 +14,28 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// Whether a storage block holds a whole window, or a window crosses several.
+/// What a storage tile is to the window an operand is read through.
 ///
-/// A fragment load addresses its window as a base plus a row stride
-/// ([`window_slice`](crate::MemData::window_slice)), which only describes a region lying inside
-/// one storage block. Untiled storage is one block over the whole buffer, so every window
-/// [`Hold`](Blocks::Hold)s; a storage-tiled buffer does only when its innermost fragment holds a
-/// whole number of leaf tiles along every axis.
-///
-/// Settled by the launch, which is the one place the buffer's real extents and the leaf's edges
-/// are both known, and read in the kernel as the comptime fact it is. `Split` is not an error:
-/// the layout walk addresses those cells correctly, one at a time. It is only the fragment loads
-/// that cannot, and they say so rather than reading a block boundary as if it were not there.
+/// A storage-tiled tensor's storage tile corresponds to a tile of the kernel's space, a level of its
+/// nest, the way a scale block is an axis of a scaled matmul: the space owns the block size, so
+/// a window that descended through that level lies inside one storage tile by construction rather than
+/// by a divisibility check. Settled by the launch, the one place the buffer's real extents and
+/// the kernel's levels are both in hand, which refuses a tensor whose storage tile is no level's tile.
+/// Read in the kernel as the comptime fact it is; [`at`](crate::Tile::at) turns
+/// [`Above`](Storage::Tiled) into [`Held`](Storage::Contiguous) on the way down.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Blocks {
-    /// Every window this operand is read through lands inside one storage block.
-    Hold,
-    /// A window can cross a block boundary, so only a layout walk addresses its cells.
-    Split,
+pub enum Storage {
+    /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
+    /// window lies inside it.
+    Strided,
+    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this window
+    /// sits above that level and spans several storage tiles, so only a layout walk addresses its
+    /// cells. Descending through level `i` makes it [`Held`](Storage::Contiguous).
+    Tiled(usize),
+    /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
+    /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
+    /// want.
+    Contiguous,
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
@@ -53,10 +57,10 @@ pub struct TileSpec {
     /// stored element and a `u32` says nothing about the values inside it. Stated by
     /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
     pub packing: Packing,
-    /// How this operand's storage blocks fall under the windows it is read through. Settled by
-    /// the launch; [`Hold`](Blocks::Hold) for every untiled operand, which is every operand that
-    /// does not say otherwise.
-    pub blocks: Blocks,
+    /// What this operand's storage tiles are to the windows it is read through. Settled by
+    /// the launch; [`Whole`](Storage::Strided) for every untiled operand, which is every operand
+    /// that does not say otherwise.
+    pub storage: Storage,
 }
 
 impl TileSpec {
@@ -70,7 +74,7 @@ impl TileSpec {
             boundaries: SmallVec::new(),
             units: 0,
             packing: Packing::Plain,
-            blocks: Blocks::Hold,
+            storage: Storage::Strided,
         }
     }
 
@@ -100,10 +104,10 @@ impl TileSpec {
         self
     }
 
-    /// How this operand's storage blocks fall under the windows it is read through; settled by
-    /// the launch, [`Hold`](Blocks::Hold) by default (which is what every untiled operand is).
-    pub fn blocks(mut self, blocks: Blocks) -> Self {
-        self.blocks = blocks;
+    /// What this operand's storage tiles are to the windows it is read through; settled by
+    /// the launch, [`Whole`](Storage::Strided) by default (which is what every untiled operand is).
+    pub fn storage(mut self, storage: Storage) -> Self {
+        self.storage = storage;
         self
     }
 
@@ -229,6 +233,39 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
             coefficients,
             offsets,
         )
+    }
+}
+
+/// [`Scales`] as one launch argument. `V` is the block level's served width; the global level
+/// is one scalar, and `'static` because a comptime-optional launch argument has to be.
+#[derive(CubeType, CubeLaunch)]
+pub struct ScalesArg<'a, S: Numeric, V: Size> {
+    pub block: TileArg<'a, S, V>,
+    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
+}
+
+impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
+    pub fn block(block: TileArgLaunch<'static, S, V>) -> Self {
+        ScalesArgLaunch::new(block, ComptimeOptionArgs::None)
+    }
+
+    pub fn block_under(
+        block: TileArgLaunch<'static, S, V>,
+        global: TileArgLaunch<'static, S, Const<1>>,
+    ) -> Self {
+        ScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
+    }
+}
+
+#[cube]
+impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
+    pub fn tile(&self, #[comptime] space: Space) -> Scales<S> {
+        let block = self.block.tile(comptime!(space.clone()));
+        #[comptime]
+        match &self.global {
+            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
+            ComptimeOption::None => Scales::<S>::block(block),
+        }
     }
 }
 
