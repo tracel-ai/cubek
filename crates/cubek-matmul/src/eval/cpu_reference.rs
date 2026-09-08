@@ -63,7 +63,7 @@ pub fn matmul_cpu_reference_total(problem: &MatmulProblem) -> u64 {
     (problem.num_batches() * problem.m * problem.n) as u64
 }
 
-fn produce_with<F>(
+pub(crate) fn produce_with<F>(
     client: Client,
     problem: MatmulProblem,
     seed_lhs: u64,

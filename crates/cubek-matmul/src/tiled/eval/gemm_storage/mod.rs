@@ -8,6 +8,9 @@
 //! Every strategy runs the plan the selector picks for the problem, so the storage of the weight
 //! is the only variable. The row-major plan is listed twice, first and last: the machine drifts
 //! thermally, and two readings of the same row bracket the drift the middle row sits in.
+//!
+//! Each strategy is proved on a small shape against the CPU reference before it is timed, so a
+//! wrong read of the storage tiles cannot win by being fast.
 
 use cubecl::{
     benchmark::{Benchmark, ProfileDuration, TimingMethod},
@@ -16,15 +19,22 @@ use cubecl::{
     ir::FloatKind,
     prelude::*,
     std::tensor::TensorHandle,
-    zspace::{Shape, Tiling, shape},
+    zspace::shape,
 };
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples, TestInput, client};
+use cubek_test_utils::{
+    CatalogEntry, CategoryWork, ComputeWork, RunSamples, TestInput, ValidationResult,
+    assert_equals_approx, client,
+};
 
 use crate::{
     definition::{AvailableVectorSizes, MatmulCost, MatmulElems, MatmulGlobalElems, MatmulProblem},
+    eval::cpu_reference::{cpu_reference_result, matmul_epsilon, produce_with},
     routine::{BlueprintStrategy, DeviceSettings},
-    tiled::cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, launch_ref},
+    tiled::{
+        cmma::{CmmaBlueprint, CmmaRoutine, CmmaStrategy, StoredTiles, launch_ref},
+        pack::pack,
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,6 +70,15 @@ pub enum Weight {
     Tiled,
 }
 
+impl Weight {
+    fn name(self) -> &'static str {
+        match self {
+            Weight::RowMajor => "rowmajor",
+            Weight::Tiled => "tiled",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct StorageStrategy {
     weight: Weight,
@@ -91,8 +110,88 @@ fn plan(
         problem,
         &device_settings,
         acc,
+        StoredTiles::default(),
     )
     .map_err(|e| format!("{e:?}"))
+}
+
+fn matmul_problem(m: usize, n: usize, k: usize, elems: &MatmulElems) -> MatmulProblem {
+    MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![1],
+        shape![1],
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        elems.as_global_elems(),
+        cubecl::ir::AddressType::U32,
+    )
+}
+
+/// The weight as `strategy` stores it: plain, or packed to the plan's stage. Packing is a real
+/// relayout of the data, so the packed weight computes the same product as the plain one.
+fn weight(
+    client: &Client,
+    weight: Weight,
+    rhs: TensorBinding,
+    dtype: ElemType,
+    blueprint: &CmmaBlueprint,
+) -> Result<TensorBinding, String> {
+    match weight {
+        Weight::RowMajor => Ok(rhs),
+        Weight::Tiled => {
+            let (_, stage_n) = blueprint.stage();
+            pack(client, rhs, dtype, (blueprint.stage_k, stage_n))
+                .map(TensorHandle::binding)
+                .map_err(|e| format!("{e:?}"))
+        }
+    }
+}
+
+/// Proves `strategy` correct on a small shape before it is timed: the same plan selection and
+/// the same weight storage as the timed run, against the CPU reference.
+fn prove(client: &Client, strategy: &StorageStrategy, precision: Precision) -> Result<(), String> {
+    let dtype = precision.dtype();
+    let elems = MatmulElems::from_single_dtype(dtype);
+    let problem = matmul_problem(64, 256, 256, &elems);
+    let delivery = match strategy.weight {
+        Weight::RowMajor => CmmaStrategy::default(),
+        Weight::Tiled => CmmaStrategy::tiled(),
+    };
+    let blueprint = plan(client, &problem, dtype, delivery)?;
+    let (seed_lhs, seed_rhs) = (7, 11);
+    let stored = strategy.weight;
+    let actual = produce_with(
+        client.clone(),
+        problem.clone(),
+        seed_lhs,
+        seed_rhs,
+        |c, lhs, rhs, out, dtypes| {
+            let rhs = weight(c, stored, rhs.into_data(), dtype, &blueprint)
+                .map_err(|e| crate::definition::MatmulSetupError::InvalidConfig(Box::new(e)))?;
+            launch_ref(
+                c,
+                lhs,
+                InputBinding::Normal(rhs, dtype),
+                out,
+                &BlueprintStrategy::Forced(blueprint.clone()),
+                dtypes,
+            )
+        },
+    )?;
+    let expected = cpu_reference_result(client.clone(), problem, seed_lhs, seed_rhs, None)?;
+    match assert_equals_approx(&actual, &expected, matmul_epsilon(&elems, 500.)) {
+        ValidationResult::Pass | ValidationResult::Skipped(_) => Ok(()),
+        ValidationResult::Fail(reason) | ValidationResult::Error(reason) => Err(format!(
+            "the {} weight computes the wrong product, so its timing would be meaningless: \
+             {reason}",
+            strategy.weight.name()
+        )),
+    }
 }
 
 struct StorageBench {
@@ -105,7 +204,7 @@ struct StorageBench {
 }
 
 impl Benchmark for StorageBench {
-    type Input = (TensorHandle, TensorHandle);
+    type Input = (TensorHandle, TensorBinding);
     type Output = ();
 
     fn prepare(&self) -> Self::Input {
@@ -115,18 +214,19 @@ impl Benchmark for StorageBench {
             .dtype(dtype)
             .uniform(0, 0.0, 1.0)
             .generate_without_host_data();
-        // The weight, packed at load: its contents do not matter to the timing, only its layout.
-        let (stage_m, stage_n) = self.blueprint.stage();
-        let _ = stage_m;
-        let stage_k = self.blueprint.stage_k;
-        let rhs_dims = match self.weight {
-            Weight::RowMajor => vec![k, n],
-            Weight::Tiled => vec![k / stage_k, n / stage_n, stage_k, stage_n],
-        };
-        let rhs = TestInput::builder(self.client.clone(), Shape::from(rhs_dims))
+        // The weight, packed at load where the strategy stores it in tiles.
+        let rhs = TestInput::builder(self.client.clone(), shape![k, n])
             .dtype(dtype)
             .uniform(1, 0.0, 1.0)
             .generate_without_host_data();
+        let rhs = weight(
+            &self.client,
+            self.weight,
+            rhs.binding(),
+            dtype,
+            &self.blueprint,
+        )
+        .expect("the proof packed this weight before the timing");
         (lhs, rhs)
     }
 
@@ -134,10 +234,6 @@ impl Benchmark for StorageBench {
         let StorageProblem { m, n, .. } = self.problem;
         let dtype = self.problem.precision.dtype();
         let out = TensorHandle::empty(&self.client, shape![m, n], dtype);
-        let mut rhs = rhs.binding();
-        if let Weight::Tiled = self.weight {
-            rhs.tiling = Tiling::new(&[2, 2]).expect("two matrix dims, two fragments each");
-        }
         launch_ref(
             &self.client,
             InputBinding::Normal(lhs.binding(), dtype),
@@ -155,10 +251,7 @@ impl Benchmark for StorageBench {
     }
 
     fn name(&self) -> String {
-        let storage = match self.weight {
-            Weight::RowMajor => "rowmajor",
-            Weight::Tiled => "tiled",
-        };
+        let storage = self.weight.name();
         let StorageProblem { m, n, k, precision } = self.problem;
         let precision = match precision {
             Precision::F32 => "f32",
@@ -187,22 +280,10 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
     let client = device.client();
+    prove(&client, strategy, problem.precision)?;
     let dtype = problem.precision.dtype();
     let elems = MatmulElems::from_single_dtype(dtype);
-    let matmul = MatmulProblem::from_parameters(
-        problem.m,
-        problem.n,
-        problem.k,
-        shape![1],
-        shape![1],
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        None,
-        None,
-        elems.as_global_elems(),
-        cubecl::ir::AddressType::U32,
-    );
+    let matmul = matmul_problem(problem.m, problem.n, problem.k, &elems);
     let delivery = match strategy.weight {
         Weight::RowMajor => CmmaStrategy::default(),
         Weight::Tiled => CmmaStrategy::tiled(),
