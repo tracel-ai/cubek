@@ -226,16 +226,18 @@ fn serving_geometry(promoted: bool) {
     let dtype = f32::elem_type_native();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
-        vec![
-            Level::cubes(&[(M, rows_per_cube)]),
-            Level::planes(&[(M, rows_per_plane)]),
-            Level::lanes(&[
-                Cut::new(M, rows_per_lane).across(groups),
-                Cut::new(KI, factor).across(group_lanes).interleaved(),
-            ]),
-            Level::walk(&[(KB, 1)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
+            vec![
+                Level::cubes(&[(M, rows_per_cube)]),
+                Level::planes(&[(M, rows_per_plane)]),
+                Level::lanes(&[
+                    Cut::new(M, rows_per_lane).across(groups),
+                    Cut::new(KI, factor).across(group_lanes).interleaved(),
+                ]),
+                Level::walk(&[(KB, 1)]),
+            ],
+        ),
         KernelForm::Static,
     );
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.

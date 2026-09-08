@@ -72,8 +72,10 @@ fn coarse_spec() -> TileSpec {
 fn space(cut: usize) -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
-        vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+        Partitioning::new(
+            Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
+            vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+        ),
         KernelForm::Static,
     )
 }

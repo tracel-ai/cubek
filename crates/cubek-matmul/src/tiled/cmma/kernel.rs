@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Cut, DeliveryFamily, Fragments, Level, Monoid, PlanePartition, Ring, Semiring, Space,
-    StageStorage, TileArg, pipelined,
+    Axis, Cut, DeliveryFamily, Fragments, Level, Monoid, Partitioning, PlanePartition, Ring,
+    Semiring, Space, StageStorage, TileArg, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -31,18 +31,19 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
 }
 
 impl CmmaBlueprint {
+    /// The space with the levels that cut it: what the leaf and the overhangs are read off.
+    pub fn partitioning(&self, space: &Space, batch: &[Axis]) -> Partitioning {
+        Partitioning::new(space.clone(), cmma_levels(self, batch))
+    }
+
     /// The tile every operand is cut to at the bottom: the instruction's.
     pub fn leaf(&self, space: &Space, batch: &[Axis]) -> Vec<(Axis, usize)> {
-        space.leaf(&cmma_levels(self, batch)).extents()
+        self.partitioning(space, batch).leaf().extents()
     }
 
     /// The axes some tile reaches past the end of.
     pub fn overhangs(&self, space: &Space, batch: &[Axis]) -> Vec<Axis> {
-        let levels = cmma_levels(self, batch);
-        space
-            .axes()
-            .filter(|&axis| space.overhangs(&levels, axis))
-            .collect()
+        self.partitioning(space, batch).overhanging()
     }
 
     /// The grid this launch runs on: a cube per stage of the output and per batch, the

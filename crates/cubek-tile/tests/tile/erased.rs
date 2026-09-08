@@ -93,8 +93,10 @@ macro_rules! output_arg {
 fn space(form: KernelForm) -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(ROW, ROWS), (COL, COLS)]),
-        vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+        Partitioning::new(
+            Space::new(&[(ROW, ROWS), (COL, COLS)]),
+            vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+        ),
         form,
     )
 }
@@ -405,8 +407,10 @@ fn matmul_space() -> Launcher {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
         KernelForm::Static,
     )
 }
@@ -539,8 +543,10 @@ const MASKED_ROWS: usize = 5;
 fn masked_space(form: KernelForm) -> Launcher {
     Launcher::implied(
         &cubecl::test_device().client(),
-        Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
-        vec![Level::walk(&[(ROW, 2), (COL, 2)])],
+        Partitioning::new(
+            Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
+            vec![Level::walk(&[(ROW, 2), (COL, 2)])],
+        ),
         form,
     )
 }

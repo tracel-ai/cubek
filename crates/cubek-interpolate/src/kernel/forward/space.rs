@@ -1,7 +1,9 @@
 use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
-use cubek_tile::{Axis, Compaction, Cut, Level, PhysicalAxisMap, Projection, RegisterBlock, Space};
+use cubek_tile::{
+    Axis, Compaction, Cut, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
+};
 
 pub const BATCH: Axis = Axis(0);
 pub const OUTPUT_H: Axis = Axis(1);
@@ -61,18 +63,19 @@ impl InterpolateSpace {
         Space::new(&self.extents())
     }
 
+    /// The space with the levels that cut it: what the leaf and the overhangs are read off.
+    pub fn partitioning(&self) -> Partitioning {
+        Partitioning::new(self.space(), self.levels())
+    }
+
     /// The tile every operand is cut to at the bottom.
     pub fn leaf(&self) -> Vec<(Axis, usize)> {
-        self.space().leaf(&self.levels()).extents()
+        self.partitioning().leaf().extents()
     }
 
     /// The axes some tile reaches past the end of.
     pub fn overhangs(&self) -> Vec<Axis> {
-        let (space, levels) = (self.space(), self.levels());
-        space
-            .axes()
-            .filter(|&axis| space.overhangs(&levels, axis))
-            .collect()
+        self.partitioning().overhanging()
     }
 
     /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's

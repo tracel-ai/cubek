@@ -1,7 +1,9 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Cut, Level, Region, RegisterBlock, Semiring, Space, Tile, TileArg};
+use cubek_tile::{
+    Axis, Cut, Level, Partitioning, Region, RegisterBlock, Semiring, Space, Tile, TileArg,
+};
 
 use crate::tiled::{
     M, N,
@@ -37,21 +39,20 @@ pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) ->
 }
 
 impl QuantGemvBlueprint {
+    /// The space with the levels that cut it: what the leaf and the overhangs are read off.
+    pub fn partitioning(&self, problem: &QuantGemvProblem) -> Partitioning {
+        Partitioning::new(quant_gemv_space(problem), quant_gemv_levels(self, problem))
+    }
+
     /// The tile every operand is cut to at the bottom: a lane's rows against one stored word.
     pub fn leaf(&self, problem: &QuantGemvProblem) -> Vec<(Axis, usize)> {
-        quant_gemv_space(problem)
-            .leaf(&quant_gemv_levels(self, problem))
-            .extents()
+        self.partitioning(problem).leaf().extents()
     }
 
     /// The axes some tile reaches past the end of: none, the blueprint refuses a problem its
     /// tiles do not divide.
     pub fn overhangs(&self, problem: &QuantGemvProblem) -> Vec<Axis> {
-        let (space, levels) = (quant_gemv_space(problem), quant_gemv_levels(self, problem));
-        space
-            .axes()
-            .filter(|&axis| space.overhangs(&levels, axis))
-            .collect()
+        self.partitioning(problem).overhanging()
     }
 
     /// The grid this launch runs on: a cube per strip of rows, a plane per group of them, every

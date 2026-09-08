@@ -60,11 +60,13 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     let dtype = f32::elem_type_native();
     let launcher = Launcher::implied(
         &client,
-        Space::new(&[(M, m), (N, n), (K, k)]),
-        vec![
-            Level::walk(&[(M, m), (N, n), (K, block_k)]),
-            Level::walk(&[(M, tile), (N, tile), (K, tile)]),
-        ],
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, block_k)]),
+                Level::walk(&[(M, tile), (N, tile), (K, tile)]),
+            ],
+        ),
         KernelForm::Static,
     );
 
