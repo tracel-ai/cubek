@@ -207,3 +207,69 @@ fn without_the_route_the_walk_folds_every_expert() {
          weights window"
     );
 }
+
+/// Counts the steps of a walk routed on `axis`, which the refusal test hands an axis the space
+/// does not carry.
+#[cube(launch)]
+fn routed_axis_kernel(
+    k: &TileArg<'_, f32, Const<1>>,
+    out: &mut Tensor<f32>,
+    space: Space,
+    #[comptime] level: Level,
+    #[comptime] axis: Axis,
+) {
+    let k = k.tile(comptime!(space.clone()));
+    let mut steps = 0u32;
+    for _region in k.level(comptime!(level.clone())).routed(axis, 0usize) {
+        steps += 1;
+    }
+    out[0] = f32::cast_from(steps);
+}
+
+fn launch_routed_on(axis: Axis) -> f32 {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, TOKENS), (EXPERT, EXPERTS)]),
+            vec![Level::walk(&[(EXPERT, 1)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let (k_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, EXPERTS]))
+        .dtype(f32_ty)
+        .custom(vec![0.0; TOKENS * EXPERTS])
+        .generate_with_f32_host_data();
+    let out_handle = TestInput::builder(client.clone(), Shape::new([1]))
+        .dtype(f32_ty)
+        .custom(vec![-7.0])
+        .generate_without_host_data();
+
+    routed_axis_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            k_handle.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, EXPERT]),
+        ),
+        out_handle.clone().binding().into_tensor_arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        axis,
+    );
+
+    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32).get_f32(&[0])
+}
+
+/// A comptime refusal inside a `#[cube]` verb does NOT reach the caller: kernel expansion runs
+/// on a worker thread, so `Walk::routed`'s assert panics there and the launch returns as if
+/// nothing happened (visible only under `CUBECL_DEBUG_LOG`). Measured 2026-09-08; the refusal a
+/// routed axis owes has to run on the host, so there is no `should_panic` twin to this test.
+#[test]
+fn routing_an_axis_of_the_space_is_the_only_case_checked_here() {
+    assert_eq!(launch_routed_on(EXPERT), 1.0);
+}
