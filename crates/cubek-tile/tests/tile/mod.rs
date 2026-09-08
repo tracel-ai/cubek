@@ -15,6 +15,7 @@ mod procedural;
 mod quant;
 mod ragged;
 mod recursive;
+mod routed;
 mod reduce;
 mod references;
 mod scaled;
