@@ -229,57 +229,20 @@ fn cmma_storage_tiled_weight_f32() {
     storage_tiled_weight(f32::elem_type_native());
 }
 
-/// Copy every logical `(b, k, n)` element of `src` into `dst` through their views, whatever
-/// each buffer's physical layout: how a weight is packed to a block layout on the device.
-#[cube(launch)]
-fn pack_weight<E: Numeric>(
-    src: &cubek_tile::TileArg<'_, E, Const<1>>,
-    dst: &cubek_tile::TileArg<'_, E, Const<1>>,
-    space: cubek_tile::Space,
-    #[define(E)] _dtype: ElemType,
-) {
-    use cubecl::std::tensor::layout::CoordsDyn;
-    let src = src.tile(comptime!(space.clone()));
-    let mut dst = dst.tile(comptime!(space.clone()));
-    let r = src.view::<Const<1>>();
-    let mut w = dst.view_mut::<Const<1>>();
-    let shape = r.shape();
-    for b in 0..shape[0] {
-        for k in 0..shape[1] {
-            for n in 0..shape[2] {
-                let mut pos = CoordsDyn::new();
-                pos.push(b);
-                pos.push(k);
-                pos.push(n);
-                w.write(pos.clone(), r.read(pos));
-            }
-        }
-    }
-}
-
 fn storage_tiled_weight(dtype: ElemType) {
-    use cubecl::{
-        ir::FloatKind,
-        std::tensor::TensorHandle,
-        zspace::{Shape, Tiling},
-    };
+    use cubecl::ir::FloatKind;
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
-        tiled::cmma::{CmmaRoutine, launch_ref},
+        tiled::{
+            cmma::{CmmaRoutine, launch_ref},
+            pack::pack,
+        },
     };
     use cubek_std::InputBinding;
     use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
-    use cubek_tile::{
-        Axis, KernelForm, Launcher, Partitioning, Projection, Space, StorageTiling, TileArgLaunch,
-        TileSpec,
-    };
 
     use crate::harness::assert_result;
-
-    const B: Axis = Axis(0);
-    const K: Axis = Axis(1);
-    const N: Axis = Axis(2);
 
     let client = client();
     let (m, n, k) = (128, 256, 384);
@@ -324,46 +287,13 @@ fn storage_tiled_weight(dtype: ElemType) {
             let (_, stage_n) = blueprint.stage();
             let stage_k = blueprint.stage_k;
 
-            // The weight, packed: `[1, k / stage_k, n / stage_n, stage_k, stage_n]`, the binding
-            // saying its two matrix dims are stored two fragments deep.
-            let packed = TensorHandle::empty(
-                c,
-                Shape::from(vec![1, k / stage_k, n / stage_n, stage_k, stage_n]),
-                dtype,
-            );
-            let space = Space::new(&[(B, 1), (K, k), (N, n)]);
-            let launcher = Launcher::implied(
-                c,
-                Partitioning::new(space.clone(), vec![]),
-                KernelForm::Static,
-            );
-            let plain = TileArgLaunch::new(
-                rhs.clone().binding().into_tensor_arg(),
-                TileSpec::direct(&[B, K, N]),
-            );
-            let mut packed_binding = packed.clone().binding();
-            packed_binding.tiling = Tiling::new(&[1, 2, 2]).unwrap();
-            let blocked = TileArgLaunch::new(
-                packed_binding.clone().into_tensor_arg(),
-                TileSpec::new(Projection::tiled(
-                    &[B, K, N],
-                    StorageTiling::suffix(3, 1, 1),
-                )),
-            );
-            pack_weight::launch(
-                c,
-                CubeCount::new_single(),
-                CubeDim::new_single(),
-                plain,
-                blocked,
-                launcher.space_arg(),
-                dtype,
-            );
+            // The weight, packed to the plan's stage.
+            let packed = pack(c, rhs.clone().binding(), dtype, (stage_k, stage_n))?;
 
             launch_ref(
                 c,
                 InputBinding::Normal(lhs.clone().binding(), dtype),
-                InputBinding::Normal(packed_binding, dtype),
+                InputBinding::Normal(packed.binding(), dtype),
                 out.clone().binding(),
                 &BlueprintStrategy::Forced(blueprint),
                 &elems,

@@ -2,6 +2,7 @@
 
 pub mod cmma;
 pub mod cpu_gemm;
+pub mod pack;
 pub mod quant_gemv;
 
 mod operands;
