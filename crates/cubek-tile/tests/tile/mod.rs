@@ -11,6 +11,7 @@ mod instruction;
 mod launcher;
 mod matmul;
 mod packed;
+mod paged;
 mod procedural;
 mod quant;
 mod ragged;
