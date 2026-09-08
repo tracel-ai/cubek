@@ -11,11 +11,10 @@ pub use problem::{ReduceBenchKind, ReduceBenchPrecision, ReduceProblem, precisio
 pub use strategy::strategies;
 
 use cubecl::benchmark::TimingMethod;
-use cubecl::prelude::*;
 use cubek_test_utils::{CatalogEntry, CategoryWork, ComputeWork, RunSamples};
 
 use crate::ReduceStrategy;
-use crate::eval::cpu_reference::output_dtype_for;
+use crate::eval::cpu_reference::{accumulation_dtype, output_dtype_for};
 use crate::launch::ReduceDtypes;
 use crate::routines::ReduceCost;
 
@@ -76,7 +75,7 @@ impl cubek_test_utils::Category for Category {
             dtypes: ReduceDtypes {
                 input: value_dtype,
                 output: output_dtype_for(&problem.config, value_dtype),
-                accumulation: f32::elem_type_native(),
+                accumulation: accumulation_dtype(),
             },
         };
 

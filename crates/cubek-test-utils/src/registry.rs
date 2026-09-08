@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use cubecl::benchmark::{ProfileDuration, TimingMethod};
 use cubecl::client::Client;
+use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 use cubecl::std::throughput::{measure_memory_curve, measure_peak_throughput};
 use cubecl::throughput::{
@@ -20,16 +21,29 @@ use cubecl::throughput::{
 
 use crate::{HostData, Progress};
 
+/// `CUBEK_BENCH_TIMING`'s override, read once: it can't change over a
+/// process's life, and every category consults it once per row.
+static TIMING_OVERRIDE: LazyLock<Option<TimingMethod>> = LazyLock::new(|| {
+    match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
+        Ok("device") => Some(TimingMethod::Device),
+        Ok("system") => Some(TimingMethod::System),
+        Ok(other) => panic!("CUBEK_BENCH_TIMING takes 'device' or 'system', not {other:?}"),
+        Err(_) => None,
+    }
+});
+
 /// The timing method a category measures with, overridden for a whole run by
 /// `CUBEK_BENCH_TIMING`. Device timestamps leave the launch out, so a row that
 /// beats its ceiling is checked by measuring it again on the wall clock.
 pub fn timing_method(default: TimingMethod) -> TimingMethod {
-    match std::env::var("CUBEK_BENCH_TIMING").as_deref() {
-        Ok("device") => TimingMethod::Device,
-        Ok("system") => TimingMethod::System,
-        Ok(other) => panic!("CUBEK_BENCH_TIMING takes 'device' or 'system', not {other:?}"),
-        Err(_) => default,
-    }
+    TIMING_OVERRIDE.unwrap_or(default)
+}
+
+/// Whether `client`'s device can carry out `f16` arithmetic, not just storage.
+/// A category benchmarking a narrower dtype checks this before adding rows a
+/// runtime without hardware or software f16 support would only fail on.
+pub fn supports_f16_arithmetic(client: &Client) -> bool {
+    half::f16::supported_uses(client).contains(TypeUsage::Arithmetic)
 }
 
 /// Times one launch on the device, failing the row when the launch itself failed.

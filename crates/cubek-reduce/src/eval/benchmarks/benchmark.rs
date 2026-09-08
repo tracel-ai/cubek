@@ -112,16 +112,12 @@ impl Benchmark for ReduceBench {
     fn execute(&self, (input, out, indices): Self::Input) -> Result<(), String> {
         let value_dtype = self.value_dtype;
         let index_dtype = u32::elem_type_native();
-        let acc_dtype = f32::elem_type_native();
+        let acc_dtype = crate::eval::cpu_reference::accumulation_dtype();
 
         match self.kind {
             ReduceBenchKind::Single => {
-                let output_dtype = match self.config {
-                    ReduceOperationConfig::ArgMax
-                    | ReduceOperationConfig::ArgMin
-                    | ReduceOperationConfig::ArgTopK(_) => index_dtype,
-                    _ => value_dtype,
-                };
+                let output_dtype =
+                    crate::eval::cpu_reference::output_dtype_for(&self.config, value_dtype);
                 crate::reduce(
                     &self.client,
                     input.binding(),

@@ -135,7 +135,7 @@ pub fn strategy_result(
 ) -> Result<HostData, String> {
     let input_dtype = input.dtype;
     let output_dtype = output_dtype_for(&config, input_dtype);
-    let accumulation_dtype = f32::elem_type_native();
+    let accumulation_dtype = accumulation_dtype();
 
     let input_handle = input
         .tensor(client.clone(), shape.clone())
@@ -192,7 +192,7 @@ pub fn strategy_result_with_indices(
 ) -> Result<HostData, String> {
     let input_dtype = input.dtype;
     let index_dtype = u32::elem_type_native();
-    let accumulation_dtype = f32::elem_type_native();
+    let accumulation_dtype = accumulation_dtype();
 
     let input_handle = input
         .tensor(client.clone(), shape.clone())
@@ -314,6 +314,12 @@ pub fn output_dtype_for(config: &ReduceOperationConfig, input_dtype: ElemType) -
         | ReduceOperationConfig::ArgTopK(_) => u32::elem_type_native(),
         _ => input_dtype,
     }
+}
+
+/// What every `reduce`/`reduce_with_indices` launch folds into, regardless of
+/// the input or output element type.
+pub fn accumulation_dtype() -> ElemType {
+    f32::elem_type_native()
 }
 
 pub fn contiguous_strides(shape: &[usize]) -> Strides {
