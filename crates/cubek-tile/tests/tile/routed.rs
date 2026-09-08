@@ -290,3 +290,65 @@ fn a_route_past_the_last_expert_clamps_to_it() {
         }
     }
 }
+
+/// Each lane writes the expert coordinate its region carried, so a walk that folds the lane's own
+/// position into a routed axis is visible as lanes disagreeing.
+#[cube(launch)]
+fn routed_lanes_kernel(
+    out: &mut Tensor<f32>,
+    space: Space,
+    #[comptime] lanes: Level,
+    #[comptime] target: usize,
+) {
+    for region in space
+        .lanes(comptime!(lanes.clone()))
+        .routed(EXPERT, comptime!(target).runtime())
+    {
+        out[UNIT_POS_X as usize] = f32::cast_from(region.coord(EXPERT) as u32);
+    }
+}
+
+/// A routed axis spread across the plane's lanes: naming a coordinate names it for every lane,
+/// since a lane's own share of the axis is what the route replaces rather than shifts. Without
+/// that, lane `l` would read expert `target + l` off one shared operand.
+#[test]
+fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+    // A unit level must partition the plane exactly, so the axis is as wide as the plane.
+    let lanes = client.properties().hardware.plane_size_max as usize;
+    let target = 2usize;
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(EXPERT, lanes)]),
+            vec![Level::lanes(&[Cut::new(EXPERT, 1).across(lanes)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let out_handle = TestInput::builder(client.clone(), Shape::new([lanes]))
+        .dtype(f32_ty)
+        .custom(vec![-1.0; lanes])
+        .generate_without_host_data();
+
+    routed_lanes_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        CubeDim::new_2d(lanes as u32, 1),
+        out_handle.clone().binding().into_tensor_arg(),
+        launcher.space_arg(),
+        launcher.level(0),
+        target,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
+    for lane in 0..lanes {
+        assert_eq!(
+            got.get_f32(&[lane]),
+            target as f32,
+            "lane {lane} read a different expert than the one the route named"
+        );
+    }
+}

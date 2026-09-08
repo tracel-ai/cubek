@@ -39,10 +39,14 @@ pub struct Walk {
     /// share (`Contiguous`) or the instance count (`Interleaved`); `1` for `Sequential`.
     scales: Coords<usize>,
     /// Per-axis coordinate the kernel routed rather than the odometer counted, `0` on every axis
-    /// it did not ([`routed`](Walk::routed)). Added to each resolved digit, which costs
-    /// nothing where it is the constant `0` and is the whole coordinate where the axis counts
-    /// one of itself.
+    /// it did not ([`routed`](Walk::routed)).
     route: Coords<u32>,
+    /// Which axes [`route`](Self::route) speaks for, so the rest fold their digit as ever and
+    /// pay nothing. A routed axis takes that coordinate whole: an instance position folded in
+    /// would hand each lane of a distributed axis a different one, which is not what naming a
+    /// coordinate means.
+    #[cube(comptime)]
+    routed_at: Vec<usize>,
     /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
     /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
     base: usize,
@@ -305,6 +309,7 @@ impl Walk {
             positions,
             scales,
             route: const_coords(comptime!(vec![0; rank])),
+            routed_at: comptime!(Vec::new()),
             base: 0usize,
             steps,
             parent,
@@ -346,7 +351,9 @@ impl Walk {
             // buffer, and a refusal is not available here (a panic inside a cube verb dies on a
             // kernel-expansion worker thread, where no caller sees it).
             if comptime!(p == at) {
-                let last = self.counts.at(p).fsub(1usize);
+                // The axis's own tiles, not `counts`, which on a distributed axis is this
+                // instance's share of them and would clamp every lane to its first.
+                let last = comptime!(self.level.count(&self.space, axis) - 1).runtime();
                 counts.push(1usize);
                 route.push(coord.fmin(last).fcast::<u32>());
             } else {
@@ -361,6 +368,11 @@ impl Walk {
             positions: self.positions,
             scales: self.scales,
             route,
+            routed_at: comptime!({
+                let mut routed_at = self.routed_at.clone();
+                routed_at.push(at);
+                routed_at
+            }),
             base: self.base,
             steps,
             parent: self.parent,
@@ -378,6 +390,7 @@ impl Walk {
             positions: self.positions,
             scales: self.scales,
             route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base: self.base,
             steps: self.steps,
             parent: self.parent,
@@ -402,6 +415,7 @@ impl Walk {
             positions: self.positions,
             scales: self.scales,
             route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base: self.base,
             steps: self.steps,
             parent: self.parent,
@@ -429,6 +443,7 @@ impl Walk {
             positions: self.positions,
             scales: self.scales,
             route: self.route,
+            routed_at: comptime!(self.routed_at.clone()),
             base,
             steps,
             parent: self.parent,
@@ -462,11 +477,11 @@ impl Walk {
 
         #[unroll]
         for p in 0..comptime!(self.space.rank()) {
-            coords.push(
-                self.fold(self.digit(idx, p), p)
-                    .fcast::<u32>()
-                    .fadd(self.route.at(p)),
-            );
+            if comptime!(self.routed_at.contains(&p)) {
+                coords.push(self.route.at(p));
+            } else {
+                coords.push(self.fold(self.digit(idx, p), p).fcast::<u32>());
+            }
         }
         coords
     }
