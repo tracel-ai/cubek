@@ -23,18 +23,20 @@ pub struct CmmaData<T: Numeric> {
 #[cube]
 impl<T: Numeric> CmmaData<T> {
     /// Allocate an uninitialized fragment. `m`/`n`/`k` are the whole MMA tile, passed in
-    /// full whatever the role; the layout is `RowMajor` (how the stages are laid out).
+    /// full whatever the role; `layout` is how the stage it loads from lays the role's rows
+    /// out.
     pub(crate) fn alloc(
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
+        #[comptime] layout: MatrixLayout,
     ) -> CmmaData<T> {
-        let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, MatrixLayout::RowMajor) };
+        let matrix = unsafe { Matrix::<T>::uninitialized(ident, m, n, k, layout) };
         CmmaData::<T> {
             matrix,
             ident,
-            layout: MatrixLayout::RowMajor,
+            layout,
         }
     }
 

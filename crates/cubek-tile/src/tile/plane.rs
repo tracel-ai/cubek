@@ -42,9 +42,13 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            PlaneForm::Cmma => {
-                PlaneTile::new_Cmma(CmmaData::<T>::alloc(MatrixIdent::Accumulator, m, n, k))
-            }
+            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(
+                MatrixIdent::Accumulator,
+                m,
+                n,
+                k,
+                MatrixLayout::RowMajor,
+            )),
             PlaneForm::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
@@ -60,24 +64,22 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// An operand tile in role `ident`, uninitialized. `k` is the operand's own contraction
-    /// depth, not the instruction's.
+    /// An operand tile in role `ident`, uninitialized, loaded in `layout`: the role's own row
+    /// order, or its transpose where the operand lies that way. `k` is the operand's own
+    /// contraction depth, not the instruction's.
     pub(crate) fn operand(
         #[comptime] form: PlaneForm,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] k: usize,
+        #[comptime] layout: MatrixLayout,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k)),
+            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k, layout)),
             PlaneForm::Mma { io } => match comptime!(ident) {
-                MatrixIdent::A => {
-                    PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, MatrixLayout::RowMajor, io))
-                }
-                MatrixIdent::B => {
-                    PlaneTile::new_Mma(MmaData::<T>::rhs(m, n, k, MatrixLayout::RowMajor, io))
-                }
+                MatrixIdent::A => PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, layout, io)),
+                MatrixIdent::B => PlaneTile::new_Mma(MmaData::<T>::rhs(m, n, k, layout, io)),
                 MatrixIdent::Accumulator => {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
@@ -279,18 +281,39 @@ impl<T: Numeric> PlanePartition<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
 
-        // `A` is `m×k`, `B` is `k×n`: the operand's role is where its contracted axis sits, and
-        // its fragments run along the accumulator's rows or columns accordingly, one deep along
-        // the contraction.
+        // The operand's role is which of the accumulator's axes it shares: `A` spans the rows,
+        // `B` the columns. Its fragments run along that axis, one deep along the contraction —
+        // counted in the window's own axis order, since that is how `at` addresses them.
         let contracted = comptime!(window.contraction(&out));
-        let (ident, t0, t1) = comptime!(if contracted == a1 {
-            (MatrixIdent::A, grid.0, 1)
+        let free = comptime!(if contracted == a1 {
+            a0
         } else {
             assert!(
                 contracted == a0,
                 "PlanePartition::store: the contracted axis must be one of the trailing two"
             );
-            (MatrixIdent::B, 1, grid.1)
+            a1
+        });
+        let out_rows = comptime!(out.axis_at(out.rank() - 2));
+        let (ident, tiles) = comptime!(if free == out_rows {
+            (MatrixIdent::A, grid.0)
+        } else {
+            assert!(
+                free == out.axis_at(out.rank() - 1),
+                "PlanePartition::store: the operand's free axis must be one of the output's \
+                 trailing two"
+            );
+            (MatrixIdent::B, grid.1)
+        });
+        let (t0, t1) = comptime!(if free == a0 { (tiles, 1) } else { (1, tiles) });
+        // The role's rows: `A` is `m×k` and `B` is `k×n`, so an operand whose window lists the
+        // axes in that order is row-major, and one listing them the other way — a weight
+        // stored `{n, k}`, read in lines along its contraction — is the same fragment loaded
+        // col-major off the same rows.
+        let layout = comptime!(if (ident == MatrixIdent::A) == (contracted == a1) {
+            MatrixLayout::RowMajor
+        } else {
+            MatrixLayout::ColMajor
         });
         let k = comptime!(window.extent(contracted));
 
@@ -299,7 +322,7 @@ impl<T: Numeric> PlanePartition<T> {
         for _i in 0..t0 {
             #[unroll]
             for _j in 0..t1 {
-                frags.push(PlaneTile::<T>::operand(form, ident, m, n, k));
+                frags.push(PlaneTile::<T>::operand(form, ident, m, n, k, layout));
             }
         }
         Tile::<T> {

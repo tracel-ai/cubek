@@ -3928,9 +3928,29 @@ fn cmma_matmul_staged_k_walk_vectorized() {
     check_cmma_matmul_k_walk(16, 1, 2, StageLayout::Tiled);
 }
 
+/// The staged cmma K walk with the rhs stored `{N, K}`: the stage keeps that order and the `B`
+/// fragment loads col-major off it, so a weight contiguous along the contraction is staged in
+/// its own lines. Double-buffered, so the ring's prefetch moves that order too.
+#[test]
+fn cmma_matmul_double_buffered_k_walk_transposed_rhs() {
+    check_cmma_matmul_k_walk_with(32, 2, 1, StageLayout::Tiled, true);
+}
+
 /// The one level always stages, whatever its depth: a cmma leaf cannot consume the global inputs
 /// directly, so the kernel first materializes them in shared memory.
 fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayout) {
+    check_cmma_matmul_k_walk_with(k, depth, v, layout, false)
+}
+
+/// [`check_cmma_matmul_k_walk`], the rhs stored `{K, N}` or — `transposed` — `{N, K}`, against
+/// the reference each storage order states over the same arange.
+fn check_cmma_matmul_k_walk_with(
+    k: usize,
+    depth: usize,
+    v: usize,
+    layout: StageLayout,
+    transposed: bool,
+) {
     let client = cubecl::test_device().client();
     if !require_cmma_8x8x8_f32(&client) {
         return;
@@ -3948,7 +3968,8 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+    let b_axes: &[Axis] = if transposed { &[N, K] } else { &[K, N] };
+    let b = TileInput::builder(&client, launcher.space().project(b_axes))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel zeroes the accumulator fragment.
@@ -3970,7 +3991,17 @@ fn check_cmma_matmul_k_walk(k: usize, depth: usize, v: usize, layout: StageLayou
         depth,
         f32::elem_type_native(),
     );
-    assert_matmul_arange(&client, c.handle(), m, n, k);
+    if transposed {
+        let output = HostData::from_tensor_handle(&client, c.handle(), HostDataType::F32);
+        let (_, expected) = TestInput::builder(client, shape![m, n])
+            .custom(folded_matmul_reference(m, n, k))
+            .generate_with_f32_host_data();
+        assert_equals_approx(&output, &expected, 1e-3)
+            .as_test_outcome()
+            .enforce()
+    } else {
+        assert_matmul_arange(&client, c.handle(), m, n, k);
+    }
 }
 
 /// The manual/raw-mma instruction: the raw-mma twin of `cmma_matmul_staged_k_walk`: the same
