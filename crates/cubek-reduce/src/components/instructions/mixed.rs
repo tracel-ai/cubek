@@ -3,8 +3,8 @@ use super::{
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
-    Accumulator, AccumulatorFormat, Item, OrderKey, ReduceOutputMode, SharedAccumulatorKind,
-    SlotCount, TopK,
+    Accumulator, AccumulatorExpand, AccumulatorFormat, Item, OrderKey, ReduceOutputMode,
+    SharedAccumulatorKind, SlotCount, TopK,
 };
 use crate::{
     ReduceDtypes,
@@ -245,26 +245,33 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
         match accumulator {
-            DynamicSharedAccumulator::Packed(packed) => Accumulator::<P> {
-                elements: Value::new_None(),
-                args: Value::new_None(),
-                packed: packed.get(index),
-            },
-            DynamicSharedAccumulator::Unpacked { elements, args } => Accumulator::<P> {
-                elements: elements.get(index),
-                args: args.get(index),
-                packed: Value::new_None(),
-            },
+            DynamicSharedAccumulator::Packed(packed) => Accumulator::new_Packed(packed.get(index)),
+            DynamicSharedAccumulator::Unpacked { elements, args } => {
+                Accumulator::new_Unpacked(elements.get(index), args.get(index))
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         match accumulator {
-            DynamicSharedAccumulator::Packed(packed) => packed.set(index, item.packed),
-            DynamicSharedAccumulator::Unpacked { elements, args } => {
-                elements.set(index, item.elements);
-                args.set(index, item.args);
-            }
+            DynamicSharedAccumulator::Packed(packed) => match item {
+                Accumulator::Packed(keys) => packed.set(index, keys),
+                Accumulator::Unpacked { .. } => {
+                    panic!("a packed slot takes a packed accumulator")
+                }
+            },
+            DynamicSharedAccumulator::Unpacked {
+                elements: shared_elements,
+                args: shared_args,
+            } => match item {
+                Accumulator::Unpacked { elements, args } => {
+                    shared_elements.set(index, elements);
+                    shared_args.set(index, args);
+                }
+                Accumulator::Packed(_) => {
+                    panic!("an unpacked slot takes an unpacked accumulator")
+                }
+            },
         }
     }
 }

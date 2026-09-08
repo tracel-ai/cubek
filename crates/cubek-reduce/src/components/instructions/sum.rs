@@ -36,11 +36,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
-            args: Value::new_None(),
-            packed: Value::new_None(),
-        }
+        Accumulator::new_Unpacked(
+            Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
+            Value::new_None(),
+        )
     }
 
     fn reduce(
@@ -49,27 +48,29 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let accumulator_item = accumulator.elements.item();
+        let accumulator_item = accumulator.elements().item();
         let item = item.elements;
         let elements = match reduce_step {
             ReduceStep::Plane => accumulator_item + plane_sum(Vector::cast_from(item)),
             ReduceStep::Identity => accumulator_item + Vector::cast_from(item),
         };
 
-        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator
+            .elements_mut()
+            .assign(&Value::new_single(elements));
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
-        let sum = plane_sum(Vector::cast_from(accumulator.elements.item()));
-        accumulator.elements.assign(&Value::new_single(sum));
+        let sum = plane_sum(Vector::cast_from(accumulator.elements().item()));
+        accumulator.elements_mut().assign(&Value::new_single(sum));
     }
 
     fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let accumulator_item = accumulator.elements.item();
-        let other_item = other.elements.item();
+        let accumulator_item = accumulator.elements().item();
+        let other_item = other.elements().item();
 
         accumulator
-            .elements
+            .elements_mut()
             .assign(&Value::new_single(accumulator_item + other_item));
     }
 
@@ -82,7 +83,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        let sum = Vector::vector_sum(accumulator.elements.item());
+        let sum = Vector::vector_sum(accumulator.elements().item());
 
         (Value::new_single(Out::cast_from(sum)), Value::new_None())
     }
@@ -93,7 +94,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Sum {
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         (
-            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_single(Vector::cast_from(accumulator.elements().item())),
             Value::new_None(),
         )
     }

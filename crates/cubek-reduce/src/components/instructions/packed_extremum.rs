@@ -38,19 +38,15 @@ impl PackedExtremum {
     }
 
     pub fn null_accumulator<P: ReducePrecision>(&self, identity: P::EA) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_None(),
-            args: Value::new_None(),
-            packed: Value::new_single(empty_order_key::<P::EA, P::SI>(
-                Vector::new(identity),
-                self.order,
-            )),
-        }
+        Accumulator::new_Packed(Value::new_single(empty_order_key::<P::EA, P::SI>(
+            Vector::new(identity),
+            self.order,
+        )))
     }
 
     pub fn reduce<P: ReducePrecision>(
         &self,
-        accumulator: &mut Accumulator<P>,
+        keys: &mut Value<Vector<OrderKey, P::SI>>,
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
@@ -65,28 +61,30 @@ impl PackedExtremum {
             ReduceStep::Identity => key,
         };
 
-        key_insert::<P::SI>(&mut accumulator.packed, candidate);
+        key_insert::<P::SI>(keys, candidate);
     }
 
-    pub fn plane_reduce_inplace<P: ReducePrecision>(&self, accumulator: &mut Accumulator<P>) {
-        let winning = plane_max(accumulator.packed.item());
-        accumulator.packed.assign(&Value::new_single(winning));
+    pub fn plane_reduce_inplace<P: ReducePrecision>(
+        &self,
+        keys: &mut Value<Vector<OrderKey, P::SI>>,
+    ) {
+        let winning = plane_max(keys.item());
+        keys.assign(&Value::new_single(winning));
     }
 
     pub fn fuse_accumulators<P: ReducePrecision>(
         &self,
-        accumulator: &mut Accumulator<P>,
-        other: &Accumulator<P>,
+        keys: &mut Value<Vector<OrderKey, P::SI>>,
+        other: Vector<OrderKey, P::SI>,
     ) {
-        key_insert::<P::SI>(&mut accumulator.packed, other.packed.item());
+        key_insert::<P::SI>(keys, other);
     }
 
     pub fn to_output_parallel<P: ReducePrecision, Out: Numeric, Idx: Numeric>(
         &self,
-        accumulator: Accumulator<P>,
+        keys: Vector<OrderKey, P::SI>,
     ) -> (Value<Out>, Value<Idx>) {
-        let key =
-            Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(accumulator.packed.item()));
+        let key = Vector::<OrderKey, Const<1>>::new(finalize_key::<P::SI>(keys));
 
         (
             Value::new_single(Out::cast_from(
@@ -100,10 +98,8 @@ impl PackedExtremum {
 
     pub fn to_output_perpendicular<P: ReducePrecision, Out: Numeric, Idx: Numeric>(
         &self,
-        accumulator: Accumulator<P>,
+        key: Vector<OrderKey, P::SI>,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let key = accumulator.packed.item();
-
         (
             Value::new_single(Vector::cast_from(order_key_value::<P::EA, P::SI>(
                 key, self.order,

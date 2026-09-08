@@ -40,11 +40,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
-            args: Value::new_None(),
-            packed: Value::new_None(),
-        }
+        Accumulator::new_Unpacked(
+            Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
+            Value::new_None(),
+        )
     }
 
     fn reduce(
@@ -53,7 +52,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let accumulator_item = accumulator.elements.item();
+        let accumulator_item = accumulator.elements().item();
         let elements = match reduce_step {
             ReduceStep::Plane => {
                 let candidate_item =
@@ -66,22 +65,26 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
             }
         };
 
-        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator
+            .elements_mut()
+            .assign(&Value::new_single(elements));
     }
 
     fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let accumulator_item = accumulator.elements.item();
-        let other_item = other.elements.item();
+        let accumulator_item = accumulator.elements().item();
+        let other_item = other.elements().item();
 
         let selected = select_max(accumulator_item, other_item);
-        accumulator.elements.assign(&Value::new_single(selected));
+        accumulator
+            .elements_mut()
+            .assign(&Value::new_single(selected));
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
-        let acc_item = accumulator.elements.item();
+        let acc_item = accumulator.elements().item();
         let candidate_item = Vector::cast_from(plane_max_propagating_nan(Vector::abs(acc_item)));
         let max = select_max(acc_item, candidate_item);
-        accumulator.elements.assign(&Value::new_single(max));
+        accumulator.elements_mut().assign(&Value::new_single(max));
     }
 
     fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
@@ -94,7 +97,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
         let mut max = P::EA::from_int(0);
-        let accumulator = accumulator.elements.item();
+        let accumulator = accumulator.elements().item();
         #[unroll]
         for k in 0..accumulator.vector_size() {
             let candidate = accumulator.extract(k);
@@ -113,7 +116,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         (
-            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_single(Vector::cast_from(accumulator.elements().item())),
             Value::new_None(),
         )
     }

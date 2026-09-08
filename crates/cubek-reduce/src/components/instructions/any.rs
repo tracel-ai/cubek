@@ -45,11 +45,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
     }
 
     fn null_accumulator(_this: &Self) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
-            args: Value::new_None(),
-            packed: Value::new_None(),
-        }
+        Accumulator::new_Unpacked(
+            Value::new_single(Vector::empty().fill(P::EA::from_int(0))),
+            Value::new_None(),
+        )
     }
 
     fn reduce(
@@ -58,7 +57,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let accumulator_item = accumulator.elements.item();
+        let accumulator_item = accumulator.elements().item();
         let flag = normalize_to_flag::<P::EI, P::SI>(item.elements);
         let elements = match reduce_step {
             ReduceStep::Plane => {
@@ -75,30 +74,34 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
             }
         };
 
-        accumulator.elements.assign(&Value::new_single(elements));
+        accumulator
+            .elements_mut()
+            .assign(&Value::new_single(elements));
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
         // The accumulator already holds 0/1 flags, so max-of-flags is OR.
-        let acc_item = accumulator.elements.item();
+        let acc_item = accumulator.elements().item();
         let candidate_item = Vector::cast_from(plane_max(acc_item));
         let any = select_many(
             acc_item.greater_than(&candidate_item),
             acc_item,
             candidate_item,
         );
-        accumulator.elements.assign(&Value::new_single(any));
+        accumulator.elements_mut().assign(&Value::new_single(any));
     }
 
     fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        let accumulator_item = accumulator.elements.item();
-        let other_item = other.elements.item();
+        let accumulator_item = accumulator.elements().item();
+        let other_item = other.elements().item();
 
-        accumulator.elements.assign(&Value::new_single(select_many(
-            accumulator_item.greater_than(&other_item),
-            accumulator_item,
-            other_item,
-        )));
+        accumulator
+            .elements_mut()
+            .assign(&Value::new_single(select_many(
+                accumulator_item.greater_than(&other_item),
+                accumulator_item,
+                other_item,
+            )));
     }
 
     fn output_mode(_this: &Self) -> comptime_type!(ReduceOutputMode) {
@@ -112,7 +115,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
     ) -> (Value<Out>, Value<Idx>) {
         // Fold the vectorized flags from the OR identity (0).
         let mut any = P::EA::from_int(0);
-        let accumulator = accumulator.elements.item();
+        let accumulator = accumulator.elements().item();
         #[unroll]
         for k in 0..accumulator.vector_size() {
             let candidate = accumulator.extract(k);
@@ -127,7 +130,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Any {
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
         (
-            Value::new_single(Vector::cast_from(accumulator.elements.item())),
+            Value::new_single(Vector::cast_from(accumulator.elements().item())),
             Value::new_None(),
         )
     }

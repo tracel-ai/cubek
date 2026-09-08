@@ -293,12 +293,40 @@ pub struct Item<P: ReducePrecision> {
 }
 
 #[derive(CubeType)]
-pub struct Accumulator<P: ReducePrecision> {
-    pub elements: Value<Vector<P::EA, P::SI>>,
-    pub args: Value<Vector<u32, P::SI>>,
-    /// The packed keys, which replace `elements` and `args` rather than
-    /// joining them: exactly one of the two spellings is ever populated.
-    pub packed: Value<Vector<OrderKey, P::SI>>,
+pub enum Accumulator<P: ReducePrecision> {
+    /// Values, beside their coordinates when the instruction tracks them.
+    Unpacked {
+        elements: Value<Vector<P::EA, P::SI>>,
+        args: Value<Vector<u32, P::SI>>,
+    },
+    /// Each value packed with its coordinate into one key.
+    Packed(Value<Vector<OrderKey, P::SI>>),
+}
+
+#[cube]
+impl<P: ReducePrecision> Accumulator<P> {
+    /// The values of an accumulator that keeps them apart from their
+    /// coordinates, for the instructions that never pack.
+    pub fn elements(&self) -> &Value<Vector<P::EA, P::SI>> {
+        match self {
+            Accumulator::Unpacked { elements, .. } => elements,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate values"),
+        }
+    }
+
+    pub fn elements_mut(&mut self) -> &mut Value<Vector<P::EA, P::SI>> {
+        match self {
+            Accumulator::Unpacked { elements, .. } => elements,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate values"),
+        }
+    }
+
+    pub fn args(&self) -> &Value<Vector<u32, P::SI>> {
+        match self {
+            Accumulator::Unpacked { args, .. } => args,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate coordinates"),
+        }
+    }
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
@@ -322,15 +350,11 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_single(accumulator[index]),
-            args: Value::new_None(),
-            packed: Value::new_None(),
-        }
+        Accumulator::new_Unpacked(Value::new_single(accumulator[index]), Value::new_None())
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator[index] = item.elements.item();
+        accumulator[index] = item.elements().item();
     }
 }
 
@@ -381,28 +405,33 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for Ar
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
         match accumulator {
-            ArgAccumulator::Packed(packed) => Accumulator::<P> {
-                elements: Value::new_None(),
-                args: Value::new_None(),
-                packed: Value::new_single(packed[index]),
-            },
-            ArgAccumulator::Unpacked { elements, args } => Accumulator::<P> {
-                elements: Value::new_single(elements[index]),
-                args: args.get(index),
-                packed: Value::new_None(),
-            },
+            ArgAccumulator::Packed(packed) => {
+                Accumulator::new_Packed(Value::new_single(packed[index]))
+            }
+            ArgAccumulator::Unpacked { elements, args } => {
+                Accumulator::new_Unpacked(Value::new_single(elements[index]), args.get(index))
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
         match accumulator {
-            ArgAccumulator::Packed(packed) => {
-                packed[index] = item.packed.item();
-            }
-            ArgAccumulator::Unpacked { elements, args } => {
-                elements[index] = item.elements.item();
-                args.set(index, item.args);
-            }
+            ArgAccumulator::Packed(packed) => match item {
+                Accumulator::Packed(keys) => packed[index] = keys.item(),
+                Accumulator::Unpacked { .. } => panic!("a packed slot takes a packed accumulator"),
+            },
+            ArgAccumulator::Unpacked {
+                elements: shared_elements,
+                args: shared_args,
+            } => match item {
+                Accumulator::Unpacked { elements, args } => {
+                    shared_elements[index] = elements.item();
+                    shared_args.set(index, args);
+                }
+                Accumulator::Packed(_) => {
+                    panic!("an unpacked slot takes an unpacked accumulator")
+                }
+            },
         }
     }
 }
