@@ -5,11 +5,11 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
     zspace::Tiling,
 };
+use cubek_tile::Blocks;
 use cubek_tile::{
     Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
     Partitioning, PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec,
 };
-use cubek_tile::Blocks;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);

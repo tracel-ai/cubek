@@ -10,8 +10,8 @@ use cubecl::quant::scheme::{QuantScheme, QuantValue};
 use cubecl::std::tensor::layout::linear::linear_view;
 
 use crate::{
-    Axis, Blocks, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis,
-    Projection, QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Blocks, Boundary, ConcreteLayout, DequantAt, Geometry, Packing, PhysicalAxis, Projection,
+    QuantTileArgLaunch, Space, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.

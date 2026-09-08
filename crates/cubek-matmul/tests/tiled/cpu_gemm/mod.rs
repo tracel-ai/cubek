@@ -856,10 +856,7 @@ fn cpu_gemm_rejects_input_register_type() {
         ir::{ElemType, FloatKind},
         prelude::*,
     };
-    use cubek_matmul::{
-        definition::MatmulSetupError,
-        tiled::cpu_gemm::launch_ref,
-    };
+    use cubek_matmul::{definition::MatmulSetupError, tiled::cpu_gemm::launch_ref};
     use cubek_std::InputBinding;
     use cubek_test_utils::TestInput;
 
@@ -907,10 +904,7 @@ fn cpu_gemm_rejects_input_register_type() {
 #[test]
 fn accumulator_holds_steps_the_output_element_cannot() {
     use cubecl::prelude::*;
-    use cubek_matmul::{
-        definition::MatmulGlobalElems as Globals,
-        tiled::cpu_gemm::launch_ref,
-    };
+    use cubek_matmul::{definition::MatmulGlobalElems as Globals, tiled::cpu_gemm::launch_ref};
     use cubek_std::InputBinding;
     use cubek_test_utils::{HostData, HostDataType, HostDataVec, TestInput};
 
