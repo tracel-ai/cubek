@@ -3,6 +3,7 @@
 use cubecl::{
     prelude::*,
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
+    zspace::Tiling,
 };
 use cubek_tile::{
     Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
@@ -99,6 +100,7 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
         handle: client.empty(len * size_of::<f32>()).binding(),
         strides: strides.into(),
         shape: shape.to_vec().into(),
+        tiling: Tiling::UNTILED,
     }
 }
 
