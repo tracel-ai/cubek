@@ -43,30 +43,23 @@ fn paged_sum_kernel<E: Numeric>(
     #[comptime] seq: Level,
     #[comptime] logical: Level,
     #[comptime] physical: Level,
-    #[comptime] route: bool,
     #[define(E)] _dtype: ElemType,
 ) {
     let kv = kv.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for sequence in space.level(comptime!(seq.clone())) {
+    for sequence in space.over(&seq) {
         let b = sequence.coord(B);
 
         let mut total = out.at(&sequence);
         total.init(Monoid::identity::<E>(comptime!(Monoid::Sum)));
 
-        for lp in sequence.level(comptime!(logical.clone())) {
+        for lp in sequence.over(&logical) {
             let phys = table[b * PAGES_PER_SEQ + lp.coord(LP)] as usize;
 
             // The same call MoE makes: the axis keeps the pool's four pages, the walk visits the
-            // one the table named. `route` off walks the pool instead, which is the control.
-            let pages = lp.level(comptime!(physical.clone()));
-            let pages = match comptime!(route) {
-                true => pages.routed(PAGE, phys),
-                false => pages,
-            };
-
-            for page in pages {
+            // one the table named.
+            for page in lp.over(&physical).routed(PAGE, phys) {
                 let mut cell = out.at(&page);
                 cell.reduce_axis_accumulate(&kv.at(&page), comptime!(Monoid::Sum));
             }
@@ -84,7 +77,7 @@ fn kv_values() -> Vec<f32> {
         .collect()
 }
 
-fn run(route: bool) -> HostData {
+fn run(table: &[u32]) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
@@ -114,7 +107,7 @@ fn run(route: bool) -> HostData {
         .generate_with_f32_host_data();
     let table_handle = TestInput::builder(client.clone(), Shape::new([TABLE.len()]))
         .dtype(u32_ty)
-        .custom(TABLE.iter().map(|&p| p as f32).collect())
+        .custom(table.iter().map(|&p| p as f32).collect())
         .generate_without_host_data();
     let out_handle = TestInput::builder(client.clone(), Shape::new([SEQS, FEATURES]))
         .dtype(f32_ty)
@@ -145,7 +138,6 @@ fn run(route: bool) -> HostData {
         launcher.level(0),
         launcher.level(1),
         launcher.level(2),
-        route,
         f32_ty,
     );
 
@@ -153,7 +145,7 @@ fn run(route: bool) -> HostData {
 }
 
 /// The reference: each sequence over the slots of the pages its table names.
-fn expected() -> Vec<Vec<f32>> {
+fn expected(table: &[u32]) -> Vec<Vec<f32>> {
     let values = kv_values();
     (0..SEQS)
         .map(|b| {
@@ -161,7 +153,7 @@ fn expected() -> Vec<Vec<f32>> {
                 .map(|d| {
                     (0..PAGES_PER_SEQ)
                         .flat_map(|lp| {
-                            let page = TABLE[b * PAGES_PER_SEQ + lp] as usize;
+                            let page = table[b * PAGES_PER_SEQ + lp] as usize;
                             (0..PAGE_SIZE).map(move |o| (page * PAGE_SIZE + o) * FEATURES + d)
                         })
                         .map(|i| values[i])
@@ -172,33 +164,22 @@ fn expected() -> Vec<Vec<f32>> {
         .collect()
 }
 
+/// Two page tables over the same pool: the answer follows the table, which it could not if the
+/// route did nothing, since the walk would fold the whole pool under both.
 #[test]
 fn a_routed_page_axis_folds_each_sequence_over_the_pages_it_holds() {
-    let got = run(true);
-    let want = expected();
-    for (b, row) in want.iter().enumerate() {
-        for (d, cell) in row.iter().enumerate() {
-            assert_eq!(
-                got.get_f32(&[b, d]),
-                *cell,
-                "sequence {b} feature {d}: pages {:?}",
-                &TABLE[b * PAGES_PER_SEQ..(b + 1) * PAGES_PER_SEQ]
-            );
+    for table in [TABLE, [0, 1, 1, 0]] {
+        let got = run(&table);
+        let want = expected(&table);
+        for (b, row) in want.iter().enumerate() {
+            for (d, cell) in row.iter().enumerate() {
+                assert_eq!(
+                    got.get_f32(&[b, d]),
+                    *cell,
+                    "sequence {b} feature {d}: pages {:?}",
+                    &table[b * PAGES_PER_SEQ..(b + 1) * PAGES_PER_SEQ]
+                );
+            }
         }
     }
-}
-
-/// Without the route the walk folds the whole pool for every logical page, so the table decides
-/// nothing. The mechanism is what the test above measures, not the arithmetic around it.
-#[test]
-fn without_the_route_the_walk_folds_the_whole_pool() {
-    let got = run(false);
-    let want = expected();
-    let differs = (0..SEQS)
-        .flat_map(|b| (0..FEATURES).map(move |d| (b, d)))
-        .any(|(b, d)| got.get_f32(&[b, d]) != want[b][d]);
-    assert!(
-        differs,
-        "dropping the route changed nothing, so the table is not what picks the physical page"
-    );
 }

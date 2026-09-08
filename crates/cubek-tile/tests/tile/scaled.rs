@@ -56,7 +56,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -97,7 +97,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -106,7 +106,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
             Semiring::SUM_PROD,
         );
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }
@@ -133,7 +133,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     scales.push(global.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),
@@ -1182,7 +1182,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         Monoid::Sum,
     );
     acc.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
         acc_r.mma_scaled(
             &a.at(&region),
@@ -1191,7 +1191,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
             Semiring::SUM_PROD,
         );
     }
-    for r0 in c.level(comptime!(level.clone())).unrolled() {
+    for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
         c_w.copy_cast_from(&acc.at(&r0));
     }
@@ -1326,7 +1326,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     scales.push(scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_r = c.at(&region);
         c_r.mma_scaled_with(
             &a.at(&region),

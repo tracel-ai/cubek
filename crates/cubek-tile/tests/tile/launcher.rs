@@ -5,11 +5,11 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
     zspace::Tiling,
 };
+use cubek_tile::Blocks;
 use cubek_tile::{
     Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
     Partitioning, PhysicalAxisMap, Projection, Scale, Space, StorageTiling, TileSpec,
 };
-use cubek_tile::Blocks;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -252,10 +252,10 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
             Partitioning::new(space, levels),
             KernelForm::Dynamic,
         )
-            .arg(binding(&client, &[4, 2, 16, 4]))
-            .subspace(&[M, K])
-            .tiling(StorageTiling::uniform(2, 1))
-            .build()
+        .arg(binding(&client, &[4, 2, 16, 4]))
+        .subspace(&[M, K])
+        .tiling(StorageTiling::uniform(2, 1))
+        .build()
     };
     assert_eq!(holds.spec.blocks, Blocks::Hold);
 
@@ -267,10 +267,10 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
             Partitioning::new(space, levels),
             KernelForm::Dynamic,
         )
-            .arg(binding(&client, &[4, 3, 16, 6]))
-            .subspace(&[M, K])
-            .tiling(StorageTiling::uniform(2, 1))
-            .build()
+        .arg(binding(&client, &[4, 3, 16, 6]))
+        .subspace(&[M, K])
+        .tiling(StorageTiling::uniform(2, 1))
+        .build()
     };
     assert_eq!(splits.spec.blocks, Blocks::Split);
 
@@ -282,9 +282,9 @@ fn arg_settles_whether_a_storage_block_holds_a_whole_leaf_tile() {
             Partitioning::new(space, levels),
             KernelForm::Dynamic,
         )
-            .arg(binding(&client, &[64, 18]))
-            .subspace(&[M, K])
-            .build()
+        .arg(binding(&client, &[64, 18]))
+        .subspace(&[M, K])
+        .build()
     };
     assert_eq!(plain.spec.blocks, Blocks::Hold);
 }

@@ -45,7 +45,7 @@ fn copy_run<E: Numeric>(
 ) {
     let src = src.tile(comptime!(space.clone()));
     let dst = dst.tile(comptime!(space.clone()));
-    let walk = dst.level(comptime!(level.clone()));
+    let walk = dst.over(&level);
     let total = walk.total();
     let pos = CUBE_POS_X as usize;
 
@@ -71,7 +71,7 @@ fn copy_one_run<E: Numeric>(
 ) {
     let src = src.tile(comptime!(space.clone()));
     let dst = dst.tile(comptime!(space.clone()));
-    let walk = dst.level(comptime!(level.clone()));
+    let walk = dst.over(&level);
 
     // Stated at launch but taken as runtime values: a window whose bounds fold to constants
     // would prove the decode only for the case the compiler could have unrolled.
@@ -279,11 +279,11 @@ fn stream_matmul<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        for cell in region.level(comptime!(inner.clone())).window(from, steps) {
+        for cell in region.over(&inner).window(from, steps) {
             let mut acc_cell = acc.at(&cell);
             acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
         }
-        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+        for r0 in c_region.over(&inner).unrolled() {
             let mut c_region_w = c_region.at(&r0);
             c_region_w.copy_cast_from(&acc.at(&r0));
         }
@@ -327,7 +327,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        let cells = region.level(comptime!(inner.clone())).window(from, steps);
+        let cells = region.over(&inner).window(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         pipelined(cells, &mut ring, |slot, cell| {
             let mut acc_cell = acc.at(cell);
@@ -336,7 +336,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
                 acc_cell.mma(&a_cell, b_s, Semiring::SUM_PROD);
             });
         });
-        for r0 in c_region.level(comptime!(inner.clone())).unrolled() {
+        for r0 in c_region.over(&inner).unrolled() {
             let mut c_region_w = c_region.at(&r0);
             c_region_w.copy_cast_from(&acc.at(&r0));
         }

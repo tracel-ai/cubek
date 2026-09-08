@@ -74,7 +74,7 @@ fn split_k_matmul_one_level<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_cube = c.at(&region);
         c_cube.mma_with(
             &a.at(&region),
@@ -100,11 +100,11 @@ fn split_k_matmul_two_levels<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(outer.clone())) {
+    for region in space.over(&outer) {
         let c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
-        for region in region.level(comptime!(inner.clone())) {
+        for region in region.over(&inner) {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
                 &a_cube.at(&region),

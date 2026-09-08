@@ -93,10 +93,7 @@ fn attention_fold_kernel<W: Size>(
     };
 
     // The fold: one S block per region.
-    for region in k
-        .level(comptime!(blocks.clone()))
-        .window(0, probe.blocks(block))
-    {
+    for region in k.over(&blocks).window(0, probe.blocks(block)) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -853,15 +850,15 @@ fn attention_fold_split_kernel<W: Size>(
     // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
     let team_scores = comptime!(Level::walk(&[(R, rows), (C, block)]));
-    let tw = score_all.level(team_scores);
+    let tw = score_all.over(&team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
     let team_rows = comptime!(Level::walk(&[(T, 1), (R, rows)]));
-    let rw = factors_all.level(team_rows);
+    let rw = factors_all.over(&team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
     let team_acc = comptime!(Level::walk(&[(R, rows), (V, val_dim)]));
-    let aw = acc_all.level(team_acc);
+    let aw = acc_all.over(&team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 
     let kept = comptime!(Space::new(&[(R, rows)]));
@@ -883,7 +880,7 @@ fn attention_fold_split_kernel<W: Size>(
         causal,
         materialized: false,
     };
-    let k_walk = k.level(comptime!(blocks.clone()));
+    let k_walk = k.over(&blocks);
     // The same bound the plain fold walks to, so a causal split runs the rounds its rows can
     // read rather than every round the axis holds.
     let blocks = probe.blocks(block);
@@ -1180,7 +1177,7 @@ fn attention_stream_test_kernel<W: Size>(
     // This team's contiguous slice of the walk: no barriers anywhere.
     let t = UNIT_POS_Y as usize;
     let bound_s = bound as usize;
-    let k_walk = k.level(comptime!(blocks.clone()));
+    let k_walk = k.over(&blocks);
     let blocks = bound_s.div_ceil(block);
     let per_team = blocks.div_ceil(splits);
     let start_b = t * per_team;
@@ -1348,10 +1345,7 @@ fn visited_blocks_kernel(
         materialized: false,
     };
     let mut visited = 0u32;
-    for _region in k
-        .level(comptime!(blocks.clone()))
-        .window(0, probe.blocks(block))
-    {
+    for _region in k.over(&blocks).window(0, probe.blocks(block)) {
         visited += 1;
     }
     out[0] = f32::cast_from(visited);

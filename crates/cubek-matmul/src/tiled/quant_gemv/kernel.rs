@@ -140,29 +140,29 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     }
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
-    for cube in out.cubes(comptime!(bp.cubes())) {
+    for cube in out.over(&bp.cubes()) {
         let out_cube = out.at(&cube);
-        for plane in cube.planes(comptime!(bp.planes())) {
+        for plane in cube.over(&bp.planes()) {
             let out_plane = out_cube.at(&plane);
-            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+            for lane in plane.over(&bp.lanes(&problem)) {
                 let mut out_lane = out_plane.at(&lane);
                 out_lane.zero();
             }
         }
     }
 
-    for cube in space.cubes(comptime!(bp.cubes())) {
+    for cube in space.over(&bp.cubes()) {
         let out_cube = out.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);
         let scales_cube = at_all(&scale_tiles, &cube);
-        for plane in cube.planes(comptime!(bp.planes())) {
+        for plane in cube.over(&bp.planes()) {
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
             let scales_plane = at_all(&scales_cube, &plane);
             // The lane's share of the blocks, one stored word a step.
-            for lane in plane.lanes(comptime!(bp.lanes(&problem))) {
+            for lane in plane.over(&bp.lanes(&problem)) {
                 let mut out_lane = out_plane.at(&lane);
                 let scales_lane = at_all(&scales_plane, &lane);
                 out_lane.mma_scaled_with(

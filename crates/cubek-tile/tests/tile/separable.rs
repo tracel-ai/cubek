@@ -85,7 +85,7 @@ fn separable_kernel<E: Float>(
     };
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -115,7 +115,7 @@ fn separable_kernel_staged<E: Float>(
     );
 
     let output = output.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -337,7 +337,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     );
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -615,7 +615,7 @@ fn resample_kernel<E: Float>(
     };
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -724,7 +724,7 @@ fn procedural_mask_kernel<E: Float>(
     let mut output = output.tile(comptime!(space.clone()));
     output.zero();
 
-    for region in rhs.level(comptime!(level.clone())) {
+    for region in rhs.over(&level) {
         let rhs = rhs.at(&region);
         let child = comptime!(level.clone().child(&space.clone()));
         let mut factors = Sequence::new();
@@ -795,7 +795,7 @@ fn resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -824,7 +824,7 @@ fn resample_kernel_masked_staged<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(space.clone()));
-    let walk = space.level(comptime!(level.clone()));
+    let walk = space.over(&level);
     let mut ring = Ring::smem_single(&walk, &input, StageStorage::Strided, 1usize);
     pipelined(walk, &mut ring, |slot, region| {
         let mut out = output.at(region);
@@ -1015,7 +1015,7 @@ fn column_spanning_resample_kernel<E: Float>(
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1110,7 +1110,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),
@@ -1223,7 +1223,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     );
 
     let output = output.tile(comptime!(space.clone()));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut out = output.at(&region);
         out.mm_with(
             &weights.at(&region),

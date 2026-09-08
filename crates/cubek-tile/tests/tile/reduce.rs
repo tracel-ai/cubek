@@ -40,7 +40,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut c_region = c.at(&region);
         c_region.mma_with(
             &a.at(&region),
@@ -72,7 +72,7 @@ fn reduce_body<E: Numeric>(
     #[comptime] monoid: Monoid,
 ) {
     output.init(Monoid::identity::<E>(monoid));
-    let walk = space.level(level);
+    let walk = space.over(&level);
     match comptime!(read) {
         Read::InPlace => {
             for region in walk {
@@ -1328,11 +1328,11 @@ fn resident_fold_kernel<E: Numeric>(
         monoid,
     );
     acc.init(Monoid::identity::<E>(monoid));
-    for region in space.level(comptime!(level.clone())) {
+    for region in space.over(&level) {
         let mut acc_region = acc.at(&region);
         acc_region.reduce_axis_accumulate(&input.at(&region), monoid);
     }
-    for r0 in out.level(comptime!(level.clone())).unrolled() {
+    for r0 in out.over(&level).unrolled() {
         let mut out_w = out.at(&r0);
         out_w.copy_cast_from(&acc.at(&r0));
     }
