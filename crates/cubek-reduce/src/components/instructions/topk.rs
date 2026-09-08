@@ -178,7 +178,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
 
                 match reduce_step {
                     ReduceStep::Plane => plane_topk_key_insert::<P::EA, P::SI>(keys, key, this.k),
-                    ReduceStep::Identity => ranked_key_insert::<P::SI>(keys, key, this.k),
+                    ReduceStep::Identity => ranked_key_insert::<P::SI>(keys, key, this.k, false),
                 }
             }
             Accumulator::Unpacked { elements, args } => {
@@ -226,7 +226,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
                 let other_keys = other_packed.multiple();
 
                 for i in 0..this.k {
-                    ranked_key_insert::<P::SI>(keys, other_keys[i], this.k);
+                    ranked_key_insert::<P::SI>(keys, other_keys[i], this.k, false);
                 }
             }
             (
@@ -633,7 +633,12 @@ pub fn plane_topk_key_insert<N: Numeric, S: Size>(
     #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
     for _i in 0..k {
         let winning = plane_max(local_best);
-        ranked_key_insert::<S>(keys, winning, k);
+        ranked_key_insert::<S>(
+            keys,
+            winning,
+            k,
+            comptime!(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET),
+        );
 
         let is_winner = local_best.equal(&winning);
         local_best = select_many(

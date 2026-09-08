@@ -105,16 +105,19 @@ pub(crate) fn key_insert<S: Size>(
 /// Insert a candidate into `keys`, held in ranked order, dropping the last.
 ///
 /// The ordering and the tie-break ride one comparison, and one selected pair
-/// swaps both halves of a slot.
+/// swaps both halves of a slot. Only a caller that is itself unrolled `k` times
+/// asks for `unrolled`, since the budget it is priced against is the `k * k` of
+/// that nest rather than this loop's `k`.
 #[cube]
 pub(crate) fn ranked_key_insert<S: Size>(
     keys: &mut Array<Vector<OrderKey, S>>,
     insert_key: Vector<OrderKey, S>,
     #[comptime] k: usize,
+    #[comptime] unrolled: bool,
 ) {
     let mut insert_key = insert_key;
 
-    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    #[unroll(unrolled)]
     for j in 0..k {
         let to_keep = keys[j].greater_than(&insert_key);
         let next_key = select_many(to_keep, insert_key, keys[j]);
