@@ -36,16 +36,6 @@ impl CmmaBlueprint {
         Partitioning::new(space.clone(), cmma_levels(self, batch))
     }
 
-    /// The tile every operand is cut to at the bottom: the instruction's.
-    pub fn leaf(&self, space: &Space, batch: &[Axis]) -> Vec<(Axis, usize)> {
-        self.partitioning(space, batch).leaf().extents()
-    }
-
-    /// The axes some tile reaches past the end of.
-    pub fn overhangs(&self, space: &Space, batch: &[Axis]) -> Vec<Axis> {
-        self.partitioning(space, batch).overhanging()
-    }
-
     /// The grid this launch runs on: a cube per stage of the output and per batch, the
     /// blueprint's planes in each.
     pub fn grid(&self, space: &Space, batch: &[Axis], plane_size: u32) -> (CubeCount, CubeDim) {

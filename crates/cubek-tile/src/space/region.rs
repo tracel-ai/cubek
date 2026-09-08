@@ -17,6 +17,10 @@ pub struct Step {
     pub(crate) space: Space,
     #[cube(comptime)]
     pub(crate) level: Level,
+    /// Where `level` sits in the nest, outermost `0`: what a storage block's level is matched
+    /// against on the way down ([`Blocks`](crate::Blocks)).
+    #[cube(comptime)]
+    pub(crate) depth: usize,
 }
 
 #[cube]
@@ -25,11 +29,13 @@ impl Step {
         coords: Coords<u32>,
         #[comptime] space: Space,
         #[comptime] level: Level,
+        #[comptime] depth: usize,
     ) -> Step {
         Step {
             coords,
             space,
             level,
+            depth,
         }
     }
 
@@ -141,6 +147,7 @@ impl Region {
             self.digits.index(i).clone(),
             comptime!(self.space_at(i)),
             comptime!(self.levels[i].clone()),
+            comptime!(self.base + i),
         )
     }
 

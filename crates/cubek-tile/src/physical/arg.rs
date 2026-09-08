@@ -14,24 +14,28 @@ use cubecl::zspace::SmallVec;
 
 use crate::*;
 
-/// Whether a storage block holds a whole window, or a window crosses several.
+/// What a storage block is to the window an operand is read through.
 ///
-/// A fragment load addresses its window as a base plus a row stride
-/// ([`window_slice`](crate::MemData::window_slice)), which only describes a region lying inside
-/// one storage block. Untiled storage is one block over the whole buffer, so every window
-/// [`Hold`](Blocks::Hold)s; a storage-tiled buffer does only when its innermost fragment holds a
-/// whole number of leaf tiles along every axis.
-///
-/// Settled by the launch, which is the one place the buffer's real extents and the leaf's edges
-/// are both known, and read in the kernel as the comptime fact it is. `Split` is not an error:
-/// the layout walk addresses those cells correctly, one at a time. It is only the fragment loads
-/// that cannot, and they say so rather than reading a block boundary as if it were not there.
+/// A storage-tiled tensor's block corresponds to a tile of the kernel's space, a level of its
+/// nest, the way a scale block is an axis of a scaled matmul: the space owns the block size, so
+/// a window that descended through that level lies inside one block by construction rather than
+/// by a divisibility check. Settled by the launch, the one place the buffer's real extents and
+/// the kernel's levels are both in hand, which refuses a tensor whose block is no level's tile.
+/// Read in the kernel as the comptime fact it is; [`at`](crate::Tile::at) turns
+/// [`Above`](Blocks::Above) into [`Held`](Blocks::Held) on the way down.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Blocks {
-    /// Every window this operand is read through lands inside one storage block.
-    Hold,
-    /// A window can cross a block boundary, so only a layout walk addresses its cells.
-    Split,
+    /// Untiled storage: the whole buffer is one block, addressed by its strides, and every
+    /// window lies inside it.
+    Whole,
+    /// Storage-tiled, the block being the tile of level `i` of the kernel's nest; this window
+    /// sits above that level and spans several blocks, so only a layout walk addresses its
+    /// cells. Descending through level `i` makes it [`Held`](Blocks::Held).
+    Above(usize),
+    /// Storage-tiled and inside one block: one contiguous run from its origin, addressed
+    /// affinely by the block's own strides, which is what a fragment load and a stage fill
+    /// want.
+    Held,
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
@@ -53,9 +57,9 @@ pub struct TileSpec {
     /// stored element and a `u32` says nothing about the values inside it. Stated by
     /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
     pub packing: Packing,
-    /// How this operand's storage blocks fall under the windows it is read through. Settled by
-    /// the launch; [`Hold`](Blocks::Hold) for every untiled operand, which is every operand that
-    /// does not say otherwise.
+    /// What this operand's storage blocks are to the windows it is read through. Settled by
+    /// the launch; [`Whole`](Blocks::Whole) for every untiled operand, which is every operand
+    /// that does not say otherwise.
     pub blocks: Blocks,
 }
 
@@ -70,7 +74,7 @@ impl TileSpec {
             boundaries: SmallVec::new(),
             units: 0,
             packing: Packing::Plain,
-            blocks: Blocks::Hold,
+            blocks: Blocks::Whole,
         }
     }
 
@@ -100,8 +104,8 @@ impl TileSpec {
         self
     }
 
-    /// How this operand's storage blocks fall under the windows it is read through; settled by
-    /// the launch, [`Hold`](Blocks::Hold) by default (which is what every untiled operand is).
+    /// What this operand's storage blocks are to the windows it is read through; settled by
+    /// the launch, [`Whole`](Blocks::Whole) by default (which is what every untiled operand is).
     pub fn blocks(mut self, blocks: Blocks) -> Self {
         self.blocks = blocks;
         self

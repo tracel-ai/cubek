@@ -323,27 +323,45 @@ fn all_tiled() {
     );
 }
 
+/// A storage block is the tile of one of the kernel's levels, and a block of blocks names one
+/// level per nesting. CpuGemm's leaf is the `4 x 4 x 4` instruction, so a tensor stored in
+/// `4 x 4` blocks of `2 x 2` names a tile no level cuts, and the launch refuses it rather than
+/// reading across the inner block.
 #[test]
-fn all_recursively_tiled() {
-    // Two nested levels: `4 × 4` blocks each split into `2 × 2`.
-    run(
-        InnerLayout::Tiled {
-            tiles: vec![(4, 4), (2, 2)],
-        },
-        InnerLayout::Tiled {
-            tiles: vec![(4, 4), (2, 2)],
-        },
-        InnerLayout::Tiled {
-            tiles: vec![(4, 4), (2, 2)],
-        },
-        Dims {
-            lhs_batch: 2,
-            rhs_batch: 2,
-            m: 8,
-            n: 8,
-            k: 8,
-            tile_size: 4,
-        },
+fn nested_blocks_below_the_leaf_are_refused() {
+    let client = cubecl::test_device().client();
+    if skip_unless_cpu(&client) {
+        return;
+    }
+    let nested = || InnerLayout::Tiled {
+        tiles: vec![(4, 4), (2, 2)],
+    };
+    let outcome = std::panic::catch_unwind(|| {
+        run(
+            nested(),
+            nested(),
+            nested(),
+            Dims {
+                lhs_batch: 2,
+                rhs_batch: 2,
+                m: 8,
+                n: 8,
+                k: 8,
+                tile_size: 4,
+            },
+        )
+    });
+    let message = match outcome {
+        Err(payload) => payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default(),
+        Ok(()) => panic!("a block that is no level's tile was read anyway"),
+    };
+    assert!(
+        message.contains("the tile of no level"),
+        "refused for another reason: {message}"
     );
 }
 

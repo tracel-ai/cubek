@@ -21,7 +21,7 @@ use crate::{
         M, N,
         quant_gemv::{
             base::{QuantGemvProblem, QuantGemvRoutine},
-            kernel::{KB, KI, quant_gemv_kernel, quant_gemv_space},
+            kernel::{KB, KI, quant_gemv_kernel},
         },
     },
 };
@@ -77,14 +77,12 @@ pub fn launch_ref(
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::new(
+    let launch = Launcher::partitioned(
         client,
-        quant_gemv_space(problem),
+        blueprint.partitioning(problem),
         blueprint.grid(problem, plane_size),
         KernelForm::Static,
-    )
-    .leaf(&blueprint.leaf(problem))
-    .overhanging(&blueprint.overhangs(problem));
+    );
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;
     // the scales span `KB` alone and address it as it stands.

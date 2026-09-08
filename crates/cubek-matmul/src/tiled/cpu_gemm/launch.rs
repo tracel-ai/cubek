@@ -1,10 +1,6 @@
 //! Launch wiring for the CpuGemm routine.
 
-use cubecl::{
-    client::Client,
-    prelude::*,
-    zspace::{Tiling, metadata::Metadata},
-};
+use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space};
 
@@ -15,7 +11,7 @@ use crate::{
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cpu_gemm::{base::CpuGemmRoutine, kernel::cpu_gemm_kernel},
-    tiled::{K, M, N, batch_axis},
+    tiled::{K, M, N, batch_axis, logical_dims},
 };
 
 /// A strided matmul operand must be contiguous along one of its two innermost dims. Under storage
@@ -54,19 +50,6 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
-/// Logical `(batches, rows, cols)` off a buffer that may be storage-tiled: the tensor states how
-/// it is stored, so its own metadata folds the fragments back and nothing here has to be told.
-fn fold_logical(shape: &[usize], strides: &[usize], tiling: Tiling) -> (Vec<usize>, usize, usize) {
-    let logical = Metadata::new(shape.to_vec(), strides.to_vec())
-        .with_tiling(tiling)
-        .expect("a binding's tiling describes its own rank")
-        .logical_shape()
-        .expect("a binding's tiling describes its own rank");
-    let dims = logical.as_slice();
-    let split = dims.len() - 2;
-    (dims[..split].to_vec(), dims[split], dims[split + 1])
-}
-
 #[allow(clippy::result_large_err)]
 pub fn launch_ref(
     client: &Client,
@@ -96,8 +79,8 @@ pub fn launch_ref(
     // Logical dims folded from each operand's physical shape (it may be a higher-rank tiled
     // buffer): `k` on lhs's trailing axis, `n` on rhs's, leading dims each operand's own (possibly
     // broadcast) batch shape.
-    let (lhs_batches, m, k) = fold_logical(lhs.shape(), &lhs.data().strides, lhs.data().tiling);
-    let (rhs_batches, _, n) = fold_logical(rhs.shape(), &rhs.data().strides, rhs.data().tiling);
+    let (lhs_batches, m, k) = logical_dims(lhs.data());
+    let (rhs_batches, _, n) = logical_dims(rhs.data());
     let out_batches = broadcast_batches(&lhs_batches, &rhs_batches).ok_or_else(|| {
         MatmulSetupError::InvalidConfig(Box::new(format!(
             "CpuGemm: batch shapes do not broadcast, lhs:{lhs_batches:?} rhs:{rhs_batches:?}"
@@ -148,18 +131,17 @@ pub fn launch_ref(
         .chain([(M, m), (N, n), (K, k)])
         .collect();
 
-    // The kernel's own statement of the space, with this launch's extents stamped on: geometry
-    // off the concrete extents, overhang checks derived per operand, all inside the launcher.
+    // The kernel's own statement of the space and its levels, with this launch's extents stamped
+    // on: geometry off the concrete extents, overhang checks derived per operand, a storage block
+    // matched to its level, all inside the launcher.
     let space = Space::new(&extents);
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::new(
+    let launch = Launcher::partitioned(
         client,
-        space.clone(),
+        blueprint.partitioning(&space, &batch_axes),
         blueprint.grid(&space, &batch_axes, plane_size),
         KernelForm::Dynamic,
-    )
-    .leaf(&blueprint.leaf(&space, &batch_axes))
-    .overhanging(&blueprint.overhangs(&space, &batch_axes));
+    );
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher
