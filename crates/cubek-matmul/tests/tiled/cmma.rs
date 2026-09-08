@@ -118,7 +118,7 @@ fn cmma_tma_rejects_oversized_box() {
         definition::{AvailableVectorSizes, MatmulSetupError},
         routine::DeviceSettings,
         tiled::{
-            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition},
+            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition, StoredTiles},
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
@@ -153,6 +153,7 @@ fn cmma_tma_rejects_oversized_box() {
         &problem,
         &device_settings,
         problem.global_dtypes.out,
+        StoredTiles::default(),
     ) {
         Err(MatmulSetupError::InvalidConfig(msg)) => {
             let msg = msg.to_string();
@@ -235,7 +236,7 @@ fn storage_tiled_weight(dtype: ElemType) {
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
         routine::DeviceSettings,
         tiled::{
-            cmma::{CmmaRoutine, launch_ref},
+            cmma::{CmmaRoutine, StoredTiles, launch_ref},
             pack::pack,
         },
     };
@@ -283,6 +284,7 @@ fn storage_tiled_weight(dtype: ElemType) {
                 &problem,
                 &device_settings,
                 acc,
+                StoredTiles::default(),
             )?;
             let (_, stage_n) = blueprint.stage();
             let stage_k = blueprint.stage_k;
@@ -310,4 +312,146 @@ fn storage_tiled_weight(dtype: ElemType) {
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
     .enforce()
+}
+
+/// A weight is packed once and read at every `m`. Its storage tile names the stage: an inferred
+/// plan stages to it, whatever this `m` would have chosen, and moves it under the Tiled delivery.
+#[test]
+fn cmma_packed_weight_names_the_stage_across_m() {
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::{
+            cmma::{CmmaDelivery, CmmaRoutine, StoredTiles, launch_ref},
+            pack::pack,
+        },
+    };
+    use cubek_std::InputBinding;
+    use cubek_test_utils::{ExecutionOutcome, TestInput, TestOutcome, launch_and_capture_outcome};
+
+    use crate::harness::assert_result;
+
+    let client = client();
+    let dtype = f32::elem_type_native();
+    let (n, k) = (512, 256);
+    let dtypes = MatmulElems::from_single_dtype(dtype);
+    let sz = dtype.size();
+    let device_settings = DeviceSettings {
+        client: client.clone(),
+        plane_dim: client.properties().hardware.plane_size_max,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, sz, sz, sz)
+            .pick_max()
+            .unwrap(),
+        max_cube_count: client.properties().hardware.max_cube_count,
+    };
+
+    // A storage tile the selector would not have picked on its own: twice its stage depth and
+    // stage width for an f32 weight.
+    let tile = (32, 64);
+    let (rhs, rhs_data) = TestInput::builder(
+        client.clone(),
+        rect(64, n, k, dtypes.as_global_elems()).rhs_shape,
+    )
+    .dtype(dtype)
+    .uniform(5678, -1., 1.)
+    .generate_with_f32_host_data();
+    let packed = pack(&client, rhs.binding(), dtype, tile).unwrap();
+
+    for m in [64, 512] {
+        let problem = rect(m, n, k, dtypes.as_global_elems());
+        let free = CmmaRoutine::blueprint(
+            &BlueprintStrategy::Inferred(CmmaStrategy::default()),
+            &problem,
+            &device_settings,
+            dtype,
+            StoredTiles::default(),
+        )
+        .unwrap();
+        let held = CmmaRoutine::blueprint(
+            &BlueprintStrategy::Inferred(CmmaStrategy::default()),
+            &problem,
+            &device_settings,
+            dtype,
+            StoredTiles {
+                lhs: None,
+                rhs: Some(tile),
+            },
+        )
+        .unwrap();
+        assert_eq!(free.delivery, CmmaDelivery::Copy);
+        assert_eq!(held.delivery, CmmaDelivery::Tiled);
+        assert_eq!((held.stage_k, held.stage().1), tile, "at m = {m}");
+        assert_ne!((free.stage_k, free.stage().1), tile, "at m = {m}");
+
+        let (lhs, lhs_data) = TestInput::builder(client.clone(), problem.lhs_shape.clone())
+            .dtype(dtype)
+            .uniform(1234 + m as u64, -1., 1.)
+            .generate_with_f32_host_data();
+        let out = TestInput::builder(client.clone(), problem.out_shape.clone())
+            .dtype(dtype)
+            .uniform(4242, 10., 100.)
+            .generate_without_host_data();
+        let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
+            let launch = || -> Result<(), MatmulSetupError> {
+                launch_ref(
+                    c,
+                    InputBinding::Normal(lhs.clone().binding(), dtype),
+                    InputBinding::Normal(packed.clone().binding(), dtype),
+                    out.clone().binding(),
+                    &BlueprintStrategy::Inferred(CmmaStrategy::default()),
+                    &dtypes,
+                )
+            };
+            launch().into()
+        });
+        match outcome {
+            ExecutionOutcome::Executed => {
+                assert_result(&lhs_data, &rhs_data, &problem, &client, out, dtypes.clone())
+                    .as_test_outcome()
+            }
+            ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
+        }
+        .enforce();
+    }
+}
+
+/// Both operands stored, each naming `stage_k` through its tile: they must agree.
+#[test]
+fn cmma_refuses_stored_operands_that_disagree_on_k() {
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::cmma::{CmmaRoutine, StoredTiles},
+    };
+
+    let client = client();
+    let dtype = f32::elem_type_native();
+    let dtypes = MatmulElems::from_single_dtype(dtype);
+    let problem = rect(64, 512, 256, dtypes.as_global_elems());
+    let sz = dtype.size();
+    let device_settings = DeviceSettings {
+        client: client.clone(),
+        plane_dim: client.properties().hardware.plane_size_max,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, sz, sz, sz)
+            .pick_max()
+            .unwrap(),
+        max_cube_count: client.properties().hardware.max_cube_count,
+    };
+    match CmmaRoutine::blueprint(
+        &BlueprintStrategy::Inferred(CmmaStrategy::default()),
+        &problem,
+        &device_settings,
+        dtype,
+        StoredTiles {
+            lhs: Some((16, 32)),
+            rhs: Some((16, 64)),
+        },
+    ) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(msg.contains("same depth"), "wrong rejection: {msg}")
+        }
+        Err(other) => panic!("expected a stage_k disagreement, got {other:?}"),
+        Ok(_) => panic!("expected a stage_k disagreement, got a blueprint"),
+    }
 }

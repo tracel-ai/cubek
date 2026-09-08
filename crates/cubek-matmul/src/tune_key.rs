@@ -4,7 +4,7 @@ use cubecl::{
     ir::ElemType,
     quant::scheme::QuantScheme,
     tune::anchor,
-    zspace::{Shape, Strides},
+    zspace::{Shape, Strides, Tiling, metadata::Metadata},
 };
 use cubek_std::{MatmulProblemSize, MatrixLayout, launch::tma::stride_align_bits};
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,33 @@ pub struct MatmulProblemDefinition {
     pub elem_out: ElemType,
     pub matrix_layout_lhs: MatrixBatchLayout,
     pub matrix_layout_rhs: MatrixBatchLayout,
+    /// How lhs is stored: plain rows, or storage tiles, which name the stage a routine reads it
+    /// in. A packed tensor's strides are row-major over its physical dims, so nothing above
+    /// tells it from its plain twin.
+    pub lhs_storage: StorageTileKey,
+    pub rhs_storage: StorageTileKey,
+}
+
+/// How a matrix operand is stored, for the key: plain, or in `rows x cols` storage tiles.
+#[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub enum StorageTileKey {
+    Plain,
+    Tiled { rows: usize, cols: usize },
+}
+
+impl StorageTileKey {
+    /// Off a binding's physical shape and tiling: the innermost two dims are the storage tile.
+    fn of(shape: &Shape, tiling: Tiling) -> Self {
+        if tiling.is_tiled() {
+            let rank = shape.len();
+            StorageTileKey::Tiled {
+                rows: shape[rank - 2],
+                cols: shape[rank - 1],
+            }
+        } else {
+            StorageTileKey::Plain
+        }
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +117,8 @@ impl MatmulAutotuneKey {
         rhs_shape: &Shape,
         lhs_strides: &Strides,
         rhs_strides: &Strides,
+        lhs_tiling: Tiling,
+        rhs_tiling: Tiling,
         elem_lhs: ElemType,
         elem_rhs: ElemType,
         elem_out: ElemType,
@@ -101,6 +130,8 @@ impl MatmulAutotuneKey {
             rhs_shape,
             lhs_strides,
             rhs_strides,
+            lhs_tiling,
+            rhs_tiling,
             elem_lhs,
             elem_rhs,
             elem_out,
@@ -117,16 +148,31 @@ impl MatmulAutotuneKey {
         rhs_shape: &Shape,
         lhs_strides: &Strides,
         rhs_strides: &Strides,
+        lhs_tiling: Tiling,
+        rhs_tiling: Tiling,
         elem_lhs: ElemType,
         elem_rhs: ElemType,
         elem_out: ElemType,
         lhs_scheme: Option<&QuantScheme>,
         rhs_scheme: Option<&QuantScheme>,
     ) -> MatmulAutotuneKey {
-        let ndims = lhs_shape.len();
-        let m = lhs_shape[ndims - 2];
-        let k = lhs_shape[ndims - 1];
-        let n = rhs_shape[ndims - 1];
+        // The logical dims: a storage-tiled operand's physical shape splits each matrix dim in
+        // two, and its own metadata folds them back.
+        let logical = |shape: &Shape, strides: &Strides, tiling: Tiling| {
+            Metadata::new(shape.clone(), strides.clone())
+                .with_tiling(tiling)
+                .expect("a binding's tiling describes its own rank")
+                .logical_shape()
+                .expect("a binding's tiling describes its own rank")
+        };
+        let lhs_logical = logical(lhs_shape, lhs_strides, lhs_tiling);
+        let rhs_logical = logical(rhs_shape, rhs_strides, rhs_tiling);
+        let ndims = lhs_logical.len();
+        let m = lhs_logical[ndims - 2];
+        let k = lhs_logical[ndims - 1];
+        let n = rhs_logical[ndims - 1];
+        let lhs_storage = StorageTileKey::of(lhs_shape, lhs_tiling);
+        let rhs_storage = StorageTileKey::of(rhs_shape, rhs_tiling);
 
         let matrix_layout_lhs = matrix_batch_layout(lhs_strides, lhs_scheme);
         let matrix_layout_rhs = matrix_batch_layout(rhs_strides, rhs_scheme);
@@ -184,6 +230,8 @@ impl MatmulAutotuneKey {
             elem_out,
             matrix_layout_lhs,
             matrix_layout_rhs,
+            lhs_storage,
+            rhs_storage,
         );
         let analysis = MatmulAutotuneAnalysis {
             // From the anchored dims, like every derived field above: the raw
@@ -237,6 +285,8 @@ mod tests {
             &rhs_shape,
             &lhs_strides,
             &rhs_strides,
+            Tiling::UNTILED,
+            Tiling::UNTILED,
             F32,
             F32,
             F32,
@@ -276,6 +326,54 @@ mod tests {
         assert_ne!(key(64, 128, 64), key(1, 128, 64));
     }
 
+    /// A weight packed into storage tiles has row-major strides over its physical dims, so the
+    /// layout and stride factors cannot tell it from its plain twin: the key says how it is
+    /// stored, and reads the logical dims off the tiling rather than the physical shape.
+    #[test]
+    fn a_packed_operand_keys_apart_from_its_plain_twin() {
+        let (m, k, n, tk, tn) = (64usize, 256usize, 512usize, 16usize, 32usize);
+        let plain = MatmulAutotuneKey::from_parts(
+            &Shape::new([m, k]),
+            &Shape::new([k, n]),
+            &Strides::new(&[k, 1]),
+            &Strides::new(&[n, 1]),
+            Tiling::UNTILED,
+            Tiling::UNTILED,
+            F32,
+            F32,
+            F32,
+            None,
+            None,
+        );
+        let packed = MatmulAutotuneKey::from_parts(
+            &Shape::new([m, k]),
+            &Shape::new([k / tk, n / tn, tk, tn]),
+            &Strides::new(&[k, 1]),
+            &Strides::new(&[n * tk, tk * tn, tn, 1]),
+            Tiling::UNTILED,
+            Tiling::new(&[2, 2]).unwrap(),
+            F32,
+            F32,
+            F32,
+            None,
+            None,
+        );
+        assert_ne!(plain, packed);
+        assert_eq!(
+            (
+                packed.definition.m,
+                packed.definition.n,
+                packed.definition.k
+            ),
+            (plain.definition.m, plain.definition.n, plain.definition.k)
+        );
+        assert_eq!(
+            packed.definition.rhs_storage,
+            StorageTileKey::Tiled { rows: tk, cols: tn }
+        );
+        assert_eq!(packed.definition.lhs_storage, StorageTileKey::Plain);
+    }
+
     /// The transposed (`MildlyPermuted`) arm must likewise use the actual column stride. The
     /// [`key`] helper above is all-contiguous, so it never reaches this branch.
     #[test]
@@ -289,6 +387,8 @@ mod tests {
                 &Shape::new([2, k, n]),
                 &Strides::new(&[k * m, 1, m]), // transposed lhs
                 &Strides::new(&[k * n, n, 1]), // contiguous rhs
+                Tiling::UNTILED,
+                Tiling::UNTILED,
                 F32,
                 F32,
                 F32,
@@ -316,6 +416,8 @@ mod tests {
                 &rhs_shape,
                 lhs_strides,
                 rhs_strides,
+                Tiling::UNTILED,
+                Tiling::UNTILED,
                 F32,
                 F32,
                 F32,
@@ -348,6 +450,8 @@ mod tests {
                 &rhs_shape,
                 lhs_strides,
                 &rhs_strides,
+                Tiling::UNTILED,
+                Tiling::UNTILED,
                 F32,
                 F32,
                 F32,

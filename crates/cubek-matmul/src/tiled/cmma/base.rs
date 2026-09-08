@@ -136,6 +136,40 @@ impl CmmaBlueprint {
     }
 }
 
+/// The storage tiles the operands arrived in, read off their bindings
+/// ([`storage_tile`](crate::tiled::storage_tile)): each names the stage on its axes, since a
+/// routine reads whole storage tiles. A plain operand names nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StoredTiles {
+    /// The lhs tile `(rows, cols)`, which is `(stage_m, stage_k)`.
+    pub lhs: Option<(usize, usize)>,
+    /// The rhs tile `(rows, cols)`, which is `(stage_k, stage_n)`.
+    pub rhs: Option<(usize, usize)>,
+}
+
+impl StoredTiles {
+    /// The stage edges these tiles fix, `(stage_m, stage_k, stage_n)`, `None` where no operand
+    /// names one.
+    ///
+    /// # Errors
+    ///
+    /// Both operands stored, in different `K` runs: each names `stage_k`, so they must agree.
+    #[allow(clippy::result_large_err, clippy::type_complexity)]
+    fn stage(self) -> Result<(Option<usize>, Option<usize>, Option<usize>), MatmulSetupError> {
+        let stage_k = match (self.lhs, self.rhs) {
+            (Some((_, lk)), Some((rk, _))) if lk != rk => {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                    "Cmma: lhs is stored in storage tiles {lk} deep along K and rhs {rk} deep; \
+                     both name stage_k, so pack them to the same depth"
+                ))));
+            }
+            (Some((_, k)), _) | (None, Some((k, _))) => Some(k),
+            (None, None) => None,
+        };
+        Ok((self.lhs.map(|(m, _)| m), stage_k, self.rhs.map(|(_, n)| n)))
+    }
+}
+
 /// The routine's launch knobs; the geometry is fully inferred.
 #[derive(Clone, Debug, Default)]
 pub struct CmmaStrategy {
@@ -188,16 +222,20 @@ impl CmmaRoutine {
     /// instruction's [`MmaConfig`] is keyed on it, since that is the accumulator the
     /// kernel emits.
     #[allow(clippy::result_large_err)]
+    ///
+    /// `stored` is what the operands' storage tiles fix: an inferred plan stages to them, and
+    /// moves them under the `Tiled` delivery; a forced plan is checked against them at the launch.
     pub fn blueprint(
         strategy: &BlueprintStrategy<(), CmmaRoutine>,
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
         acc: ElemType,
+        stored: StoredTiles,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let blueprint = match strategy {
             BlueprintStrategy::Forced(blueprint) => blueprint.clone(),
             BlueprintStrategy::Inferred(args) => {
-                Self::select(problem, device_settings, args.delivery, acc)?
+                Self::select(problem, device_settings, args.delivery, acc, stored)?
             }
         };
         // Pure plan validation first (backend-independent), the availability gate after.
@@ -247,15 +285,37 @@ impl CmmaRoutine {
 
     /// Pick the instruction from the hardware's cmma configs (aspect-aware, mirroring the
     /// classic `find_instruction_size` stages), then tile the stage with as many planes as
-    /// the cube dim affords, snapped to divisors of the tile grid.
+    /// the cube dim affords, snapped to divisors of the tile grid. A stage edge a stored
+    /// operand fixes is taken as is: the instruction must divide it and the planes and
+    /// partition are sized to realize it exactly, whatever this problem's `m` would have chosen,
+    /// since a weight is packed once and read at every `m`.
     #[allow(clippy::result_large_err)]
     fn select(
         problem: &MatmulProblem,
         device_settings: &DeviceSettings,
         delivery: CmmaDelivery,
         acc: ElemType,
+        stored: StoredTiles,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let client = &device_settings.client;
+        let (fixed_m, fixed_k, fixed_n) = stored.stage()?;
+        // The plain delivery yields to a stored operand, which only the Tiled delivery moves; an
+        // asked-for TMA does not, and the launch refuses the pair rather than switch it.
+        let delivery = match (delivery, stored) {
+            (
+                CmmaDelivery::Copy,
+                StoredTiles {
+                    lhs: None,
+                    rhs: None,
+                },
+            ) => CmmaDelivery::Copy,
+            (CmmaDelivery::Copy, _) => CmmaDelivery::Tiled,
+            (other, _) => other,
+        };
+        let divides = |edge: Option<usize>, i: usize| edge.is_none_or(|e| e.is_multiple_of(i));
+        let fits = |m: usize, n: usize, k: usize| {
+            divides(fixed_m, m) && divides(fixed_n, n) && divides(fixed_k, k)
+        };
         let plane_dim = client.properties().hardware.plane_size_max as usize;
         if plane_dim <= 1 {
             return Err(MatmulSetupError::Unavailable(
@@ -296,7 +356,7 @@ impl CmmaRoutine {
         let (im, inn, ik) = candidates
             .iter()
             .copied()
-            .find(|&(m, n, k)| supported(m, n, k))
+            .find(|&(m, n, k)| supported(m, n, k) && fits(m, n, k))
             .or_else(|| {
                 client
                     .properties()
@@ -306,6 +366,7 @@ impl CmmaRoutine {
                     .iter()
                     .find(|c| c.a_type == d.lhs && c.b_type == d.rhs && c.cd_type == acc)
                     .map(|c| (c.m as usize, c.n as usize, c.k as usize))
+                    .filter(|&(m, n, k)| fits(m, n, k))
             })
             .ok_or(MatmulSetupError::Unavailable(
                 MatmulAvailabilityError::TileSizeNotFound,
@@ -320,9 +381,22 @@ impl CmmaRoutine {
         let rows = (budget / inn.div_ceil(4).max(1)).max(1);
 
         let part_m = 1;
-        let part_n = divisor_at_most(grid_n.max(1), rows.min(MAX_PLANES_PER_AXIS));
-        let planes_m = divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS));
+        let part_n = match fixed_n {
+            Some(stage_n) => stage_n / inn,
+            None => divisor_at_most(grid_n.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+        };
+        let planes_m = match fixed_m {
+            Some(stage_m) => stage_m / im,
+            None => divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+        };
         let planes_n = 1;
+        if planes_m * planes_n > budget {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: lhs is stored in storage tiles {} rows tall, {planes_m} planes of the \
+                 {im}-row instruction, more than the {budget} planes a cube holds",
+                fixed_m.unwrap_or(0)
+            ))));
+        }
 
         // Stage depth, snapped down to the deepest `d·ik` dividing `k`. The knee is set by
         // the double-buffered smem the cooperative fill must keep resident, so it scales by
@@ -334,11 +408,14 @@ impl CmmaRoutine {
         // f16-accumulate wanted twice that (sk64 at 4.87).
         let stage_k_bytes = if acc.size() >= 4 { 64 } else { 128 };
         let cap = (stage_k_bytes / d.lhs.size().max(1)).max(ik);
-        let stage_k = (1..=(cap / ik).max(1))
-            .rev()
-            .map(|d| d * ik)
-            .find(|&sk| problem.k.is_multiple_of(sk))
-            .unwrap_or(ik);
+        let stage_k = match fixed_k {
+            Some(stage_k) => stage_k,
+            None => (1..=(cap / ik).max(1))
+                .rev()
+                .map(|d| d * ik)
+                .find(|&sk| problem.k.is_multiple_of(sk))
+                .unwrap_or(ik),
+        };
 
         Ok(CmmaBlueprint {
             instruction: InstructionShape {

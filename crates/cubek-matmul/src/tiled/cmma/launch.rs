@@ -18,7 +18,7 @@ use crate::{
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
-        base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
+        base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, StoredTiles},
         kernel::cmma_kernel,
     },
     tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
@@ -153,7 +153,13 @@ fn setup(
         max_cube_count: client.properties().hardware.max_cube_count,
     };
 
-    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc)?;
+    // What the operands' storage tiles fix: an inferred plan stages to them, a forced one is
+    // checked against them below.
+    let stored = StoredTiles {
+        lhs: storage_tile(lhs.data(), "lhs")?,
+        rhs: storage_tile(rhs.data(), "rhs")?,
+    };
+    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc, stored)?;
     let (stage_m, stage_n) = blueprint.stage();
     validate_storage_tiled(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
     validate_storage_tiled(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
