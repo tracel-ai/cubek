@@ -94,3 +94,29 @@ at prefill shapes, against Marlin) needs the NVIDIA box and comes after.
 - Blackwell's block-scaled instruction, quest 4.
 - The K-packed form at more than one row: quest 9's commit 3, then a one-line change here.
 - The gemm autotune table racing the fragment arm: a candidate row, after the number exists.
+
+## Landed, 2026-09-09
+
+cubek-Ringo, branch `quest3/explicit-scales` on `626548f5` (six commits); metabolic-Ringo, branch
+`quest3/scales-explicit` on John's quest 9 landing `af9b280c` (four commits), wired by a
+LOCAL-ONLY `[patch]` that never ships. Everything below is Metal-verified on the M2 Pro.
+
+| step | what | proves it |
+|---|---|---|
+| C1 | `Scaling::{lhs, rhs}`; `scale_side` and its lhs default deleted; `check_scales_ride` reads the statement against the axes | four Metal suites unchanged, 7 host unit tests |
+| C2 | `Projection::scales_per(block)` and `whole()` | 4 unit tests, one scaled spec rewritten through them |
+| C3 | `Field::{Quant, Fp8}`, `Packing::Subword`, `WordOfLine` + `SubwordView` (the slot is the line's index through the whole layout, so a two-byte row of scales works), `ScalesArg::packed_block` | `e4m3_fields_unpack_on_read`, `ue8m0_scales_are_read_as_bytes`, `byte_scale_rows_need_no_word_alignment`, `e4m3_scales_reach_the_promoted_block` |
+| C4 | `mma_scaled` on a cmma accumulator: the scaled operand landed in a per-plane shared window opened by `Tile::with_landing(planes, lanes)`, filled through the packed view, the plain `cmma::execute` | `a_cmma_accumulator_takes_{the_scaled_contraction, rhs_scales, rhs_scales_col_major}`, `a_packed_rhs_reaches_the_tensor_cores` on the M2's `8x8x8` |
+| M1 | the kernel spells `Scaling::rhs`; the launch derives the scales' projections | 22 unit tests, the Metal correctness suite |
+| M2 | the widen kernel deleted; minifloat scales bound as words served one a read | `tests/scaled_byte_scales.rs`: both packings, one and two levels, hand-built since burn's Metal device refuses to quantize with a minifloat scale |
+| M3 | `ScaledInstruction::{Registers, Fragments}`; the fragment arm's space (cubes over rows and blocks, planes over rows, a `K` walk, the block's fragments); the heuristic routes prefill rows behind `hw.accelerated`; the register arm keeps rows up to 32 | `the_prefill_launch_reads_as_a_table`, the two election tests, the heuristic route test, `packed_prefill_runs_on_the_tensor_cores` at 64 rows on Metal |
+
+What the plan got wrong on the way: the fragment leaf's `m`, `n`, `k` must come off the
+accumulator's axes and the contracted extent, since a split contraction's trailing axes are its
+digits; and a sub-word slot cannot be the innermost coordinate, because a row of scales need not
+start on a word boundary.
+
+Left for the number: register leaf against fragment leaf at prefill shapes on the NVIDIA box,
+where the manual-mma form with register operands (Marlin proper) is the next arm. The gemm
+autotune table does not race the fragment arm yet. A plane owns one fragment of rows against one
+block of columns; a fragment grid per plane waits on `partition_grid` reading a split column group.
