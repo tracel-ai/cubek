@@ -259,6 +259,16 @@ impl Strategy {
         dtypes: &mut MatmulElems,
     ) -> Result<(), MatmulSetupError> {
         use TileMatmulKind::{Cmma, Mma};
+        // Every routine here reads rows off its operands' strides, and would read a packed
+        // buffer's tiles as rows; a storage-tiled operand rides the tiled cmma routine.
+        for (name, binding) in [("lhs", lhs.data()), ("rhs", rhs.data())] {
+            if binding.tiling.is_tiled() {
+                return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                    "{self}: {name} is storage-tiled, which the multi-level routines read as \
+                     rows; it rides the tiled cmma routine"
+                ))));
+            }
+        }
         match self {
             Strategy::SimpleCyclicCmma(s) => launch_tiling::launch_ref(
                 client,

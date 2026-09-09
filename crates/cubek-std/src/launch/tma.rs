@@ -104,6 +104,47 @@ pub fn tma_operand(
     (arg, transposed)
 }
 
+/// A storage-tiled operand's tensor map: the descriptor is the physical
+/// `[.., R/tr, C/tc, tr, tc]` the data is already stored in, and the box is one whole storage
+/// tile. Where [`tma_operand`] collapses a binding to the descriptor's `(batch, rows, cols)`
+/// and may swap the inner pair, this one takes the binding as it is: the storage tile is the
+/// innermost pair and therefore the fastest-varying, so one box is one contiguous run and there
+/// is nothing to transpose.
+///
+/// # Panics
+///
+/// A binding whose innermost two dims are not `tile`, which is what packing produced and what
+/// the routine's own storage-tile check enforces.
+pub fn tma_operand_tiled(
+    binding: TensorBinding,
+    tile: (usize, usize),
+    storage_ty: ElemType,
+    swizzle: TensorMapSwizzle,
+) -> TensorMapArg<Tiled> {
+    let rank = binding.shape.len();
+    let stored = (binding.shape[rank - 2], binding.shape[rank - 1]);
+    assert_eq!(
+        stored, tile,
+        "tma_operand_tiled: the binding is stored in {stored:?} tiles, not the {tile:?} asked for"
+    );
+    // One box per storage tile: unit on every outer dim, the whole tile on the inner pair.
+    let mut dims = vec![1usize; rank];
+    dims[rank - 2] = tile.0;
+    dims[rank - 1] = tile.1;
+    let box_shape: Shape = dims.into();
+    let meta = tma_meta_tiled(
+        Metadata::new(binding.shape.clone(), binding.strides.clone()),
+        box_shape,
+        remap_storage_for_tma(storage_ty),
+        swizzle,
+    );
+    TensorMapArg {
+        tensor: binding.into_tensor_arg(),
+        metadata: meta,
+        _kind: PhantomData,
+    }
+}
+
 /// Build a tiled [`TensorMapMeta`] with the defaults shared by every current call site
 /// (no interleave, no prefetch, OOB-fill = zero, elem_stride = `[1; rank]`).
 pub fn tma_meta_tiled(
@@ -122,5 +163,58 @@ pub fn tma_meta_tiled(
         prefetch: TensorMapPrefetch::None,
         oob_fill: OobFill::Zero,
         elem_ty,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cubecl::zspace::Tiling;
+
+    use super::*;
+
+    /// A weight packed to a 32x64 stage: `[256, 512]` stored as `[8, 8, 32, 64]`.
+    fn packed() -> TensorBinding {
+        let client = cubecl::test_device().client();
+        let shape = shape![8, 8, 32, 64];
+        let strides = strides![64 * 32 * 8, 64 * 32, 64, 1];
+        TensorBinding {
+            handle: client.empty(256 * 512 * 4).binding(),
+            strides,
+            shape,
+            tiling: Tiling::new(&[2, 2]).unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_stored_descriptor_keeps_the_rank_and_boxes_one_storage_tile() {
+        let arg = tma_operand_tiled(
+            packed(),
+            (32, 64),
+            f32::elem_type_native(),
+            TensorMapSwizzle::None,
+        );
+        // The descriptor is the buffer as it is stored, not collapsed to (batch, row, col).
+        assert_eq!(&arg.metadata.metadata.shape()[..], &[8, 8, 32, 64]);
+        assert_eq!(
+            &arg.metadata.metadata.strides()[..],
+            &[64 * 32 * 8, 64 * 32, 64, 1]
+        );
+        // One box is one storage tile: unit outside, the whole tile on the inner pair, which is
+        // the fastest-varying pair, so the box is one contiguous run.
+        let TensorMapFormat::Tiled(TiledArgs { tile_size }) = &arg.metadata.format else {
+            panic!("expected a tiled tensor map");
+        };
+        assert_eq!(&tile_size[..], &[1, 1, 32, 64]);
+    }
+
+    #[test]
+    #[should_panic(expected = "stored in (32, 64) tiles, not the (64, 64) asked for")]
+    fn a_stored_descriptor_refuses_a_tile_the_buffer_does_not_hold() {
+        tma_operand_tiled(
+            packed(),
+            (64, 64),
+            f32::elem_type_native(),
+            TensorMapSwizzle::None,
+        );
     }
 }

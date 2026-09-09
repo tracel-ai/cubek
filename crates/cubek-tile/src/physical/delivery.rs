@@ -1,23 +1,26 @@
-//! How an operand's bytes move: the [`Delivery`] (cooperative buffer copy, one storage tile
-//! at a time, or TMA bulk copy) and its type-level twin [`DeliveryFamily`], which lets one
-//! kernel body serve every argument type.
+//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine) and
+//! its type-level twin [`DeliveryFamily`], which lets one kernel body serve every argument type.
+//!
+//! How the operand is *stored* is a separate fact, and it rides the spec's
+//! [`Storage`](crate::Storage): a storage-tiled operand states the level its tile is the tile of,
+//! and every mover here serves it. The two are orthogonal on purpose, so a weight packed to the
+//! stage can move under the TMA engine as well as under the units.
 
 use cubecl::prelude::*;
 
 use crate::{Space, Storage, StridedOperand, Sync, Tile, TileArg, TmaTileArg};
 
-/// How an operand reaches a stage: a buffered cooperative copy, the same copy of one storage
-/// storage tile that is the stage, coordinate-backed cooperative materialization, or a TMA hardware
-/// bulk copy. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync comes
-/// from it.
+/// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
+/// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
+/// via [`delivery`](crate::Tile::delivery); the staging sync comes from it.
+///
+/// Storage-tiledness is not a variant here. A storage tile is a fact of the data, stated by the
+/// spec's [`Storage`], and it only decides how wide a run each stage is: under `Copy` the units
+/// copy that run, under `Tma` it is the box the engine fetches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
     #[default]
     Copy,
-    /// A storage-tiled operand whose storage tile is a level of the kernel's nest
-    /// ([`Storage`]): the stage is one contiguous run of the buffer, copied cooperatively. The
-    /// shape a TMA box is, moved by the cube's units rather than the hardware.
-    Tiled,
     Procedural,
     Tma,
 }
@@ -34,7 +37,7 @@ impl Delivery {
     /// The synchronization required to materialize this source in a staging slot.
     pub(crate) fn rendezvous(&self) -> Sync {
         match self {
-            Delivery::Copy | Delivery::Tiled | Delivery::Procedural => Sync::Cube,
+            Delivery::Copy | Delivery::Procedural => Sync::Cube,
             Delivery::Tma => Sync::Barrier,
         }
     }
@@ -90,7 +93,7 @@ pub trait TensorDelivery: DeliveryFamily {
     ) -> <Self::Arg<E, V> as LaunchArg>::RuntimeArg;
 }
 
-impl TensorDelivery for Strided {
+impl TensorDelivery for Cooperative {
     fn operand<E: Numeric, V: Size>(
         operand: StridedOperand,
     ) -> <Self::Arg<E, V> as LaunchArg>::RuntimeArg {
@@ -98,51 +101,26 @@ impl TensorDelivery for Strided {
     }
 }
 
-impl TensorDelivery for StorageTiled {
-    fn operand<E: Numeric, V: Size>(
-        operand: StridedOperand,
-    ) -> <Self::Arg<E, V> as LaunchArg>::RuntimeArg {
-        operand.arg::<E, V>()
-    }
-}
-
-/// [`Delivery::Copy`]'s family: a plain tensor + spec ([`TileArg`]), tiled in-kernel
-/// by [`Tile::of`]. Reads rows, so a storage-tiled operand is refused here rather than read
-/// across its storage tile boundaries; that operand rides [`StorageTiled`].
-pub struct Strided;
-
-/// [`Delivery::Tiled`]'s family: the same tensor + spec ([`TileArg`]), the spec stating the
-/// level of the kernel's nest its storage tile is the tile of ([`Storage::Tiled`]). The plain
-/// operand beside a storage-tiled one (an activation beside a packed weight) rides here untiled;
-/// only the operand whose spec states a storage tile moves as one.
-pub struct StorageTiled;
+/// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
+/// in-kernel by [`Tile::of`]. Serves a plain operand and a storage-tiled one alike: the spec's
+/// [`Storage`] says which, and a stated storage tile only makes each stage one contiguous run
+/// instead of a row at a time. So an activation and a weight packed to the stage ride here
+/// together.
+pub struct Cooperative;
 
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
 pub struct Tma;
 
 #[cube]
-impl DeliveryFamily for Strided {
+impl DeliveryFamily for Cooperative {
     type Arg<E: Numeric, V: Size> = TileArg<'static, E, V>;
 
     fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
         comptime!(match arg.spec.storage {
-            Storage::Strided => {}
-            Storage::Tiled(level) => panic!(
-                "Strided: this operand arrived storage-tiled (its storage tile is the tile of level \
-                 {level}), which the strided delivery reads across; launch it under StorageTiled"
-            ),
+            Storage::Strided | Storage::Tiled(_) => {}
             Storage::Contiguous =>
-                panic!("Strided: a launched spec is never inside a storage tile"),
+                panic!("Cooperative: a launched spec is never inside a storage tile"),
         });
-        arg.tile(space)
-    }
-}
-
-#[cube]
-impl DeliveryFamily for StorageTiled {
-    type Arg<E: Numeric, V: Size> = TileArg<'static, E, V>;
-
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
         arg.tile(space)
     }
 }

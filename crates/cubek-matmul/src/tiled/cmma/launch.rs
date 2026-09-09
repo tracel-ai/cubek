@@ -4,11 +4,10 @@
 use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
-    launch::tma::{stride_align_bits, tma_operand},
+    launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Geometry, KernelForm, Launcher, Space, StorageTiled, Strided, TensorDelivery, Tma,
-    TmaTileArgLaunch,
+    Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
 };
 
 use crate::{
@@ -18,7 +17,7 @@ use crate::{
     },
     routine::{BlueprintStrategy, DeviceSettings},
     tiled::cmma::{
-        base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine},
+        base::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, StoredTiles},
         kernel::cmma_kernel,
     },
     tiled::{K, M, N, batch_axis, logical_dims, storage_tile},
@@ -57,11 +56,10 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
-/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes, and
-/// only the [`Tiled`](CmmaDelivery::Tiled) delivery moves it. A plain input passes.
+/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes.
+/// A plain input passes.
 #[allow(clippy::result_large_err)]
 fn validate_storage_tiled(
-    blueprint: &CmmaBlueprint,
     name: &str,
     binding: &TensorBinding,
     stage: (usize, usize),
@@ -69,16 +67,6 @@ fn validate_storage_tiled(
     let Some(tile) = storage_tile(binding, name)? else {
         return Ok(());
     };
-    match blueprint.delivery {
-        CmmaDelivery::Tiled => {}
-        CmmaDelivery::Copy | CmmaDelivery::Tma => {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma: {name} arrived storage-tiled, which only the Tiled delivery moves, not \
-                 {:?}",
-                blueprint.delivery
-            ))));
-        }
-    }
     if tile != stage {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
@@ -153,10 +141,16 @@ fn setup(
         max_cube_count: client.properties().hardware.max_cube_count,
     };
 
-    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc)?;
+    // What the operands' storage tiles fix: an inferred plan stages to them, a forced one is
+    // checked against them below.
+    let stored = StoredTiles {
+        lhs: storage_tile(lhs.data(), "lhs")?,
+        rhs: storage_tile(rhs.data(), "rhs")?,
+    };
+    let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc, stored)?;
     let (stage_m, stage_n) = blueprint.stage();
-    validate_storage_tiled(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
-    validate_storage_tiled(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
+    validate_storage_tiled("lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
+    validate_storage_tiled("rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -236,20 +230,7 @@ pub fn launch_ref(
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // Every path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided::<Strided>(
-            client,
-            &launch,
-            cube_count,
-            cube_dim,
-            &blueprint,
-            &batch_axes,
-            elems,
-            lhs,
-            rhs,
-            out,
-            &out_batch_axes,
-        ),
-        CmmaDelivery::Tiled => launch_strided::<StorageTiled>(
+        CmmaDelivery::Copy => launch_strided::<Cooperative>(
             client,
             &launch,
             cube_count,
@@ -290,10 +271,10 @@ struct Elems {
     acc: ElemType,
 }
 
-/// The tensor-bound path, strided or storage-tiled (`D` says which, and the [`Tiled`] family
-/// serves a plain operand beside a storage-tiled one): each operand lined at the widest width
-/// the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
-/// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
+/// The tensor-bound path, the cube's units moving each stage: each operand lined at the widest
+/// width the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
+/// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
+/// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
 fn launch_strided<D>(
     client: &Client,
@@ -372,6 +353,11 @@ fn launch_tma(
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
+    //
+    // A storage-tiled operand keeps its stored rank: its tile is the plan's stage (the setup
+    // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
+    // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
+    // its box is the stage cut out of rows.
     fn operand<E: Numeric>(
         axes: &[Axis],
         dtype: ElemType,
@@ -379,6 +365,15 @@ fn launch_tma(
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
     ) -> TmaTileArgLaunch<E> {
+        if binding.tiling.is_tiled() {
+            let map = tma_operand_tiled(binding, box_dims, dtype, TensorMapSwizzle::None);
+            return TmaTileArgLaunch::tensor_map_stored(
+                map,
+                axes,
+                (rows, cols),
+                (box_dims.0 as u32, box_dims.1 as u32),
+            );
+        }
         let (map, transposed) = tma_operand(
             binding,
             1,
