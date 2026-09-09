@@ -118,7 +118,12 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     // Every query about "the scales" is about the level nearest the values: the coarser ones cover
     // a tile of its tiles, so they neither check the side nor set the granularity.
     let inner = scales.index(0);
-    comptime!(check_scales_ride(side, &inner.space, &space, shape.acc_axes));
+    comptime!(check_scales_ride(
+        side,
+        &inner.space,
+        &space,
+        shape.acc_axes
+    ));
     let scales_projection = inner.projection();
     comptime!(check_scales_omit_rather_than_divide(&scales_projection));
     direct::contract_scaled::<E, EL, ER, ES>(

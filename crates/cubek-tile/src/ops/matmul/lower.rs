@@ -188,10 +188,8 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// [`mma_leaf`] with one operand scaled, on a register-block accumulator, the form whose step
-/// has a scale to apply. A fragment accumulator contracts through a hardware instruction that
-/// takes two operands and no scales, so a scaled contraction there is a different instruction,
-/// not this one under a flag.
+/// [`mma_leaf`] with one operand scaled: a register block folds the scale at the read, a cmma
+/// fragment loads the scaled operand from a landing its lanes wrote.
 #[cube]
 pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
     acc: &mut Tile<E>,
@@ -259,9 +257,8 @@ impl<E: Numeric> PlaneTile<E> {
 
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
-    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand. Only the register form:
-    /// a hardware instruction eats its operands' format whole, so a scale there routes to the
-    /// *fragment* rather than to a view, which is a different instruction.
+    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand: folded at the read in
+    /// the register form, folded into a landing the fragment loads from in the cmma form.
     pub fn mma_scaled<EL: Numeric, ER: Numeric, ES: Numeric>(
         &mut self,
         lhs: &Tile<EL>,
@@ -276,8 +273,16 @@ impl<E: Numeric> PlaneTile<E> {
                 strided_2d(lhs, rhs, comptime!(out.clone()), false);
                 d.mma_scaled(lhs, rhs, side, scales, out, semiring)
             }
-            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
-                "mma_scaled: a hardware instruction eats its operands' format, so a scaled                  contraction on a fragment accumulator needs a scaled hardware instruction"
+            // The scaled operand is landed in shared memory, unpacked and scaled, and loaded as
+            // the fragment the plain instruction takes.
+            PlaneTile::Cmma(d) => {
+                strided_2d(lhs, rhs, comptime!(out.clone()), false);
+                hardware_semiring(semiring);
+                d.mma_scaled(lhs, rhs, side, scales, out)
+            }
+            PlaneTile::Mma(_) => panic!(
+                "mma_scaled: the manual-mma form takes its operands from registers, and landing \
+                 a scaled operand there is not written yet; open a cmma accumulator"
             ),
         }
     }

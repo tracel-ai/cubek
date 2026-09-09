@@ -20,6 +20,8 @@ use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
 
+use super::matmul::require_cmma_8x8x8_f32;
+
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 /// The contraction, as the two axes a block makes of it: which block, and where inside it.
@@ -134,6 +136,52 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
+    }
+}
+
+/// [`scaled_matmul`] on a tensor-core accumulator: the scaled operand is landed in shared memory
+/// by the plane's lanes, unpacked and scaled, and loaded as the fragment the plain instruction
+/// takes. Both operands carry a landing here so one kernel serves either side.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
+    #[comptime] planes: usize,
+    #[comptime] lanes: usize,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone())).with_landing(planes, lanes);
+    let b = b.tile(comptime!(space.clone())).with_landing(planes, lanes);
+    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let c = c.tile(comptime!(space.clone()));
+    let mut acc = c.cmma_accumulator::<E, E>(
+        &a,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        Monoid::Sum,
+    );
+    acc.zero();
+    for region in space.over(&level) {
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &a.at(&region),
+            &b.at(&region),
+            &Scaling::on(side, scales.at(&region)),
+            Semiring::SUM_PROD,
+        );
+    }
+    for r0 in c.over(&level).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
     }
 }
 
@@ -1434,4 +1482,164 @@ fn lhs_scales_are_served_several_at_a_time() {
             "at {n}: got {have}, want {want}"
         );
     }
+}
+
+/// Which operand of the tensor-core test carries the scales, and how the rhs is stored.
+#[derive(Clone, Copy)]
+enum CmmaCase {
+    /// Scales per `(row, block of K)`, on the lhs.
+    Lhs,
+    /// Scales per `(block of K, column)`, on a rhs stored `{K, N}`.
+    RhsRowMajor,
+    /// The same scales on a rhs stored `{N, K}`, read col-major, so the landing is the
+    /// transpose of the scales' matrix.
+    RhsColMajor,
+}
+
+/// `c = (a ⊗ s) · b` or `a · (b ⊗ s)` through the M2's `8x8x8` fragment, one block of `K` a
+/// region, against the host product.
+fn check_scaled_cmma(case: CmmaCase) {
+    let (rows, cols, block, blocks) = (8, 8, 8, 4);
+    let depth = block * blocks;
+
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    let lanes = client.properties().hardware.plane_size_min as usize;
+    let dtype = f32::elem_type_native();
+    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    let s: Vec<f32> = (0..blocks * 8).map(|i| (i as f32 + 1.0) / 2.0).collect();
+    // The rhs as stored: `{K, N}`, or `{N, K}` holding the same matrix.
+    let b_stored: Vec<f32> = match case {
+        CmmaCase::RhsColMajor => (0..cols * depth)
+            .map(|i| b[(i % depth) * cols + i / depth])
+            .collect(),
+        _ => b.clone(),
+    };
+    let b_shape = match case {
+        CmmaCase::RhsColMajor => shape![cols, depth],
+        _ => shape![depth, cols],
+    };
+    let s_shape = match case {
+        CmmaCase::Lhs => shape![rows, blocks],
+        _ => shape![blocks, cols],
+    };
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let (b_t, _) = TestInput::builder(client.clone(), b_shape)
+        .dtype(dtype)
+        .custom(b_stored)
+        .generate_with_f32_host_data();
+    let (s_t, _) = TestInput::builder(client.clone(), s_shape)
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+        ),
+        KernelForm::Static,
+    );
+    let split = PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
+    let b_spec = match case {
+        CmmaCase::RhsColMajor => TileSpec::new(Projection::new(
+            &[N, KB, KI],
+            &[PhysicalAxisMap::of(N), split.clone()],
+        )),
+        _ => TileSpec::new(Projection::new(
+            &[KB, KI, N],
+            &[split.clone(), PhysicalAxisMap::of(N)],
+        )),
+    };
+    let s_spec = match case {
+        CmmaCase::Lhs => TileSpec::new(Projection::new(
+            &[M, KB],
+            &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
+        )),
+        _ => TileSpec::new(Projection::new(
+            &[KB, KI, N],
+            &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N)],
+        )),
+    };
+    let side = match case {
+        CmmaCase::Lhs => ScaleSide::Lhs,
+        _ => ScaleSide::Rhs,
+    };
+
+    scaled_matmul_cmma::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            a_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), split],
+            )),
+        ),
+        TileArgLaunch::new(b_t.binding().into_tensor_arg(), b_spec),
+        TileArgLaunch::new(s_t.binding().into_tensor_arg(), s_spec),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        side,
+        1,
+        lanes,
+        [dtype, dtype],
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| {
+                    let scale = match case {
+                        CmmaCase::Lhs => s[m * blocks + k / block],
+                        _ => s[(k / block) * cols + n],
+                    };
+                    a[m * depth + k] * scale * b[k * cols + n]
+                })
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **The scaled contraction runs on the tensor cores.** The lhs is landed scaled by the plane's
+/// lanes and loaded as the `A` fragment; the instruction is the plain one.
+#[test]
+fn a_cmma_accumulator_takes_the_scaled_contraction() {
+    check_scaled_cmma(CmmaCase::Lhs);
+}
+
+/// The rhs side of the same, stored `{K, N}`: the landing is the `B` fragment as stored.
+#[test]
+fn a_cmma_accumulator_takes_rhs_scales() {
+    check_scaled_cmma(CmmaCase::RhsRowMajor);
+}
+
+/// The rhs stored `{N, K}`, the way a weight lies with its contraction innermost: the landing is
+/// col-major, so each line's scale sits at its column and its row's block.
+#[test]
+fn a_cmma_accumulator_takes_rhs_scales_col_major() {
+    check_scaled_cmma(CmmaCase::RhsColMajor);
 }

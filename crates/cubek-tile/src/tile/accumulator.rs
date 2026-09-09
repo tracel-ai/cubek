@@ -204,6 +204,42 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
+    /// This operand with a landing: `planes` windows of shared memory, one per plane of `lanes`
+    /// units, each one leaf window of this operand wide, that the fragment leaf lands the
+    /// operand's `values ⊗ scales` in before loading them as a fragment
+    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator). Stated where the operand is
+    /// opened, since the landing is part of its residence, like [`with_scratch`](Tile::with_scratch).
+    pub fn with_landing(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
+        let cells = comptime!({
+            let leaf = self.space.leaf(&self.levels);
+            (0..leaf.rank())
+                .map(|p| leaf.extent_at(p))
+                .product::<usize>()
+        });
+        let space = comptime!(self.space.clone());
+        let depth = comptime!(self.depth);
+        let levels = comptime!(self.levels.clone());
+        let start = (UNIT_POS as usize / lanes) * cells;
+        let end = start + cells;
+        let landing = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
+            .map(|landing| &landing[start..end]);
+        match self.tile_kind {
+            TileKind::Gmem(g) => Tile::<Acc> {
+                tile_kind: TileKind::new_Gmem(g.with_landing(landing)),
+                space,
+                depth,
+                levels,
+            },
+            TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::with_landing: a landing takes a global-memory operand to a fragment")
+            }
+        }
+    }
+
     /// The plane-resident partition an accumulator contracts in, in `form`, uninitialized and
     /// shaped to meet `lhs` at the instruction. `vector_size` is its lines' width and `fold` what
     /// a line holds ([`RegisterData::fold`]); only the software form reads them.

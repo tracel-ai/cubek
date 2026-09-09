@@ -890,7 +890,12 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     for region in space.over(&level).unrolled() {
         let scales = Scales::block(scale.at(&region));
         let mut acc_region = acc.at(&region);
-        acc_region.mma_scaled(&a.at(&region), &b.at(&region), &Scaling::rhs(scales), Semiring::SUM_PROD);
+        acc_region.mma_scaled(
+            &a.at(&region),
+            &b.at(&region),
+            &Scaling::rhs(scales),
+            Semiring::SUM_PROD,
+        );
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);

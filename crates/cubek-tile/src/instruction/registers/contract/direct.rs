@@ -472,7 +472,7 @@ fn nest_scaled<
 /// level resolves it to its own granularity through its own projection, which is what "one scale
 /// per block" already means.
 #[cube]
-pub(super) fn combined_scales<'a, ES: Numeric, S: Size>(
+pub(crate) fn combined_scales<'a, ES: Numeric, S: Size>(
     scales: &'a Sequence<Tile<ES>>,
     #[comptime] level: ScaleLevel,
     mat: usize,

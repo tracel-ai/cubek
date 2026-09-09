@@ -431,14 +431,7 @@ impl<'a, F: Numeric, NF: Size> SubwordViewExpand<'a, F, NF> {
         pos: <Coords2d as CubeType>::ExpandType,
         checked: bool,
     ) -> NativeExpand<Vector<F, NF>> {
-        read_subword::expand::<F, NF>(
-            scope,
-            &self.words,
-            pos,
-            self.origin,
-            self.field,
-            checked,
-        )
+        read_subword::expand::<F, NF>(scope, &self.words, pos, self.origin, self.field, checked)
     }
 }
 
