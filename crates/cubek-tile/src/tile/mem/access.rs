@@ -7,7 +7,7 @@ use cubecl::{
     std::quant::unpack_fields,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, ErasedTensor, View, ViewMut, WriteOnly,
-        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn},
+        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout},
     },
 };
 
@@ -1037,7 +1037,10 @@ impl<T: Numeric> MemData<T> {
 
     /// [`matrix_transparent`](MemData::matrix_transparent) for a sub-word operand: `layout`
     /// counts its columns in words, and the view serves `W` of a word's fields per read.
-    pub(crate) fn matrix_subword<W: Size, L: TileLayout<Coords2d>>(
+    pub(crate) fn matrix_subword<
+        W: Size,
+        L: TileLayout<Coords2d> + Layout<SourceCoordinates = CoordsDyn> + Clone,
+    >(
         &self,
         layout: L,
         #[comptime] field: Field,
@@ -1051,14 +1054,14 @@ impl<T: Numeric> MemData<T> {
         // The base and window layouts address served lines; the storage under them maps a line
         // to its word.
         let storage = self.lines_storage::<u32, Const<1>>();
+        let window = self.window().with_guard(comptime!(Guard::Checked));
         let words = storage
             .view(WordOfLine::new(storage.len(), per_line))
             .view(self.base())
-            .view(self.window().with_guard(comptime!(Guard::Checked)))
-            .view(layout);
-        let rank = self.window.origin.len();
-        let origin = self.window.origin.at(comptime!(rank - 1)).fcast::<u32>();
-        let values = SubwordView::<T, W>::new(words, origin, comptime!(field));
+            .view(window.clone())
+            .view(layout.clone());
+        let values =
+            SubwordView::<T, W, L>::new(words, layout, window, self.base(), comptime!(field));
         MaskedView::new(values.view(), comptime!(self.access.overhang.masks()))
     }
 

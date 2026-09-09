@@ -2056,7 +2056,18 @@ fn e4m3_fields_unpack_on_read() {
 /// exact.
 #[test]
 fn ue8m0_scales_are_read_as_bytes() {
-    let (field, rows, cols, block, blocks) = (QuantValue::Q8S, 4, 4, 8, 4);
+    check_ue8m0_scales(8, 4);
+}
+
+/// The same with two blocks a row: a row of scales is half a word, so a word straddles two
+/// rows and the slot is the line's index through the whole layout, not its column.
+#[test]
+fn byte_scale_rows_need_no_word_alignment() {
+    check_ue8m0_scales(16, 2);
+}
+
+fn check_ue8m0_scales(block: usize, blocks: usize) {
+    let (field, rows, cols) = (QuantValue::Q8S, 4, 4);
     let depth = block * blocks;
     let bits = field.size_bits();
     let factor = 32 / bits;

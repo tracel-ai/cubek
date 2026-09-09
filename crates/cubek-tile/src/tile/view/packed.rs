@@ -16,9 +16,9 @@ use cubecl::post_processing::minifloat::{fp8_bits_to_f32, ue8m0_bits_to_f32};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
-use cubecl::std::tensor::layout::{Coords1d, Coords2d, Layout, LayoutExpand};
+use cubecl::std::tensor::layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand};
 
-use crate::{Field, FieldDecode, field_decode};
+use crate::{Field, FieldDecode, GmemLayout, Window, field_decode};
 use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
@@ -352,39 +352,53 @@ impl Layout for WordOfLine {
 }
 
 /// One word read whole, `NF` of its fields served: the slot is the line's position in its word,
-/// `origin` being the window's innermost origin in served lines, so a reader stepping one value
-/// at a time under a runtime index reads the word it lands in and shifts.
+/// which is the line's index through the whole layout chain, so a row of scales need not start
+/// on a word boundary. A reader stepping one value at a time under a runtime index reads the
+/// word it lands in and shifts.
 #[cube]
-pub(crate) fn read_subword<F: Numeric, NF: Size>(
+pub(crate) fn read_subword<
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn>,
+>(
     words: &View<'_, Vector<u32, Const<1>>, Coords2d>,
+    layout: &L,
+    window: &Window,
+    base: &GmemLayout,
     pos: Coords2d,
-    origin: u32,
     #[comptime] field: Field,
     #[comptime] checked: bool,
 ) -> Vector<F, NF> {
-    let (row, col) = pos;
     let nf = NF::value();
     let width = comptime!(nf as u32);
-    let per_line = comptime!(field.per_word() as u32 / width);
+    let per_line = comptime!(field.per_word() / nf);
     let bits = comptime!(field.size_bits() as u32);
     let word = if checked {
-        words.read_checked((row, col))
+        words.read_checked(pos)
     } else {
-        words.read_unchecked((row, col))
+        words.read_unchecked(pos)
     };
-    let slot = (origin + col) % per_line;
+    let line = base.to_source_pos(window.to_source_pos(layout.to_source_pos(pos)));
+    let slot = (line % per_line) as u32;
     let shifted = word >> Vector::<u32, Const<1>>::new(slot * width * bits);
     unpack_line::<F, Const<1>, NF>(shifted, field)
 }
 
 /// [`PackedView`] serving fewer values than a word holds ([`Packing::Subword`](crate::Packing::Subword)):
-/// a `(row, col)` view in served lines whose words are addressed through [`WordOfLine`].
+/// a `(row, col)` view in served lines whose words are addressed through [`WordOfLine`], and
+/// whose slot is read off the same layout chain.
 #[expect(dead_code, reason = "read through the expand impls below")]
 #[derive(CubeType, Clone)]
-pub(crate) struct SubwordView<'a, F: Numeric, NF: Size> {
+pub(crate) struct SubwordView<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone,
+> {
     words: View<'a, Vector<u32, Const<1>>, Coords2d>,
-    /// The window's innermost origin, in served lines.
-    origin: u32,
+    layout: L,
+    window: Window,
+    base: GmemLayout,
     #[cube(comptime)]
     field: Field,
     #[cube(comptime)]
@@ -392,35 +406,57 @@ pub(crate) struct SubwordView<'a, F: Numeric, NF: Size> {
 }
 
 #[cube]
-impl<'a, F: Numeric, NF: Size> SubwordView<'a, F, NF> {
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> SubwordView<'a, F, NF, L>
+{
     pub fn new(
         words: View<'a, Vector<u32, Const<1>>, Coords2d>,
-        origin: u32,
+        layout: L,
+        window: Window,
+        base: GmemLayout,
         #[comptime] field: Field,
     ) -> Self {
-        SubwordView::<'a, F, NF> {
+        SubwordView::<'a, F, NF, L> {
             words,
-            origin,
+            layout,
+            window,
+            base,
             field,
             _ty: PhantomData,
         }
     }
 }
 
-impl<'a, F: Numeric, NF: Size> SubwordView<'a, F, NF> {
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> SubwordView<'a, F, NF, L>
+{
     pub fn view(self) -> View<'a, Vector<F, NF>, Coords2d> {
         unexpanded!()
     }
 
     pub fn __expand_view(
         scope: &Scope,
-        this: SubwordViewExpand<'a, F, NF>,
+        this: SubwordViewExpand<'a, F, NF, L>,
     ) -> ViewExpand<'a, Vector<F, NF>, Coords2d> {
         this.__expand_view_method(scope)
     }
 }
 
-impl<'a, F: Numeric, NF: Size> SubwordViewExpand<'a, F, NF> {
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> SubwordViewExpand<'a, F, NF, L>
+{
     pub fn __expand_view_method(self, scope: &Scope) -> ViewExpand<'a, Vector<F, NF>, Coords2d> {
         ViewExpand::new(scope, self)
     }
@@ -431,22 +467,55 @@ impl<'a, F: Numeric, NF: Size> SubwordViewExpand<'a, F, NF> {
         pos: <Coords2d as CubeType>::ExpandType,
         checked: bool,
     ) -> NativeExpand<Vector<F, NF>> {
-        read_subword::expand::<F, NF>(scope, &self.words, pos, self.origin, self.field, checked)
+        read_subword::expand::<F, NF, L>(
+            scope,
+            &self.words,
+            &self.layout,
+            &self.window,
+            &self.base,
+            pos,
+            self.field,
+            checked,
+        )
     }
 }
 
-impl<'a, F: Numeric, NF: Size> Vectorized for SubwordView<'a, F, NF> {}
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> Vectorized for SubwordView<'a, F, NF, L>
+{
+}
 
-impl<'a, F: Numeric, NF: Size> VectorizedExpand for SubwordViewExpand<'a, F, NF> {
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> VectorizedExpand for SubwordViewExpand<'a, F, NF, L>
+{
     fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
         VectorSize::from(NF::__expand_value(scope))
     }
 }
 
-impl<'a, F: Numeric, NF: Size> ViewOperations<Vector<F, NF>, Coords2d> for SubwordView<'a, F, NF> {}
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> ViewOperations<Vector<F, NF>, Coords2d> for SubwordView<'a, F, NF, L>
+{
+}
 
-impl<'a, F: Numeric, NF: Size> ViewOperationsExpand<Vector<F, NF>, Coords2d>
-    for SubwordViewExpand<'a, F, NF>
+impl<
+    'a,
+    F: Numeric,
+    NF: Size,
+    L: Layout<Coordinates = Coords2d, SourceCoordinates = CoordsDyn> + Clone + 'a,
+> ViewOperationsExpand<Vector<F, NF>, Coords2d> for SubwordViewExpand<'a, F, NF, L>
 {
     fn __expand_read_method(
         &self,
