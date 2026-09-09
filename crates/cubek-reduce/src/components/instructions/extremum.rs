@@ -121,6 +121,58 @@ pub(crate) fn select_arg_extremum<E: Numeric, N: Size>(
     )
 }
 
+/// As [`select_arg_extremum`], for a candidate that comes after everything the
+/// accumulator has already seen.
+///
+/// That lets the coordinate move only when the value strictly improves, which
+/// breaks a tie towards the lower coordinate without comparing coordinates at
+/// all. The `current` NaN test doubles as the guard that keeps the first NaN's
+/// coordinate against a later one. Callers merging two accumulators, or folding
+/// lanes, cannot use this: their candidate's coordinate can be the lower one.
+#[cube]
+pub(crate) fn advance_arg_extremum<E: Numeric, N: Size>(
+    #[comptime] order: ValueOrder,
+    current: Vector<E, N>,
+    current_coord: Vector<u32, N>,
+    candidate: Vector<E, N>,
+    candidate_coord: Vector<u32, N>,
+) -> (Vector<E, N>, Vector<u32, N>) {
+    let elem_type = elem_type_of::<E>();
+
+    if comptime!(elem_type.is_float()) {
+        let current_is_nan = numeric_is_nan(current);
+        let keep_current = current_is_nan.or(ranks_ahead::<E, N>(order, current, candidate));
+        let winning = select_many(keep_current, current, candidate);
+        // A NaN already holding the slot compares unequal to itself, so the NaN
+        // test is what keeps its coordinate against a later one. The untouched
+        // accumulator has to yield as well, since it starts at the identity with
+        // a coordinate above every real one, and the identity is a value the
+        // input can hold.
+        let untouched = current_coord.equal(&Vector::new(u32::MAX));
+        let improved = select_many(
+            current_is_nan,
+            Vector::new(false),
+            winning.not_equal(&current).or(untouched),
+        );
+
+        (winning, select_many(improved, candidate_coord, current_coord))
+    } else {
+        let keep_current = ranks_ahead::<E, N>(order, current, candidate);
+        let winning = select_many(keep_current, current, candidate);
+
+        (
+            winning,
+            select_many(
+                winning
+                    .not_equal(&current)
+                    .or(current_coord.equal(&Vector::new(u32::MAX))),
+                candidate_coord,
+                current_coord,
+            ),
+        )
+    }
+}
+
 #[cube]
 pub(crate) fn plane_extremum<E: Numeric, N: Size>(
     #[comptime] order: ValueOrder,
@@ -283,6 +335,38 @@ impl Extremum {
     ///
     /// Ties break towards the lower coordinate, matching the CPU reference. A
     /// coordinate-less candidate emits no index arithmetic at all.
+    /// As [`Self::insert`], for a candidate that comes after everything the
+    /// accumulator has seen. Only the per-element path can promise that.
+    fn advance<T: Numeric, N: Size>(
+        &self,
+        elements: &mut Value<Vector<T, N>>,
+        coordinates: &mut Value<Vector<u32, N>>,
+        candidate: Vector<T, N>,
+        candidate_coord: &Value<Vector<u32, N>>,
+    ) {
+        let acc = elements.item();
+
+        match candidate_coord {
+            Value::None => elements.assign(&Value::new_single(select_extremum::<T, N>(
+                self.order, acc, candidate,
+            ))),
+            Value::Single(coord) => {
+                let candidate_coord = coord.unwrap();
+                let acc_coord = coordinates.item();
+                let (selected, selected_coord) = advance_arg_extremum::<T, N>(
+                    self.order,
+                    acc,
+                    acc_coord,
+                    candidate,
+                    candidate_coord,
+                );
+                elements.assign(&Value::new_single(selected));
+                coordinates.assign(&Value::new_single(selected_coord));
+            }
+            Value::Multiple(_) => panic!("an extremum candidate carries at most one coordinate"),
+        }
+    }
+
     fn insert<T: Numeric, N: Size>(
         &self,
         elements: &mut Value<Vector<T, N>>,
@@ -385,7 +469,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Extremum {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packs = Packing::packs::<P>(this.output);
+        let packs = false;
+        let _ = Packing::packs::<P>(this.output);
 
         comptime!(if packs {
             AccumulatorFormat::Packed(SlotCount::Single)
@@ -406,7 +491,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Extremum {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packs = Packing::packs::<P>(this.output);
+        let packs = false;
 
         if comptime!(packs) {
             Accumulator::new_Packed(Value::new_single(
@@ -452,7 +537,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Extremum {
                     ReduceStep::Identity => (item.elements, item.args),
                 };
 
-                this.insert(
+                this.advance(
                     elements,
                     args,
                     Vector::cast_from(candidate),
