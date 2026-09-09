@@ -1,4 +1,6 @@
-use super::{ReduceFamily, ReduceInstruction, plane_max_propagating_nan, select_max};
+use super::{
+    ReduceFamily, ReduceInstruction, ValueOrder, plane_extremum_propagating_nan, select_extremum,
+};
 use crate::components::{
     instructions::{
         Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
@@ -55,13 +57,15 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let accumulator_item = accumulator.elements().item();
         let elements = match reduce_step {
             ReduceStep::Plane => {
-                let candidate_item =
-                    Vector::cast_from(plane_max_propagating_nan(Vector::abs(item.elements)));
-                select_max(accumulator_item, candidate_item)
+                let candidate_item = Vector::cast_from(plane_extremum_propagating_nan(
+                    ValueOrder::Descending,
+                    Vector::abs(item.elements),
+                ));
+                select_extremum(ValueOrder::Descending, accumulator_item, candidate_item)
             }
             ReduceStep::Identity => {
                 let item_abs = Vector::cast_from(Vector::abs(item.elements));
-                select_max(accumulator_item, item_abs)
+                select_extremum(ValueOrder::Descending, accumulator_item, item_abs)
             }
         };
 
@@ -74,7 +78,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         let accumulator_item = accumulator.elements().item();
         let other_item = other.elements().item();
 
-        let selected = select_max(accumulator_item, other_item);
+        let selected = select_extremum(ValueOrder::Descending, accumulator_item, other_item);
         accumulator
             .elements_mut()
             .assign(&Value::new_single(selected));
@@ -82,8 +86,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
         let acc_item = accumulator.elements().item();
-        let candidate_item = Vector::cast_from(plane_max_propagating_nan(Vector::abs(acc_item)));
-        let max = select_max(acc_item, candidate_item);
+        let candidate_item = Vector::cast_from(plane_extremum_propagating_nan(
+            ValueOrder::Descending,
+            Vector::abs(acc_item),
+        ));
+        let max = select_extremum(ValueOrder::Descending, acc_item, candidate_item);
         accumulator.elements_mut().assign(&Value::new_single(max));
     }
 
@@ -101,7 +108,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for MaxAbs {
         #[unroll]
         for k in 0..accumulator.vector_size() {
             let candidate = accumulator.extract(k);
-            max = select_max(
+            max = select_extremum(
+                ValueOrder::Descending,
                 Vector::<P::EA, Const<1>>::new(candidate),
                 Vector::<P::EA, Const<1>>::new(max),
             )

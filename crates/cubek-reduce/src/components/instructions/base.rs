@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 /// Which of a reduction's two results the single-output path writes.
 ///
 /// For instructions that can track their candidates' coordinates
-/// ([`TopK`](super::TopK), [`Min`](super::Min), [`Max`](super::Max)), the mode
+/// ([`TopK`](super::TopK), [`Extremum`](super::Extremum)), the mode
 /// only decides construction ([`ReduceInstruction::requirements`],
 /// `null_accumulator`) and which half of the `to_output_*` pair the writer
 /// keeps; everything in between reads the accumulator's own state.
@@ -210,7 +210,7 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
 ///
-/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example how to implement
+/// See a provided implementation, such as [`Sum`](super::Sum) or [`Extremum`](super::Extremum) for an example how to implement
 /// this trait for a custom instruction.
 ///
 /// A reduction works at three levels. First, it takes input data of type `In` and reduce them
@@ -358,8 +358,8 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 }
 
-/// The shared memory used by [`Max`](super::Max) and [`Min`](super::Min), in
-/// whichever of the two spellings the instruction accumulates in.
+/// The shared memory used by [`Extremum`](super::Extremum), in whichever of the
+/// two representations the instruction accumulates in.
 #[derive(CubeType)]
 pub enum ArgAccumulator<P: ReducePrecision> {
     /// A slice of values, beside a slice of coordinates when the instruction

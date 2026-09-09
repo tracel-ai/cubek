@@ -1,7 +1,8 @@
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use super::extrema::numeric_is_nan;
+use super::extremum::numeric_is_nan;
 use crate::components::instructions::{ReduceOutputMode, Value};
 use crate::components::precision::ReducePrecision;
 
@@ -12,12 +13,12 @@ pub(crate) type Packed = u64;
 
 const SIGN: u32 = 0x8000_0000;
 
-/// Which end of the value range a [`Packed`] ranks first.
+/// Which end of the value range a packed value ranks first.
 ///
 /// A NaN outranks every number in both, so neither is the other's reverse and a
 /// value packed for one cannot be read back as the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum ValueOrder {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ValueOrder {
     /// Largest value first, as top-k and max rank.
     Descending,
     /// Smallest value first, as min ranks.
