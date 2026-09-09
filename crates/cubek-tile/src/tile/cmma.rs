@@ -21,6 +21,14 @@ pub struct CmmaData<T: Numeric> {
     /// The whole MMA tile's `(m, n)`, whatever the role.
     #[cube(comptime)]
     pub shape: (usize, usize),
+    /// This plane's window of shared memory, one tile wide, that the fragment bounces through
+    /// where its intrinsic cannot do the work: a row-wise op, or a drain into a store that folds.
+    /// Opened on the accumulator ([`with_scratch`](Tile::with_scratch)) and carried by every
+    /// fragment taken off it.
+    pub scratch: ComptimeOption<Shared<[T]>>,
+    /// Units in one plane, stated with the scratch: what a bounce deals the tile's cells across.
+    #[cube(comptime)]
+    pub lanes: usize,
 }
 
 #[cube]
@@ -41,6 +49,24 @@ impl<T: Numeric> CmmaData<T> {
             ident,
             layout,
             shape: comptime!((m, n)),
+            scratch: ComptimeOption::new_None(),
+            lanes: 0usize,
+        }
+    }
+
+    /// This fragment carrying `scratch`, one tile of shared memory for its plane of `lanes`.
+    pub(crate) fn with_scratch(
+        self,
+        scratch: Shared<[T]>,
+        #[comptime] lanes: usize,
+    ) -> CmmaData<T> {
+        CmmaData::<T> {
+            matrix: self.matrix,
+            ident: comptime!(self.ident),
+            layout: comptime!(self.layout),
+            shape: comptime!(self.shape),
+            scratch: ComptimeOption::new_Some(scratch),
+            lanes,
         }
     }
 
@@ -79,6 +105,8 @@ impl<T: Numeric> CmmaData<T> {
                 ident,
                 layout,
                 shape: comptime!((m, n)),
+                scratch: ComptimeOption::new_None(),
+                lanes: 0usize,
             })),
             space: comptime!(space),
             depth: comptime!(0usize),
@@ -123,6 +151,60 @@ impl<T: Numeric> CmmaData<T> {
             stride,
             comptime!(self.layout),
         )
+    }
+
+    /// Drain this fragment into a store that folds: bounced through the plane's scratch, then
+    /// each lane adds its cells through the store's own write, which is the atomic add. The
+    /// intrinsic's store replaces and elects no writer; the scratch is what gives each cell one
+    /// owner, so a lane adds it once. The syncs are cube-wide, as every fragment bounce's are.
+    pub(crate) fn accumulate_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
+        let scratch = #[comptime]
+        match &self.scratch {
+            ComptimeOption::Some(scratch) => scratch.clone(),
+            ComptimeOption::None => panic!(
+                "CmmaData::accumulate_cast_window: a fragment folds into an accumulating store \
+                 through a scratch; open the accumulator with `with_scratch`"
+            ),
+        };
+        let (m, n) = comptime!(self.shape);
+        // The store takes lines of its own width, so the tile is dealt out in lines: `n` is the
+        // instruction's and a served width divides it.
+        let width = comptime!(mem.store.vector_size);
+        comptime!(assert!(
+            n.is_multiple_of(width),
+            "CmmaData::accumulate_cast_window: the store's lines ({width}) do not divide the \
+             fragment's columns ({n})"
+        ));
+        let size!(W) = width;
+        let lines_per_row = comptime!(n / width);
+        let lines = comptime!(m * lines_per_row);
+        let lanes = comptime!(self.lanes);
+        let lane = UNIT_POS_X as usize % lanes;
+        let axes = comptime!(MatrixAxes::trailing_pair(&space));
+        let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
+        sync_cube();
+        self.store_scratch(&scratch);
+        sync_cube();
+        #[unroll]
+        for t in 0..comptime!(lines.div_ceil(lanes)) {
+            let line = lane + t * lanes;
+            if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                let mut value = Vector::<Out, W>::empty();
+                #[unroll]
+                for e in 0..width {
+                    value.insert(e, Out::cast_from(scratch[line * width + e]));
+                }
+                sink.write(
+                    ((line / lines_per_row) as u32, (line % lines_per_row) as u32),
+                    value,
+                );
+            }
+        }
+        sync_cube();
     }
 
     /// Drain this fragment into `mem`'s *window*, casting `T` down to the sink's element

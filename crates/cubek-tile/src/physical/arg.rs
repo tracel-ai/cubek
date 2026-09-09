@@ -174,9 +174,9 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 
 /// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
 /// for a destination whose writes add rather than replace. Bound as `Atomic<E>`, which carries no
-/// served width, so the tile is served scalar and its register block works in scalars where a
-/// storing one works in lines. A limit, not a design: serving it wider is sound, but the width
-/// would have to be stated on the [`TileSpec`], and today no operand states one.
+/// served width, so the width is stated where the tile is served ([`tile`](Self::tile)), as
+/// [`tile_packed`](TileArg::tile_packed) states its value type: the tile addresses lines of that
+/// width and the drain adds each line's scalars one atomic at a time.
 ///
 /// **The buffer arrives holding the monoid's identity.** A cell here belongs to several instances
 /// and none of them may seed it, so the seeding happens once at the launch. Nothing can check it:
@@ -190,10 +190,11 @@ pub struct AccumulateArg<'a, E: Numeric> {
 
 #[cube]
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
-    /// Serve the output as a [`Tile`] that accumulates into it. [`TileArg::tile`]'s twin, and the same
-    /// call: the kernel's one `space` projected onto this operand's `spec` axes.
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
-        Tile::<E>::of_atomic_accumulate::<Const<1>>(
+    /// Serve the output as a [`Tile`] that accumulates into it at width `V`. [`TileArg::tile`]'s
+    /// twin, and the same call: the kernel's one `space` projected onto this operand's `spec`
+    /// axes.
+    pub fn tile<V: Size>(&self, #[comptime] space: Partitioning) -> Tile<E> {
+        Tile::<E>::of_atomic_accumulate::<V>(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),

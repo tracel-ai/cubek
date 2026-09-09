@@ -182,9 +182,21 @@ impl<Acc: Numeric> Tile<Acc> {
                 let end = start + cells;
                 let scratch = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
                     .map(|scratch| &scratch[start..end]);
+                // Every fragment carries the scratch too: one taken off the partition by `at`
+                // bounces on its own, which is how it drains into a store that folds.
+                let mut frags = Sequence::<PlaneTile<Acc>>::new();
+                #[unroll]
+                for i in 0..comptime!(p.m_tiles * p.n_tiles) {
+                    frags.push(
+                        p.frags
+                            .index(i)
+                            .clone()
+                            .with_scratch(scratch.clone(), lanes),
+                    );
+                }
                 Tile::<Acc> {
                     tile_kind: TileKind::new_PlanePartition(PlanePartition::<Acc> {
-                        frags: p.frags,
+                        frags,
                         m_tiles: comptime!(p.m_tiles),
                         n_tiles: comptime!(p.n_tiles),
                         scratch: ComptimeOption::new_Some(scratch),

@@ -799,6 +799,10 @@ impl<T: Numeric> Tile<T> {
     /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
     /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
     /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
+    ///
+    /// Into a destination that folds ([`Write::Accumulate`]), a cmma fragment drains through the
+    /// scratch its accumulator was opened with, cell by cell, since its intrinsic's store cannot
+    /// add.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.space.clone());
         match (&mut self.tile_kind, &src.tile_kind) {
