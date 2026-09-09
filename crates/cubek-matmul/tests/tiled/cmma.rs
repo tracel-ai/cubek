@@ -378,8 +378,10 @@ fn cmma_packed_weight_names_the_stage_across_m() {
             },
         )
         .unwrap();
+        // The storage tile pins the stage, and leaves the delivery alone: who moves the bytes
+        // is a knob, how they are stored is a fact of the data.
         assert_eq!(free.delivery, CmmaDelivery::Copy);
-        assert_eq!(held.delivery, CmmaDelivery::Tiled);
+        assert_eq!(held.delivery, CmmaDelivery::Copy);
         assert_eq!((held.stage_k, held.stage().1), tile, "at m = {m}");
         assert_ne!((free.stage_k, free.stage().1), tile, "at m = {m}");
 

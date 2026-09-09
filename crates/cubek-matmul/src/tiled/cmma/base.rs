@@ -12,8 +12,8 @@
 //! - Quantized inputs.
 //! - Operands not row-major contiguous (col-major needs a fragment-layout path not yet wired).
 //! - Shapes not divisible by the instruction (the cmma transport cannot mask an overhang).
-//! - A storage-tiled input under any delivery but [`CmmaDelivery::Tiled`], or whose storage tile is not
-//!   this plan's stage on its axes: the storage tile names the stage, the plan cannot disagree.
+//! - A storage-tiled input whose storage tile is not this plan's stage on its axes: the storage
+//!   tile names the stage, the plan cannot disagree. Which delivery moves it is unrelated.
 
 use std::fmt::Display;
 
@@ -34,13 +34,11 @@ const MAX_PLANES_PER_AXIS: usize = 4;
 /// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum CmmaDelivery {
+    /// The cube's units move each stage.
     #[default]
     Copy,
+    /// The TMA engine moves each stage.
     Tma,
-    /// An input packed at load into storage tiles of exactly this plan's stage (the weight of a prefill
-    /// matmul), so each stage is one contiguous run of the buffer; the other input may stay
-    /// row-major. Refused for a storage tile that is not the stage.
-    Tiled,
 }
 
 impl CmmaDelivery {
@@ -187,7 +185,7 @@ impl CmmaStrategy {
 
     pub fn tiled() -> Self {
         CmmaStrategy {
-            delivery: CmmaDelivery::Tiled,
+            delivery: CmmaDelivery::Copy,
         }
     }
 }
@@ -197,7 +195,6 @@ impl Display for CmmaStrategy {
         match self.delivery {
             CmmaDelivery::Copy => Ok(()),
             CmmaDelivery::Tma => f.write_str("_tma"),
-            CmmaDelivery::Tiled => f.write_str("_tiled"),
         }
     }
 }
@@ -223,8 +220,8 @@ impl CmmaRoutine {
     /// kernel emits.
     #[allow(clippy::result_large_err)]
     ///
-    /// `stored` is what the operands' storage tiles fix: an inferred plan stages to them, and
-    /// moves them under the `Tiled` delivery; a forced plan is checked against them at the launch.
+    /// `stored` is what the operands' storage tiles fix: an inferred plan stages to them; a
+    /// forced plan is checked against them at the launch.
     pub fn blueprint(
         strategy: &BlueprintStrategy<(), CmmaRoutine>,
         problem: &MatmulProblem,
@@ -298,20 +295,9 @@ impl CmmaRoutine {
         stored: StoredTiles,
     ) -> Result<CmmaBlueprint, MatmulSetupError> {
         let client = &device_settings.client;
+        // The storage tiles constrain the plan's stage; they do not touch the delivery, which
+        // says who moves the bytes and serves a stored operand either way.
         let (fixed_m, fixed_k, fixed_n) = stored.stage()?;
-        // The plain delivery yields to a stored operand, which only the Tiled delivery moves; an
-        // asked-for TMA does not, and the launch refuses the pair rather than switch it.
-        let delivery = match (delivery, stored) {
-            (
-                CmmaDelivery::Copy,
-                StoredTiles {
-                    lhs: None,
-                    rhs: None,
-                },
-            ) => CmmaDelivery::Copy,
-            (CmmaDelivery::Copy, _) => CmmaDelivery::Tiled,
-            (other, _) => other,
-        };
         let divides = |edge: Option<usize>, i: usize| edge.is_none_or(|e| e.is_multiple_of(i));
         let fits = |m: usize, n: usize, k: usize| {
             divides(fixed_m, m) && divides(fixed_n, n) && divides(fixed_k, k)

@@ -7,8 +7,7 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand},
 };
 use cubek_tile::{
-    Axis, Geometry, KernelForm, Launcher, Space, StorageTiled, Strided, TensorDelivery, Tma,
-    TmaTileArgLaunch,
+    Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
 };
 
 use crate::{
@@ -57,11 +56,10 @@ fn validate_single_type(dtypes: &MatmulElems, ident: MatmulIdent) -> Result<(), 
     }
 }
 
-/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes, and
-/// only the [`Tiled`](CmmaDelivery::Tiled) delivery moves it. A plain input passes.
+/// A storage-tiled input names the stage: its storage tile must be this plan's stage on its axes.
+/// A plain input passes.
 #[allow(clippy::result_large_err)]
 fn validate_storage_tiled(
-    blueprint: &CmmaBlueprint,
     name: &str,
     binding: &TensorBinding,
     stage: (usize, usize),
@@ -69,16 +67,6 @@ fn validate_storage_tiled(
     let Some(tile) = storage_tile(binding, name)? else {
         return Ok(());
     };
-    match blueprint.delivery {
-        CmmaDelivery::Tiled => {}
-        CmmaDelivery::Copy | CmmaDelivery::Tma => {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "Cmma: {name} arrived storage-tiled, which only the Tiled delivery moves, not \
-                 {:?}",
-                blueprint.delivery
-            ))));
-        }
-    }
     if tile != stage {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "Cmma: {name} is stored in {tile:?} storage tiles but the plan stages {stage:?}; the storage \
@@ -161,8 +149,8 @@ fn setup(
     };
     let blueprint = CmmaRoutine::blueprint(strategy, &problem, &device_settings, acc, stored)?;
     let (stage_m, stage_n) = blueprint.stage();
-    validate_storage_tiled(&blueprint, "lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
-    validate_storage_tiled(&blueprint, "rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
+    validate_storage_tiled("lhs", lhs.data(), (stage_m, blueprint.stage_k))?;
+    validate_storage_tiled("rhs", rhs.data(), (blueprint.stage_k, stage_n))?;
 
     // The descriptor requires every non-contiguous stride 16-byte aligned; the problem's
     // strides are synthesized, so check the real bindings here.
@@ -242,20 +230,7 @@ pub fn launch_ref(
     // The one dispatch Rust forces: pick the compile-time family for the runtime delivery.
     // Every path runs the same kernel body and never branches on the delivery again.
     match blueprint.delivery {
-        CmmaDelivery::Copy => launch_strided::<Strided>(
-            client,
-            &launch,
-            cube_count,
-            cube_dim,
-            &blueprint,
-            &batch_axes,
-            elems,
-            lhs,
-            rhs,
-            out,
-            &out_batch_axes,
-        ),
-        CmmaDelivery::Tiled => launch_strided::<StorageTiled>(
+        CmmaDelivery::Copy => launch_strided::<Cooperative>(
             client,
             &launch,
             cube_count,
@@ -296,10 +271,10 @@ struct Elems {
     acc: ElemType,
 }
 
-/// The tensor-bound path, strided or storage-tiled (`D` says which, and the [`Tiled`] family
-/// serves a plain operand beside a storage-tiled one): each operand lined at the widest width
-/// the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
-/// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation.
+/// The tensor-bound path, the cube's units moving each stage: each operand lined at the widest
+/// width the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
+/// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
+/// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
 #[allow(clippy::too_many_arguments)]
 fn launch_strided<D>(
     client: &Client,
