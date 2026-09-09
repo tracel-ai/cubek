@@ -25,7 +25,8 @@ pub enum ReduceOperation {
     Prod(Prod),
     Mean(Mean),
     MaxAbs(MaxAbs),
-    Extremum(Extremum),
+    Max(Extremum),
+    Min(Extremum),
     TopK(TopK),
     Any(Any),
     All(All),
@@ -289,7 +290,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 <MaxAbs as ReduceInstruction<P>>::requirements(max_abs)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::requirements(topk),
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::requirements(extremum)
             }
             ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::requirements(any),
@@ -305,7 +306,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => {
                 <MaxAbs as ReduceInstruction<P>>::accumulator_format(maxabs)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::accumulator_format(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::accumulator_format(topk),
@@ -320,11 +321,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperationConfig::Prod => ReduceOperation::new_Prod(Prod {}),
             ReduceOperationConfig::Mean => ReduceOperation::new_Mean(Mean { sum: Sum {} }),
             ReduceOperationConfig::MaxAbs => ReduceOperation::new_MaxAbs(MaxAbs {}),
-            ReduceOperationConfig::ArgMax => ReduceOperation::new_Extremum(Extremum {
+            ReduceOperationConfig::ArgMax => ReduceOperation::new_Max(Extremum {
                 order: ValueOrder::Descending,
                 output: ReduceOutputMode::Indices,
             }),
-            ReduceOperationConfig::ArgMin => ReduceOperation::new_Extremum(Extremum {
+            ReduceOperationConfig::ArgMin => ReduceOperation::new_Min(Extremum {
                 order: ValueOrder::Ascending,
                 output: ReduceOutputMode::Indices,
             }),
@@ -332,11 +333,11 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 k,
                 output: ReduceOutputMode::Indices,
             }),
-            ReduceOperationConfig::Max => ReduceOperation::new_Extremum(Extremum {
+            ReduceOperationConfig::Max => ReduceOperation::new_Max(Extremum {
                 order: ValueOrder::Descending,
                 output: ReduceOutputMode::Values,
             }),
-            ReduceOperationConfig::Min => ReduceOperation::new_Extremum(Extremum {
+            ReduceOperationConfig::Min => ReduceOperation::new_Min(Extremum {
                 order: ValueOrder::Ascending,
                 output: ReduceOutputMode::Values,
             }),
@@ -355,7 +356,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Prod(prod) => <Prod as ReduceInstruction<P>>::null_input(prod),
             ReduceOperation::Mean(mean) => <Mean as ReduceInstruction<P>>::null_input(mean),
             ReduceOperation::MaxAbs(maxabs) => <MaxAbs as ReduceInstruction<P>>::null_input(maxabs),
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::null_input(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_input(topk),
@@ -372,7 +373,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => {
                 <MaxAbs as ReduceInstruction<P>>::null_accumulator(maxabs)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::null_accumulator(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_accumulator(topk),
@@ -400,7 +401,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => {
                 <MaxAbs as ReduceInstruction<P>>::reduce(maxabs, accumulator, item, reduce_step)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::reduce(extremum, accumulator, item, reduce_step)
             }
             ReduceOperation::TopK(topk) => {
@@ -429,7 +430,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(max_abs) => {
                 <MaxAbs as ReduceInstruction<P>>::plane_reduce_inplace(max_abs, accumulator)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::plane_reduce_inplace(extremum, accumulator)
             }
             ReduceOperation::TopK(topk) => {
@@ -458,7 +459,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => {
                 <MaxAbs as ReduceInstruction<P>>::fuse_accumulators(maxabs, accumulator, other)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::fuse_accumulators(extremum, accumulator, other)
             }
             ReduceOperation::TopK(topk) => {
@@ -481,7 +482,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::MaxAbs(maxabs) => {
                 <MaxAbs as ReduceInstruction<P>>::output_mode(maxabs)
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::output_mode(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::output_mode(topk),
@@ -515,7 +516,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::to_output_parallel::<Out, Idx>(
                     extremum,
                     accumulator,
@@ -568,7 +569,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::Extremum(extremum) => {
+            ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
                     extremum,
                     accumulator,
