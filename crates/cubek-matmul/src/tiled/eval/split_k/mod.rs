@@ -354,7 +354,7 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
                 self.launcher.partitioning_arg(),
-                self.dtype,
+                dtype,
             ),
             Levels::Two => split_k_matmul_two_levels::launch(
                 &self.client,
@@ -364,7 +364,7 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
                 self.launcher.partitioning_arg(),
-                self.self.dtype,
+                dtype,
             ),
         }
         Ok(())
