@@ -52,7 +52,7 @@ pub(crate) fn extremum_identity<E: Numeric>(#[comptime] order: ValueOrder) -> E 
 
 /// Whether `current` ranks ahead of `candidate` on value alone, NaN aside.
 #[cube]
-fn ranks_ahead<E: Numeric, N: Size>(
+pub(crate) fn ranks_ahead<E: Numeric, N: Size>(
     #[comptime] order: ValueOrder,
     current: Vector<E, N>,
     candidate: Vector<E, N>,
@@ -122,7 +122,7 @@ pub(crate) fn select_arg_extremum<E: Numeric, N: Size>(
 }
 
 #[cube]
-fn plane_extremum<E: Numeric, N: Size>(
+pub(crate) fn plane_extremum<E: Numeric, N: Size>(
     #[comptime] order: ValueOrder,
     item: Vector<E, N>,
 ) -> Vector<E, N> {

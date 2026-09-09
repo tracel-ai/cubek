@@ -1,5 +1,5 @@
 use super::{
-    All, Any, Extremum, MaxAbs, Mean, Prod, ReduceFamily, ReduceInstruction, ReduceRequirements,
+    Extremum, MaxAbs, Mean, Predicate, Prod, ReduceFamily, ReduceInstruction, ReduceRequirements,
     SharedAccumulator, Sum,
 };
 use crate::components::instructions::{
@@ -28,8 +28,8 @@ pub enum ReduceOperation {
     Max(Extremum),
     Min(Extremum),
     TopK(TopK),
-    Any(Any),
-    All(All),
+    Any(Predicate),
+    All(Predicate),
 }
 
 #[derive_cube_comptime]
@@ -293,8 +293,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::Max(extremum) | ReduceOperation::Min(extremum) => {
                 <Extremum as ReduceInstruction<P>>::requirements(extremum)
             }
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::requirements(any),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::requirements(all),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::requirements(predicate)
+            }
         }
     }
 
@@ -310,8 +311,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 <Extremum as ReduceInstruction<P>>::accumulator_format(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::accumulator_format(topk),
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::accumulator_format(any),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::accumulator_format(all),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::accumulator_format(predicate)
+            }
         }
     }
 
@@ -345,8 +347,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 k,
                 output: ReduceOutputMode::Values,
             }),
-            ReduceOperationConfig::Any => ReduceOperation::new_Any(Any {}),
-            ReduceOperationConfig::All => ReduceOperation::new_All(All {}),
+            ReduceOperationConfig::Any => ReduceOperation::new_Any(Predicate::any()),
+            ReduceOperationConfig::All => ReduceOperation::new_All(Predicate::all()),
         }
     }
 
@@ -360,8 +362,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 <Extremum as ReduceInstruction<P>>::null_input(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_input(topk),
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::null_input(any),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::null_input(all),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::null_input(predicate)
+            }
         }
     }
 
@@ -377,8 +380,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 <Extremum as ReduceInstruction<P>>::null_accumulator(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::null_accumulator(topk),
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::null_accumulator(any),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::null_accumulator(all),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::null_accumulator(predicate)
+            }
         }
     }
 
@@ -407,11 +411,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::reduce(topk, accumulator, item, reduce_step)
             }
-            ReduceOperation::Any(any) => {
-                <Any as ReduceInstruction<P>>::reduce(any, accumulator, item, reduce_step)
-            }
-            ReduceOperation::All(all) => {
-                <All as ReduceInstruction<P>>::reduce(all, accumulator, item, reduce_step)
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::reduce(
+                    predicate,
+                    accumulator,
+                    item,
+                    reduce_step,
+                )
             }
         }
     }
@@ -436,11 +442,8 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::plane_reduce_inplace(topk, accumulator)
             }
-            ReduceOperation::Any(any) => {
-                <Any as ReduceInstruction<P>>::plane_reduce_inplace(any, accumulator)
-            }
-            ReduceOperation::All(all) => {
-                <All as ReduceInstruction<P>>::plane_reduce_inplace(all, accumulator)
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::plane_reduce_inplace(predicate, accumulator)
             }
         }
     }
@@ -465,11 +468,12 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
             ReduceOperation::TopK(topk) => {
                 <TopK as ReduceInstruction<P>>::fuse_accumulators(topk, accumulator, other)
             }
-            ReduceOperation::Any(any) => {
-                <Any as ReduceInstruction<P>>::fuse_accumulators(any, accumulator, other)
-            }
-            ReduceOperation::All(all) => {
-                <All as ReduceInstruction<P>>::fuse_accumulators(all, accumulator, other)
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::fuse_accumulators(
+                    predicate,
+                    accumulator,
+                    other,
+                )
             }
         }
     }
@@ -486,8 +490,9 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 <Extremum as ReduceInstruction<P>>::output_mode(extremum)
             }
             ReduceOperation::TopK(topk) => <TopK as ReduceInstruction<P>>::output_mode(topk),
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::output_mode(any),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::output_mode(all),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::output_mode(predicate)
+            }
         }
     }
 
@@ -527,14 +532,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                 Out,
                 Idx,
             >(topk, accumulator, shape_axis_reduce),
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_parallel::<
-                Out,
-                Idx,
-            >(any, accumulator, shape_axis_reduce),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_parallel::<
-                Out,
-                Idx,
-            >(all, accumulator, shape_axis_reduce),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::to_output_parallel::<Out, Idx>(
+                    predicate,
+                    accumulator,
+                    shape_axis_reduce,
+                )
+            }
         }
     }
 
@@ -583,14 +587,13 @@ impl<P: ReducePrecision> ReduceInstruction<P> for ReduceOperation {
                     shape_axis_reduce,
                 )
             }
-            ReduceOperation::Any(any) => <Any as ReduceInstruction<P>>::to_output_perpendicular::<
-                Out,
-                Idx,
-            >(any, accumulator, shape_axis_reduce),
-            ReduceOperation::All(all) => <All as ReduceInstruction<P>>::to_output_perpendicular::<
-                Out,
-                Idx,
-            >(all, accumulator, shape_axis_reduce),
+            ReduceOperation::All(predicate) | ReduceOperation::Any(predicate) => {
+                <Predicate as ReduceInstruction<P>>::to_output_perpendicular::<Out, Idx>(
+                    predicate,
+                    accumulator,
+                    shape_axis_reduce,
+                )
+            }
         }
     }
 }

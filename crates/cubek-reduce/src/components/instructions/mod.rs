@@ -1,18 +1,15 @@
-mod all;
-mod any;
 mod base;
 mod extremum;
 mod maxabs;
 mod mean;
 mod mixed;
 mod packing;
+mod predicate;
 mod prod;
 mod sum;
 mod topk;
 mod utils;
 
-pub use all::*;
-pub use any::*;
 pub use base::*;
 pub use extremum::*;
 pub use maxabs::*;
@@ -20,6 +17,7 @@ pub use mean::*;
 pub use mixed::*;
 pub use packing::ValueOrder;
 pub(crate) use packing::*;
+pub use predicate::*;
 pub use prod::*;
 pub use sum::*;
 pub use topk::*;
