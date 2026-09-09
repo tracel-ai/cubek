@@ -124,11 +124,18 @@ pub(crate) fn select_arg_extremum<E: Numeric, N: Size>(
 /// As [`select_arg_extremum`], for a candidate that comes after everything the
 /// accumulator has already seen.
 ///
-/// That lets the coordinate move only when the value strictly improves, which
-/// breaks a tie towards the lower coordinate without comparing coordinates at
-/// all. The `current` NaN test doubles as the guard that keeps the first NaN's
-/// coordinate against a later one. Callers merging two accumulators, or folding
-/// lanes, cannot use this: their candidate's coordinate can be the lower one.
+/// The coordinate then moves only when the candidate takes the slot outright, so
+/// a tie keeps the lower one without comparing coordinates at all. `keep_current`
+/// already holds for a NaN in the slot, which is what keeps the first NaN's
+/// coordinate against a later one.
+///
+/// Every test here is an ordered comparison. An earlier form asked whether the
+/// winner differed from the slot, which is the same thing in IEEE but reads a
+/// NaN against itself, and WGSL does not promise that answer: on wgpu the
+/// coordinate then stayed behind whenever a NaN displaced a number.
+///
+/// Callers merging two accumulators, or folding lanes, cannot use this: their
+/// candidate's coordinate can be the lower one.
 #[cube]
 pub(crate) fn advance_arg_extremum<E: Numeric, N: Size>(
     #[comptime] order: ValueOrder,
@@ -139,38 +146,26 @@ pub(crate) fn advance_arg_extremum<E: Numeric, N: Size>(
 ) -> (Vector<E, N>, Vector<u32, N>) {
     let elem_type = elem_type_of::<E>();
 
-    if comptime!(elem_type.is_float()) {
-        let current_is_nan = numeric_is_nan(current);
-        let keep_current = current_is_nan.or(ranks_ahead::<E, N>(order, current, candidate));
-        let winning = select_many(keep_current, current, candidate);
-        // A NaN already holding the slot compares unequal to itself, so the NaN
-        // test is what keeps its coordinate against a later one. The untouched
-        // accumulator has to yield as well, since it starts at the identity with
-        // a coordinate above every real one, and the identity is a value the
-        // input can hold.
-        let untouched = current_coord.equal(&Vector::new(u32::MAX));
-        let improved = select_many(
-            current_is_nan,
-            Vector::new(false),
-            winning.not_equal(&current).or(untouched),
-        );
-
-        (winning, select_many(improved, candidate_coord, current_coord))
+    let keep_current = if comptime!(elem_type.is_float()) {
+        numeric_is_nan(current).or(ranks_ahead::<E, N>(order, current, candidate))
     } else {
-        let keep_current = ranks_ahead::<E, N>(order, current, candidate);
-        let winning = select_many(keep_current, current, candidate);
+        ranks_ahead::<E, N>(order, current, candidate)
+    };
 
-        (
-            winning,
-            select_many(
-                winning
-                    .not_equal(&current)
-                    .or(current_coord.equal(&Vector::new(u32::MAX))),
-                candidate_coord,
-                current_coord,
-            ),
-        )
-    }
+    // The accumulator starts at the identity with a coordinate above every real
+    // one, and the input can hold that identity, so an untouched slot yields even
+    // on a tie.
+    let untouched = current_coord.equal(&Vector::new(u32::MAX));
+    let keep_coord = select_many(
+        untouched,
+        Vector::new(false),
+        keep_current.or(current.equal(&candidate)),
+    );
+
+    (
+        select_many(keep_current, current, candidate),
+        select_many(keep_coord, current_coord, candidate_coord),
+    )
 }
 
 #[cube]
@@ -330,11 +325,6 @@ impl Extremum {
         extremum_identity::<E>(self.order)
     }
 
-    /// Fold `candidate` into the accumulator, keeping whichever item this order
-    /// ranks first per vector element, and its coordinate when it carries one.
-    ///
-    /// Ties break towards the lower coordinate, matching the CPU reference. A
-    /// coordinate-less candidate emits no index arithmetic at all.
     /// As [`Self::insert`], for a candidate that comes after everything the
     /// accumulator has seen. Only the per-element path can promise that.
     fn advance<T: Numeric, N: Size>(
@@ -367,6 +357,11 @@ impl Extremum {
         }
     }
 
+    /// Fold `candidate` into the accumulator, keeping whichever item this order
+    /// ranks first per vector element, and its coordinate when it carries one.
+    ///
+    /// Ties break towards the lower coordinate, matching the CPU reference. A
+    /// coordinate-less candidate emits no index arithmetic at all.
     fn insert<T: Numeric, N: Size>(
         &self,
         elements: &mut Value<Vector<T, N>>,
