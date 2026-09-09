@@ -58,6 +58,7 @@ fn scaled_matmul<E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -71,7 +72,7 @@ fn scaled_matmul<E: Numeric>(
         c_region.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales,
+            &Scaling::on(side, scales),
             BLOCK,
             Semiring::SUM_PROD,
         );
@@ -299,6 +300,7 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         dtype,
     );
 
@@ -489,6 +491,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Rhs,
         dtype,
     );
 
@@ -632,7 +635,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
         c_region.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales,
+            &Scaling::rhs(scales),
             BLOCK,
             Semiring::SUM_PROD,
         );
@@ -887,7 +890,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     for region in space.over(&level).unrolled() {
         let scales = Scales::block(scale.at(&region));
         let mut acc_region = acc.at(&region);
-        acc_region.mma_scaled(&a.at(&region), &b.at(&region), &scales, Semiring::SUM_PROD);
+        acc_region.mma_scaled(&a.at(&region), &b.at(&region), &Scaling::rhs(scales), Semiring::SUM_PROD);
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -1010,7 +1013,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
         c_region.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales,
+            &Scaling::rhs(scales),
             BLOCK,
             Semiring::SUM_PROD,
         );

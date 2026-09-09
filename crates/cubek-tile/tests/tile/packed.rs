@@ -68,7 +68,7 @@ fn packed_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &scales.at(&region),
+            &Scaling::lhs(scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -100,7 +100,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &scales.at(&region),
+            &Scaling::lhs(scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -242,8 +242,8 @@ fn nvfp4_shaped_decode() {
 }
 
 /// `c = x · (w ⊗ s)` with `w` packed along its columns: the q4 kernel with the *weights on the
-/// right*, which is the shape the shipped quant matmul has. Same verb, same body: only the
-/// scales' axes differ, and that is what says which factor they meet.
+/// right*, which is the shape the shipped quant matmul has. Same verb, same body: the kernel
+/// states the other side ([`Scaling::rhs`]), and the scales' axes are checked against it.
 #[cube(launch)]
 fn packed_matmul_rhs<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
@@ -264,7 +264,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
         c_r.mma_scaled_with(
             &x.at(&region),
             &w.at(&region),
-            &scales.at(&region),
+            &Scaling::rhs(scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -295,7 +295,7 @@ fn native_matmul<E: Numeric>(
         c_r.mma_scaled_with(
             &w.at(&region),
             &x.at(&region),
-            &scales.at(&region),
+            &Scaling::lhs(scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -337,7 +337,7 @@ fn packed_gemv<E: Numeric, V: Size>(
             acc_s.mma_scaled(
                 &x.at(&step),
                 &w.at(&step),
-                &scales.at(&step),
+                &Scaling::rhs(scales.at(&step)),
                 Semiring::SUM_PROD,
             );
         }

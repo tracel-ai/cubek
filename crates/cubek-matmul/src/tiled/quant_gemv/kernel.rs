@@ -1,7 +1,9 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Cut, Level, Partitioning, RegisterBlock, ScalesArg, Semiring, Space, TileArg};
+use cubek_tile::{
+    Cut, Level, Partitioning, RegisterBlock, ScalesArg, Scaling, Semiring, Space, TileArg,
+};
 
 use crate::tiled::{
     M, N,
@@ -89,9 +91,9 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 ///
 /// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_packed`]); the
 /// scales arrive as their own tensor at their own element type and fold in at the contraction
-/// ([`cubek_tile::Tile::mma_scaled_with`]). Nothing here mentions a quantization scheme, a block size or a
-/// scale binding riding the weight: which values one scale covers is the scales operand's own
-/// axes, stated in the space.
+/// ([`cubek_tile::Tile::mma_scaled_with`]), on the weight's side ([`Scaling::lhs`]). Nothing
+/// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
+/// values one scale covers is the scales operand's own axes, stated in the space.
 ///
 /// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
 /// activation buffer holds, `ES` the scales', `EO` the output's, and the leaf casts each into
@@ -147,11 +149,10 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
             // The lane's share of the blocks, one stored word a step.
             for lane in plane {
                 let mut out_lane = out_plane.at(&lane);
-                let scales_lane = scales_plane.at(&lane);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&lane),
                     &x_plane.at(&lane),
-                    &scales_lane,
+                    &Scaling::lhs(scales_plane.at(&lane)),
                     config,
                     Semiring::SUM_PROD,
                 );

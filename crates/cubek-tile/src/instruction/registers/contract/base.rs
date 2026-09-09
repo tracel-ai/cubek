@@ -5,7 +5,7 @@ use cubecl::prelude::*;
 
 use super::direct;
 use super::gather;
-use super::scale::{check_scales_omit_rather_than_divide, scale_side};
+use super::scale::{check_scales_omit_rather_than_divide, check_scales_ride};
 use super::shape::ContractShape;
 use crate::*;
 
@@ -66,7 +66,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
 }
 
 /// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
-/// rhs twin, whichever [`scale_side`] reads off the scales' axes.
+/// rhs twin, whichever `side` the kernel stated.
 ///
 /// The 2-D nest only, deliberately. The N-D nest reads its operands through compacted gather
 /// windows, where a step has no single scalar `k` to address a scale with; that is a second
@@ -78,6 +78,7 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
+    #[comptime] side: ScaleSide,
     scales: &Sequence<Tile<ES>>,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
@@ -115,9 +116,9 @@ pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
          N-D nest, which addresses every operand at the cell instead"
     ));
     // Every query about "the scales" is about the level nearest the values: the coarser ones cover
-    // a tile of its tiles, so they neither pick the side nor set the granularity.
+    // a tile of its tiles, so they neither check the side nor set the granularity.
     let inner = scales.index(0);
-    let side = comptime!(scale_side(&inner.space, &space, shape.acc_axes));
+    comptime!(check_scales_ride(side, &inner.space, &space, shape.acc_axes));
     let scales_projection = inner.projection();
     comptime!(check_scales_omit_rather_than_divide(&scales_projection));
     direct::contract_scaled::<E, EL, ER, ES>(

@@ -1,4 +1,5 @@
-//! `c.mm_scaled(&a, &b, &s)`: the contraction with one operand scaled by a **real operand**.
+//! `c.mm_scaled(&a, &b, &Scaling::lhs(s))`: the contraction with one operand scaled by a **real
+//! operand**, on the side the kernel states.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
 //! is a fact about the rhs's columns and nothing else could fold it in; anything else scales the
@@ -37,6 +38,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -49,7 +51,7 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales.at(&region),
+            &Scaling::on(side, scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -66,6 +68,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -89,7 +92,7 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         acc_r.mma_scaled(
             &a.at(&region),
             &b.at(&region),
-            &scales.at(&region),
+            &Scaling::on(side, scales.at(&region)),
             Semiring::SUM_PROD,
         );
     }
@@ -109,6 +112,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -126,7 +130,7 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales.at(&region),
+            &Scaling::on(side, scales.at(&region)),
             REGISTER_BLOCK,
             Semiring::SUM_PROD,
         );
@@ -223,6 +227,7 @@ fn two_levels_fold_in_order() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -324,6 +329,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -423,6 +429,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -520,6 +527,7 @@ fn a_scale_over_no_axis_covers_everything() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -620,6 +628,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -723,6 +732,7 @@ fn f16_scales_are_read_as_f16() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, scale_dtype],
     );
 
@@ -741,8 +751,8 @@ fn f16_scales_are_read_as_f16() {
     }
 }
 
-/// The scales span `N`, so they scale the rhs. Nothing at the call site says so: the verb reads
-/// it off the operand.
+/// The scales span `N`, so they scale the rhs, and the call site says so
+/// ([`Scaling::rhs`]); the leaf checks the statement against the axes.
 #[test]
 fn scales_over_the_columns_scale_the_rhs() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
@@ -824,6 +834,7 @@ fn scales_over_the_columns_scale_the_rhs() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Rhs,
         [dtype, dtype],
     );
 
@@ -923,6 +934,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Rhs,
         [dtype, dtype],
     );
 
@@ -1022,6 +1034,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Rhs,
         [dtype, dtype],
     );
 
@@ -1123,6 +1136,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 
@@ -1151,6 +1165,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -1174,7 +1189,7 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         acc_r.mma_scaled(
             &a.at(&region),
             &b.at(&region),
-            &scales.at(&region),
+            &Scaling::on(side, scales.at(&region)),
             Semiring::SUM_PROD,
         );
     }
@@ -1276,6 +1291,7 @@ fn rhs_scales_are_served_several_at_a_time() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Rhs,
         [dtype, dtype],
     );
 
@@ -1305,6 +1321,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: ScaleSide,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -1317,7 +1334,7 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
         c_r.mma_scaled_with(
             &a.at(&region),
             &b.at(&region),
-            &scales.at(&region),
+            &Scaling::on(side, scales.at(&region)),
             comptime!(RegisterBlock::new(64).lane_fanout()),
             Semiring::SUM_PROD,
         );
@@ -1404,6 +1421,7 @@ fn lhs_scales_are_served_several_at_a_time() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        ScaleSide::Lhs,
         [dtype, dtype],
     );
 

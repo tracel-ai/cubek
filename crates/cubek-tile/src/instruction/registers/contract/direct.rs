@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 
-use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
+use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel};
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};

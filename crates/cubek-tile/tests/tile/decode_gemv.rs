@@ -64,7 +64,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
                 out_lane.mma_scaled_with(
                     &w_plane.at(&lane),
                     &x_plane.at(&lane),
-                    &scales_plane.at(&lane),
+                    &Scaling::lhs(scales_plane.at(&lane)),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -118,7 +118,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
                 acc_lane.mma_scaled(
                     &w_plane.at(&lane),
                     &x_plane.at(&lane),
-                    &scales_plane.at(&lane),
+                    &Scaling::lhs(scales_plane.at(&lane)),
                     Semiring::SUM_PROD,
                 );
             }

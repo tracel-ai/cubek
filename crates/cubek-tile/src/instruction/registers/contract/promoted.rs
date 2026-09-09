@@ -9,9 +9,9 @@
 
 use cubecl::prelude::*;
 
-use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
+use super::scale::{ContractEdges, EdgeOrdinal, ScaleLevel};
 use crate::instruction::registers::block;
-use crate::instruction::registers::contract::scale_side;
+use crate::instruction::registers::contract::check_scales_ride;
 use crate::instruction::registers::lines::{CombinedScales, ScaledLines};
 use crate::*;
 
@@ -123,7 +123,7 @@ impl<T: Numeric> RegisterData<T> {
     }
 
     /// `self += (lhs ⊗ scale) · rhs`, or its rhs twin: [`mma`](RegisterData::mma) with one operand
-    /// scaled by a real operand, the side read off the scales' axes.
+    /// scaled by a real operand, on the side the kernel stated.
     ///
     /// The form a decode gemv wants: the partials never round-trip through the sink between `K`
     /// steps, so a walk that returns to this leaf keeps them in `T`. `out` is the accumulator's
@@ -132,6 +132,7 @@ impl<T: Numeric> RegisterData<T> {
         &mut self,
         lhs: &Tile<EL>,
         rhs: &Tile<ER>,
+        #[comptime] side: ScaleSide,
         scales: &Sequence<Tile<ES>>,
         #[comptime] out: Space,
         #[comptime] semiring: Semiring,
@@ -168,7 +169,7 @@ impl<T: Numeric> RegisterData<T> {
 
         let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs.space));
         let cols = comptime!(acc_axes.cols(&out));
-        let side = comptime!(scale_side(&inner.space, &out, acc_axes));
+        comptime!(check_scales_ride(side, &inner.space, &out, acc_axes));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs.space, mr, kc));
         let rhs_axes = comptime!(MatrixAxes::of(&rhs.space, kc, cols));
         // This block's own geometry. It walks one contracted value a step, so its accumulator
