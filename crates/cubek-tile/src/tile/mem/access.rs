@@ -193,6 +193,10 @@ impl<T: Numeric> MemData<T> {
                             let size!(WP) = comptime!(packing.physical(src.store.vector_size));
                             self.scan_transparent::<u32, WP, W>(src)
                         }
+                        Packing::Subword { .. } => panic!(
+                            "MemData::fill_from: a sub-word operand is read one value a step, \
+                             not staged"
+                        ),
                     }
                 }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
@@ -994,7 +998,37 @@ impl<T: Numeric> MemData<T> {
                     comptime!(guard.checks() && self.access.overhang.masks()),
                 )
             }
+            Packing::Subword { .. } => {
+                panic!("MemData::transparent: a sub-word operand is read through matrix_subword")
+            }
         }
+    }
+
+    /// [`matrix_transparent`](MemData::matrix_transparent) for a sub-word operand: `layout`
+    /// counts its columns in words, and the view serves `W` of a word's fields per read.
+    pub(crate) fn matrix_subword<W: Size, L: TileLayout<Coords2d>>(
+        &self,
+        layout: L,
+        #[comptime] field: Field,
+    ) -> MatrixView<'_, Vector<T, W>> {
+        comptime!(assert!(
+            self.access.storage == Storage::Strided,
+            "MemData::matrix_subword: a sub-word operand lies in global memory as bound"
+        ));
+        let served = comptime!(self.store.vector_size);
+        let per_line = comptime!(field.per_word() / served);
+        // The base and window layouts address served lines; the storage under them maps a line
+        // to its word.
+        let storage = self.lines_storage::<u32, Const<1>>();
+        let words = storage
+            .view(WordOfLine::new(storage.len(), per_line))
+            .view(self.base())
+            .view(self.window().with_guard(comptime!(Guard::Checked)))
+            .view(layout);
+        let rank = self.window.origin.len();
+        let origin = self.window.origin.at(comptime!(rank - 1)).fcast::<u32>();
+        let values = SubwordView::<T, W>::new(words, origin, comptime!(field));
+        MaskedView::new(values.view(), comptime!(self.access.overhang.masks()))
     }
 
     /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves

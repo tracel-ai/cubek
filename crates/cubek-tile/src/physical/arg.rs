@@ -3,7 +3,7 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
@@ -93,8 +93,19 @@ impl TileSpec {
     /// `field`-wide slot, innermost axis first; the tile then serves those values, unpacking at
     /// the read. Values and nothing else: scales are a second tensor and folding them in is a verb
     /// the kernel writes, so a packed operand is sayable on its own and a q4 kernel needs no scheme.
-    pub fn packed(self, field: QuantValue) -> Self {
-        self.packing(Packing::Packed { field })
+    pub fn packed(self, field: impl Into<Field>) -> Self {
+        self.packing(Packing::Packed {
+            field: field.into(),
+        })
+    }
+
+    /// [`packed`](Self::packed) served `width` values a line out of one bound word, for a reader
+    /// stepping one value at a time: a scales operand stored as bytes is read this way.
+    pub fn subword(self, field: impl Into<Field>, width: usize) -> Self {
+        self.packing(Packing::Subword {
+            field: field.into(),
+            width,
+        })
     }
 
     /// [`packed`](Self::packed) for a caller holding the [`Packing`] itself, which the launch
@@ -273,6 +284,41 @@ impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
 impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
     pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
         let block = self.block.tile(comptime!(space.clone()));
+        #[comptime]
+        match &self.global {
+            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
+            ComptimeOption::None => Scales::<S>::block(block),
+        }
+    }
+}
+
+/// [`ScalesArg`] with the block level stored as fields of `u32` words, served `S` through the
+/// packed view ([`TileSpec::packed`] or [`TileSpec::subword`]): `ue8m0` or `ue4m3` scales read
+/// in their own width, with no widening pass before the launch. The global level is one scalar
+/// at `S`.
+#[derive(CubeType, CubeLaunch)]
+pub struct PackedScalesArg<'a, S: Numeric, V: Size> {
+    pub block: TileArg<'a, u32, V>,
+    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
+}
+
+impl<S: Numeric, V: Size> PackedScalesArgLaunch<'static, S, V> {
+    pub fn block(block: TileArgLaunch<'static, u32, V>) -> Self {
+        PackedScalesArgLaunch::new(block, ComptimeOptionArgs::None)
+    }
+
+    pub fn block_under(
+        block: TileArgLaunch<'static, u32, V>,
+        global: TileArgLaunch<'static, S, Const<1>>,
+    ) -> Self {
+        PackedScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
+    }
+}
+
+#[cube]
+impl<'a, S: Numeric, V: Size> PackedScalesArg<'a, S, V> {
+    pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
+        let block = self.block.tile_packed::<S>(comptime!(space.clone()));
         #[comptime]
         match &self.global {
             ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),

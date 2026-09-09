@@ -308,8 +308,8 @@ impl<T: Numeric> Tile<T> {
              its spec may not state a packing too"
         ));
         // A packed store serves `factor` values per stored element, on top of the binding's own
-        // line width.
-        let vector_size = comptime!(bound_width * packing.factor());
+        // line width; a sub-word store serves its stated width out of one word.
+        let vector_size = comptime!(packing.served(bound_width));
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows. Same for a
         // padded stage width, which `StridedTileSource` already checked for the specs it builds;

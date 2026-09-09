@@ -13,10 +13,10 @@
 //! binding whose shape counts *values* while the packing says how many sit in one stored word.
 
 use cubecl::{
-    bytes::Bytes, features::TypeUsage, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, features::TypeUsage, ir::types::Fp8Format, prelude::*,
+    quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
-use cubecl_common::e2m1;
+use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
 
@@ -324,6 +324,78 @@ fn packed_gemv<E: Numeric, V: Size>(
         let scales = scales.at(&cube);
         let c = c.at(&cube);
         // The accumulator lives in registers across the whole walk and drains once.
+        let mut acc = c.block_accumulator::<E, E, E>(
+            &x,
+            &w,
+            comptime!(Fragments::below(&c, &x)),
+            REGISTER_BLOCK,
+            Monoid::Sum,
+        );
+        acc.zero();
+        for step in cube {
+            let mut acc_s = acc.at(&step);
+            acc_s.mma_scaled(
+                &x.at(&step),
+                &w.at(&step),
+                &Scaling::rhs(scales.at(&step)),
+                Semiring::SUM_PROD,
+            );
+        }
+        for r0 in c.walk().unrolled() {
+            let mut c_w = c.at(&r0);
+            c_w.copy_cast_from(&acc.at(&r0));
+        }
+    }
+}
+
+/// [`packed_matmul`] with the scales stored as bytes, four to a word, served one at a time: a
+/// `ue8m0` or `ue4m3` scale is read in its own width, and nothing widens it on the host.
+#[cube(launch)]
+fn packed_matmul_byte_scales<E: Numeric>(
+    w: &TileArg<'_, u32, Const<1>>,
+    x: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, u32, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let x = x.tile(comptime!(space.clone()));
+    let scales = Scales::block(scale.tile_packed::<E>(comptime!(space.clone())));
+    let mut c = c.tile(comptime!(space.clone()));
+    c.zero();
+    for region in space.over(&level) {
+        let mut c_r = c.at(&region);
+        c_r.mma_scaled_with(
+            &w.at(&region),
+            &x.at(&region),
+            &Scaling::lhs(scales.at(&region)),
+            REGISTER_BLOCK,
+            Semiring::SUM_PROD,
+        );
+    }
+}
+
+/// [`packed_gemv`] with byte scales on the rhs, into the promoted block.
+#[cube(launch)]
+fn packed_gemv_byte_scales<E: Numeric, V: Size>(
+    x: &TileArg<'_, E, Const<1>>,
+    w: &TileArg<'_, u32, Const<1>>,
+    scale: &TileArg<'_, u32, Const<1>>,
+    c: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let scales = Scales::block(scale.tile_packed::<E>(comptime!(space.clone())));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        let x = x.at(&cube);
+        let w = w.at(&cube);
+        let scales = scales.at(&cube);
+        let c = c.at(&cube);
         let mut acc = c.block_accumulator::<E, E, E>(
             &x,
             &w,
@@ -1850,6 +1922,341 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         assert!(
             (have - want).abs() < 1e-3,
             "at col {n}: got {have}, want {want}"
+        );
+    }
+}
+
+/// Pack bytes four to a word, low byte first.
+fn words_of_bytes(bytes: &[u8]) -> Vec<u32> {
+    bytes
+        .chunks(4)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &b)| acc | ((b as u32) << (j * 8)))
+        })
+        .collect()
+}
+
+/// **An 8-bit float field unpacks on read.** `e4m3` codes four to a word, decoded through the
+/// format rather than sign-extended; the NaN codes are left out, since one of those has nothing
+/// to compare against.
+#[test]
+fn e4m3_fields_unpack_on_read() {
+    let (field, rows, cols) = (QuantValue::E4M3, 8, 8);
+    let factor = 32 / field.size_bits();
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let bytes: Vec<u8> = (0..rows * cols).map(|i| (i * 4) as u8).collect();
+    let input = TensorHandle::new_contiguous(
+        vec![rows, cols],
+        client.create(Bytes::from_elems(words_of_bytes(&bytes))),
+        u32::elem_type_native(),
+    );
+    let dtype = f32::elem_type_native();
+    let output = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let space = Space::new(&[(M, rows), (N, cols)]);
+    packed_copy::launch(
+        &client,
+        CubeCount::new_single(),
+        CubeDim::new_single(),
+        factor,
+        TileArgLaunch::new(
+            input.binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]).packed(field),
+        ),
+        TileArgLaunch::new(
+            output.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        space.launch_arg(&space),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, output, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want = e4m3::from_bits(bytes[m * cols + n]).to_f32();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                have.to_bits() == want.to_bits(),
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **Scales stored as `ue8m0` bytes are read in their own width.** Four codes to a word, the
+/// scales operand bound one word wide and served one scale at a time
+/// ([`TileSpec::subword`]), on the lhs of the memory-backed leaf, which steps the block index at
+/// runtime. A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is
+/// exact.
+#[test]
+fn ue8m0_scales_are_read_as_bytes() {
+    let (field, rows, cols, block, blocks) = (QuantValue::Q8S, 4, 4, 8, 4);
+    let depth = block * blocks;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..rows * depth)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let x: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Exponents -2..=2: the code is the exponent biased by 127.
+    let exponents: Vec<i32> = (0..rows * blocks).map(|i| (i % 5) as i32 - 2).collect();
+    let s: Vec<f32> = exponents.iter().map(|&e| 2f32.powi(e)).collect();
+    let codes: Vec<u8> = exponents.iter().map(|&e| (e + 127) as u8).collect();
+
+    let dtype = f32::elem_type_native();
+    let w_tensor = TensorHandle::new_contiguous(
+        vec![rows, depth],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    // Shape and strides count scales; a row of `blocks` codes is one word.
+    let s_tensor = TensorHandle::new_contiguous(
+        vec![rows, blocks],
+        client.create(Bytes::from_elems(words_of_bytes(&codes))),
+        u32::elem_type_native(),
+    );
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let w_projection = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+        ],
+    );
+    packed_matmul_byte_scales::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(w_projection.clone()).packed(field),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            TileSpec::new(w_projection.scales_per(KB)).subword(Fp8Format::UE8M0, 1),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| w[m * depth + k] as f32 * s[m * blocks + k / block] * x[k * cols + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **Byte scales reach the promoted block on the rhs.** `e4m3` codes for the decode gemv's
+/// scales, one per `(block of K, block of N)`, read one at a time under the block's constant
+/// column ordinal. Halves, which `e4m3` holds exactly.
+#[test]
+fn e4m3_scales_reach_the_promoted_block() {
+    let (field, block_k, blocks_k) = (QuantValue::Q8S, 8, 4);
+    let depth = block_k * blocks_k;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+    // Four cubes of one packed line each, so a row of the scales is one word of four codes.
+    let (cols, bn) = (factor * 4, factor);
+    let blocks_n = cols / bn;
+
+    let x: Vec<f32> = (0..depth).map(|i| (i % 7) as f32 - 3.0).collect();
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..depth * cols)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let s: Vec<f32> = (0..blocks_k * blocks_n)
+        .map(|i| (i as f32 + 1.0) / 2.0)
+        .collect();
+    let codes: Vec<u8> = s.iter().map(|&v| e4m3::from_f32(v).to_bits()).collect();
+
+    let dtype = f32::elem_type_native();
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![1, depth])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let w_tensor = TensorHandle::new_contiguous(
+        vec![depth, cols],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let s_tensor = TensorHandle::new_contiguous(
+        vec![blocks_k, blocks_n],
+        client.create(Bytes::from_elems(words_of_bytes(&codes))),
+        u32::elem_type_native(),
+    );
+    let c = TestInput::builder(client.clone(), shape![1, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[
+                (M, 1),
+                (NB, blocks_n),
+                (NI, bn),
+                (KB, blocks_k),
+                (KI, block_k),
+            ]),
+            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+        ),
+        KernelForm::Static,
+    );
+
+    packed_gemv_byte_scales::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        factor,
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, NB, NI],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block_k), (KI, 1)]),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, NB],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
+            ))
+            .subword(QuantValue::E4M3, 1),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, NB, NI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(NB, bn), (NI, 1)]),
+                ],
+            )),
+        ),
+        launcher.partitioning_arg(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for n in 0..cols {
+        let want: f32 = (0..depth)
+            .map(|k| x[k] * w[k * cols + n] as f32 * s[(k / block_k) * blocks_n + n / bn])
+            .sum();
+        let have = got.get_f32(&[0, n]);
+        assert!(
+            (have - want).abs() < 1e-3,
+            "at {n}: got {have}, want {want}"
         );
     }
 }

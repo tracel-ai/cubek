@@ -4,15 +4,21 @@
 //! scale: it is the whole read. [`Packing::Packed`](crate::Packing::Packed) names the field, this view unpacks it, and no
 //! scheme, scale binding or block grid is anywhere in the path. What folds a scale back in, where
 //! there is one, is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)).
+//!
+//! [`SubwordView`] is the same read serving fewer values than a word holds: the word is read
+//! whole and the slot picked at the read, for a reader stepping one value at a time.
 
 use std::marker::PhantomData;
 
 use cubecl::ir::VectorSize;
+use cubecl::ir::types::Fp8Format;
+use cubecl::post_processing::minifloat::{fp8_bits_to_f32, ue8m0_bits_to_f32};
 use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
+use cubecl::std::tensor::layout::{Coords1d, Coords2d, Layout, LayoutExpand};
 
-use crate::{FieldDecode, field_decode};
+use crate::{Field, FieldDecode, field_decode};
 use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
@@ -20,36 +26,47 @@ use cubecl::{
 };
 
 /// Unpack one line of stored words into the `NF` values it holds: `NQ` words, each carrying
-/// `32 / field.size_bits()` consecutive fields.
+/// `NF / NQ` consecutive fields from its low bits, the whole word unless the line is a sub-word
+/// read.
 ///
-/// Two shapes, because a field decodes two ways. A `Q*` field is an integer: the width says how
-/// many bits one holds and the top one is its sign, so `Q4S` is `[-8, 7]` in four bits. An `e2m1`
-/// field is a float code, read back by reinterpreting the byte two of them share.
+/// Three shapes, because a field decodes three ways. A `Q*` field is an integer: the width says
+/// how many bits one holds and the top one is its sign, so `Q4S` is `[-8, 7]` in four bits. An
+/// `e2m1` field is a float code, read back by reinterpreting the byte two of them share. An 8-bit
+/// float code is a byte, read back through its format's decoder.
 #[cube]
 pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
-    #[comptime] field: QuantValue,
+    #[comptime] field: Field,
 ) -> Vector<F, NF> {
     match comptime!(field_decode(field)) {
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
-        // A launch states its field, so it can refuse this one before it compiles a kernel around
-        // it; reaching here means nothing did.
-        FieldDecode::Unserved => panic!(
-            "unpack_line: {field:?} is not served by the packed view. Bind the tensor at its own \
-             element and let the contraction cast it"
-        ),
+        FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
     }
+}
+
+/// Fields one word contributes to an `nf`-wide line of `nq` words: the whole word, or the low
+/// slots of a sub-word read.
+fn fields_per_word(nq: usize, nf: usize, bits: usize) -> usize {
+    let per_word = u32::BITS as usize / bits;
+    let fields = nf / nq;
+    assert!(
+        fields > 0 && fields <= per_word && nf == fields * nq,
+        "unpack_line: {nf} values from {nq} words of {per_word} fields"
+    );
+    fields
 }
 
 /// The integer fields, sign-extended out of their slots.
 #[cube]
 fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
-    #[comptime] field: QuantValue,
+    #[comptime] field: Field,
 ) -> Vector<F, NF> {
     let bits = comptime!(field.size_bits());
-    let factor = comptime!(u32::BITS as usize / bits);
+    let nq = NQ::value();
+    let nf = NF::value();
+    let factor = comptime!(fields_per_word(nq, nf, bits));
     let mask = comptime!(((1u64 << bits) - 1) as u32);
     // The sign bit, doubling as the bias of the branchless extension below.
     let sign = comptime!(1u32 << (bits - 1));
@@ -83,20 +100,53 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());
-    let bytes = comptime!(u32::BITS as usize / (QuantValue::E2M1.size_bits() * pair));
-    let factor = comptime!(bytes * pair);
+    let nq = NQ::value();
+    let nf = NF::value();
+    let fields = comptime!(fields_per_word(nq, nf, QuantValue::E2M1.size_bits()));
+    // A sub-word read of one code still decodes its pair and keeps the first.
+    let bytes = comptime!(fields.div_ceil(pair));
 
     let mut out = Vector::<F, NF>::empty();
     #[unroll]
     for w in 0..words.vector_size() {
         let word = words.extract(w);
-        let base = w * factor;
+        let base = w * fields;
         #[unroll]
         for j in 0..bytes {
             let byte = (word >> comptime!((j * 8) as u32)) & 0xff;
             let values = e2m1_packed_bits_to_float::<F, Const<2>>(byte);
             out.insert(base + j * pair, values.extract(0usize));
-            out.insert(base + j * pair + 1, values.extract(1usize));
+            if comptime!(j * pair + 1 < fields) {
+                out.insert(base + j * pair + 1, values.extract(1usize));
+            }
+        }
+    }
+    out
+}
+
+/// The 8-bit float codes, one byte each, through the format's decoder on `u32` patterns.
+#[cube]
+fn unpack_byte_line<F: Numeric, NQ: Size, NF: Size>(
+    words: Vector<u32, NQ>,
+    #[comptime] format: Fp8Format,
+) -> Vector<F, NF> {
+    let nq = NQ::value();
+    let nf = NF::value();
+    let fields = comptime!(fields_per_word(nq, nf, 8));
+
+    let mut out = Vector::<F, NF>::empty();
+    #[unroll]
+    for w in 0..words.vector_size() {
+        let word = words.extract(w);
+        let base = w * fields;
+        #[unroll]
+        for j in 0..fields {
+            let byte = Vector::<u32, Const<1>>::new((word >> comptime!((j * 8) as u32)) & 0xff);
+            let value = match comptime!(format) {
+                Fp8Format::UE8M0 => ue8m0_bits_to_f32::<Const<1>>(byte),
+                _ => fp8_bits_to_f32::<Const<1>>(byte, format),
+            };
+            out.insert(base + j, F::cast_from(value.extract(0usize)));
         }
     }
     out
@@ -113,14 +163,14 @@ fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Ve
 pub(crate) struct PackedView<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> {
     words: View<'a, Vector<u32, NQ>, C>,
     #[cube(comptime)]
-    field: QuantValue,
+    field: Field,
     #[cube(comptime)]
     _ty: PhantomData<(F, NF)>,
 }
 
 #[cube]
 impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static> PackedView<'a, NQ, F, NF, C> {
-    pub fn new(words: View<'a, Vector<u32, NQ>, C>, #[comptime] field: QuantValue) -> Self {
+    pub fn new(words: View<'a, Vector<u32, NQ>, C>, #[comptime] field: Field) -> Self {
         PackedView::<'a, NQ, F, NF, C> {
             words,
             field,
@@ -255,5 +305,219 @@ impl<'a, NQ: Size, F: Numeric, NF: Size, C: Coordinates + 'static>
         _pos: C::ExpandType,
     ) {
         panic!("PackedView: a tensor map cannot unpack on the fly")
+    }
+}
+
+/// The storage layout under a sub-word operand: a line index in served lines maps to the word
+/// holding it, so the base and window layouts above it keep addressing lines and the buffer is
+/// still read a word at a time.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub(crate) struct WordOfLine {
+    lines: usize,
+    #[cube(comptime)]
+    per_line: usize,
+}
+
+#[cube]
+impl WordOfLine {
+    pub fn new(words: usize, #[comptime] per_line: usize) -> Self {
+        WordOfLine {
+            lines: words * per_line,
+            per_line,
+        }
+    }
+}
+
+#[cube]
+impl Layout for WordOfLine {
+    type Coordinates = Coords1d;
+    type SourceCoordinates = Coords1d;
+
+    fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
+        pos / self.per_line
+    }
+
+    fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
+        (self.to_source_pos(pos), self.is_in_bounds(pos))
+    }
+
+    fn shape(&self) -> Self::Coordinates {
+        self.lines
+    }
+
+    fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
+        pos < self.lines
+    }
+}
+
+/// One word read whole, `NF` of its fields served: the slot is the line's position in its word,
+/// `origin` being the window's innermost origin in served lines, so a reader stepping one value
+/// at a time under a runtime index reads the word it lands in and shifts.
+#[cube]
+pub(crate) fn read_subword<F: Numeric, NF: Size>(
+    words: &View<'_, Vector<u32, Const<1>>, Coords2d>,
+    pos: Coords2d,
+    origin: u32,
+    #[comptime] field: Field,
+    #[comptime] checked: bool,
+) -> Vector<F, NF> {
+    let (row, col) = pos;
+    let nf = NF::value();
+    let width = comptime!(nf as u32);
+    let per_line = comptime!(field.per_word() as u32 / width);
+    let bits = comptime!(field.size_bits() as u32);
+    let word = if checked {
+        words.read_checked((row, col))
+    } else {
+        words.read_unchecked((row, col))
+    };
+    let slot = (origin + col) % per_line;
+    let shifted = word >> Vector::<u32, Const<1>>::new(slot * width * bits);
+    unpack_line::<F, Const<1>, NF>(shifted, field)
+}
+
+/// [`PackedView`] serving fewer values than a word holds ([`Packing::Subword`](crate::Packing::Subword)):
+/// a `(row, col)` view in served lines whose words are addressed through [`WordOfLine`].
+#[expect(dead_code, reason = "read through the expand impls below")]
+#[derive(CubeType, Clone)]
+pub(crate) struct SubwordView<'a, F: Numeric, NF: Size> {
+    words: View<'a, Vector<u32, Const<1>>, Coords2d>,
+    /// The window's innermost origin, in served lines.
+    origin: u32,
+    #[cube(comptime)]
+    field: Field,
+    #[cube(comptime)]
+    _ty: PhantomData<(F, NF)>,
+}
+
+#[cube]
+impl<'a, F: Numeric, NF: Size> SubwordView<'a, F, NF> {
+    pub fn new(
+        words: View<'a, Vector<u32, Const<1>>, Coords2d>,
+        origin: u32,
+        #[comptime] field: Field,
+    ) -> Self {
+        SubwordView::<'a, F, NF> {
+            words,
+            origin,
+            field,
+            _ty: PhantomData,
+        }
+    }
+}
+
+impl<'a, F: Numeric, NF: Size> SubwordView<'a, F, NF> {
+    pub fn view(self) -> View<'a, Vector<F, NF>, Coords2d> {
+        unexpanded!()
+    }
+
+    pub fn __expand_view(
+        scope: &Scope,
+        this: SubwordViewExpand<'a, F, NF>,
+    ) -> ViewExpand<'a, Vector<F, NF>, Coords2d> {
+        this.__expand_view_method(scope)
+    }
+}
+
+impl<'a, F: Numeric, NF: Size> SubwordViewExpand<'a, F, NF> {
+    pub fn __expand_view_method(self, scope: &Scope) -> ViewExpand<'a, Vector<F, NF>, Coords2d> {
+        ViewExpand::new(scope, self)
+    }
+
+    fn read(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+        checked: bool,
+    ) -> NativeExpand<Vector<F, NF>> {
+        read_subword::expand::<F, NF>(
+            scope,
+            &self.words,
+            pos,
+            self.origin,
+            self.field,
+            checked,
+        )
+    }
+}
+
+impl<'a, F: Numeric, NF: Size> Vectorized for SubwordView<'a, F, NF> {}
+
+impl<'a, F: Numeric, NF: Size> VectorizedExpand for SubwordViewExpand<'a, F, NF> {
+    fn __expand_vector_size_method(&self, scope: &Scope) -> VectorSize {
+        VectorSize::from(NF::__expand_value(scope))
+    }
+}
+
+impl<'a, F: Numeric, NF: Size> ViewOperations<Vector<F, NF>, Coords2d> for SubwordView<'a, F, NF> {}
+
+impl<'a, F: Numeric, NF: Size> ViewOperationsExpand<Vector<F, NF>, Coords2d>
+    for SubwordViewExpand<'a, F, NF>
+{
+    fn __expand_read_method(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<F, NF>> {
+        self.read(scope, pos, false)
+    }
+
+    fn __expand_read_checked_method(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<F, NF>> {
+        self.read(scope, pos, true)
+    }
+
+    fn __expand_read_masked_method(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+        mask_value: NativeExpand<Vector<F, NF>>,
+    ) -> NativeExpand<Vector<F, NF>> {
+        let in_bounds = self.__expand_is_in_bounds_method(scope, pos);
+        let value = self.read(scope, pos, true);
+        select::expand::<Vector<F, NF>>(scope, in_bounds, value, mask_value)
+    }
+
+    fn __expand_read_unchecked_method(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+    ) -> NativeExpand<Vector<F, NF>> {
+        self.read(scope, pos, false)
+    }
+
+    fn __expand_as_linear_slice_method(
+        &self,
+        _scope: &Scope,
+        _pos: <Coords2d as CubeType>::ExpandType,
+        _end: <Coords2d as CubeType>::ExpandType,
+    ) -> &SliceExpand<Vector<F, NF>> {
+        panic!("SubwordView: a packed operand has no raw slice of served values")
+    }
+
+    fn __expand_shape_method(&self, scope: &Scope) -> <Coords2d as CubeType>::ExpandType {
+        self.words.clone().__expand_shape_method(scope)
+    }
+
+    fn __expand_is_in_bounds_method(
+        &self,
+        scope: &Scope,
+        pos: <Coords2d as CubeType>::ExpandType,
+    ) -> NativeExpand<bool> {
+        self.words.clone().__expand_is_in_bounds_method(scope, pos)
+    }
+
+    fn __expand_tensor_map_load_method(
+        &self,
+        _scope: &Scope,
+        _barrier: &NativeExpand<Barrier>,
+        _shared_memory: &mut SliceExpand<Vector<F, NF>>,
+        _pos: <Coords2d as CubeType>::ExpandType,
+    ) {
+        panic!("SubwordView: a tensor map cannot unpack on the fly")
     }
 }
