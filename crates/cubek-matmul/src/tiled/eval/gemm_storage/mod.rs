@@ -77,6 +77,34 @@ impl Weight {
             Weight::Tiled => "tiled",
         }
     }
+
+    /// The delivery a plan reads this storage through.
+    fn delivery(self) -> CmmaStrategy {
+        match self {
+            Weight::RowMajor => CmmaStrategy::default(),
+            Weight::Tiled => CmmaStrategy::tiled(),
+        }
+    }
+
+    /// The weight as this storage holds it: plain, or packed to the plan's stage. Packing is a
+    /// real relayout of the data, so the packed weight computes the same product as the plain one.
+    fn store(
+        self,
+        client: &Client,
+        rhs: TensorBinding,
+        dtype: ElemType,
+        blueprint: &CmmaBlueprint,
+    ) -> Result<TensorBinding, String> {
+        match self {
+            Weight::RowMajor => Ok(rhs),
+            Weight::Tiled => {
+                let (_, stage_n) = blueprint.stage();
+                pack(client, rhs, dtype, (blueprint.stage_k, stage_n))
+                    .map(TensorHandle::binding)
+                    .map_err(|e| format!("{e:?}"))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -84,14 +112,28 @@ pub struct StorageStrategy {
     weight: Weight,
 }
 
-/// The plan the selector picks for `problem` under `strategy`'s delivery: the same geometry
-/// either way, so the two storages are compared on one plan.
+/// The `m x n x k` problem and the plan the selector picks for it under `weight`'s delivery: the
+/// same geometry either way, so the two storages are compared on one plan.
 fn plan(
     client: &Client,
-    problem: &MatmulProblem,
+    (m, n, k): (usize, usize, usize),
     dtype: ElemType,
-    strategy: CmmaStrategy,
-) -> Result<CmmaBlueprint, String> {
+    weight: Weight,
+) -> Result<(MatmulProblem, CmmaBlueprint), String> {
+    let problem = MatmulProblem::from_parameters(
+        m,
+        n,
+        k,
+        shape![1],
+        shape![1],
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        MatrixLayout::RowMajor,
+        None,
+        None,
+        MatmulElems::from_single_dtype(dtype).as_global_elems(),
+        cubecl::ir::AddressType::U32,
+    );
     let acc = match dtype {
         ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
         other => other,
@@ -105,93 +147,15 @@ fn plan(
             .map_err(|e| format!("{e:?}"))?,
         max_cube_count: client.properties().hardware.max_cube_count,
     };
-    CmmaRoutine::blueprint(
-        &BlueprintStrategy::Inferred(strategy),
-        problem,
+    let blueprint = CmmaRoutine::blueprint(
+        &BlueprintStrategy::Inferred(weight.delivery()),
+        &problem,
         &device_settings,
         acc,
         StoredTiles::default(),
     )
-    .map_err(|e| format!("{e:?}"))
-}
-
-fn matmul_problem(m: usize, n: usize, k: usize, elems: &MatmulElems) -> MatmulProblem {
-    MatmulProblem::from_parameters(
-        m,
-        n,
-        k,
-        shape![1],
-        shape![1],
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        MatrixLayout::RowMajor,
-        None,
-        None,
-        elems.as_global_elems(),
-        cubecl::ir::AddressType::U32,
-    )
-}
-
-/// The weight as `strategy` stores it: plain, or packed to the plan's stage. Packing is a real
-/// relayout of the data, so the packed weight computes the same product as the plain one.
-fn weight(
-    client: &Client,
-    weight: Weight,
-    rhs: TensorBinding,
-    dtype: ElemType,
-    blueprint: &CmmaBlueprint,
-) -> Result<TensorBinding, String> {
-    match weight {
-        Weight::RowMajor => Ok(rhs),
-        Weight::Tiled => {
-            let (_, stage_n) = blueprint.stage();
-            pack(client, rhs, dtype, (blueprint.stage_k, stage_n))
-                .map(TensorHandle::binding)
-                .map_err(|e| format!("{e:?}"))
-        }
-    }
-}
-
-/// Proves `strategy` correct on a small shape before it is timed: the same plan selection and
-/// the same weight storage as the timed run, against the CPU reference.
-fn prove(client: &Client, strategy: &StorageStrategy, precision: Precision) -> Result<(), String> {
-    let dtype = precision.dtype();
-    let elems = MatmulElems::from_single_dtype(dtype);
-    let problem = matmul_problem(64, 256, 256, &elems);
-    let delivery = match strategy.weight {
-        Weight::RowMajor => CmmaStrategy::default(),
-        Weight::Tiled => CmmaStrategy::tiled(),
-    };
-    let blueprint = plan(client, &problem, dtype, delivery)?;
-    let (seed_lhs, seed_rhs) = (7, 11);
-    let stored = strategy.weight;
-    let actual = produce_with(
-        client.clone(),
-        problem.clone(),
-        seed_lhs,
-        seed_rhs,
-        |c, lhs, rhs, out, dtypes| {
-            let rhs = weight(c, stored, rhs.into_data(), dtype, &blueprint)
-                .map_err(|e| crate::definition::MatmulSetupError::InvalidConfig(Box::new(e)))?;
-            launch_ref(
-                c,
-                lhs,
-                InputBinding::Normal(rhs, dtype),
-                out,
-                &BlueprintStrategy::Forced(blueprint.clone()),
-                dtypes,
-            )
-        },
-    )?;
-    let expected = cpu_reference_result(client.clone(), problem, seed_lhs, seed_rhs, None)?;
-    match assert_equals_approx(&actual, &expected, matmul_epsilon(&elems, 500.)) {
-        ValidationResult::Pass | ValidationResult::Skipped(_) => Ok(()),
-        ValidationResult::Fail(reason) | ValidationResult::Error(reason) => Err(format!(
-            "the {} weight computes the wrong product, so its timing would be meaningless: \
-             {reason}",
-            strategy.weight.name()
-        )),
-    }
+    .map_err(|e| format!("{e:?}"))?;
+    Ok((problem, blueprint))
 }
 
 struct StorageBench {
@@ -219,14 +183,10 @@ impl Benchmark for StorageBench {
             .dtype(dtype)
             .uniform(1, 0.0, 1.0)
             .generate_without_host_data();
-        let rhs = weight(
-            &self.client,
-            self.weight,
-            rhs.binding(),
-            dtype,
-            &self.blueprint,
-        )
-        .expect("the proof packed this weight before the timing");
+        let rhs = self
+            .weight
+            .store(&self.client, rhs.binding(), dtype, &self.blueprint)
+            .expect("the proof packed this weight before the timing");
         (lhs, rhs)
     }
 
@@ -280,19 +240,49 @@ pub fn bench(
 ) -> Result<RunSamples, String> {
     let device = cubecl::test_device();
     let client = device.client();
-    prove(&client, strategy, problem.precision)?;
     let dtype = problem.precision.dtype();
     let elems = MatmulElems::from_single_dtype(dtype);
-    let matmul = matmul_problem(problem.m, problem.n, problem.k, &elems);
-    let delivery = match strategy.weight {
-        Weight::RowMajor => CmmaStrategy::default(),
-        Weight::Tiled => CmmaStrategy::tiled(),
-    };
-    let blueprint = plan(&client, &matmul, dtype, delivery)?;
+    let weight = strategy.weight;
 
+    // Prove the storage correct on a small shape before timing it: the same plan selection and
+    // the same weight storage as the timed run, against the CPU reference.
+    let (proof, proof_plan) = plan(&client, (64, 256, 256), dtype, weight)?;
+    let (seed_lhs, seed_rhs) = (7, 11);
+    let actual = produce_with(
+        client.clone(),
+        proof.clone(),
+        seed_lhs,
+        seed_rhs,
+        |c, lhs, rhs, out, dtypes| {
+            let rhs = weight
+                .store(c, rhs.into_data(), dtype, &proof_plan)
+                .map_err(|e| crate::definition::MatmulSetupError::InvalidConfig(Box::new(e)))?;
+            launch_ref(
+                c,
+                lhs,
+                InputBinding::Normal(rhs, dtype),
+                out,
+                &BlueprintStrategy::Forced(proof_plan.clone()),
+                dtypes,
+            )
+        },
+    )?;
+    let expected = cpu_reference_result(client.clone(), proof, seed_lhs, seed_rhs, None)?;
+    match assert_equals_approx(&actual, &expected, matmul_epsilon(&elems, 500.)) {
+        ValidationResult::Pass | ValidationResult::Skipped(_) => {}
+        ValidationResult::Fail(reason) | ValidationResult::Error(reason) => {
+            return Err(format!(
+                "the {} weight computes the wrong product, so its timing would be meaningless: \
+                 {reason}",
+                weight.name()
+            ));
+        }
+    }
+
+    let (_, blueprint) = plan(&client, (problem.m, problem.n, problem.k), dtype, weight)?;
     let bench = StorageBench {
         problem: *problem,
-        weight: strategy.weight,
+        weight,
         blueprint,
         client: client.clone(),
         dtypes: elems,
