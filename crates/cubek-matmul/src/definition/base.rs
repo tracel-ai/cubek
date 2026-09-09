@@ -28,6 +28,21 @@ pub fn broadcast_batches(lhs: &[usize], rhs: &[usize]) -> Option<Shape> {
         .collect()
 }
 
+/// Whether the launch feeds an accumulator operand alongside lhs and rhs.
+///
+/// A present accumulator is read into the registers before the k-loop, through
+/// a stage of its own that the cube allocates on top of the operand and output
+/// stages. Nothing else in the problem says it is there, so a blueprint chosen
+/// without this lands on a launch that requests more shared memory than the
+/// blueprint was checked against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccumulatorOperand {
+    /// The launch reads no accumulator: `out = lhs @ rhs`.
+    Absent,
+    /// The launch reads an accumulator: `out = lhs @ rhs + acc`.
+    Present,
+}
+
 #[derive(Clone, Debug)]
 /// Description of a matmul problem to solve, regardless of actual data
 pub struct MatmulProblem {
@@ -75,6 +90,11 @@ pub struct MatmulProblem {
 
     /// Address type, defined by the max of each handle's `required_address_type`
     pub address_type: AddressType,
+
+    /// Whether the launch reads an accumulator operand. Both constructors leave
+    /// it [`Absent`](AccumulatorOperand::Absent); a caller that passes one says
+    /// so, so the shared-memory budget charges its stage.
+    pub accumulator: AccumulatorOperand,
 }
 
 impl MatmulProblem {
@@ -124,6 +144,7 @@ impl MatmulProblem {
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
             address_type,
+            accumulator: AccumulatorOperand::Absent,
         })
     }
 
@@ -173,6 +194,7 @@ impl MatmulProblem {
             rhs_scheme: rhs_scheme.copied(),
             global_dtypes,
             address_type,
+            accumulator: AccumulatorOperand::Absent,
         }
     }
 

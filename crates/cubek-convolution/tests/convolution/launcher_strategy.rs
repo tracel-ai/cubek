@@ -16,7 +16,7 @@ use cubek_convolution::{
 };
 use cubek_matmul::multi_level::stage::SwizzleModes;
 use cubek_matmul::{
-    definition::{AvailableVectorSizes, MatmulElems, MatmulGlobalElems},
+    definition::{AccumulatorOperand, AvailableVectorSizes, MatmulElems, MatmulGlobalElems},
     multi_level::{
         components::{
             global::{InputLoadFlow, LoadFlows},
@@ -179,7 +179,7 @@ fn test_algo_with_padding_end(
         TileMatmulKind::Cmma,
         tiling_scheme,
         plane_dim,
-        &problem.as_matmul_problem(),
+        &problem.as_matmul_problem(AccumulatorOperand::Absent),
     )
     .shared_swizzle(swizzle)
     .partition_buffering(partition_buffering)

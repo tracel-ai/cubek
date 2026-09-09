@@ -4,7 +4,7 @@ use crate::{
 };
 use cubecl::{client::Client, prelude::TensorBinding};
 use cubek_matmul::{
-    definition::{MatmulElems, MatmulVectorSizes},
+    definition::{AccumulatorOperand, MatmulElems, MatmulVectorSizes},
     multi_level::{
         BatchMatmulRoutine,
         args::{InputArg, OutputArg},
@@ -28,6 +28,13 @@ pub fn launch_kernel_concrete<Args: ConcreteArgs<A>, A: BatchMatmulRoutine<Runti
     blueprint_strategy: &BlueprintStrategy<Args::Config, A>,
     dtypes: &MatmulElems,
 ) -> Result<(), ConvSetupError> {
+    // The bias is read into the accumulator through a stage of its own, which the
+    // blueprint's shared-memory budget has to charge.
+    let accumulator = match bias {
+        Some(_) => AccumulatorOperand::Present,
+        None => AccumulatorOperand::Absent,
+    };
+
     let mut view_vector_sizes = vector_sizes;
 
     if let InputBinding::Quantized { scheme, .. } = input {
@@ -39,13 +46,17 @@ pub fn launch_kernel_concrete<Args: ConcreteArgs<A>, A: BatchMatmulRoutine<Runti
 
     let device_settings = A::device_settings(client, view_vector_sizes);
     let expand_info = A::expand_blueprint(
-        &problem.as_matmul_problem(),
+        &problem.as_matmul_problem(accumulator),
         &device_settings,
         blueprint_strategy,
     )?;
 
     let problem = Args::adjust_problem(client, problem, &expand_info.blueprint, dtypes);
-    let launch_info = A::prepare(&problem.as_matmul_problem(), &device_settings, expand_info)?;
+    let launch_info = A::prepare(
+        &problem.as_matmul_problem(accumulator),
+        &device_settings,
+        expand_info,
+    )?;
 
     let (input, runtime_args) = <InputArg<Args> as ConcreteInputsFactory<A>>::create(
         input,

@@ -2,7 +2,7 @@ use cubecl::{
     ir::AddressType,
     zspace::{Shape, Strides, shape},
 };
-use cubek_matmul::definition::{MatmulGlobalElems, MatmulProblem};
+use cubek_matmul::definition::{AccumulatorOperand, MatmulGlobalElems, MatmulProblem};
 use cubek_std::MatrixLayout;
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,7 +50,10 @@ pub struct ConvolutionProblem {
 }
 
 impl ConvolutionProblem {
-    pub fn as_matmul_problem(&self) -> MatmulProblem {
+    /// The bias is not part of the convolution problem: it arrives at launch, so
+    /// the caller states whether one is there. The matmul selector charges its
+    /// stage against the shared-memory budget.
+    pub fn as_matmul_problem(&self, accumulator: AccumulatorOperand) -> MatmulProblem {
         let rank = self.lhs_strides.len();
 
         // Strides are expected to be in row major (m, n) format so for matmul checks we need to
@@ -95,6 +98,7 @@ impl ConvolutionProblem {
             rhs_scheme: None,
             global_dtypes: self.global_dtypes.clone(),
             address_type: self.address_type,
+            accumulator,
         }
     }
 
