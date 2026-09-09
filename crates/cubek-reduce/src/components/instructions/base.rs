@@ -63,7 +63,7 @@ pub enum SlotCount {
 }
 
 /// Whether an accumulator stores each slot's value and coordinate separately or
-/// folded into one [`Packed`](super::Packed).
+/// folded into one `Packed`.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
     Unpacked(SlotCount),

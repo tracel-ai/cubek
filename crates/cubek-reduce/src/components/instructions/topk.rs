@@ -472,7 +472,7 @@ fn topk_finalize_with_coords<P: ReducePrecision>(
     (topk_vals, topk_coords)
 }
 
-/// [`topk_finalize_with_coords`] over packed packed, for the parallel layout.
+/// [`topk_finalize_with_coords`] over packed values, for the parallel layout.
 #[cube]
 fn topk_finalize_packed<P: ReducePrecision>(
     packed: &Array<Vector<Packed, P::SI>>,
@@ -630,11 +630,12 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
     }
 }
 
-/// Plane-cooperative insertion of one packed-candidate candidate per lane.
+/// Plane-cooperative insertion of one packed candidate per lane.
 ///
 /// A candidate already carries the tie-break, so the plane's winner is a plain
-/// [`plane_max`] and the lane holding it is the lane whose candidate equals it: two
-/// lanes cannot hold the same candidate, since the coordinate is part of it.
+/// [`plane_max`](fn@plane_max) and the lane holding it is the lane whose candidate
+/// equals it: two lanes cannot hold the same candidate, since the coordinate is
+/// part of it.
 #[cube]
 pub fn plane_topk_packed_insert<N: Numeric, S: Size>(
     packed: &mut Array<Vector<Packed, S>>,
@@ -662,7 +663,7 @@ pub fn plane_topk_packed_insert<N: Numeric, S: Size>(
     }
 }
 
-/// Plane-cooperative merge of per-lane packed-candidate accumulators.
+/// Plane-cooperative merge of per-lane packed accumulators.
 #[cube]
 pub fn plane_topk_packed_merge<N: Numeric, S: Size>(
     packed: &mut Array<Vector<Packed, S>>,
