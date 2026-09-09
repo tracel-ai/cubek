@@ -259,66 +259,72 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     }
 }
 
-/// [`Scales`] as one launch argument. `V` is the block level's served width; the global level
-/// is one scalar, and `'static` because a comptime-optional launch argument has to be.
+/// [`Scales`] as one launch argument. The block level is bound plain at `S`, or as fields of
+/// `u32` words served `S` through the packed view ([`TileSpec::packed`], [`TileSpec::subword`]),
+/// which is how `ue8m0` and `ue4m3` scales stored as bytes are read in their own width. `V` is
+/// the block level's served width; the global level is one scalar at `S`, and `'static` because
+/// a comptime-optional launch argument has to be.
 #[derive(CubeType, CubeLaunch)]
 pub struct ScalesArg<'a, S: Numeric, V: Size> {
-    pub block: TileArg<'a, S, V>,
+    pub block: ComptimeOption<TileArg<'a, S, V>>,
+    pub packed_block: ComptimeOption<TileArg<'static, u32, V>>,
     pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
 }
 
 impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
     pub fn block(block: TileArgLaunch<'static, S, V>) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::None)
+        ScalesArgLaunch::new(
+            ComptimeOptionArgs::Some(block),
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::None,
+        )
     }
 
     pub fn block_under(
         block: TileArgLaunch<'static, S, V>,
         global: TileArgLaunch<'static, S, Const<1>>,
     ) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
+        ScalesArgLaunch::new(
+            ComptimeOptionArgs::Some(block),
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::Some(global),
+        )
+    }
+
+    /// The block level stored as fields of `u32` words.
+    pub fn packed_block(block: TileArgLaunch<'static, u32, V>) -> Self {
+        ScalesArgLaunch::new(
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::Some(block),
+            ComptimeOptionArgs::None,
+        )
+    }
+
+    pub fn packed_block_under(
+        block: TileArgLaunch<'static, u32, V>,
+        global: TileArgLaunch<'static, S, Const<1>>,
+    ) -> Self {
+        ScalesArgLaunch::new(
+            ComptimeOptionArgs::None,
+            ComptimeOptionArgs::Some(block),
+            ComptimeOptionArgs::Some(global),
+        )
     }
 }
 
 #[cube]
 impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
     pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
-        let block = self.block.tile(comptime!(space.clone()));
-        #[comptime]
-        match &self.global {
-            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
-            ComptimeOption::None => Scales::<S>::block(block),
-        }
-    }
-}
-
-/// [`ScalesArg`] with the block level stored as fields of `u32` words, served `S` through the
-/// packed view ([`TileSpec::packed`] or [`TileSpec::subword`]): `ue8m0` or `ue4m3` scales read
-/// in their own width, with no widening pass before the launch. The global level is one scalar
-/// at `S`.
-#[derive(CubeType, CubeLaunch)]
-pub struct PackedScalesArg<'a, S: Numeric, V: Size> {
-    pub block: TileArg<'a, u32, V>,
-    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
-}
-
-impl<S: Numeric, V: Size> PackedScalesArgLaunch<'static, S, V> {
-    pub fn block(block: TileArgLaunch<'static, u32, V>) -> Self {
-        PackedScalesArgLaunch::new(block, ComptimeOptionArgs::None)
-    }
-
-    pub fn block_under(
-        block: TileArgLaunch<'static, u32, V>,
-        global: TileArgLaunch<'static, S, Const<1>>,
-    ) -> Self {
-        PackedScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
-    }
-}
-
-#[cube]
-impl<'a, S: Numeric, V: Size> PackedScalesArg<'a, S, V> {
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
-        let block = self.block.tile_packed::<S>(comptime!(space.clone()));
+        let block = #[comptime]
+        match (&self.block, &self.packed_block) {
+            (ComptimeOption::Some(block), ComptimeOption::None) => {
+                block.tile(comptime!(space.clone()))
+            }
+            (ComptimeOption::None, ComptimeOption::Some(block)) => {
+                block.tile_packed::<S>(comptime!(space.clone()))
+            }
+            _ => panic!("ScalesArg: the block level is bound plain or packed, exactly one"),
+        };
         #[comptime]
         match &self.global {
             ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
