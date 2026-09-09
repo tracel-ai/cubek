@@ -320,6 +320,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] fold: usize,
         #[comptime] monoid: Monoid,
         #[comptime] depth: usize,
+        #[comptime] levels: Vec<Level>,
     ) -> Tile<T> {
         let (m_tiles, n_tiles) = comptime!((fragments.m_tiles, fragments.n_tiles));
         let (m, n, k) = comptime!((fragments.m, fragments.n, fragments.k));
@@ -353,12 +354,14 @@ impl<T: Numeric> PlanePartition<T> {
             // never read; the first partition level below reads its own edges off its child.
             space,
             depth,
+            levels,
         }
     }
 
     /// The store for one region of an operand under `out`'s contraction: a partition mirroring
     /// the accumulator's `grid` of fragments along the operand's own axes, tiles uninitialized
     /// in `form`; [`copy_from`](Tile::copy_from) fills it. `m`/`n` are the accumulator fragment's.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn store(
         #[comptime] window: Space,
         #[comptime] form: PlaneForm,
@@ -367,6 +370,7 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] depth: usize,
+        #[comptime] levels: Vec<Level>,
     ) -> Tile<T> {
         let a0 = comptime!(window.axis_at(window.rank() - 2));
         let a1 = comptime!(window.axis_at(window.rank() - 1));
@@ -424,6 +428,7 @@ impl<T: Numeric> PlanePartition<T> {
             }),
             space: comptime!(window),
             depth,
+            levels,
         }
     }
 
@@ -464,6 +469,7 @@ impl<T: Numeric> PlanePartition<T> {
             comptime!(m),
             comptime!(n),
             comptime!(src.depth),
+            comptime!(src.levels.clone()),
         );
         frags.copy_from(src);
         frags

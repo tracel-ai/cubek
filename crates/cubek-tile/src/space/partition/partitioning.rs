@@ -1,8 +1,8 @@
 //! A [`Space`] and the [`Level`]s that cut it, held as one value.
 
-use cubecl::prelude::{CubeCount, CubeDim};
+use cubecl::{prelude::*, unexpanded};
 
-use crate::{Axis, ComputeScope, CubeAxis, Level, Space};
+use crate::{Axis, ComputeScope, CubeAxis, Level, Region, RegionExpand, Space, Walk};
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
@@ -17,10 +17,129 @@ use crate::{Axis, ComputeScope, CubeAxis, Level, Space};
 /// It is the pair, not a new statement: the levels are the kernel's, outermost first, and
 /// nothing here reorders or invents one. What the kernel *does* with a level — where it opens an
 /// accumulator, what it stages, which instruction its leaf runs under — stays the kernel's own.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// What a kernel is handed ([`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg)),
+/// and what its loops iterate: `for cube in space` deals the first level, `for plane in cube` the
+/// next, down to the leaf. The levels ride along comptime; the space's dynamic extents are the
+/// runtime half.
+#[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
-    space: Space,
-    levels: Vec<Level>,
+    pub(crate) space: Space,
+    #[cube(comptime)]
+    pub(crate) levels: Vec<Level>,
+}
+
+/// The comptime partitioning of a runtime one, read as the host reads it: what
+/// `comptime!(space.clone())` resolves to on the partitioning a kernel is handed.
+impl PartitioningExpand {
+    #[allow(clippy::should_implement_trait)]
+    pub fn clone(&self) -> Partitioning {
+        Partitioning::new(self.space.clone(), self.levels.clone())
+    }
+
+    pub fn space(&self) -> Space {
+        self.space.clone()
+    }
+
+    pub fn levels(&self) -> Vec<Level> {
+        self.levels.clone()
+    }
+
+    pub fn level(&self, i: usize) -> Level {
+        self.levels[i].clone()
+    }
+
+    pub fn depth(&self) -> usize {
+        self.levels.len()
+    }
+
+    pub fn rank(&self) -> usize {
+        self.space.rank()
+    }
+
+    pub fn axis_at(&self, i: usize) -> Axis {
+        self.space.axis_at(i)
+    }
+
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.space.extent(axis)
+    }
+
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.space.contains(axis)
+    }
+
+    pub fn position(&self, axis: Axis) -> usize {
+        self.space.position(axis)
+    }
+
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        self.space.project(axes)
+    }
+
+    pub fn axes(&self) -> Vec<Axis> {
+        self.space.axes()
+    }
+}
+
+#[cube]
+impl Partitioning {
+    /// The regions of the first level: what `for cube in space` iterates.
+    pub fn walk(&self) -> Walk {
+        Region::root(self).walk()
+    }
+
+    /// The regions of `level` over this space, a level of the kernel's own rather than the
+    /// partitioning's: a walk the kernel states beside its loops, not one of them.
+    pub fn over(&self, #[comptime] level: &Level) -> Walk {
+        Walk::of(&self.space, comptime!(level.clone()), Region::root(self))
+    }
+}
+
+/// The runtime twin of `for plane in space`, which a kernel's host-side body names but never
+/// runs: every loop over a region expands in-kernel.
+impl IntoIterator for Partitioning {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+impl IntoIterator for &Partitioning {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+/// `for region in partitioning` iterates its first level.
+impl Iterable for PartitioningExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        RegionExpand::__expand_root(scope, &self).expand(scope, body)
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        RegionExpand::__expand_root(scope, &self).expand_unroll(scope, body)
+    }
+}
+
+/// `for cube in &space`: the same, leaving `space` to the body.
+impl Iterable for &PartitioningExpand {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        RegionExpand::__expand_root(scope, self).expand(scope, body)
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        RegionExpand::__expand_root(scope, self).expand_unroll(scope, body)
+    }
 }
 
 impl Partitioning {
@@ -52,6 +171,31 @@ impl Partitioning {
     /// The pair, for a caller that has to hand the halves to something older.
     pub fn into_parts(self) -> (Space, Vec<Level>) {
         (self.space, self.levels)
+    }
+
+    /// The space's axes, read through the pair: what a kernel handed a partitioning asks of it.
+    pub fn rank(&self) -> usize {
+        self.space.rank()
+    }
+
+    pub fn axis_at(&self, i: usize) -> Axis {
+        self.space.axis_at(i)
+    }
+
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.space.extent(axis)
+    }
+
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.space.contains(axis)
+    }
+
+    pub fn position(&self, axis: Axis) -> usize {
+        self.space.position(axis)
+    }
+
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        self.space.project(axes)
     }
 
     /// The leaf the levels reach: each level's child of the last, the tile the operands are

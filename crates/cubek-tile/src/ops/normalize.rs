@@ -165,6 +165,7 @@ mod tests {
             tile_kind: TileKindExpand::PlaneTile(plane_tile),
             space: Space::new(&[(Axis(0), 4)]),
             depth: 0,
+            levels: Vec::new(),
         };
         tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
     }

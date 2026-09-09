@@ -48,6 +48,7 @@ impl<T: Numeric> TmaData<T> {
             }),
             space: comptime!(space),
             depth: comptime!(0usize),
+            levels: comptime!(Vec::new()),
         }
     }
 }

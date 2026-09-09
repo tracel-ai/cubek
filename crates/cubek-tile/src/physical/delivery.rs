@@ -8,7 +8,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Space, Storage, StridedOperand, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Partitioning, Storage, StridedOperand, Sync, Tile, TileArg, TmaTileArg};
 
 /// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
 /// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
@@ -80,7 +80,8 @@ pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
 
     /// Serve the argument as a [`Tile`]: the kernel's one `space` projected onto the
     /// argument's own spec axes.
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E>;
+    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Partitioning)
+    -> Tile<E>;
 }
 
 /// The families whose argument is a plain tensor + its spec ([`TileArg`]): what a built
@@ -115,7 +116,10 @@ pub struct Tma;
 impl DeliveryFamily for Cooperative {
     type Arg<E: Numeric, V: Size> = TileArg<'static, E, V>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] space: Partitioning,
+    ) -> Tile<E> {
         comptime!(match arg.spec.storage {
             Storage::Strided | Storage::Tiled(_) => {}
             Storage::Contiguous =>
@@ -129,7 +133,10 @@ impl DeliveryFamily for Cooperative {
 impl DeliveryFamily for Tma {
     type Arg<E: Numeric, V: Size> = TmaTileArg<E>;
 
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Space) -> Tile<E> {
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] space: Partitioning,
+    ) -> Tile<E> {
         arg.tile(space)
     }
 }

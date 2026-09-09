@@ -106,7 +106,7 @@ pub fn cmma_kernel<
     a: &D::Arg<EL, VA>,
     b: &D::Arg<ER, VB>,
     c: &TileArg<'_, E, VC>,
-    space: Space,
+    space: Partitioning,
     #[comptime] bp: CmmaBlueprint,
     #[comptime] batch: Vec<Axis>,
     #[define(EL)] _lhs_dtype: ElemType,
@@ -136,7 +136,7 @@ pub fn cmma_kernel<
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
 
-    for cube in space.cubes(comptime!(bp.cubes(&batch))) {
+    for cube in space {
         let a = a.at(&cube);
         let b = b.at(&cube);
         let c = c.at(&cube);
@@ -145,7 +145,7 @@ pub fn cmma_kernel<
         acc.zero();
 
         // One stage of K per region, both inputs staged for it.
-        let stages = cube.walk(comptime!(bp.k_stages()));
+        let stages = cube.walk();
         let mut ring = Ring::smem(
             &stages,
             &a,
@@ -158,18 +158,18 @@ pub fn cmma_kernel<
         pipelined(stages, &mut ring, |slot, stage| {
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
-                for plane in stage.planes(comptime!(bp.planes())) {
+                for plane in stage {
                     // The plane's window of each stage, taken once: the slot's origin is a
                     // runtime value, so a window per step would pay its load and add per step.
                     let acc_plane = acc_stage.at(&plane);
                     let a_p = a_s.at(&plane);
                     let b_p = b_s.at(&plane);
                     // The operands are loaded into fragments one K step at a time.
-                    for step in plane.walk(comptime!(bp.k_steps())).unrolled() {
+                    for step in plane.walk().unrolled() {
                         let acc_step = acc_plane.at(&step);
                         let a_f = PlanePartition::<EL>::cmma_fragments(&a_p.at(&step), &acc_step);
                         let b_f = PlanePartition::<ER>::cmma_fragments(&b_p.at(&step), &acc_step);
-                        for cell in step.walk(comptime!(bp.fragments())).unrolled() {
+                        for cell in step.walk().unrolled() {
                             let mut acc_cell = acc_step.at(&cell);
                             acc_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
                         }
@@ -177,9 +177,10 @@ pub fn cmma_kernel<
                 }
             });
         });
-        // Each fragment to its window of the output, cast down to its type.
-        for plane in cube.planes(comptime!(bp.planes())) {
-            for cell in plane.walk(comptime!(bp.fragments())).unrolled() {
+        // Each fragment to its window of the output, cast down to its type: the planes and
+        // their fragments, skipping the `K` levels between them, which the output does not span.
+        for plane in cube.over(&bp.planes()) {
+            for cell in plane.over(&bp.fragments()).unrolled() {
                 let mut c_cell = c.at(&cell);
                 c_cell.copy_cast_from(&acc.at(&cell));
             }

@@ -12,8 +12,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Level, MaskProbe, MemData, RowState, Space, StageStorage, TileArg, TileArgLaunch,
-    TileSpec,
+    Axis, Level, MaskProbe, MemData, Partitioning, RowState, Space, StageStorage, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 const Q: Axis = Axis(0);
@@ -29,7 +29,7 @@ fn softmax_walk_kernel(
     lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] lanes: usize,
@@ -97,8 +97,8 @@ fn softmax_walk_kernel(
             materialized,
         };
         let corr = if comptime!(lanes > 1) {
-            let mut score_w = score.at(&score.walk(comptime!(rows_level.clone())).region(worker));
-            let mut p_w = p.at(&p.walk(comptime!(rows_level.clone())).region(worker));
+            let mut score_w = score.at(&score.over(&rows_level).region(worker));
+            let mut p_w = p.at(&p.over(&rows_level).region(worker));
             score_w.softmax::<f32>(&mut p_w, &mut state, &probe, &mask_tile, scale)
         } else {
             let probe = MaskProbe {
@@ -364,7 +364,7 @@ fn softmax_smem_acc_kernel(
     lse: &mut Tensor<f32>,                 // [rows]
     scale: f32,
     bound_s: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] block_space: Space, // {Q: rows, S: block cols}
     #[comptime] units: usize,
     #[comptime] causal: bool,

@@ -1,6 +1,8 @@
-//! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code,
-//! and the verbs a kernel's loop states it with ([`Space::cubes`], [`Space::planes`],
-//! [`Space::lanes`], [`Space::walk`], and the same on a [`Region`] or a [`Tile`]).
+//! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code.
+//! A kernel's loops rarely name one: `for cube in space` and `for plane in cube` iterate the
+//! [`Partitioning`](crate::Partitioning)'s levels in turn, and a walk is what such a loop builds
+//! ([`Region::walk`]). A level the kernel states beside its loops is walked with
+//! [`over`](Region::over).
 //!
 //! A walk is a sequence with random access and nothing else: it computes once how many regions
 //! this cube or plane owns at the level ([`total`](Walk::total)) and how an index maps to one
@@ -20,12 +22,12 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, SpaceExpand,
-    const_coords, instance_count, instance_tiles, run_length,
+    Axis, Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, const_coords,
+    instance_count, instance_tiles, run_length,
 };
 
 use super::walk_order::walk_index;
-use super::{ComputeScope, CubeAxis, Distribution, LevelScope, Spread, WalkOrder};
+use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -88,108 +90,10 @@ pub struct Run {
     stride: usize,
 }
 
-/// The loops a kernel writes over a space or a region, one verb per statement. A distribute verb
-/// (`cubes`, `planes`, `lanes`) hands each instance of that scope its region and iterates that:
-/// once when each instance takes one tile, its share otherwise. `walk` steps every region. The
-/// verb checks the level it is handed: `for plane in stage.planes(level)` refuses a level that
-/// deals to cubes or steps an axis, so the header cannot say one thing while the value does
-/// another. A kernel generic over its levels, which cannot know the verb, says
-/// [`over`](Space::over).
-#[cube]
-impl Space {
-    /// The regions of `level` over this space, whatever scope the level is: what a kernel handed
-    /// its levels states. Comptime for `Static` axes, runtime for `Dynamic`.
-    pub fn over(&self, #[comptime] level: &Level) -> Walk {
-        Walk::of(self, comptime!(level.clone()), Region::root(self, 0usize))
-    }
-
-    /// Each cube's box of this space under `level`, which deals to the cube grid and steps
-    /// nothing.
-    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            self,
-            level,
-            Region::root(self, 0usize),
-            comptime!(LevelScope::Cubes),
-        )
-    }
-
-    /// Each plane's box of this space under `level`, which deals to the cube's planes and steps
-    /// nothing.
-    pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            self,
-            level,
-            Region::root(self, 0usize),
-            comptime!(LevelScope::Planes),
-        )
-    }
-
-    /// Each lane's box of this space under `level`, which deals to the plane's lanes and steps
-    /// nothing.
-    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            self,
-            level,
-            Region::root(self, 0usize),
-            comptime!(LevelScope::Lanes),
-        )
-    }
-
-    /// Every region of this space under `level`, which deals to nobody: the loop steps them all.
-    pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            self,
-            level,
-            Region::root(self, 0usize),
-            comptime!(LevelScope::Sequential),
-        )
-    }
-}
-
 #[cube]
 impl Region {
-    /// [`Space::cubes`] over this region's own box, one level further down the path.
-    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            &self.child(),
-            level,
-            self.clone(),
-            comptime!(LevelScope::Cubes),
-        )
-    }
-
-    /// [`Space::planes`] over this region's own box, one level further down the path.
-    pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            &self.child(),
-            level,
-            self.clone(),
-            comptime!(LevelScope::Planes),
-        )
-    }
-
-    /// [`Space::lanes`] over this region's own box, one level further down the path.
-    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            &self.child(),
-            level,
-            self.clone(),
-            comptime!(LevelScope::Lanes),
-        )
-    }
-
-    /// [`Space::walk`] over this region's own box, one level further down the path.
-    pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        Walk::stated(
-            &self.child(),
-            level,
-            self.clone(),
-            comptime!(LevelScope::Sequential),
-        )
-    }
-
-    /// [`Space::over`] over this region's own box, one level further down the path.
+    /// The regions of `level` over this region's own box, a level of the kernel's own rather
+    /// than the partitioning's next ([`walk`](Region::walk)).
     pub fn over(&self, #[comptime] level: &Level) -> Walk {
         Walk::of(&self.child(), comptime!(level.clone()), self.clone())
     }
@@ -197,25 +101,6 @@ impl Region {
 
 #[cube]
 impl Walk {
-    /// [`of`](Walk::of) under a verb: the level must have been built under the same one.
-    pub(crate) fn stated(
-        space: &Space,
-        #[comptime] level: Level,
-        parent: Region,
-        #[comptime] verb: LevelScope,
-    ) -> Walk {
-        comptime!({
-            let built = level.scope();
-            assert!(
-                built == verb,
-                "{}: this level was built by `Level::{}`, which is not what this loop says",
-                verb.verb(),
-                built.verb()
-            );
-        });
-        Walk::of(space, level, parent)
-    }
-
     pub(crate) fn of(space: &Space, #[comptime] level: Level, parent: Region) -> Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]

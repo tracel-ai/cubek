@@ -32,7 +32,7 @@ fn reduce_matmul_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -66,7 +66,7 @@ enum Read {
 fn reduce_body<E: Numeric>(
     input: &Tile<E>,
     output: &mut Tile<E>,
-    space: &Space,
+    space: &Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
@@ -96,7 +96,7 @@ fn reduce_body<E: Numeric>(
 fn reduce_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
@@ -118,7 +118,7 @@ fn reduce_kernel<E: Numeric>(
 fn reduce_kernel_v4<E: Numeric>(
     input: &TileArg<'_, E, Const<4>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[comptime] monoid: Monoid,
@@ -143,13 +143,13 @@ fn reduce_kernel_v4<E: Numeric>(
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] read: Read,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(space.clone()),
+        comptime!(space.space().clone()),
         AffineCoordinate::<E> {
             offset: E::new(0.0_f32),
             coefficient: E::new(1.0_f32),
@@ -219,7 +219,7 @@ fn run(
             c_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(c_axes),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -485,7 +485,7 @@ fn run_reduce_with_vw(
                 launcher.cube_dim(),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.space_arg(),
+                launcher.partitioning_arg(),
                 launcher.level(0),
                 read,
                 monoid,
@@ -499,7 +499,7 @@ fn run_reduce_with_vw(
                 launcher.cube_dim(),
                 TileArgLaunch::new(in_binding.into_tensor_arg(), TileSpec::direct(in_axes)),
                 TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-                launcher.space_arg(),
+                launcher.partitioning_arg(),
                 launcher.level(0),
                 read,
                 monoid,
@@ -827,7 +827,7 @@ fn run_reduce_checked(
             TileSpec::direct(in_axes).checked(true),
         ),
         TileArgLaunch::new(out_binding.into_tensor_arg(), TileSpec::direct(out_axes)),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         read,
         monoid,
@@ -963,7 +963,7 @@ fn check_procedural_reduce(read: Read) {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         read,
         dtype,
@@ -1310,7 +1310,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
 fn resident_fold_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] monoid: Monoid,
     #[define(E)] _dtype: ElemType,
@@ -1380,7 +1380,7 @@ fn resident_max_over_lane_split_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         Monoid::Max,
         f32_ty,
@@ -1452,7 +1452,7 @@ fn resident_max_over_lane_group_k() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         Monoid::Max,
         f32_ty,

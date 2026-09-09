@@ -32,7 +32,7 @@ pub type StorageTile = (usize, usize);
 fn relayout<E: Numeric, V: Size>(
     src: &TileArg<'_, E, V>,
     dst: &TileArg<'_, E, V>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -41,7 +41,7 @@ fn relayout<E: Numeric, V: Size>(
     let rank = comptime!(space.rank());
     let ri = comptime!(rank - 2);
     let ci = comptime!(rank - 1);
-    for cube in space.cubes(level) {
+    for cube in space.over(&level) {
         let s = src.at(&cube);
         let mut d = dst.at(&cube);
         let r = s.view::<V>();
@@ -216,7 +216,7 @@ fn relayout_launch(
         v,
         s.arg(),
         d.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         level,
         dtype,
     );

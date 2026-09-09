@@ -28,7 +28,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     weights: &TileArg<'_, u32, Const<1>>,
     scales: &TileArg<'_, S, F>,
     out: &TileArg<'_, E, W>,
-    space: Space,
+    space: Partitioning,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let weights = weights.tile_packed::<E>(comptime!(space.clone()));
@@ -135,7 +135,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
         w_op.arg(),
         s_op.arg(),
         out_op.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         [dtype, dtype],
     );
 

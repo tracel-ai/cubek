@@ -82,6 +82,7 @@ impl<T: Numeric> CmmaData<T> {
             })),
             space: comptime!(space),
             depth: comptime!(0usize),
+            levels: comptime!(Vec::new()),
         }
     }
 

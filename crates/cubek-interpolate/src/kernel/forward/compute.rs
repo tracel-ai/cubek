@@ -5,7 +5,7 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Phase, Region, RegisterBlock, Ring, Semiring, Space, StageStorage, Tile, TileArg,
+    Axis, Partitioning, Phase, Region, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg,
     affine_along, pipelined, separable_product, sum_of,
 };
 
@@ -41,7 +41,7 @@ fn tap_distance<E: Float>(
 pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     input: &TileArg<'_, E, V>,
     output: &TileArg<'_, E, V>,
-    space: Space,
+    space: Partitioning,
     #[comptime] row_scale: u32,
     #[comptime] row_offset: i32,
     #[comptime] row_divisor: u32,
@@ -49,7 +49,6 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     #[comptime] col_offset: i32,
     #[comptime] col_divisor: u32,
     #[comptime] radius: usize,
-    #[comptime] plan: InterpolateSpace,
     #[comptime] stage: InputStage,
     #[comptime] padded: Option<usize>,
     #[comptime] config: RegisterBlock,
@@ -63,7 +62,11 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
     let weights = Tile::<E>::procedural_separable::<SeparableWeights<E, F::Filter<E>>>(
-        comptime!(space.project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])),
+        comptime!(
+            space
+                .space()
+                .project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
+        ),
         separable_product(factors),
     );
     let weights = match comptime!(F::NORMALIZATION) {
@@ -76,8 +79,8 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     // This cube's box of the output, walked one channel block at a time. Whether the input is
     // staged into shared memory for each block is the launch's call on the window's size, stated
     // as `stage`; the walk is the same either way.
-    for cube in space.cubes(comptime!(plan.cubes())) {
-        let blocks = cube.walk(comptime!(plan.channel_blocks()));
+    for cube in space {
+        let blocks = cube.walk();
         match comptime!(stage) {
             InputStage::Smem => {
                 let mut ring =
@@ -91,7 +94,6 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
                             &output_block,
                             &weights_block,
                             input_block,
-                            plan,
                             config,
                         );
                     });
@@ -104,7 +106,6 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
                         &output.at(&block),
                         &weights.at(&block),
                         &input.at(&block),
-                        plan,
                         config,
                     );
                 }
@@ -121,14 +122,13 @@ fn interpolate_block<E: Float>(
     output: &Tile<E>,
     weights: &Tile<E>,
     input: &Tile<E>,
-    #[comptime] plan: InterpolateSpace,
     #[comptime] config: RegisterBlock,
 ) {
-    for plane in block.planes(comptime!(plan.planes())) {
+    for plane in block {
         let output_plane = output.at(&plane);
         let weights_plane = weights.at(&plane);
         let input_plane = input.at(&plane);
-        for cell in plane.lanes(comptime!(plan.lanes())) {
+        for cell in plane {
             let mut output_cell = output_plane.at(&cell);
             output_cell.mm_with(
                 &weights_plane.at(&cell),

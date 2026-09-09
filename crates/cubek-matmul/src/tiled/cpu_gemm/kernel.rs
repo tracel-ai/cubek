@@ -91,9 +91,8 @@ pub fn cpu_gemm_kernel<
     a: &TileArg<'_, EL, VA>,
     b: &TileArg<'_, ER, VB>,
     c: &TileArg<'_, E, VC>,
-    space: Space,
+    space: Partitioning,
     #[comptime] bp: CpuGemmBlueprint,
-    #[comptime] batch: Vec<Axis>,
     #[define(EL)] _lhs_dtype: ElemType,
     #[define(ER)] _rhs_dtype: ElemType,
     #[define(E)] _acc_dtype: ElemType,
@@ -113,15 +112,15 @@ pub fn cpu_gemm_kernel<
         k: leaf.k,
     });
 
-    for cube in space.cubes(comptime!(bp.cubes(&batch))) {
-        for plane in cube.planes(comptime!(bp.planes())) {
+    for cube in space {
+        for plane in cube {
             let a = a.at(&plane);
             let b = b.at(&plane);
             let mut c = c.at(&plane);
             let mut acc =
                 c.block_accumulator::<EA, EL, ER>(&a, &b, fragments, REGISTER_BLOCK, Monoid::Sum);
             acc.zero();
-            for step in plane.walk(comptime!(bp.k_steps())) {
+            for step in plane {
                 let mut acc_step = acc.at(&step);
                 acc_step.mma(&a.at(&step), &b.at(&step), Semiring::SUM_PROD);
             }

@@ -73,7 +73,7 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         launch.cube_dim(),
         input.arg(),
         output.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         f32::elem_type_native(),
     );
 
@@ -218,7 +218,7 @@ fn copy_quantized_per_tensor_vectorized_matches_reference() {
         v,
         input_op.arg(),
         output.arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -290,7 +290,7 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
         pack,
         input_op.arg(),
         output.arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -613,7 +613,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
 pub fn plain_copy<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
@@ -628,7 +628,7 @@ pub fn plain_copy<E: Numeric>(
 pub fn dequant_copy<I: Numeric, O: Numeric, VI: Size, VO: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, O, VO>,
-    space: Space,
+    space: Partitioning,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {
@@ -773,7 +773,7 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
             DequantAt::Read,
         ),
         TileArgLaunch::new(output.tensor_arg(1), output.spec().checked(check)),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         input_dtype,
         out_dtype,
     );

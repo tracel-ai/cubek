@@ -35,7 +35,7 @@ fn matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -56,7 +56,7 @@ fn scaled_matmul<E: Numeric>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -121,7 +121,7 @@ fn one_contracted_axis_is_the_reference() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -201,7 +201,7 @@ fn a_partitioned_axis_contracts_the_same() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -297,7 +297,7 @@ fn scales_omit_the_axis_inside_the_block() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -388,7 +388,7 @@ fn a_split_output_axis_contracts_the_same() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -487,7 +487,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -515,7 +515,7 @@ fn wide_matmul<E: Numeric, V: Size>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, V>,
     c: &TileArg<'_, E, V>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -592,7 +592,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -617,7 +617,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -718,7 +718,7 @@ fn scales_are_served_several_at_a_time() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -746,7 +746,7 @@ fn promoted_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -837,7 +837,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -864,7 +864,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -968,7 +968,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -995,7 +995,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     b: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, S, SW>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -1094,7 +1094,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         [dtype, scale_dtype],
     );

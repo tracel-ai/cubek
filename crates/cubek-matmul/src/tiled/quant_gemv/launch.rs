@@ -168,7 +168,7 @@ pub fn launch_ref(
         x_op.arg(),
         s_args,
         out_op.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         blueprint,
         *problem,
         dtypes.served,

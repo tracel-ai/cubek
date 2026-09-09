@@ -5,7 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, DequantAt, KernelForm, Launcher, QuantTileArg, Space, StridedOperand, TileArg,
+    Axis, DequantAt, KernelForm, Launcher, Partitioning, QuantTileArg, Space, StridedOperand,
+    TileArg,
 };
 
 // Input axes
@@ -83,7 +84,7 @@ pub fn launch_ref(
         cube_dim,
         input_op.arg(),
         output_op.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         input_dtype,
         output_dtype,
     );
@@ -119,7 +120,7 @@ fn check_i8_supported(client: &Client, scheme: &QuantScheme) {
 pub fn dequantize<I: Numeric, O: Numeric>(
     input: &QuantTileArg<'_, I, Const<1>>,
     output: &TileArg<'_, O, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[define(I)] _input_dtype: ElemType,
     #[define(O)] _output_dtype: ElemType,
 ) {

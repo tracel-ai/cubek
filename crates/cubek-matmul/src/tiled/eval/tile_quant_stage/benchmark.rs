@@ -30,26 +30,23 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
     a: &TileArg<'_, E, VA>,
     b: &QuantTileArg<'_, I, VB>,
     c: &TileArg<'_, E, VC>,
-    space: Space,
-    #[comptime] cubes: Level,
-    #[comptime] steps: Level,
-    #[comptime] lanes: Level,
+    space: Partitioning,
     #[define(I)] _b_dtype: ElemType,
     #[define(E)] _e_dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for cube in space.cubes(comptime!(cubes.clone())) {
+    for cube in space {
         let a = a.at(&cube);
         let b = b.at(&cube);
         let c = c.at(&cube);
-        let steps = cube.walk(comptime!(steps.clone()));
+        let steps = cube.walk();
         let mut ring = Ring::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
         pipelined(steps, &mut ring, |slot, step| {
             let c_step = c.at(step);
             slot.consume(|a_s, b_s| {
-                for lane in step.lanes(comptime!(lanes.clone())) {
+                for lane in step {
                     let mut c_lane = c_step.at(&lane);
                     c_lane.mma_with(
                         &a_s.at(&lane),
@@ -206,10 +203,7 @@ impl Benchmark for TileQuantStageBench {
             a.arg(),
             b.arg(),
             c.arg(),
-            launcher.space_arg(),
-            launcher.level(0),
-            launcher.level(1),
-            launcher.level(2),
+            launcher.partitioning_arg(),
             u32::elem_type_native(),
             f32::elem_type_native(),
         );

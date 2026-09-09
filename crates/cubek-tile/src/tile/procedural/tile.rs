@@ -18,6 +18,7 @@ impl<T: Numeric> Tile<T> {
             )),
             space,
             depth: comptime!(0usize),
+            levels: comptime!(Vec::new()),
         }
     }
 }

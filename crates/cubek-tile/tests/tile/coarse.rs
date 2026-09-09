@@ -39,7 +39,7 @@ fn coarse_lhs_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -118,7 +118,7 @@ fn run(launcher: Launcher) -> HostData {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );

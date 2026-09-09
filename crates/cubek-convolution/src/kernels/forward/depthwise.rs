@@ -96,16 +96,6 @@ impl DepthwiseSpace {
         Partitioning::new(self.space(), self.levels())
     }
 
-    /// The tile every operand is cut to at the bottom.
-    pub fn leaf(&self) -> Vec<(Axis, usize)> {
-        self.partitioning().leaf().extents()
-    }
-
-    /// The axes some tile reaches past the end of.
-    pub fn overhangs(&self) -> Vec<Axis> {
-        self.partitioning().overhanging()
-    }
-
     /// The grid this launch runs on: channels on `X`, columns on `Y`, rows and batches on `Z`,
     /// a plane per row of the cube.
     pub fn grid(&self) -> (CubeCount, CubeDim) {
@@ -162,20 +152,19 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     weight: &TileArg<'_, E, V>,
     input: &TileArg<'_, E, V>,
     out: &TileArg<'_, E, V>,
-    space: Space,
-    #[comptime] plan: DepthwiseSpace,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let weight = weight.tile(comptime!(space.clone()));
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    for cube in space.cubes(comptime!(plan.cubes())) {
+    for cube in space {
         let out = out.at(&cube);
         let weight = weight.at(&cube);
         let input = input.at(&cube);
-        for plane in cube.planes(comptime!(plan.planes())) {
-            for lane in plane.lanes(comptime!(plan.lanes())) {
+        for plane in cube {
+            for lane in plane {
                 let mut out = out.at(&lane);
                 out.mm_with(
                     &weight.at(&lane),
@@ -397,9 +386,8 @@ pub fn launch_depthwise(
     );
     let tile_c = tiling.channel_tile(lanes, width)?;
     let plan = tiling.plan(&geometry, lanes, tile_c, width);
-    let launch = Launcher::new(client, plan.space(), plan.grid(), KernelForm::Static)
-        .leaf(&plan.leaf())
-        .overhanging(&plan.overhangs());
+    let launch =
+        Launcher::partitioned(client, plan.partitioning(), plan.grid(), KernelForm::Static);
 
     // A tile that does not divide its axis leaves the last cube short, and a short cube's
     // terminal tile is still the full comptime size — so the cells past the end are addressed and
@@ -457,8 +445,7 @@ pub fn launch_depthwise(
         TileArgLaunch::new(weight.into_tensor_arg(), w_spec),
         TileArgLaunch::new(input.into_tensor_arg(), in_spec),
         TileArgLaunch::new(out.into_tensor_arg(), out_spec),
-        launch.space_arg(),
-        plan,
+        launch.partitioning_arg(),
         dtype,
     );
 

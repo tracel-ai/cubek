@@ -60,14 +60,13 @@ fn plain_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
-    #[comptime] level: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in space.over(&level) {
+    for region in space {
         let mut c_cube = c.at(&region);
         c_cube.mm_with(
             &a.at(&region),
@@ -84,21 +83,20 @@ fn atomic_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
-    #[comptime] level: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    for region in space.over(&level) {
+    for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
         let b_cube = b.at(&region);
         let mut acc = c_cube.block_accumulator::<E, E, E>(
             &a_cube,
             &b_cube,
-            comptime!(Fragments::new(&c_cube.space, &a_cube.space, &[])),
+            comptime!(Fragments::below(&c_cube, &a_cube)),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -114,35 +112,29 @@ fn atomic_matmul_lanes<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    for region in space.over(&outer) {
-        let c_cube = c.at(&region);
-        let a_cube = a.at(&region);
-        let b_cube = b.at(&region);
+    for cube in space {
+        let c_cube = c.at(&cube);
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
         let mut acc = c_cube.block_accumulator::<E, E, E>(
             &a_cube,
             &b_cube,
-            comptime!(Fragments::new(
-                &c_cube.space,
-                &a_cube.space,
-                std::slice::from_ref(&inner)
-            )),
+            comptime!(Fragments::below(&c_cube, &a_cube)),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        for region in region.over(&inner) {
-            let mut acc_lane = acc.at(&region);
-            acc_lane.mma(&a_cube.at(&region), &b_cube.at(&region), Semiring::SUM_PROD);
+        for lane in cube {
+            let mut acc_lane = acc.at(&lane);
+            acc_lane.mma(&a_cube.at(&lane), &b_cube.at(&lane), Semiring::SUM_PROD);
         }
-        for r0 in c_cube.over(&inner).unrolled() {
+        for r0 in c_cube.walk().unrolled() {
             let mut c_cube_w = c_cube.at(&r0);
             c_cube_w.copy_cast_from(&acc.at(&r0));
         }
@@ -153,13 +145,12 @@ fn atomic_matmul_lanes<E: Numeric>(
 fn fold_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    space: Space,
-    #[comptime] level: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let partials = partials.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for region in space.over(&level) {
+    for region in space {
         let mut out_cube = out.at(&region);
         out_cube.reduce_axis(&partials.at(&region), Monoid::Sum);
     }
@@ -412,8 +403,7 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.launcher.space_arg(),
-                    self.launcher.level(0),
+                    self.launcher.partitioning_arg(),
                     dtype,
                 );
             }
@@ -425,9 +415,7 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     AccumulateArgLaunch::new(self.c.tensor_arg(1), self.out_spec.clone()),
-                    self.launcher.space_arg(),
-                    self.launcher.level(0),
-                    self.launcher.level(1),
+                    self.launcher.partitioning_arg(),
                     dtype,
                 );
             }
@@ -439,8 +427,7 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[M, N])),
-                    self.launcher.space_arg(),
-                    self.launcher.level(0),
+                    self.launcher.partitioning_arg(),
                     dtype,
                 );
             }
@@ -452,8 +439,7 @@ impl Bound {
                     TileArgLaunch::new(self.a.tensor_arg(1), self.lhs_spec.clone()),
                     TileArgLaunch::new(self.b.tensor_arg(1), self.rhs_spec.clone()),
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
-                    self.launcher.space_arg(),
-                    self.launcher.level(0),
+                    self.launcher.partitioning_arg(),
                     dtype,
                 );
                 fold_splits::launch(
@@ -462,8 +448,7 @@ impl Bound {
                     self.fold_cube_dim,
                     TileArgLaunch::new(self.c.tensor_arg(1), TileSpec::direct(&[KB, M, N])),
                     TileArgLaunch::new(self.folded.tensor_arg(1), TileSpec::direct(&[M, N])),
-                    self.fold_space.space_arg(),
-                    self.fold_space.level(0),
+                    self.fold_space.partitioning_arg(),
                     dtype,
                 );
             }

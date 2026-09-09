@@ -33,7 +33,7 @@ fn attention_fold_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] blocks: Level,
     #[comptime] units: usize,
     #[comptime] causal: bool,
@@ -237,7 +237,7 @@ fn run(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         units,
         causal,
@@ -337,7 +337,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     out: &TileArg<'_, f32, Const<1>>,  // {QP, V}
     scale: f32,
     bound: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] blocks: Level,
     #[comptime] causal: bool,
     #[comptime] block: usize,
@@ -391,7 +391,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for plane in space.planes(comptime!(Level::planes(&[(QP, rows_p)]))) {
+    for plane in space.over(&comptime!(Level::planes(&[(QP, rows_p)]))) {
         let q_w = q_s.at(&plane);
         let mut score_w = score.at(&plane);
         let out_w = out.at(&plane);
@@ -418,11 +418,11 @@ fn attention_fold_cmma_kernel<E: Float>(
             .with_scratch(planes, lanes);
         acc.zero();
         // The fragment grids of every operand, cells in row-major order.
-        let acc_cells = out_w.walk(comptime!(Level::walk(&[(QP, frag), (V, frag)])));
-        let p_cells = score_w.walk(comptime!(Level::walk(&[(QP, frag), (S, frag)])));
-        let q_cells = q_w.walk(comptime!(Level::walk(&[(QP, frag), (D, frag)])));
-        let k_cells = k_w.walk(comptime!(Level::walk(&[(S, frag), (D, frag)])));
-        let v_cells = v_w.walk(comptime!(Level::walk(&[(S, frag), (V, frag)])));
+        let acc_cells = out_w.over(&comptime!(Level::walk(&[(QP, frag), (V, frag)])));
+        let p_cells = score_w.over(&comptime!(Level::walk(&[(QP, frag), (S, frag)])));
+        let q_cells = q_w.over(&comptime!(Level::walk(&[(QP, frag), (D, frag)])));
+        let k_cells = k_w.over(&comptime!(Level::walk(&[(S, frag), (D, frag)])));
+        let v_cells = v_w.over(&comptime!(Level::walk(&[(S, frag), (V, frag)])));
 
         // The probe states the masking once, and the walk takes it as its bound: a block every
         // row masks throughout is one the walk never steps to, rather than two contractions
@@ -670,7 +670,7 @@ fn run_cmma<E: Float + CubeElement>(
         ),
         scale,
         bound_s as u32,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         causal,
         block,
@@ -790,7 +790,7 @@ fn attention_fold_split_kernel<W: Size>(
     out: &mut Tensor<f32>,             // [G·QP·V] flat
     scale: f32,
     bound: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] blocks: Level,
     #[comptime] team: usize,
     #[comptime] splits: usize,
@@ -1063,7 +1063,7 @@ fn run_split_at(
         out_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         team,
         splits,
@@ -1154,7 +1154,7 @@ fn attention_stream_test_kernel<W: Size>(
     out: &TileArg<'_, f32, W>, // {G, QP(=1), V}
     scale: f32,
     bound: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] blocks: Level,
     #[comptime] lanes: usize,
     #[comptime] splits: usize,
@@ -1268,7 +1268,7 @@ fn run_stream(
         ),
         scale,
         bound_s as u32,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         lanes,
         splits,
@@ -1326,7 +1326,7 @@ fn visited_blocks_kernel(
     k: &TileArg<'_, f32, Const<1>>,
     out: &mut Tensor<f32>,
     bound: u32,
-    space: Space,
+    space: Partitioning,
     #[comptime] blocks: Level,
     #[comptime] block: usize,
     #[comptime] q_rows: usize,
@@ -1387,7 +1387,7 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
         ),
         out_handle.clone().binding().into_tensor_arg(),
         bound_s as u32,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         VISIT_BLOCK,
         q_rows,

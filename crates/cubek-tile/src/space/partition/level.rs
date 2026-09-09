@@ -1,9 +1,8 @@
 //! One decomposition [`Level`]: which axes of a space a loop cuts, to what tile edge, and who
-//! takes the tiles. The value a kernel's loop states, under the verb that says who takes the
-//! regions ([`Space::cubes`](crate::Space::cubes), [`Space::walk`](crate::Space::walk), and the
-//! rest), the value a [`Region`](crate::Region) carries down to `at`, and the value a launch
-//! sizes its grid from ([`Launcher`](crate::Launcher)). A blueprint hands the same value to both, one
-//! method per level, so the grid and the loops cannot disagree.
+//! takes the tiles. One entry of a [`Partitioning`](crate::Partitioning), which is what a
+//! kernel's loops iterate in turn, the value a [`Region`](crate::Region) carries down to `at`,
+//! and the value a launch sizes its grid from ([`Launcher`](crate::Launcher)). The launch hands
+//! the same value to both, so the grid and the loops cannot disagree.
 //!
 //! One constructor per verb: [`Level::cubes`], [`Level::planes`], [`Level::lanes`] deal tiles
 //! to a hardware scope's workers, [`Level::walk`] steps through them. A level names only the
@@ -90,7 +89,7 @@ pub struct Level {
 
 impl Level {
     /// Every worker steps through `steps`' tiles, one at a time; `(axis, edge)` each. The
-    /// contraction of a matmul is the everyday one. Stated under [`walk`](crate::Space::walk).
+    /// contraction of a matmul is the everyday one.
     pub fn walk(steps: &[(Axis, usize)]) -> Level {
         let dists: Vec<_> = steps
             .iter()
@@ -102,7 +101,7 @@ impl Level {
     /// The tiles of each entry ride a cube dimension of the launch grid, in order: the first
     /// entry's cubes are `X`, the second's `Y`, the third's `Z`. One tile per cube unless the
     /// entry says otherwise ([`Cut`]). Batch axes go on `Z` too ([`batches`](Self::batches)).
-    /// Stated under [`cubes`](crate::Space::cubes); every entry is one box of the grid.
+    /// Every entry is one box of the grid.
     pub fn cubes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
         assert!(
             cuts.len() <= 3,
@@ -114,15 +113,14 @@ impl Level {
     }
 
     /// The tiles of each entry ride the cube's planes, one tile per plane unless the entry says
-    /// otherwise ([`Cut`]). Several entries make a box per plane. Stated under
-    /// [`planes`](crate::Space::planes).
+    /// otherwise ([`Cut`]). Several entries make a box per plane.
     pub fn planes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
         Level::cut_to(cuts, |_| ComputeScope::Plane, LevelScope::Planes)
     }
 
     /// The tiles of each entry ride some of the plane's lanes; every entry states how many
     /// ([`Cut::across`]), since the plane is carved between the entries and their counts must
-    /// multiply to its width. Stated under [`lanes`](crate::Space::lanes).
+    /// multiply to its width.
     pub fn lanes(cuts: &[Cut]) -> Level {
         for cut in cuts {
             assert!(

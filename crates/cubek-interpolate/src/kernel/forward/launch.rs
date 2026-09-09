@@ -146,9 +146,8 @@ fn dispatch<F: SeparableFilterFamily>(
     };
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch = Launcher::new(client, plan.space(), plan.grid(), KernelForm::Static)
-        .leaf(&plan.leaf())
-        .overhanging(&plan.overhangs());
+    let launch =
+        Launcher::partitioned(client, plan.partitioning(), plan.grid(), KernelForm::Static);
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -221,7 +220,7 @@ fn dispatch<F: SeparableFilterFamily>(
         vector_size,
         input_arg.arg(),
         output_arg.arg(),
-        launch.space_arg(),
+        launch.partitioning_arg(),
         row.scale as u32,
         row.offset as i32,
         row.divisor as u32,
@@ -229,7 +228,6 @@ fn dispatch<F: SeparableFilterFamily>(
         col.offset as i32,
         col.divisor as u32,
         F::radius(),
-        plan,
         residence,
         stage_width,
         space::register_block(client),

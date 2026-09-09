@@ -46,21 +46,18 @@ fn depthwise_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
     weight: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    space: Space,
-    #[comptime] cubes: Level,
-    #[comptime] planes: Level,
-    #[comptime] cells: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weight = weight.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
-    for cube in space.cubes(comptime!(cubes.clone())) {
+    for cube in space {
         let out = out.at(&cube);
         let input = input.at(&cube);
         let weight = weight.at(&cube);
-        for plane in cube.planes(comptime!(planes.clone())) {
-            for cell in plane.walk(comptime!(cells.clone())) {
+        for plane in cube {
+            for cell in plane {
                 let mut out = out.at(&cell);
                 out.mm_with(
                     &input.at(&cell),
@@ -226,10 +223,7 @@ impl Depthwise {
             TileArgLaunch::new(in_handle.binding().into_tensor_arg(), in_spec),
             TileArgLaunch::new(w_handle.binding().into_tensor_arg(), w_spec),
             TileArgLaunch::new(out_handle.clone().binding().into_tensor_arg(), out_spec),
-            launcher.space_arg(),
-            launcher.level(0),
-            launcher.level(1),
-            launcher.level(2),
+            launcher.partitioning_arg(),
             f32_ty,
         );
 

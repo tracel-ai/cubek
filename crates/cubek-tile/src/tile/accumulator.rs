@@ -48,6 +48,13 @@ impl Fragments {
             k: lhs_leaf.contracted_extent(out),
         }
     }
+
+    /// [`new`](Fragments::new) under the levels below `out`'s own depth in its partitioning:
+    /// what a kernel handed a partitioning reads off the tile it opens the accumulator on, as
+    /// `comptime!(Fragments::below(&out, &lhs))`.
+    pub fn below(out: &impl Placed, lhs: &impl Placed) -> Self {
+        Fragments::new(out.space(), lhs.space(), out.below())
+    }
 }
 
 #[cube]
@@ -166,6 +173,7 @@ impl<Acc: Numeric> Tile<Acc> {
     pub fn with_scratch(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
         let space = comptime!(self.space.clone());
         let depth = comptime!(self.depth);
+        let levels = comptime!(self.levels.clone());
         match self.tile_kind {
             TileKind::PlanePartition(p) => {
                 let (m, n) = p.at(0usize, 0usize).shape();
@@ -183,6 +191,7 @@ impl<Acc: Numeric> Tile<Acc> {
                     }),
                     space,
                     depth,
+                    levels,
                 }
             }
             TileKind::Gmem(_)
@@ -216,6 +225,7 @@ impl<Acc: Numeric> Tile<Acc> {
             fold,
             monoid,
             comptime!(self.depth),
+            comptime!(self.levels.clone()),
         )
     }
 }

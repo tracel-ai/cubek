@@ -35,10 +35,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
-    space: Space,
-    #[comptime] cube: Level,
-    #[comptime] plane: Level,
-    #[comptime] lane: Level,
+    space: Partitioning,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -48,26 +45,26 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let out = out.tile(comptime!(space.clone()));
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
-    for region in out.over(&cube) {
-        let mut out_w = out.at(&region);
+    for cube in &out {
+        let mut out_w = out.at(&cube);
         out_w.zero();
     }
-    for region in space.over(&cube) {
-        let out_cube = out.at(&region);
-        let w_cube = w.at(&region);
-        let x_cube = x.at(&region);
-        let scales_cube = scales.at(&region);
-        for region in region.over(&plane) {
-            let out_plane = out_cube.at(&region);
-            let w_plane = w_cube.at(&region);
-            let x_plane = x_cube.at(&region);
-            let scales_plane = scales_cube.at(&region);
-            for region in region.over(&lane) {
-                let mut out_lane = out_plane.at(&region);
+    for cube in space {
+        let out_cube = out.at(&cube);
+        let w_cube = w.at(&cube);
+        let x_cube = x.at(&cube);
+        let scales_cube = scales.at(&cube);
+        for plane in cube {
+            let out_plane = out_cube.at(&plane);
+            let w_plane = w_cube.at(&plane);
+            let x_plane = x_cube.at(&plane);
+            let scales_plane = scales_cube.at(&plane);
+            for lane in plane {
+                let mut out_lane = out_plane.at(&lane);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&region),
-                    &x_plane.at(&region),
-                    &scales_plane.at(&region),
+                    &w_plane.at(&lane),
+                    &x_plane.at(&lane),
+                    &scales_plane.at(&lane),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -90,10 +87,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     x: &TileArg<'_, E, VX>,
     scale: &TileArg<'_, S, Const<1>>,
     out: &TileArg<'_, E, VO>,
-    space: Space,
-    #[comptime] cube: Level,
-    #[comptime] plane: Level,
-    #[comptime] lane: Level,
+    space: Partitioning,
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
@@ -104,39 +98,35 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     let mut acc = out.block_accumulator::<E, E, E>(
         &w,
         &x,
-        comptime!(Fragments::new(
-            &out.space,
-            &w.space,
-            &[cube.clone(), plane.clone(), lane.clone()]
-        )),
+        comptime!(Fragments::below(&out, &w)),
         comptime!(RegisterBlock::new(budget)),
         Monoid::Sum,
     );
     acc.zero();
-    for region in space.over(&cube) {
-        let acc_cube = acc.at(&region);
-        let w_cube = w.at(&region);
-        let x_cube = x.at(&region);
-        let scales_cube = scales.at(&region);
-        for region in region.over(&plane) {
-            let acc_plane = acc_cube.at(&region);
-            let w_plane = w_cube.at(&region);
-            let x_plane = x_cube.at(&region);
-            let scales_plane = scales_cube.at(&region);
-            for region in region.over(&lane) {
-                let mut acc_lane = acc_plane.at(&region);
+    for cube in space {
+        let acc_cube = acc.at(&cube);
+        let w_cube = w.at(&cube);
+        let x_cube = x.at(&cube);
+        let scales_cube = scales.at(&cube);
+        for plane in cube {
+            let acc_plane = acc_cube.at(&plane);
+            let w_plane = w_cube.at(&plane);
+            let x_plane = x_cube.at(&plane);
+            let scales_plane = scales_cube.at(&plane);
+            for lane in plane {
+                let mut acc_lane = acc_plane.at(&lane);
                 acc_lane.mma_scaled(
-                    &w_plane.at(&region),
-                    &x_plane.at(&region),
-                    &scales_plane.at(&region),
+                    &w_plane.at(&lane),
+                    &x_plane.at(&lane),
+                    &scales_plane.at(&lane),
                     Semiring::SUM_PROD,
                 );
             }
         }
     }
-    for r0 in out.over(&cube).unrolled() {
-        for r1 in r0.over(&plane).unrolled() {
-            for r2 in r1.over(&lane).unrolled() {
+    for r0 in out.walk().unrolled() {
+        for r1 in r0.walk().unrolled() {
+            for r2 in r1.walk().unrolled() {
                 let mut out_w = out.at(&r2);
                 out_w.copy_cast_from(&acc.at(&r2));
             }
@@ -322,10 +312,7 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            launcher.space_arg(),
-            launcher.level(0),
-            launcher.level(1),
-            launcher.level(2),
+            launcher.partitioning_arg(),
             budget,
             [dtype, dtype],
         );
@@ -340,10 +327,7 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
             x_op.arg(),
             s_op.arg(),
             out_op.arg(),
-            launcher.space_arg(),
-            launcher.level(0),
-            launcher.level(1),
-            launcher.level(2),
+            launcher.partitioning_arg(),
             budget,
             [dtype, dtype],
         );
