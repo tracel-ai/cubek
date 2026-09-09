@@ -1,13 +1,13 @@
 //! The axis-agnostic tile DSL engine.
 //!
-//! A [`Space`] is geometry only: the axes and their extents. A [`Level`] is one decomposition
-//! of it, naming the axes a loop cuts and who takes the tiles ([`Level::cubes`],
-//! [`Level::planes`], [`Level::lanes`], [`Level::walk`]); it lives on the loop that states it
-//! under the same verb ([`Space::cubes`] and the rest), and the [`Region`] that loop hands out
-//! carries it down to `at`. So the
-//! kernel is the one source of its partitioning: it cannot walk a level it does not state,
-//! and what it states is what it walks. Everything else is the kernel's to write, level by
-//! level: where an operand is materialized ([`Ring::smem`] and [`pipelined`], which also own
+//! A [`Space`] is the axes and their extents. A [`Level`] is one decomposition of it, naming
+//! the axes a loop cuts and who takes the tiles ([`Level::cubes`], [`Level::planes`],
+//! [`Level::lanes`], [`Level::walk`]). A [`Partitioning`] is the space with its levels, outermost
+//! first, and is what a kernel is handed: `for cube in space` deals the first level, `for plane
+//! in cube` the next, and the [`Region`] each loop hands out carries the path down to `at`. So
+//! the launch is the one source of the partitioning: the kernel walks the levels it was handed,
+//! one loop each, and a level of its own ([`Region::over`]) is stated beside them. Everything
+//! else is the kernel's to write, level by level: where an operand is materialized ([`Ring::smem`] and [`pipelined`], which also own
 //! how many regions are in flight), the accumulator it opens, shaped by the statement
 //! ([`Fragments`], [`Tile::block_accumulator`], [`Tile::cmma_accumulator`]), the fragments it
 //! loads ([`PlanePartition::cmma_fragments`]), the zero of what it holds where it holds it, the

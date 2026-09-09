@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, Level, MAX_AXES};
+use crate::{Axis, ByAxis, Level, MAX_AXES, PartitioningLaunch};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -159,7 +159,7 @@ impl SpaceExpand {
 impl Space {
     /// The runtime operation space: the comptime space plus the runtime `sizes` of its
     /// `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
-    /// [`Space::over`] reads them through [`Extents::count`].
+    /// A walk reads them through [`Extents::count`].
     pub(crate) fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
         Space {
             extents: Extents {
@@ -171,10 +171,16 @@ impl Space {
 }
 
 impl Space {
-    /// This space as a kernel argument: the comptime extents, and for a
+    /// This space as a kernel argument, cut by no level: the comptime extents, and for a
     /// [`Dynamic`](Extent::Dynamic) axis its size read off `concrete`, the same space with every
-    /// extent real. What a [`Launcher`](crate::Launcher) hands a kernel taking `space: Space`.
-    pub fn launch_arg(&self, concrete: &Space) -> SpaceLaunch {
+    /// extent real. A launch that states levels hands the kernel
+    /// [`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg) instead.
+    pub fn launch_arg(&self, concrete: &Space) -> PartitioningLaunch {
+        PartitioningLaunch::new(self.space_launch(concrete), Vec::new())
+    }
+
+    /// The runtime half of this space as a kernel argument: its dynamic sizes off `concrete`.
+    pub(crate) fn space_launch(&self, concrete: &Space) -> SpaceLaunch {
         let mut sizes = SequenceArg::new();
         if !self.is_static() {
             for axis in self.axes() {

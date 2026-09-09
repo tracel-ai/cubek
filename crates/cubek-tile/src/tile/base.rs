@@ -41,10 +41,14 @@ pub struct Tile<T: Numeric> {
     pub tile_kind: TileKind<T>,
     #[cube(comptime)]
     pub space: Space,
-    /// How many levels down its nest this tile sits: what `at` skips of a region's path, so a
-    /// region names the same box from the root tile and from any window of it.
+    /// How many levels down its partitioning this tile sits: what `at` skips of a region's path,
+    /// so a region names the same box from the root tile and from any window of it.
     #[cube(comptime)]
     pub(crate) depth: usize,
+    /// Every level of the partitioning this tile is walked with: what `for plane in tile`
+    /// iterates, the one at its depth. Empty for a tile no partitioning states.
+    #[cube(comptime)]
+    pub(crate) levels: Vec<Level>,
 }
 
 /// The one physical dim whose bound is `axis`'s own extent: it carries `axis` alone, at
@@ -422,6 +426,7 @@ impl<T: Numeric> Tile<T> {
             tile_kind: self.tile_kind.clone(),
             space,
             depth: comptime!(self.depth),
+            levels: comptime!(self.levels.clone()),
         }
     }
 
@@ -431,6 +436,7 @@ impl<T: Numeric> Tile<T> {
             tile_kind: self.tile_kind,
             space: comptime!(self.space.clone()),
             depth,
+            levels: comptime!(self.levels.clone()),
         }
     }
 
@@ -462,6 +468,7 @@ impl<T: Numeric> Tile<T> {
             tile_kind,
             space: comptime!(self.space.clone()),
             depth: comptime!(self.depth),
+            levels: comptime!(self.levels.clone()),
         }
     }
 
@@ -573,6 +580,7 @@ impl<T: Numeric> Tile<T> {
             tile_kind,
             space: comptime!(step.level.child(&self.space)),
             depth: comptime!(self.depth + 1),
+            levels: comptime!(self.levels.clone()),
         }
     }
 
@@ -617,59 +625,44 @@ impl<T: Numeric> Tile<T> {
         witnessed_space(comptime!(self.space.clone()), self, self, self)
     }
 
-    /// [`Space::over`] over this tile's own box: its axes alone, so a loop over one operand's
-    /// windows (each lane's rows of an output) steps nothing the operand does not span, where
-    /// the kernel's space would. The regions sit one level below this tile's depth.
+    /// This tile under the `levels` of a partitioning, at its depth: what a tile served off a
+    /// kernel argument is, so `for plane in tile` has a level to deal.
+    pub(crate) fn under(self, #[comptime] levels: Vec<Level>) -> Tile<T> {
+        Tile::<T> {
+            tile_kind: self.tile_kind,
+            space: comptime!(self.space.clone()),
+            depth: comptime!(self.depth),
+            levels,
+        }
+    }
+
+    /// The regions of the level below this tile over its own box: its axes alone, so a loop
+    /// over one operand's windows (each lane's rows of an output) steps nothing the operand
+    /// does not span, where the kernel's space would. What `for plane in tile` iterates, as a
+    /// value.
+    pub fn walk(&self) -> Walk {
+        let space = self.runtime_space();
+        Region::rooted(
+            &space,
+            comptime!(self.levels.clone()),
+            comptime!(self.depth),
+        )
+        .walk()
+    }
+
+    /// The regions of `level` over this tile's own box, a level of the kernel's own rather than
+    /// the partitioning's next ([`walk`](Tile::walk)). The regions sit one level below this
+    /// tile's depth.
     pub fn over(&self, #[comptime] level: &Level) -> Walk {
         let space = self.runtime_space();
         Walk::of(
             &space,
             comptime!(level.clone()),
-            Region::root(&space, comptime!(self.depth)),
-        )
-    }
-
-    /// [`Space::cubes`] over this tile's own box.
-    pub fn cubes(&self, #[comptime] level: Level) -> Walk {
-        let space = self.runtime_space();
-        Walk::stated(
-            &space,
-            level,
-            Region::root(&space, comptime!(self.depth)),
-            comptime!(LevelScope::Cubes),
-        )
-    }
-
-    /// [`Space::planes`] over this tile's own box.
-    pub fn planes(&self, #[comptime] level: Level) -> Walk {
-        let space = self.runtime_space();
-        Walk::stated(
-            &space,
-            level,
-            Region::root(&space, comptime!(self.depth)),
-            comptime!(LevelScope::Planes),
-        )
-    }
-
-    /// [`Space::lanes`] over this tile's own box.
-    pub fn lanes(&self, #[comptime] level: Level) -> Walk {
-        let space = self.runtime_space();
-        Walk::stated(
-            &space,
-            level,
-            Region::root(&space, comptime!(self.depth)),
-            comptime!(LevelScope::Lanes),
-        )
-    }
-
-    /// [`Space::walk`] over this tile's own box.
-    pub fn walk(&self, #[comptime] level: Level) -> Walk {
-        let space = self.runtime_space();
-        Walk::stated(
-            &space,
-            level,
-            Region::root(&space, comptime!(self.depth)),
-            comptime!(LevelScope::Sequential),
+            Region::rooted(
+                &space,
+                comptime!(self.levels.clone()),
+                comptime!(self.depth),
+            ),
         )
     }
 
@@ -932,7 +925,7 @@ impl<T: Numeric> TileExpand<T> {
 
 /// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
 /// [`witnesses`](Tile::witnesses) it, which is how an operation turns its comptime space into the
-/// runtime one [`Space::over`] walks. A fully-`Static` space short-circuits to no
+/// runtime one its loops walk. A fully-`Static` space short-circuits to no
 /// runtime sizes. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
 #[cube]
 pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
@@ -976,6 +969,83 @@ pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
         }
     }
     Space::with_sizes(space, sizes)
+}
+
+/// Where a tile sits in its partitioning: its space, and the levels below its depth. The same
+/// read on a tile and on the tile as comptime code sees it, so a comptime derivation
+/// ([`Fragments::below`](crate::Fragments::below)) takes either.
+pub trait Placed {
+    fn space(&self) -> &Space;
+    fn below(&self) -> &[Level];
+}
+
+impl<T: Numeric> Placed for Tile<T> {
+    fn space(&self) -> &Space {
+        &self.space
+    }
+    fn below(&self) -> &[Level] {
+        &self.levels[self.depth..]
+    }
+}
+
+impl<T: Numeric> Placed for TileExpand<T> {
+    fn space(&self) -> &Space {
+        &self.space
+    }
+    fn below(&self) -> &[Level] {
+        &self.levels[self.depth..]
+    }
+}
+
+/// The runtime twin of `for plane in tile`, which a kernel's host-side body names but never
+/// runs: every loop over a tile expands in-kernel.
+impl<T: Numeric> IntoIterator for Tile<T> {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> IntoIterator for &Tile<T> {
+    type Item = Region;
+    type IntoIter = std::vec::IntoIter<Region>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        unexpanded!()
+    }
+}
+
+/// `for plane in tile` iterates the level below the tile over its own box.
+impl<T: Numeric> Iterable for TileExpand<T> {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        let walk = self.__expand_walk_method(scope);
+        if walk.const_len() == Some(1) {
+            walk.expand_unroll(scope, body)
+        } else {
+            walk.expand(scope, body)
+        }
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        self.__expand_walk_method(scope).expand_unroll(scope, body)
+    }
+}
+
+/// `for plane in &tile`: the same, leaving `tile` to the body.
+impl<T: Numeric> Iterable for &TileExpand<T> {
+    type Item = RegionExpand;
+
+    fn expand(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        self.clone().expand(scope, body)
+    }
+
+    fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
+        self.clone().expand_unroll(scope, body)
+    }
 }
 
 #[cfg(test)]

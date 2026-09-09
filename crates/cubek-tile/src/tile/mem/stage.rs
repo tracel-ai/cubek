@@ -370,6 +370,7 @@ impl<T: Numeric> MemData<T> {
             }),
             space: comptime!(meta.space),
             depth: comptime!(0usize),
+            levels: comptime!(Vec::new()),
         }
     }
 

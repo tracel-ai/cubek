@@ -37,7 +37,7 @@ fn moe_kernel<E: Numeric>(
     w: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     routes: &Tensor<u32>,
-    space: Space,
+    space: Partitioning,
     #[comptime] token: Level,
     #[comptime] expert: Level,
     #[define(E)] _dtype: ElemType,
@@ -129,7 +129,7 @@ fn run(routes: &[u32]) -> HostData {
             TileSpec::direct(&[M, N]),
         ),
         routes_handle.binding().into_tensor_arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         launcher.level(1),
         f32_ty,
@@ -183,7 +183,7 @@ fn a_routed_walk_contracts_each_token_against_the_expert_its_table_names() {
 fn routed_axis_kernel(
     k: &TileArg<'_, f32, Const<1>>,
     out: &mut Tensor<f32>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] axis: Axis,
 ) {
@@ -226,7 +226,7 @@ fn launch_routed_on(axis: Axis) -> f32 {
             TileSpec::direct(&[M, EXPERT]),
         ),
         out_handle.clone().binding().into_tensor_arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         axis,
     );
@@ -265,12 +265,12 @@ fn a_route_past_the_last_expert_clamps_to_it() {
 #[cube(launch)]
 fn routed_lanes_kernel(
     out: &mut Tensor<f32>,
-    space: Space,
+    space: Partitioning,
     #[comptime] lanes: Level,
     #[comptime] target: usize,
 ) {
     for region in space
-        .lanes(comptime!(lanes.clone()))
+        .over(&lanes)
         .routed(EXPERT, comptime!(target).runtime())
     {
         out[UNIT_POS_X as usize] = f32::cast_from(region.coord(EXPERT) as u32);
@@ -307,7 +307,7 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         launcher.cube_count(),
         CubeDim::new_2d(lanes as u32, 1),
         out_handle.clone().binding().into_tensor_arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         target,
     );
@@ -330,7 +330,7 @@ fn moe_staged_kernel<E: Numeric>(
     w: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
     routes: &Tensor<u32>,
-    space: Space,
+    space: Partitioning,
     #[comptime] token: Level,
     #[comptime] expert: Level,
     #[define(E)] _dtype: ElemType,
@@ -406,7 +406,7 @@ fn a_routed_operand_stages_the_expert_the_table_named() {
             TileSpec::direct(&[M, N]),
         ),
         routes_handle.binding().into_tensor_arg(),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         launcher.level(1),
         f32_ty,

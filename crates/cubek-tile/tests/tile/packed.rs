@@ -38,7 +38,7 @@ const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 fn packed_copy<O: Numeric, V: Size>(
     input: &TileArg<'_, u32, Const<1>>,
     output: &TileArg<'_, O, V>,
-    space: Space,
+    space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
     let input = input.tile_packed::<O>(comptime!(space.clone()));
@@ -54,7 +54,7 @@ fn packed_matmul<E: Numeric>(
     x: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -83,7 +83,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     blocks: &TileArg<'_, E, Const<1>>,
     global: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -218,7 +218,7 @@ fn nvfp4_shaped_decode() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -250,7 +250,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -281,7 +281,7 @@ fn native_matmul<E: Numeric>(
     x: &TileArg<'_, E, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -311,16 +311,14 @@ fn packed_gemv<E: Numeric, V: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     scale: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, V>,
-    space: Space,
-    #[comptime] cubes: Level,
-    #[comptime] steps: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let scales = Scales::block(scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
-    for cube in space.cubes(comptime!(cubes.clone())) {
+    for cube in space {
         let x = x.at(&cube);
         let w = w.at(&cube);
         let scales = scales.at(&cube);
@@ -329,16 +327,12 @@ fn packed_gemv<E: Numeric, V: Size>(
         let mut acc = c.block_accumulator::<E, E, E>(
             &x,
             &w,
-            comptime!(Fragments::new(
-                &c.space,
-                &x.space,
-                std::slice::from_ref(&steps)
-            )),
+            comptime!(Fragments::below(&c, &x)),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        for step in cube.walk(comptime!(steps.clone())) {
+        for step in cube {
             let mut acc_s = acc.at(&step);
             acc_s.mma_scaled(
                 &x.at(&step),
@@ -347,7 +341,7 @@ fn packed_gemv<E: Numeric, V: Size>(
                 Semiring::SUM_PROD,
             );
         }
-        for r0 in c.over(&steps).unrolled() {
+        for r0 in c.walk().unrolled() {
             let mut c_w = c.at(&r0);
             c_w.copy_cast_from(&acc.at(&r0));
         }
@@ -753,7 +747,7 @@ fn a_packed_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -871,7 +865,7 @@ fn eight_bit_fields_contract_against_their_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -1017,7 +1011,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -1163,7 +1157,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -1314,7 +1308,7 @@ fn several_lines_may_share_one_scale() {
                 ],
             )),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -1420,7 +1414,7 @@ fn an_i8_operand_contracts_against_its_scales() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -1562,9 +1556,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        launcher.space_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning_arg(),
         dtype,
     );
 
@@ -1699,9 +1691,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 ],
             )),
         ),
-        launcher.space_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning_arg(),
         dtype,
     );
 
@@ -1725,35 +1715,29 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     x: &TileArg<'_, E, Const<1>>,
     w: &TileArg<'_, u32, Const<1>>,
     c: &TileArg<'_, E, V>,
-    space: Space,
-    #[comptime] cubes: Level,
-    #[comptime] steps: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for cube in space.cubes(comptime!(cubes.clone())) {
+    for cube in space {
         let x = x.at(&cube);
         let w = w.at(&cube);
         let c = c.at(&cube);
         let mut acc = c.block_accumulator::<E, E, E>(
             &x,
             &w,
-            comptime!(Fragments::new(
-                &c.space,
-                &x.space,
-                std::slice::from_ref(&steps)
-            )),
+            comptime!(Fragments::below(&c, &x)),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
-        for step in cube.walk(comptime!(steps.clone())) {
+        for step in cube {
             let mut acc_s = acc.at(&step);
             acc_s.mma(&x.at(&step), &w.at(&step), Semiring::SUM_PROD);
         }
-        for r0 in c.over(&steps).unrolled() {
+        for r0 in c.walk().unrolled() {
             let mut c_w = c.at(&r0);
             c_w.copy_cast_from(&acc.at(&r0));
         }
@@ -1855,9 +1839,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
             c.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning_arg(),
         dtype,
     );
 

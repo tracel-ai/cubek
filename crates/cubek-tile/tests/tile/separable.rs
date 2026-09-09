@@ -69,7 +69,7 @@ fn separable_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] separable: bool,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -103,7 +103,7 @@ fn separable_kernel_staged<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] width: Option<usize>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -202,7 +202,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             TileSpec::direct(&[ROW, COL]),
         ),
         separable,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -291,7 +291,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             TileSpec::direct(&[ROW, COL]),
         ),
         Some(4),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -324,7 +324,7 @@ const QSCALE: f32 = 0.05;
 fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     input: &QuantTileArg<'_, I, VI>,
     output: &TileArg<'_, E, V>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(I)] _input_dtype: ElemType,
     #[define(E)] _dtype: ElemType,
@@ -432,7 +432,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         in_dtype,
         f32_ty,
@@ -535,7 +535,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         u32::elem_type_native(),
         f32_ty,
@@ -599,7 +599,7 @@ fn resample_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
     #[comptime] normalized: bool,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -679,7 +679,7 @@ fn check_resampling(normalized: bool) {
             TileSpec::direct(&[ROW, COL]),
         ),
         normalized,
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -713,7 +713,7 @@ fn check_resampling(normalized: bool) {
 #[cube(launch)]
 fn procedural_mask_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -726,7 +726,7 @@ fn procedural_mask_kernel<E: Float>(
 
     for region in rhs.over(&level) {
         let rhs = rhs.at(&region);
-        let child = comptime!(level.clone().child(&space.clone()));
+        let child = comptime!(level.clone().child(&space.space().clone()));
         let mut factors = Sequence::new();
         factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(0.0_f32)));
         let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
@@ -765,7 +765,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
             output.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -783,7 +783,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
 fn resample_kernel_masked<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -812,7 +812,7 @@ fn resample_kernel_masked<E: Float>(
 fn resample_kernel_masked_staged<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -880,7 +880,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -960,7 +960,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -1003,7 +1003,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
 fn column_spanning_resample_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -1071,7 +1071,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -1098,7 +1098,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
 fn column_spanning_resample_kernel_masked<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -1166,7 +1166,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );
@@ -1200,7 +1200,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
 fn zero_sum_fallback_kernel<E: Float>(
     input: &TileArg<'_, E, Const<1>>,
     output: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -1271,7 +1271,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         f32_ty,
     );

@@ -6,7 +6,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, Geometry, Level, Partitioning, Set, Space, SpaceLaunch, StridedOperand,
+    Axis, Geometry, Level, Partitioning, PartitioningLaunch, Set, Space, StridedOperand,
     StridedTileSource, Unset,
 };
 
@@ -167,9 +167,13 @@ impl Launcher {
         &self.kernel
     }
 
-    /// The kernel's `space` argument: the kernel form, its dynamic extents sized by this launch.
-    pub fn space_arg(&self) -> SpaceLaunch {
-        self.kernel.launch_arg(&self.concrete)
+    /// The kernel's `space` argument: the kernel-form space, its dynamic extents sized by this
+    /// launch, under the levels the launch states. What `for cube in space` iterates.
+    pub fn partitioning_arg(&self) -> PartitioningLaunch {
+        PartitioningLaunch::new(
+            self.kernel.space_launch(&self.concrete),
+            self.levels.clone(),
+        )
     }
 
     /// The levels a partitioned or implied launch states, outermost first.

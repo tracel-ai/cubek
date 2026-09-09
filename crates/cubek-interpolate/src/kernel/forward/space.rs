@@ -68,16 +68,6 @@ impl InterpolateSpace {
         Partitioning::new(self.space(), self.levels())
     }
 
-    /// The tile every operand is cut to at the bottom.
-    pub fn leaf(&self) -> Vec<(Axis, usize)> {
-        self.partitioning().leaf().extents()
-    }
-
-    /// The axes some tile reaches past the end of.
-    pub fn overhangs(&self) -> Vec<Axis> {
-        self.partitioning().overhanging()
-    }
-
     /// The grid this launch runs on: a cube per box of the output and per batch, the geometry's
     /// planes in each.
     pub fn grid(&self) -> (CubeCount, CubeDim) {

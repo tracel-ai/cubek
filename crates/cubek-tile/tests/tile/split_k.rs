@@ -44,7 +44,7 @@ fn split_partials<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     partials: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -67,7 +67,7 @@ fn split_partials<E: Numeric>(
 fn reduce_splits<E: Numeric>(
     partials: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -147,7 +147,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             partials.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[KB, M, N]),
         ),
-        split_space.space_arg(),
+        split_space.partitioning_arg(),
         split_space.level(0),
         dtype,
     );
@@ -173,7 +173,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        fold_space.space_arg(),
+        fold_space.partitioning_arg(),
         fold_space.level(0),
         dtype,
     );
@@ -316,7 +316,7 @@ fn atomic_split_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -394,7 +394,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -537,7 +537,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -619,7 +619,7 @@ fn an_atomic_drain_folds_across_planes() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );
@@ -651,7 +651,7 @@ fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -726,7 +726,7 @@ fn a_folding_output_contracts_in_place() {
             out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        launcher.space_arg(),
+        launcher.partitioning_arg(),
         launcher.level(0),
         dtype,
     );

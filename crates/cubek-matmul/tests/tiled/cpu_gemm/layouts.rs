@@ -34,7 +34,7 @@ const K: Axis = Axis(3);
 fn copy_logical<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let src = src.tile(comptime!(space.clone()));
@@ -141,7 +141,7 @@ fn copy(client: &Client, src: &Operand, dst: &Operand) {
         CubeDim::new_single(),
         tile_arg(src),
         tile_arg(dst),
-        src.launcher.space_arg(),
+        src.launcher.partitioning_arg(),
         f32::elem_type_native(),
     );
 }

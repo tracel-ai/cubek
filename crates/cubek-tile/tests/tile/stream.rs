@@ -38,7 +38,7 @@ const REGIONS: usize = (ROWS / TILE_ROWS) * (COLS / TILE_COLS);
 fn copy_run<E: Numeric>(
     src: &TileArg<'_, E, Const<1>>,
     dst: &TileArg<'_, E, Const<1>>,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[comptime] cubes: usize,
     #[define(E)] _dtype: ElemType,
@@ -65,7 +65,7 @@ fn copy_one_run<E: Numeric>(
     dst: &TileArg<'_, E, Const<1>>,
     #[comptime] start: usize,
     #[comptime] steps: usize,
-    space: Space,
+    space: Partitioning,
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
@@ -153,7 +153,7 @@ fn runs_cover_the_grid(cubes: usize) {
         h.launcher.cube_dim(),
         src_arg,
         dst_arg,
-        h.launcher.space_arg(),
+        h.launcher.partitioning_arg(),
         h.launcher.level(0),
         cubes,
         h.dtype,
@@ -204,7 +204,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
         dst_arg,
         start,
         steps,
-        h.launcher.space_arg(),
+        h.launcher.partitioning_arg(),
         h.launcher.level(0),
         h.dtype,
     );
@@ -250,7 +250,7 @@ fn stream_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
+    space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
@@ -258,9 +258,7 @@ fn stream_matmul<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let run = space
-        .cubes(comptime!(outer.clone()))
-        .run(comptime!(inner.clone()));
+    let run = space.over(&outer).run(comptime!(inner.clone()));
     for i in 0..run.touched() {
         let region = run.region(i);
         let (from, steps) = run.steps(i);
@@ -298,7 +296,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     out: &AccumulateArg<'_, E>,
-    space: Space,
+    space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
     #[define(E)] _dtype: ElemType,
@@ -306,9 +304,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile(comptime!(space.clone()));
-    let run = space
-        .cubes(comptime!(outer.clone()))
-        .run(comptime!(inner.clone()));
+    let run = space.over(&outer).run(comptime!(inner.clone()));
     for i in 0..run.touched() {
         let region = run.region(i);
         let (from, steps) = run.steps(i);
@@ -406,7 +402,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            launcher.space_arg(),
+            launcher.partitioning_arg(),
             launcher.level(0),
             launcher.level(1),
             dtype,
@@ -427,7 +423,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            launcher.space_arg(),
+            launcher.partitioning_arg(),
             launcher.level(0),
             launcher.level(1),
             dtype,
@@ -610,7 +606,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 out.clone().binding().into_tensor_arg(),
                 TileSpec::direct(&[MM, NN]),
             ),
-            launcher.space_arg(),
+            launcher.partitioning_arg(),
             launcher.level(0),
             launcher.level(1),
             dtype,

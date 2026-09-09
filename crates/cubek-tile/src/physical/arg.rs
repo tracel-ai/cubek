@@ -192,28 +192,39 @@ pub struct AccumulateArg<'a, E: Numeric> {
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
     /// Serve the output as a [`Tile`] that accumulates into it. [`TileArg::tile`]'s twin, and the same
     /// call: the kernel's one `space` projected onto this operand's `spec` axes.
-    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
+    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
         Tile::<E>::of_atomic_accumulate::<Const<1>>(
             self.tensor,
-            space,
+            comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
         )
+        .under(comptime!(space.levels().to_vec()))
     }
 }
 
 #[cube]
 impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`]: the kernel's one `space` projected onto this
-    /// operand's `spec` axes.
-    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
-        Tile::<E>::of(self.tensor, space, comptime!(self.spec.clone()))
+    /// operand's `spec` axes, under the levels that partition it.
+    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
+        Tile::<E>::of(
+            self.tensor,
+            comptime!(space.space().clone()),
+            comptime!(self.spec.clone()),
+        )
+        .under(comptime!(space.levels().to_vec()))
     }
 
     /// [`tile`](Self::tile) for a [`packed`](TileSpec::packed) operand: `E` is the *stored*
     /// element (`u32` words) and `O` the served value, unpacked at the read. The two differ, so
     /// the served type is stated at the call rather than read off the binding.
-    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
-        Tile::<O>::of_packed(self.tensor, space, comptime!(self.spec.clone()))
+    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
+        Tile::<O>::of_packed(
+            self.tensor,
+            comptime!(space.space().clone()),
+            comptime!(self.spec.clone()),
+        )
+        .under(comptime!(space.levels().to_vec()))
     }
 
     /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: `coefficients` holds
@@ -222,17 +233,18 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// [`Offset::Dynamic`](crate::Offset) axis. [`Tile::of_gathered`] states the order.
     pub fn tile_gathered(
         &self,
-        #[comptime] space: Space,
+        #[comptime] space: Partitioning,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<E> {
         Tile::<E>::of_gathered(
             self.tensor,
-            space,
+            comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
             coefficients,
             offsets,
         )
+        .under(comptime!(space.levels().to_vec()))
     }
 }
 
@@ -259,7 +271,7 @@ impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
 
 #[cube]
 impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
-    pub fn tile(&self, #[comptime] space: Space) -> Scales<S> {
+    pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
         let block = self.block.tile(comptime!(space.clone()));
         #[comptime]
         match &self.global {
@@ -297,7 +309,7 @@ pub struct QuantTileArg<'a, E: Numeric, V: Size> {
 impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`] of the served type `O`: the kernel's one `space`
     /// projected onto this operand's `spec` axes, reads dequantizing per the scheme.
-    pub fn tile<O: Numeric>(&self, #[comptime] space: Space) -> Tile<O> {
+    pub fn tile<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
         // The engine's own backstop, like `validate_dequant_at`: the builder checks the binding
         // contract too, but a hand-built `QuantTileArgLaunch` reaches here without it.
         comptime!(cubecl::std::quant::check_scale_bindings(
@@ -318,9 +330,10 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             self.table.clone(),
             comptime!(self.scheme),
             comptime!(self.dequant_at),
-            space,
+            comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
         )
+        .under(comptime!(space.levels().to_vec()))
     }
 }
 
@@ -339,12 +352,13 @@ pub struct TmaTileArg<E: Numeric> {
 impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
     /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
-    pub fn tile(&self, #[comptime] space: Space) -> Tile<E> {
+    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
         TmaData::from_tensor_map(
             self.view.clone(),
-            comptime!(space.project(self.spec.axes())),
+            comptime!(space.space().project(self.spec.axes())),
             comptime!(self.spec.units),
         )
+        .under(comptime!(space.levels().to_vec()))
     }
 }
 

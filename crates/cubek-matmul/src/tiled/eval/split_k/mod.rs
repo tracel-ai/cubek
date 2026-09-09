@@ -67,14 +67,13 @@ fn split_k_matmul_one_level<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
-    #[comptime] level: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in space.over(&level) {
+    for region in space {
         let mut c_cube = c.at(&region);
         c_cube.mma_with(
             &a.at(&region),
@@ -92,19 +91,17 @@ fn split_k_matmul_two_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
     b: &TileArg<'_, E, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
-    space: Space,
-    #[comptime] outer: Level,
-    #[comptime] inner: Level,
+    space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    for region in space.over(&outer) {
-        let c_cube = c.at(&region);
-        let a_cube = a.at(&region);
-        let b_cube = b.at(&region);
-        for region in region.over(&inner) {
+    for cube in space {
+        let c_cube = c.at(&cube);
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
+        for region in cube {
             let mut c_lane = c_cube.at(&region);
             c_lane.mma_with(
                 &a_cube.at(&region),
@@ -305,8 +302,7 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            launcher.space_arg(),
-            launcher.level(0),
+            launcher.partitioning_arg(),
             dtype,
         ),
         Levels::Two => split_k_matmul_two_levels::launch(
@@ -316,9 +312,7 @@ fn run(client: &Client, mapping: Mapping, problem: SplitKProblem, lanes: usize) 
             TileArgLaunch::new(a.tensor_arg(1), a.spec()),
             TileArgLaunch::new(rhs_arg(&b, mapping), b.spec()),
             TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-            launcher.space_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning_arg(),
             dtype,
         ),
     }
@@ -359,9 +353,8 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.launcher.space_arg(),
-                self.launcher.level(0),
-                dtype,
+                self.launcher.partitioning_arg(),
+                self.dtype,
             ),
             Levels::Two => split_k_matmul_two_levels::launch(
                 &self.client,
@@ -370,10 +363,8 @@ impl Benchmark for SplitKBench {
                 TileArgLaunch::new(a.tensor_arg(1), a.spec()),
                 TileArgLaunch::new(rhs_arg(b, self.mapping), b.spec()),
                 TileArgLaunch::new(c.tensor_arg(1), c.spec()),
-                self.launcher.space_arg(),
-                self.launcher.level(0),
-                self.launcher.level(1),
-                dtype,
+                self.launcher.partitioning_arg(),
+                self.self.dtype,
             ),
         }
         Ok(())
