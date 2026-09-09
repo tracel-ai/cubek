@@ -182,12 +182,6 @@ impl CmmaStrategy {
             delivery: CmmaDelivery::Tma,
         }
     }
-
-    pub fn tiled() -> Self {
-        CmmaStrategy {
-            delivery: CmmaDelivery::Copy,
-        }
-    }
 }
 
 impl Display for CmmaStrategy {

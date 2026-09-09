@@ -4,7 +4,7 @@
 use cubecl::{client::Client, ir::FloatKind, prelude::*};
 use cubek_std::{
     InputBinding, MatrixLayout,
-    launch::tma::{stride_align_bits, tma_operand},
+    launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
     Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
@@ -353,6 +353,11 @@ fn launch_tma(
     let (stage_m, stage_n) = blueprint.stage();
     let stage_k = blueprint.stage_k;
     // A fn, not a closure: each operand instantiates its own erased element type.
+    //
+    // A storage-tiled operand keeps its stored rank: its tile is the plan's stage (the setup
+    // refused it otherwise), so the descriptor's box is one storage tile and each stage is one
+    // contiguous run. A plain operand is collapsed to the descriptor's `(batch, row, col)` and
+    // its box is the stage cut out of rows.
     fn operand<E: Numeric>(
         axes: &[Axis],
         dtype: ElemType,
@@ -360,6 +365,15 @@ fn launch_tma(
         box_dims: (usize, usize),
         (rows, cols): (u32, u32),
     ) -> TmaTileArgLaunch<E> {
+        if binding.tiling.is_tiled() {
+            let map = tma_operand_tiled(binding, box_dims, dtype, TensorMapSwizzle::None);
+            return TmaTileArgLaunch::tensor_map_stored(
+                map,
+                axes,
+                (rows, cols),
+                (box_dims.0 as u32, box_dims.1 as u32),
+            );
+        }
         let (map, transposed) = tma_operand(
             binding,
             1,

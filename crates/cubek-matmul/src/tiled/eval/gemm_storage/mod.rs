@@ -78,14 +78,6 @@ impl Weight {
         }
     }
 
-    /// The delivery a plan reads this storage through.
-    fn delivery(self) -> CmmaStrategy {
-        match self {
-            Weight::RowMajor => CmmaStrategy::default(),
-            Weight::Tiled => CmmaStrategy::tiled(),
-        }
-    }
-
     /// The weight as this storage holds it: plain, or packed to the plan's stage. Packing is a
     /// real relayout of the data, so the packed weight computes the same product as the plain one.
     fn store(
@@ -112,13 +104,13 @@ pub struct StorageStrategy {
     weight: Weight,
 }
 
-/// The `m x n x k` problem and the plan the selector picks for it under `weight`'s delivery: the
-/// same geometry either way, so the two storages are compared on one plan.
+/// The `m x n x k` problem and the plan the selector picks for it: one delivery, the cube's
+/// units, either way, so the weight's storage is the only variable. Nothing is stored at plan
+/// time, since the bench plans first and packs the weight to the stage the plan picked.
 fn plan(
     client: &Client,
     (m, n, k): (usize, usize, usize),
     dtype: ElemType,
-    weight: Weight,
 ) -> Result<(MatmulProblem, CmmaBlueprint), String> {
     let problem = MatmulProblem::from_parameters(
         m,
@@ -148,7 +140,7 @@ fn plan(
         max_cube_count: client.properties().hardware.max_cube_count,
     };
     let blueprint = CmmaRoutine::blueprint(
-        &BlueprintStrategy::Inferred(weight.delivery()),
+        &BlueprintStrategy::Inferred(CmmaStrategy::default()),
         &problem,
         &device_settings,
         acc,
@@ -246,7 +238,7 @@ pub fn bench(
 
     // Prove the storage correct on a small shape before timing it: the same plan selection and
     // the same weight storage as the timed run, against the CPU reference.
-    let (proof, proof_plan) = plan(&client, (64, 256, 256), dtype, weight)?;
+    let (proof, proof_plan) = plan(&client, (64, 256, 256), dtype)?;
     let (seed_lhs, seed_rhs) = (7, 11);
     let actual = produce_with(
         client.clone(),
@@ -279,7 +271,7 @@ pub fn bench(
         }
     }
 
-    let (_, blueprint) = plan(&client, (problem.m, problem.n, problem.k), dtype, weight)?;
+    let (_, blueprint) = plan(&client, (problem.m, problem.n, problem.k), dtype)?;
     let bench = StorageBench {
         problem: *problem,
         weight,

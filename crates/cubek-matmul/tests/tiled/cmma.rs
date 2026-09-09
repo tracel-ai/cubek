@@ -214,23 +214,33 @@ fn cmma_rejects_input_register_type() {
     }
 }
 
-/// The weight packed at load into blocks of exactly the plan's stage and launched under the
-/// Tiled delivery beside a row-major activation: the same product as the row-major run, read
-/// one contiguous block per stage. The pack is a copy through the two tiles' views, so the
-/// block layout the kernel reads is the one the tile engine itself describes.
+/// The weight packed at load into blocks of exactly the plan's stage, beside a row-major
+/// activation: the same product as the row-major run, read one contiguous block per stage. The
+/// pack is a copy through the two tiles' views, so the block layout the kernel reads is the one
+/// the tile engine itself describes.
 #[test]
 fn cmma_storage_tiled_weight_f16() {
     use cubecl::frontend::Scalar;
-    storage_tiled_weight(half::f16::elem_type_native());
+    storage_tiled_weight(half::f16::elem_type_native(), CmmaStrategy::default());
 }
 
 #[test]
 fn cmma_storage_tiled_weight_f32() {
     use cubecl::frontend::Scalar;
-    storage_tiled_weight(f32::elem_type_native());
+    storage_tiled_weight(f32::elem_type_native(), CmmaStrategy::default());
 }
 
-fn storage_tiled_weight(dtype: ElemType) {
+/// The same packed weight moved by the TMA engine instead of the cube's units. How an operand
+/// is stored and who moves it are independent, so this pair is a plan like any other: the
+/// descriptor keeps the stored rank and boxes one storage tile, which is one contiguous run.
+/// On a backend without TMA it is `Unavailable`, which the strict test policy surfaces.
+#[test]
+fn cmma_storage_tiled_weight_tma_f16() {
+    use cubecl::frontend::Scalar;
+    storage_tiled_weight(half::f16::elem_type_native(), CmmaStrategy::tma());
+}
+
+fn storage_tiled_weight(dtype: ElemType, strategy: CmmaStrategy) {
     use cubecl::ir::FloatKind;
     use cubek_matmul::{
         definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
@@ -266,8 +276,8 @@ fn storage_tiled_weight(dtype: ElemType) {
     let mut elems = dtypes.clone();
     let outcome = launch_and_capture_outcome(&client, &[&out.handle], |c| {
         let launch = || -> Result<(), MatmulSetupError> {
-            // The plan the selector picks for this problem, under the Tiled delivery: its stage
-            // is the block the weight is packed to.
+            // The plan the selector picks for this problem: its stage is the block the weight
+            // is packed to, whichever delivery moves it.
             let acc = match dtype {
                 ElemType::Float(FloatKind::F16 | FloatKind::BF16) => f32::elem_type_native(),
                 other => other,
@@ -280,7 +290,7 @@ fn storage_tiled_weight(dtype: ElemType) {
                 max_cube_count: c.properties().hardware.max_cube_count,
             };
             let blueprint = CmmaRoutine::blueprint(
-                &BlueprintStrategy::Inferred(CmmaStrategy::tiled()),
+                &BlueprintStrategy::Inferred(strategy.clone()),
                 &problem,
                 &device_settings,
                 acc,
@@ -312,6 +322,54 @@ fn storage_tiled_weight(dtype: ElemType) {
         ExecutionOutcome::CompileError(e) => TestOutcome::CompileError(e),
     }
     .enforce()
+}
+
+/// A packed operand under TMA is a plan, not a mistake. It may be unavailable (no TMA on this
+/// backend), but it is never refused as a bad config: how an operand is stored and who moves it
+/// are independent, and the only thing the storage tile decides is the stage.
+///
+/// Runs on every backend, since it asserts what the refusal is *not*.
+#[test]
+fn cmma_never_refuses_a_packed_weight_under_tma() {
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulElems, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::cmma::{CmmaDelivery, CmmaRoutine, StoredTiles},
+    };
+
+    let client = client();
+    let dtype = f32::elem_type_native();
+    let dtypes = MatmulElems::from_single_dtype(dtype);
+    let problem = rect(128, 256, 384, dtypes.as_global_elems());
+    let sz = dtype.size();
+    let device_settings = DeviceSettings {
+        client: client.clone(),
+        plane_dim: client.properties().hardware.plane_size_max,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, sz, sz, sz)
+            .pick_max()
+            .unwrap(),
+        max_cube_count: client.properties().hardware.max_cube_count,
+    };
+    let stored = StoredTiles {
+        lhs: None,
+        rhs: Some((32, 64)),
+    };
+    match CmmaRoutine::blueprint(
+        &BlueprintStrategy::Inferred(CmmaStrategy::tma()),
+        &problem,
+        &device_settings,
+        dtype,
+        stored,
+    ) {
+        // The plan stages to the storage tile, and still asks the engine to move it.
+        Ok(blueprint) => {
+            assert_eq!(blueprint.delivery, CmmaDelivery::Tma);
+            assert_eq!((blueprint.stage_k, blueprint.stage().1), (32, 64));
+        }
+        // No TMA here: a hardware fact, which is the only thing allowed to turn this pair down.
+        Err(MatmulSetupError::Unavailable(_)) => {}
+        Err(other) => panic!("a packed weight under TMA was refused as a config error: {other:?}"),
+    }
 }
 
 /// A weight is packed once and read at every `m`. Its storage tile names the stage: an inferred
