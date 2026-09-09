@@ -1,6 +1,6 @@
 //! Top-k past `TOPK_UNROLL_BUDGET`.
 //!
-//! `plane_topk_insert`, `plane_topk_merge` and `topk_finalize_*` each walk all
+//! `TopK::plane_insert`, `TopK::plane_merge` and the finalize methods each walk all
 //! `k` accumulator slots for each of their `k` candidates. Both levels used to
 //! be unrolled unconditionally, so the emitted kernel grew with `k²`: the
 //! `topk(300)` an object-detection head asks for expanded to ~90k copies of the
@@ -44,8 +44,8 @@ fn case(routine: RoutineStrategy, parallel_output_vectorization: bool) -> TestCa
 }
 
 /// `Eager` folds every candidate into the plane-wide accumulator as it arrives,
-/// which is `plane_topk_insert`; `Lazy` accumulates per lane and merges the
-/// lanes once at the end, which is `plane_topk_merge`. Both are forced, since an
+/// which is `TopK::plane_insert`; `Lazy` accumulates per lane and merges the
+/// lanes once at the end, which is `TopK::plane_merge`. Both are forced, since an
 /// inferred blueprint picks one of them and would leave the other uncovered.
 fn plane(plane_merge_strategy: PlaneMergeStrategy) -> RoutineStrategy {
     RoutineStrategy::Plane(BlueprintStrategy::Forced(
@@ -111,7 +111,7 @@ fn plane_lazy_topk_past_unroll_limit() {
 }
 
 // Output vectorization is what routes the accumulator out through
-// `topk_finalize_with_coords` / `topk_finalize_values`, whose `k`-by-`k` nest
+// `TopK::finalize_with_coords` / `TopK::finalize_values`, whose `k`-by-`k` nest
 // runs once more per lane of the vector.
 #[test]
 fn vectorized_topk_with_indices_past_unroll_limit() {
