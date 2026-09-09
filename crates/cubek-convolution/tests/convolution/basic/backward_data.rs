@@ -5,7 +5,7 @@ use cubek_convolution::{
     definition::{BackwardDataBlueprint, ConvBlueprint},
     launch_ref,
 };
-use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::definition::{AccumulatorOperand, MatmulElems};
 use cubek_matmul::multi_level::{
     components::tile::TileMatmulKind, definition::BatchMatmulBlueprint,
 };
@@ -92,7 +92,7 @@ fn run_backward_data_case(
         TileMatmulKind::Cmma,
         default_tiling_scheme(),
         client.properties().hardware.plane_size_max,
-        &problem.as_matmul_problem(),
+        &problem.as_matmul_problem(AccumulatorOperand::Absent),
     )
     .shared_swizzle(default_swizzle())
     .partition_buffering(default_partition_buffering())

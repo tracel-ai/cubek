@@ -3,7 +3,7 @@ use cubecl::{
     ir::{ElemType, VectorSize},
 };
 use cubek_matmul::{
-    definition::{MatmulAvailabilityError, MatmulElems, MatmulVectorSizes},
+    definition::{AccumulatorOperand, MatmulAvailabilityError, MatmulElems, MatmulVectorSizes},
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
         definition::{BatchMatmulBlueprint, TilingScheme, adjust_dtypes},
@@ -135,7 +135,9 @@ pub fn convolution_matmul_selection(
         tile_matmul,
         tiling_scheme,
         plane_dim,
-        &problem.as_matmul_problem(),
+        // Shapes and layouts only: the shared-memory budget is checked against the
+        // problem the launcher builds, which is where the bias is known.
+        &problem.as_matmul_problem(AccumulatorOperand::Absent),
     )
     .partition_buffering(PartitionBuffering::Single);
 

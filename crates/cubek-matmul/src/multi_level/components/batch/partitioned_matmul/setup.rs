@@ -2,7 +2,8 @@ use std::marker::PhantomData;
 
 use crate::{
     definition::{
-        MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError, MatmulVectorSizes,
+        AccumulatorOperand, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+        MatmulVectorSizes,
     },
     multi_level::{
         args::{ConfigRuntimeArg, RuntimeConfig, *},
@@ -122,16 +123,21 @@ impl<RC: RuntimeConfig, GMM: GlobalMatmulFamily<RC>, S: GlobalPartitionMatmul> B
 
         GMM::validate_blueprint(client, blueprint, problem, dtypes, vector_sizes)?;
 
-        let stage_config =
-            GMM::expand_config(client.properties(), blueprint, dtypes, vector_sizes)?
-                .stage_config();
+        let global_config =
+            GMM::expand_config(client.properties(), blueprint, dtypes, vector_sizes)?;
+        let stage_config = global_config.stage_config();
 
         // Validate that the kernel's shared-memory footprint fits in the
         // per-cube budget the runtime reports.
+        let acc = match problem.accumulator {
+            AccumulatorOperand::Absent => None,
+            AccumulatorOperand::Present => Some(global_config.acc_reader_config().smem_config),
+        };
         let requested = requested_smem_bytes(
             &stage_config.lhs_smem_config(),
             &stage_config.rhs_smem_config(),
             &stage_config.out_smem_config(),
+            acc.as_ref(),
         );
         let available = client.properties().hardware.max_shared_memory_size;
 
@@ -166,8 +172,10 @@ fn requested_smem_bytes(
     lhs: &StageMemoryConfig,
     rhs: &StageMemoryConfig,
     out: &StageMemoryConfig,
+    acc: Option<&StageMemoryConfig>,
 ) -> usize {
-    smem_bytes(lhs) + smem_bytes(rhs) + out_smem_bytes(out)
+    let acc_bytes = acc.map(smem_bytes).unwrap_or(0);
+    smem_bytes(lhs) + smem_bytes(rhs) + out_smem_bytes(out) + acc_bytes
 }
 
 /// Shared memory the writer allocates for the accumulator/output stage.
@@ -180,9 +188,9 @@ fn requested_smem_bytes(
 /// charged 45056, past the 32768-byte budget, so the fastest kernel for the
 /// shape became unavailable.
 ///
-/// A launch that reads an accumulator input stages it through a full-size
-/// reader stage on top of this; the problem seen here does not say whether one
-/// is present, so that stage is not counted, as before.
+/// A launch that reads an accumulator operand stages it on top of this, in the
+/// reader's own stage rather than the writer's clamped one; `requested_smem_bytes`
+/// charges that separately, and only when the problem says one is present.
 fn out_smem_bytes(out: &StageMemoryConfig) -> usize {
     let per_tile = StageMemoryConfig {
         tiles_per_partition_along_row: 1,
@@ -228,7 +236,7 @@ mod tests {
     /// the accumulator/output stage on top is what took the launch to 81920
     /// bytes. It has to be in the total the check sees.
     #[test]
-    fn requested_bytes_include_the_accumulator_stage() {
+    fn requested_bytes_include_the_output_stage() {
         let lhs = stage(128, 64, 2);
         let rhs = stage(64, 64, 2);
         let out = stage(128, 128, 1);
@@ -238,18 +246,39 @@ mod tests {
         assert_eq!(smem_bytes(&out), 32_768);
 
         assert_eq!(smem_bytes(&lhs) + smem_bytes(&rhs), 49_152);
-        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 81_920);
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out, None), 81_920);
     }
 
     /// The accumulator and output are one buffer, so a config that reports the
     /// same stage for both must not be charged for it twice.
     #[test]
-    fn the_accumulator_stage_is_counted_once() {
+    fn the_output_stage_is_counted_once() {
         let lhs = stage(64, 64, 1);
         let rhs = stage(64, 64, 1);
         let out = stage(64, 64, 1);
 
-        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 3 * 8_192);
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out, None), 3 * 8_192);
+    }
+
+    /// A launch that reads an accumulator operand allocates a reader stage the
+    /// writer's clamp does not cover: the reader fills every tile before the
+    /// k-loop, so it holds the whole stage, not one tile per partition. These
+    /// are the stages of the f32 bias launch on Apple silicon, tile (4, 4, 4),
+    /// partition (2, 2, 2), stage (16, 16, 1): the check saw 24576 bytes and
+    /// the launch requested 90112, past the 32768-byte budget, because the
+    /// 65536-byte reader stage was not in the total.
+    #[test]
+    fn requested_bytes_include_the_accumulator_reader_stage() {
+        let lhs = tiled_stage((2, 1), (8, 1));
+        let rhs = tiled_stage((2, 1), (8, 1));
+        let out = tiled_stage((2, 2), (8, 8));
+
+        assert_eq!(smem_bytes(&lhs), 4_096);
+        assert_eq!(smem_bytes(&out), 65_536);
+        assert_eq!(out_smem_bytes(&out), 16_384);
+
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out, None), 24_576);
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out, Some(&out)), 90_112);
     }
 
     /// A stage of 8x8 f32 tiles with the given partition structure, as the
@@ -292,6 +321,6 @@ mod tests {
         assert_eq!(smem_bytes(&out), 32_768);
         assert_eq!(out_smem_bytes(&out), 1_024);
 
-        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out), 13_312);
+        assert_eq!(requested_smem_bytes(&lhs, &rhs, &out, None), 13_312);
     }
 }

@@ -5,7 +5,7 @@ use cubek_convolution::{
     definition::{BackwardWeightBlueprint, ConvBlueprint},
     launch_ref,
 };
-use cubek_matmul::definition::MatmulElems;
+use cubek_matmul::definition::{AccumulatorOperand, MatmulElems};
 use cubek_matmul::multi_level::{
     components::tile::TileMatmulKind, definition::BatchMatmulBlueprint,
 };
@@ -72,7 +72,7 @@ fn backward_weight_supports_end_only_padding() {
         TileMatmulKind::Cmma,
         default_tiling_scheme(),
         client.properties().hardware.plane_size_max,
-        &problem.as_matmul_problem(),
+        &problem.as_matmul_problem(AccumulatorOperand::Absent),
     )
     .shared_swizzle(default_swizzle())
     .partition_buffering(default_partition_buffering())

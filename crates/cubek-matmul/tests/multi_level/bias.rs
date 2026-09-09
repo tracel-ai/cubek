@@ -12,7 +12,7 @@ use cubecl::{
     std::tensor::{TensorHandle, launch::ViewArg, layout::VirtualLayoutLaunch},
 };
 use cubek_matmul::{
-    definition::{AvailableVectorSizes, MatmulElems, MatmulProblem},
+    definition::{AccumulatorOperand, AvailableVectorSizes, MatmulElems, MatmulProblem},
     eval::cpu_reference::matmul_cpu_reference,
     multi_level::{
         BatchMatmulRoutine,
@@ -77,6 +77,9 @@ pub fn test_matmul_with_bias_simple_unit_f32() {
 
     problem.lhs_strides = lhs.strides().clone();
     problem.rhs_strides = rhs.strides().clone();
+    // The launch below passes a bias, so the blueprint has to be picked against a
+    // budget that charges the accumulator's reader stage.
+    problem.accumulator = AccumulatorOperand::Present;
 
     let dtypes = MatmulElems::from_globals(&problem.global_dtypes.clone());
 

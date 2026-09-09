@@ -1,7 +1,10 @@
 use std::fmt::Display;
 
 use crate::{
-    definition::{MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem, MatmulVectorSizes},
+    definition::{
+        AccumulatorOperand, MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem,
+        MatmulVectorSizes,
+    },
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
         definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme},
@@ -570,7 +573,8 @@ fn selection(
             .build()
             .unwrap();
 
-        if unit_stage_smem_bytes(&tiling_scheme, dtypes, stage_buffering) <= max_smem
+        if unit_stage_smem_bytes(&tiling_scheme, dtypes, stage_buffering, problem.accumulator)
+            <= max_smem
             || !halve_largest_partition(&mut p)
         {
             break tiling_scheme;
@@ -645,10 +649,15 @@ fn select_swizzle(swizzle_dim: usize, elem: ElemType, vector_size: VectorSize) -
 /// Keeping this in step with the launch-time check is what lets [`selection`]
 /// cap the tiling to a blueprint the check will accept, without capping harder
 /// than the check requires.
+///
+/// A present accumulator operand adds its reader stage, which for a unit
+/// blueprint is the full stage: unlike the writer, the reader fills every tile
+/// before the k-loop.
 fn unit_stage_smem_bytes(
     tiling_scheme: &TilingScheme,
     dtypes: &MatmulElems,
     stage_buffering: u32,
+    accumulator: AccumulatorOperand,
 ) -> usize {
     let em = tiling_scheme.elements_per_stage_along_m() as usize;
     let ek = tiling_scheme.elements_per_stage_along_k() as usize;
@@ -659,9 +668,14 @@ fn unit_stage_smem_bytes(
         * tiling_scheme.tile_size.m
         * tiling_scheme.tile_size.n) as usize;
 
+    let acc_reader = match accumulator {
+        AccumulatorOperand::Absent => 0,
+        AccumulatorOperand::Present => em * en,
+    };
+
     em * ek * buf * dtypes.lhs_stage.size()
         + ek * en * buf * dtypes.rhs_stage.size()
-        + out_writer * dtypes.acc_stage.size()
+        + (out_writer + acc_reader) * dtypes.acc_stage.size()
 }
 
 /// Halve the largest partition dimension greater than 1, returning whether a
@@ -721,6 +735,30 @@ mod tests {
 
         // lhs 64x8 + rhs 8x64 f32 stages, out = 4x4 partitions of one 4x4 tile.
         let expected = 64 * 8 * 4 + 8 * 64 * 4 + 16 * 16 * 4;
-        assert_eq!(unit_stage_smem_bytes(&scheme, &dtypes, 1), expected);
+        assert_eq!(
+            unit_stage_smem_bytes(&scheme, &dtypes, 1, AccumulatorOperand::Absent),
+            expected
+        );
+    }
+
+    /// A present accumulator adds a reader stage the writer's clamp does not
+    /// cover, and the selector has to see it: the same tiling that fits without
+    /// a bias can be four times over the budget with one.
+    #[test]
+    fn accumulator_reader_stage_charged_in_full() {
+        let scheme = TilingScheme::builder()
+            .with_tile_size((4, 4, 4).into())
+            .with_partition_size((4, 4, 2).into())
+            .with_stage_size((4, 4, 1).into())
+            .build()
+            .unwrap();
+        let dtypes = MatmulElems::new_deprecated::<f32>();
+
+        // The reader fills the whole 64x64 f32 stage, on top of the out stage.
+        let absent = unit_stage_smem_bytes(&scheme, &dtypes, 1, AccumulatorOperand::Absent);
+        assert_eq!(
+            unit_stage_smem_bytes(&scheme, &dtypes, 1, AccumulatorOperand::Present),
+            absent + 64 * 64 * 4
+        );
     }
 }

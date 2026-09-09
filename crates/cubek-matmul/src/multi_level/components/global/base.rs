@@ -185,6 +185,10 @@ impl GlobalConfig for SharedGlobalMatmulConfig {
         self.rhs_reader_config
     }
 
+    fn acc_reader_config(&self) -> GlobalReaderConfig {
+        self.acc_reader_config
+    }
+
     fn cube_dim(&self) -> CubeDim {
         CubeDim::new_2d(self.plane_dim(), self.num_planes)
     }
@@ -214,6 +218,9 @@ pub trait GlobalConfig:
     fn stage_config(&self) -> StageMatmulInstance;
     fn lhs_reader_config(&self) -> GlobalReaderConfig;
     fn rhs_reader_config(&self) -> GlobalReaderConfig;
+    /// The stage a present accumulator operand is read through. Routine-specific:
+    /// the generic matmul reads a full stage, convolution a single bias row.
+    fn acc_reader_config(&self) -> GlobalReaderConfig;
     fn writer_config(&self) -> GlobalWriterConfig;
     fn cube_dim(&self) -> CubeDim;
     fn global_vector_sizes(&self) -> MatmulVectorSizes;
