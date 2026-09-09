@@ -239,6 +239,62 @@ impl Projection {
         carriers
     }
 
+    /// This operand's scales, one per `block`: the level the scales tie to, named, and the axes
+    /// derived from it. The digits finer than `block` in its dim are omitted, since a scale cannot
+    /// vary inside the block it covers, and that dim is counted in blocks. Every other dim is the
+    /// values' own. `block` must partition its dim ([`disjoint`](PhysicalAxisMap::disjoint)) and
+    /// have a digit inside it.
+    pub fn scales_per(&self, block: Axis) -> Projection {
+        let pa = self
+            .physical
+            .iter()
+            .position(|map| map.terms().iter().any(|term| term.axis == block))
+            .unwrap_or_else(|| {
+                panic!("Projection::scales_per: {block:?} addresses no dim of this operand")
+            });
+        let map = &self.physical[pa];
+        let terms = map.terms();
+        let at = terms.iter().position(|term| term.axis == block).unwrap();
+        assert!(
+            map.composition() == Composition::Disjoint && at + 1 < terms.len(),
+            "Projection::scales_per: {block:?} must partition its dim with a digit inside it \
+             (PhysicalAxisMap::disjoint(&[({block:?}, block), (inside, 1)]))"
+        );
+        let radix = terms[at].scale.get();
+        let kept: Vec<(Axis, usize)> = terms[..=at]
+            .iter()
+            .map(|term| (term.axis, term.scale.get() / radix))
+            .collect();
+        let omitted: Vec<Axis> = terms[at + 1..].iter().map(|term| term.axis).collect();
+        let mut physical = self.physical.clone();
+        physical[pa] = match kept.as_slice() {
+            [(axis, 1)] => PhysicalAxisMap::of(*axis),
+            _ => PhysicalAxisMap::disjoint(&kept),
+        };
+        Projection {
+            physical,
+            axes: self
+                .axes
+                .iter()
+                .copied()
+                .filter(|axis| !omitted.contains(axis))
+                .collect(),
+        }
+    }
+
+    /// One value over the whole of this operand: the same axes, none of them addressed. The
+    /// per-tensor scale above a block level is this of the block scales.
+    pub fn whole(&self) -> Projection {
+        Projection {
+            physical: self
+                .physical
+                .iter()
+                .map(|_| PhysicalAxisMap::broadcast())
+                .collect(),
+            axes: self.axes.clone(),
+        }
+    }
+
     /// `axes` in the tile's logical order, `physical` one per physical axis in buffer order.
     pub fn new(axes: &[Axis], physical: &[PhysicalAxisMap]) -> Self {
         Projection {
@@ -510,6 +566,63 @@ mod tests {
     const A: Axis = Axis(0);
     const B: Axis = Axis(1);
     const R: Axis = Axis(2);
+
+    const M: Axis = Axis(3);
+    const KB: Axis = Axis(4);
+    const KI: Axis = Axis(5);
+    const KO: Axis = Axis(6);
+
+    /// The block scales span the values' axes but the position inside a block, and count the
+    /// split dim in blocks.
+    #[test]
+    fn scales_per_block_omit_the_digit_inside_it() {
+        let values = Projection::new(
+            &[M, KB, KI],
+            &[
+                PhysicalAxisMap::of(M),
+                PhysicalAxisMap::disjoint(&[(KB, 32), (KI, 1)]),
+            ],
+        );
+        let scales = values.scales_per(KB);
+        assert_eq!(scales.logical_axes(), &[M, KB]);
+        assert_eq!(scales.physical_rank(), 2);
+        assert!(scales.physical[1].is_identity(KB));
+    }
+
+    /// Three digits: the scales per the middle one keep the coarser digit above it, rescaled to
+    /// count blocks; the scales per the coarsest omit both finer ones.
+    #[test]
+    fn scales_per_a_coarser_digit_keep_what_is_above_it() {
+        let values = Projection::new(
+            &[M, KO, KB, KI],
+            &[
+                PhysicalAxisMap::of(M),
+                PhysicalAxisMap::disjoint(&[(KO, 64), (KB, 32), (KI, 1)]),
+            ],
+        );
+        let per_block = values.scales_per(KB);
+        assert_eq!(per_block.logical_axes(), &[M, KO, KB]);
+        assert_eq!(per_block.scale(1, KO), 2);
+        assert_eq!(per_block.scale(1, KB), 1);
+        let per_outer = values.scales_per(KO);
+        assert_eq!(per_outer.logical_axes(), &[M, KO]);
+        assert!(per_outer.physical[1].is_identity(KO));
+    }
+
+    /// The whole-tensor level spans what the block level spans and addresses none of it.
+    #[test]
+    fn the_whole_level_addresses_nothing() {
+        let block = Projection::direct(&[M, KB]);
+        let whole = block.whole();
+        assert_eq!(whole.logical_axes(), &[M, KB]);
+        assert!(!whole.addresses(M) && !whole.addresses(KB));
+    }
+
+    #[test]
+    #[should_panic(expected = "must partition its dim with a digit inside it")]
+    fn scales_per_an_unsplit_axis_are_refused() {
+        Projection::direct(&[M, KB]).scales_per(KB);
+    }
 
     #[test]
     fn direct_is_direct() {

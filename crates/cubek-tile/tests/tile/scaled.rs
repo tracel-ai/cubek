@@ -291,19 +291,21 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         KernelForm::Static,
     );
 
+    // The values' projection names the block; the scales' is derived from it, one per `KB`.
+    let a_projection = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+        ],
+    );
     scaled_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
         TileArgLaunch::new(
             a_t.binding().into_tensor_arg(),
-            TileSpec::new(Projection::new(
-                &[M, KB, KI],
-                &[
-                    PhysicalAxisMap::of(M),
-                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
-                ],
-            )),
+            TileSpec::new(a_projection.clone()),
         ),
         TileArgLaunch::new(
             b_t.binding().into_tensor_arg(),
@@ -317,11 +319,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         ),
         TileArgLaunch::new(
             s_t.binding().into_tensor_arg(),
-            // `KI` carried and addressing nothing: the scale cannot vary inside a block.
-            TileSpec::new(Projection::new(
-                &[M, KB],
-                &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
-            )),
+            TileSpec::new(a_projection.scales_per(KB)),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
