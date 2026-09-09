@@ -90,6 +90,22 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
 }
 
 #[cube]
+impl TopK {
+    /// Whether to rank with a [`Packed`], which both call sites below must agree on.
+    ///
+    /// A single slot is left unpacked: packing pays for itself per slot but builds
+    /// its value per element, which one slot never amortizes. On CPU that is worth
+    /// 19% against the unpacked insert, and max and min do not get the same choice
+    /// because the insert they would fall back to is the dearer of the two.
+    fn packs<P: ReducePrecision>(&self) -> comptime_type!(bool) {
+        let packs = Packing::packs::<P>(self.output);
+        let ranks_several = comptime!(self.k > 1);
+
+        comptime!(packs && ranks_several)
+    }
+}
+
+#[cube]
 impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     type SharedAccumulator = DynamicSharedAccumulator<P>;
     type Config = TopKConfig;
@@ -101,7 +117,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn accumulator_format(this: &Self) -> comptime_type!(AccumulatorFormat) {
-        let packed = Packing::packs::<P>(this.output);
+        let packed = this.packs::<P>();
         let k = comptime!(this.k);
 
         comptime!(if packed {
@@ -123,7 +139,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for TopK {
     }
 
     fn null_accumulator(this: &Self) -> Accumulator<P> {
-        let packed = Packing::packs::<P>(this.output);
+        let packed = this.packs::<P>();
 
         if comptime!(packed) {
             let empty =
