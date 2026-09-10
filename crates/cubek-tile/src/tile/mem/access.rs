@@ -1,5 +1,13 @@
 //! Touching a [`MemData`]: filling one from another (the cooperative copy), the views a leaf
 //! reads and writes it through, and [`at`](MemData::at), which windows it down to a region.
+//!
+//! Every cooperative fill here deals its elements out over `CUBE_DIM` workers indexed by
+//! `UNIT_POS`, which is to say it assumes every unit of the cube runs it. A walk that sets planes
+//! aside to fill its stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that
+//! assumption: only those planes run the fill, and the elements the absent units would have
+//! copied are never written — a wrong answer, not a hang. So such a walk is refused where the two
+//! meet, and only a bulk copy may be filled by planes of their own. Closing the gap is a worker
+//! offset and count on these loops, taken from the pipeline, which already knows both numbers.
 
 use cubecl::{
     prelude::*,

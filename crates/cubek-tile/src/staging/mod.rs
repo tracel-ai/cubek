@@ -4,6 +4,8 @@
 
 mod base;
 mod fill;
+#[cfg(test)]
+mod model;
 mod pipeline;
 mod ring;
 

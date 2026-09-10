@@ -3,6 +3,7 @@
 //! kernel-form one, so geometry and divisibility are always read off real extents and no call
 //! site can consume the space too early.
 
+use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
 
 use crate::{
@@ -115,6 +116,22 @@ impl Launcher {
     ) -> Self {
         let leaf = partitioning.leaf().extents();
         let overhangs = partitioning.overhanging();
+        let fillers = partitioning.fillers();
+        // The two roles meet on a barrier and nowhere else, so a device that carries no barrier
+        // type would run two loops with no rendezvous between them. Refused here, on the host,
+        // and not where the slot is allocated: a refusal at expansion fires on a worker thread,
+        // where nothing sees it and the launch returns zeros.
+        assert!(
+            fillers == 0
+                || client
+                    .properties()
+                    .features
+                    .types
+                    .opaque
+                    .contains(&OpaqueType::Barrier),
+            "Launcher: {fillers} plane(s) are set aside to fill a walk's stages, and this device \
+             carries no barrier type for the two roles to meet on"
+        );
         let (space, levels) = partitioning.into_parts();
         let mut launch = Launcher::new(client, space, grid, form)
             .leaf(&leaf)

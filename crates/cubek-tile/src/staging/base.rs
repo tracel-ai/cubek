@@ -97,26 +97,33 @@ impl<T: CubeType> Staging<T> {
 
     /// Producer acquire: wait the slot is free (`empty`, WAR) for `Barrier`; a `collective` `Cube`
     /// slot rendezvouses on `sync_cube`; a lone-unit one does nothing.
+    ///
+    /// The first wait is on the parity `writes` was not born at, which a fresh mbarrier already
+    /// carries, so it passes straight through.
     pub(crate) fn acquire_write(&self) {
         match &self.pipeline {
-            Pipeline::Barrier { empty, phase, .. } => empty.wait_parity(*phase ^ 1),
+            Pipeline::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
             Pipeline::Cube => sync_cube(),
             Pipeline::Solo => {}
         }
     }
 
     /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
-    /// declared by [`Pipeline::fill`] land. Mixed slots need every unit; pure TMA uses unit 0.
-    pub(crate) fn release_write(&self) {
-        match &self.pipeline {
+    /// declared by [`Pipeline::fill`] land. Which units arrive is the slot's to say
+    /// ([`Pipeline::producers`]).
+    pub(crate) fn release_write(&mut self) {
+        match &mut self.pipeline {
             Pipeline::Barrier {
                 full,
-                collective_full,
+                all_publish,
+                elected,
+                writes,
                 ..
             } => {
-                if comptime!(*collective_full) || UNIT_POS == 0 {
+                if *all_publish || UNIT_POS == *elected {
                     full.arrive();
                 }
+                *writes ^= 1;
             }
             Pipeline::Cube | Pipeline::Solo => {}
         }
@@ -126,18 +133,18 @@ impl<T: CubeType> Staging<T> {
     /// rendezvoused in `write`).
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
-            Pipeline::Barrier { full, phase, .. } => full.wait_parity(*phase),
+            Pipeline::Barrier { full, reads, .. } => full.wait_parity(*reads),
             Pipeline::Cube | Pipeline::Solo => {}
         }
     }
 
-    /// Consumer release: arrive `empty` (free the slot) and flip the phase for `Barrier`; nothing for
-    /// `Cube`.
+    /// Consumer release: arrive `empty` (free the slot) and flip the read parity for `Barrier`;
+    /// nothing for `Cube`.
     pub(crate) fn release_read(&mut self) {
         match &mut self.pipeline {
-            Pipeline::Barrier { empty, phase, .. } => {
+            Pipeline::Barrier { empty, reads, .. } => {
                 empty.arrive();
-                *phase ^= 1;
+                *reads ^= 1;
             }
             Pipeline::Cube | Pipeline::Solo => {}
         }

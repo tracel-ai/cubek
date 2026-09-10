@@ -14,6 +14,16 @@ use cubecl::unexpanded;
 
 use crate::*;
 
+/// What a plane of the cube does with a ring's slots ([`Ring::role`]).
+#[derive(CubeType, CubeTypeMut, IntoRuntime)]
+#[cube(runtime_variants)]
+pub enum Role {
+    /// Fills the slots, and takes no tile of any level ([`Level::filled_by`]).
+    Fill,
+    /// Reads the slots and computes out of them, and fills none.
+    Compute,
+}
+
 /// The `depth` slots of one buffered walk, and the operands they are filled from: the same
 /// payload shape at this level, so [`pipelined`] can fill a slot for a region on its own.
 #[derive(CubeType)]
@@ -22,6 +32,9 @@ pub struct Ring<T: CubeType> {
     pub(crate) sources: T,
     #[cube(comptime)]
     pub(crate) depth: usize,
+    /// Planes of the cube that fill these slots and do nothing else ([`Level::filled_by`]).
+    #[cube(comptime)]
+    pub(crate) fillers: usize,
 }
 
 #[cube]
@@ -32,6 +45,7 @@ impl<T: CubeType> Ring<T> {
         slots: Sequence<Staging<T>>,
         sources: T,
         #[comptime] depth: usize,
+        #[comptime] fillers: usize,
     ) -> Ring<T> {
         comptime!(assert!(
             depth > 0,
@@ -41,6 +55,23 @@ impl<T: CubeType> Ring<T> {
             slots,
             sources,
             depth,
+            fillers,
+        }
+    }
+
+    /// What this plane does with the ring's slots. The planes a walk sets aside to fill sit at
+    /// the end of the cube ([`Level::filled_by`]), so a unit fills exactly when it stands at or
+    /// past the ones that compute, and every plane below is the one it would have been.
+    ///
+    /// Where the walk set none aside, every plane computes and fills its own slots, which is the
+    /// schedule [`pipelined`] writes.
+    pub fn role(&self) -> Role {
+        if comptime!(self.fillers == 0) {
+            Role::new_Compute()
+        } else if UNIT_POS >= Pipeline::consumers(comptime!(self.fillers)) {
+            Role::new_Fill()
+        } else {
+            Role::new_Compute()
         }
     }
 
