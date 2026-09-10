@@ -21,8 +21,7 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        self.init_identity(comptime!(semiring.add()));
-        self.mma(lhs, rhs, semiring);
+        self.mm_scaled(&lhs.plain(), &rhs.plain(), semiring);
     }
 
     /// `c += a · b` at a final register-resident tile. Folds onto whatever `c` holds; nothing
@@ -33,46 +32,33 @@ impl<Acc: Numeric> Tile<Acc> {
         rhs: &Tile<Rhs>,
         #[comptime] semiring: Semiring,
     ) {
-        mma_leaf(self, lhs, rhs, semiring)
+        self.mma_scaled(&lhs.plain(), &rhs.plain(), semiring);
     }
 
-    /// `c = (a ⊗ s) · b`, or `c = a · (b ⊗ s)`: [`mm`](Tile::mm) with one operand scaled by a
-    /// real operand.
+    /// [`mm`](Tile::mm) over factors that carry their own scales: `c = (a ⊗ s) · b` is
+    /// `c.mm_scaled(&a.scaled(&s), &b.plain(), semiring)`.
     ///
-    /// The scales are an operand like any other, and the arithmetic that folds them in is this
-    /// verb: nothing decodes behind a read.
-    ///
-    /// **Which operand it scales is stated**, by [`Scaling::lhs`](crate::Scaling::lhs) or
-    /// [`Scaling::rhs`](crate::Scaling::rhs); the leaf checks the statement against the axes.
-    /// Both are the same sum of terms, so one verb serves both, folding once per `(row, k)` or
-    /// once per `(col, k)`.
-    ///
-    /// `s` resolves at whatever granularity its axes give it, and cannot vary over an axis it does
-    /// not address. The block is an axis of the problem, `(KB, KI)` or `(NB, NI)`, spelled with
-    /// [`PhysicalAxisMap::disjoint`](crate::PhysicalAxisMap::disjoint) on the values while the
-    /// scales leave the position inside it unmapped, so no line can straddle a block whatever
-    /// width it is served at. A scales operand that divides instead is refused.
-    pub fn mm_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+    /// Which factor a scale multiplies is where the kernel wrote it, and how deep the scales go
+    /// is how many times it said `scaled`. Nothing infers a side and nothing counts levels; a
+    /// factor carrying none reads as its values alone, which is what [`mm`](Tile::mm) hands it.
+    pub fn mm_scaled<Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric>(
         &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        scaling: &Scaling<S>,
+        lhs: &Scaled<Lhs, LS>,
+        rhs: &Scaled<Rhs, RS>,
         #[comptime] semiring: Semiring,
     ) {
         self.init_identity(comptime!(semiring.add()));
-        self.mma_scaled(lhs, rhs, scaling, semiring);
+        self.mma_scaled(lhs, rhs, semiring);
     }
 
-    /// `c += (a ⊗ s) · b` (or its rhs twin): [`mma`](Tile::mma)'s scaled form.
-    pub fn mma_scaled<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
+    /// [`mma`](Tile::mma) over factors that carry their own scales.
+    pub fn mma_scaled<Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric>(
         &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        scaling: &Scaling<S>,
+        lhs: &Scaled<Lhs, LS>,
+        rhs: &Scaled<Rhs, RS>,
         #[comptime] semiring: Semiring,
     ) {
-        let side = scaling.side();
-        mma_leaf_scaled(self, lhs, rhs, side, &scaling.levels(), semiring)
+        mma_leaf(self, lhs, rhs, semiring)
     }
 }
 
@@ -89,13 +75,7 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        let init_from = self.request_init_from(comptime!(InitFrom::Identity));
-        match comptime!(init_from) {
-            InitFrom::Identity => {}
-            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
-        }
-        self.mma_with(lhs, rhs, config, semiring);
-        self.request_init_from(comptime!(InitFrom::Cell));
+        self.mm_scaled_with(&lhs.plain(), &rhs.plain(), config, semiring);
     }
 
     /// `c += a · b` at a final memory tile through the software instruction run under `config`.
@@ -106,10 +86,38 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
+        self.mma_scaled_with(&lhs.plain(), &rhs.plain(), config, semiring);
+    }
+
+    /// [`mm_with`](Tile::mm_with) over factors that carry their own scales.
+    pub fn mm_scaled_with<Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric>(
+        &mut self,
+        lhs: &Scaled<Lhs, LS>,
+        rhs: &Scaled<Rhs, RS>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
+        let init_from = self.request_init_from(comptime!(InitFrom::Identity));
+        match comptime!(init_from) {
+            InitFrom::Identity => {}
+            InitFrom::Cell => self.init_identity(comptime!(semiring.add())),
+        }
+        self.mma_scaled_with(lhs, rhs, config, semiring);
+        self.request_init_from(comptime!(InitFrom::Cell));
+    }
+
+    /// [`mma_with`](Tile::mma_with) over factors that carry their own scales.
+    pub fn mma_scaled_with<Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric>(
+        &mut self,
+        lhs: &Scaled<Lhs, LS>,
+        rhs: &Scaled<Rhs, RS>,
+        #[comptime] config: RegisterBlock,
+        #[comptime] semiring: Semiring,
+    ) {
         let space = comptime!(self.space.clone());
         match &mut self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
-                contract::memory::<Acc, Lhs, Rhs>(g, lhs, rhs, space, config, semiring)
+                contract::memory::<Acc, Lhs, LS, Rhs, RS>(g, lhs, rhs, space, config, semiring)
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -120,47 +128,15 @@ impl<Acc: Numeric> Tile<Acc> {
             ),
         }
     }
-
-    /// `c += (a ⊗ s) · b`, or its rhs twin, at a final memory tile through the software
-    /// instruction run under `config`.
-    pub fn mma_scaled_with<Lhs: Numeric, Rhs: Numeric, S: Numeric>(
-        &mut self,
-        lhs: &Tile<Lhs>,
-        rhs: &Tile<Rhs>,
-        scaling: &Scaling<S>,
-        #[comptime] config: RegisterBlock,
-        #[comptime] semiring: Semiring,
-    ) {
-        let space = comptime!(self.space.clone());
-        let side = scaling.side();
-        match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => contract::memory_scaled::<Acc, Lhs, Rhs, S>(
-                g,
-                lhs,
-                rhs,
-                side,
-                &scaling.levels(),
-                space,
-                config,
-                semiring,
-            ),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => panic!(
-                "Tile::mma_scaled_with: the software instruction contracts into a memory \
-                 accumulator"
-            ),
-        }
-    }
 }
 
-/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form.
+/// The leaf contraction `acc += lhs · rhs`, dispatched on the accumulator's form. Each factor
+/// carries its own scales, or none.
 #[cube]
-pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
+pub fn mma_leaf<E: Numeric, Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric>(
     acc: &mut Tile<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Scaled<Lhs, LS>,
+    rhs: &Scaled<Rhs, RS>,
     #[comptime] semiring: Semiring,
 ) {
     let space = comptime!(acc.space.clone());
@@ -188,102 +164,52 @@ pub fn mma_leaf<E: Numeric, EL: Numeric, ER: Numeric>(
     }
 }
 
-/// [`mma_leaf`] with one operand scaled: a register block folds the scale at the read, a cmma
-/// fragment loads the scaled operand from a landing its lanes wrote.
-#[cube]
-pub(crate) fn mma_leaf_scaled<E: Numeric, EL: Numeric, ER: Numeric, S: Numeric>(
-    acc: &mut Tile<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    #[comptime] side: ScaleSide,
-    scales: &Sequence<Tile<S>>,
-    #[comptime] semiring: Semiring,
-) {
-    let space = comptime!(acc.space.clone());
-    let tile_kind = &mut acc.tile_kind;
-    match tile_kind {
-        // A promoted register accumulator: the partials stay in `E` across the whole walk, which
-        // is the form a decode gemv wants.
-        TileKind::PlaneTile(t) => t.mma_scaled(lhs, rhs, side, scales, space, semiring),
-        TileKind::PlanePartition(p) => {
-            comptime!(assert!(
-                p.m_tiles == 1 && p.n_tiles == 1,
-                "mma_leaf_scaled: a multi-tile partition must be contracted at its partition level"
-            ));
-            let mut t = p.at(0usize, 0usize);
-            t.mma_scaled(lhs, rhs, side, scales, space, semiring)
-        }
-        TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
-            "mma_leaf_scaled: a Gmem/Smem accumulator contracts through the software \
-             instruction, which runs under a register block; state it with \
-             Tile::mma_scaled_with(lhs, rhs, scales, config, semiring)"
-        ),
-        TileKind::TmaGmem(_) => panic!("mma_scaled: a tma source is not an accumulator sink"),
-        TileKind::Procedural(_) => {
-            panic!("mma_scaled: a procedural tile is not an accumulator sink")
-        }
-    }
-}
-
 #[cube]
 impl<E: Numeric> PlaneTile<E> {
-    /// Contract this plane tile.
-    pub fn mma<EL: Numeric, ER: Numeric>(
+    /// Contract this plane tile, each factor times whatever scales it carries.
+    ///
+    /// A hardware instruction eats its operands' format, so a scaled factor reaches one through
+    /// memory: [`CmmaData::mma_scaled`] lands it, unpacked and scaled, in the plane's own window
+    /// and loads the fragment from there. The manual-mma form takes its operands from registers
+    /// and has no such landing, so it refuses one.
+    pub fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
+        lhs: &Scaled<EL, LS>,
+        rhs: &Scaled<ER, RS>,
         #[comptime] out: Space,
         #[comptime] semiring: Semiring,
     ) {
+        let lhs_values = lhs.values();
+        let rhs_values = rhs.values();
+        let lhs_count = lhs.levels().len();
+        let rhs_count = rhs.levels().len();
+        let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
         match self {
             PlaneTile::Cmma(d) => {
-                let transposed = transposed_rhs(lhs, rhs);
-                strided_2d(lhs, rhs, out, transposed);
+                let transposed = transposed_rhs(&lhs_values, &rhs_values);
+                strided_2d(&lhs_values, &rhs_values, comptime!(out.clone()), transposed);
                 hardware_semiring(semiring);
-                d.mma(lhs, rhs)
+                if comptime!(scaled) {
+                    d.mma_scaled(lhs, rhs, out)
+                } else {
+                    d.mma(&lhs_values, &rhs_values)
+                }
             }
             PlaneTile::Mma(d) => {
-                flattened_k(lhs, rhs, out);
+                comptime!(assert!(
+                    !scaled,
+                    "mma: the manual-mma instruction takes its operands from registers, where a \
+                     scaled factor has nowhere to land; open a cmma accumulator"
+                ));
+                flattened_k(&lhs_values, &rhs_values, out);
                 hardware_semiring(semiring);
-                d.mma(lhs, rhs)
+                d.mma(&lhs_values, &rhs_values)
             }
             PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, comptime!(out.clone()), comptime!(d.fold > 1));
+                let folded = comptime!(d.fold > 1);
+                strided_2d(&lhs_values, &rhs_values, comptime!(out.clone()), folded);
                 d.mma(lhs, rhs, out, semiring)
             }
-        }
-    }
-}
-
-#[cube]
-impl<E: Numeric> PlaneTile<E> {
-    /// [`mma`](PlaneTile::mma) with one operand scaled by a real operand: folded at the read in
-    /// the register form, folded into a landing the fragment loads from in the cmma form.
-    pub fn mma_scaled<EL: Numeric, ER: Numeric, ES: Numeric>(
-        &mut self,
-        lhs: &Tile<EL>,
-        rhs: &Tile<ER>,
-        #[comptime] side: ScaleSide,
-        scales: &Sequence<Tile<ES>>,
-        #[comptime] out: Space,
-        #[comptime] semiring: Semiring,
-    ) {
-        match self {
-            PlaneTile::Register(d) => {
-                strided_2d(lhs, rhs, comptime!(out.clone()), false);
-                d.mma_scaled(lhs, rhs, side, scales, out, semiring)
-            }
-            // The scaled operand is landed in shared memory, unpacked and scaled, and loaded as
-            // the fragment the plain instruction takes.
-            PlaneTile::Cmma(d) => {
-                strided_2d(lhs, rhs, comptime!(out.clone()), false);
-                hardware_semiring(semiring);
-                d.mma_scaled(lhs, rhs, side, scales, out)
-            }
-            PlaneTile::Mma(_) => panic!(
-                "mma_scaled: the manual-mma form takes its operands from registers, and landing \
-                 a scaled operand there is not written yet; open a cmma accumulator"
-            ),
         }
     }
 }

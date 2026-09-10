@@ -1,5 +1,5 @@
-//! `c.mm_scaled(&a, &b, &Scaling::lhs(s))`: the contraction with one operand scaled by a **real
-//! operand**, on the side the kernel states.
+//! `c.mm(&a.scaled(&s), &b, semiring)`: the contraction with one factor scaled by a **real
+//! operand**, on the factor the kernel wrote it on.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
 //! is a fact about the rhs's columns and nothing else could fold it in; anything else scales the
@@ -22,6 +22,14 @@ use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
 
+/// Which factor a test kernel writes its scales on. The engine has no such enum: a kernel says
+/// which by where it writes `.scaled()`, and these kernels serve both cases from one launch.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Scaled {
+    Lhs,
+    Rhs,
+}
+
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 /// The contraction, as the two axes a block makes of it: which block, and where inside it.
@@ -40,23 +48,30 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => c_r.mma_scaled_with(
+                &a.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).plain(),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => c_r.mma_scaled_with(
+                &a.at(&region).plain(),
+                &b.at(&region).scaled(&scale.at(&region)),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            ),
+        }
     }
 }
 
@@ -70,12 +85,12 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E, E>(
         &a,
@@ -91,12 +106,18 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => acc_r.mma_scaled(
+                &a.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).plain(),
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => acc_r.mma_scaled(
+                &a.at(&region).plain(),
+                &b.at(&region).scaled(&scale.at(&region)),
+                Semiring::SUM_PROD,
+            ),
+        }
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -114,28 +135,39 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     // The operand is the hierarchy: block scales, under the factor that covers a tile of their
     // tiles. Nothing states a scheme.
-    let scales = Scales::block_under(
-        blocks.tile(comptime!(space.clone())),
-        global.tile(comptime!(space.clone())),
-    );
+    // The operand is the hierarchy: block scales, under the factor that covers a tile of their
+    // tiles. Said twice, and nothing states a scheme.
+    let blocks = blocks.tile(comptime!(space.clone()));
+    let global = global.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            REGISTER_BLOCK,
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => c_r.mma_scaled_with(
+                &a.at(&region)
+                    .scaled(&blocks.at(&region))
+                    .scaled(&global.at(&region)),
+                &b.at(&region).plain(),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => c_r.mma_scaled_with(
+                &a.at(&region).plain(),
+                &b.at(&region)
+                    .scaled(&blocks.at(&region))
+                    .scaled(&global.at(&region)),
+                REGISTER_BLOCK,
+                Semiring::SUM_PROD,
+            ),
+        }
     }
 }
 
@@ -151,14 +183,14 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[comptime] planes: usize,
     #[comptime] lanes: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone())).with_landing(planes, lanes);
     let b = b.tile(comptime!(space.clone())).with_landing(planes, lanes);
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
@@ -172,12 +204,18 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => acc_r.mma_scaled(
+                &a.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).plain(),
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => acc_r.mma_scaled(
+                &a.at(&region).plain(),
+                &b.at(&region).scaled(&scale.at(&region)),
+                Semiring::SUM_PROD,
+            ),
+        }
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -275,7 +313,7 @@ fn two_levels_fold_in_order() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -375,7 +413,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -475,7 +513,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -573,7 +611,7 @@ fn a_scale_over_no_axis_covers_everything() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -674,7 +712,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -778,7 +816,7 @@ fn f16_scales_are_read_as_f16() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, scale_dtype],
     );
 
@@ -798,7 +836,7 @@ fn f16_scales_are_read_as_f16() {
 }
 
 /// The scales span `N`, so they scale the rhs, and the call site says so
-/// ([`Scaling::rhs`]); the leaf checks the statement against the axes.
+/// on the rhs; the leaf checks that against the axes.
 #[test]
 fn scales_over_the_columns_scale_the_rhs() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
@@ -880,7 +918,7 @@ fn scales_over_the_columns_scale_the_rhs() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Rhs,
+        Scaled::Rhs,
         [dtype, dtype],
     );
 
@@ -980,7 +1018,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Rhs,
+        Scaled::Rhs,
         [dtype, dtype],
     );
 
@@ -1080,7 +1118,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Rhs,
+        Scaled::Rhs,
         [dtype, dtype],
     );
 
@@ -1182,7 +1220,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -1211,12 +1249,12 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<E, E, E>(
         &a,
@@ -1232,12 +1270,18 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
     acc.zero();
     for region in space.over(&level) {
         let mut acc_r = acc.at(&region);
-        acc_r.mma_scaled(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => acc_r.mma_scaled(
+                &a.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).plain(),
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => acc_r.mma_scaled(
+                &a.at(&region).plain(),
+                &b.at(&region).scaled(&scale.at(&region)),
+                Semiring::SUM_PROD,
+            ),
+        }
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -1337,7 +1381,7 @@ fn rhs_scales_are_served_several_at_a_time() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Rhs,
+        Scaled::Rhs,
         [dtype, dtype],
     );
 
@@ -1367,23 +1411,30 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] side: ScaleSide,
+    #[comptime] side: Scaled,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
         let mut c_r = c.at(&region);
-        c_r.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &Scaling::on(side, scales.at(&region)),
-            comptime!(RegisterBlock::new(64).lane_fanout()),
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => c_r.mma_scaled_with(
+                &a.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).plain(),
+                comptime!(RegisterBlock::new(64).lane_fanout()),
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => c_r.mma_scaled_with(
+                &a.at(&region).plain(),
+                &b.at(&region).scaled(&scale.at(&region)),
+                comptime!(RegisterBlock::new(64).lane_fanout()),
+                Semiring::SUM_PROD,
+            ),
+        }
     }
 }
 
@@ -1467,7 +1518,7 @@ fn lhs_scales_are_served_several_at_a_time() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        ScaleSide::Lhs,
+        Scaled::Lhs,
         [dtype, dtype],
     );
 
@@ -1574,8 +1625,8 @@ fn check_scaled_cmma(case: CmmaCase) {
         )),
     };
     let side = match case {
-        CmmaCase::Lhs => ScaleSide::Lhs,
-        _ => ScaleSide::Rhs,
+        CmmaCase::Lhs => Scaled::Lhs,
+        _ => Scaled::Rhs,
     };
 
     scaled_matmul_cmma::launch(

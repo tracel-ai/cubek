@@ -11,8 +11,9 @@
 //! buffer. A wide read wants a lane owning consecutive blocks, which is the opposite of the
 //! interleave the fold is built on.
 
+use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection, ScalesArgLaunch};
+use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -150,9 +151,9 @@ pub fn launch_ref(
     }
     let mut levels = levels.into_iter();
     let block = levels.next().expect("a block level, checked above").arg();
-    let s_args = match levels.next() {
-        Some(global) => ScalesArgLaunch::block_under(block, global.arg()),
-        None => ScalesArgLaunch::block(block),
+    let tensor = match levels.next() {
+        Some(global) => ComptimeOptionArgs::Some(global.arg()),
+        None => ComptimeOptionArgs::None,
     };
     // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
@@ -166,7 +167,8 @@ pub fn launch_ref(
         out_op.vector_size,
         w_op.arg(),
         x_op.arg(),
-        s_args,
+        block,
+        tensor,
         out_op.arg(),
         launch.partitioning_arg(),
         blueprint,

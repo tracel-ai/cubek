@@ -41,7 +41,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // This instance's windows of `out`, each initialized once: the level projected
     // onto `out`'s own axes walks nothing it does not span.
@@ -53,18 +53,17 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         let out_cube = out.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);
-        let scales_cube = scales.at(&cube);
+        let scale_cube = scale.at(&cube);
         for plane in cube {
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
-            let scales_plane = scales_cube.at(&plane);
+            let scale_plane = scale_cube.at(&plane);
             for lane in plane {
                 let mut out_lane = out_plane.at(&lane);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane),
-                    &Scaling::lhs(scales_plane.at(&lane)),
+                    &w_plane.at(&lane).scaled(&scale_plane.at(&lane)),
+                    &x_plane.at(&lane).plain(),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -93,7 +92,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ) {
     let w = w.tile_packed::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let scales = Scales::block(scale.tile(comptime!(space.clone())));
+    let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     let mut acc = out.block_accumulator::<E, E, E>(
         &w,
@@ -107,18 +106,17 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
         let acc_cube = acc.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);
-        let scales_cube = scales.at(&cube);
+        let scale_cube = scale.at(&cube);
         for plane in cube {
             let acc_plane = acc_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
-            let scales_plane = scales_cube.at(&plane);
+            let scale_plane = scale_cube.at(&plane);
             for lane in plane {
                 let mut acc_lane = acc_plane.at(&lane);
                 acc_lane.mma_scaled(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane),
-                    &Scaling::lhs(scales_plane.at(&lane)),
+                    &w_plane.at(&lane).scaled(&scale_plane.at(&lane)),
+                    &x_plane.at(&lane).plain(),
                     Semiring::SUM_PROD,
                 );
             }

@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Cut, Level, Partitioning, RegisterBlock, ScalesArg, Scaling, Semiring, Space, TileArg,
+    Cut, Level, MaybeTile, MaybeTileExpand, Partitioning, RegisterBlock, Semiring, Space, TileArg,
 };
 
 use crate::tiled::{
@@ -91,7 +91,7 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 ///
 /// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_packed`]); the
 /// scales arrive as their own tensor at their own element type and fold in at the contraction
-/// ([`cubek_tile::Tile::mma_scaled_with`]), on the weight's side ([`Scaling::lhs`]). Nothing
+/// ([`cubek_tile::Tile::mma_scaled_with`]), written on the weight. Nothing
 /// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
 /// values one scale covers is the scales operand's own axes, stated in the space.
 ///
@@ -109,7 +109,8 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
-    scales: &ScalesArg<'_, ES, Const<1>>,
+    block_scales: &TileArg<'_, ES, Const<1>>,
+    tensor_scale: &ComptimeOption<TileArg<'static, ES, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
     space: Partitioning,
     #[comptime] bp: QuantGemvBlueprint,
@@ -120,9 +121,11 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     #[define(EO)] _out_dtype: ElemType,
 ) {
     let config = comptime!(register_block(&bp, &problem));
-    let w = w.tile_packed::<EC>(comptime!(space.clone()));
+    let w = w
+        .tile_packed::<EC>(comptime!(space.clone()))
+        .scaled(&block_scales.tile(comptime!(space.clone())))
+        .maybe_scaled(&tensor_scale.tile(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
-    let scales = scales.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
     for cube in &out {
@@ -140,19 +143,16 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
         let out_cube = out.at(&cube);
         let w_cube = w.at(&cube);
         let x_cube = x.at(&cube);
-        let scales_cube = scales.at(&cube);
         for plane in cube {
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
-            let scales_plane = scales_cube.at(&plane);
             // The lane's share of the blocks, one stored word a step.
             for lane in plane {
                 let mut out_lane = out_plane.at(&lane);
                 out_lane.mma_scaled_with(
                     &w_plane.at(&lane),
-                    &x_plane.at(&lane),
-                    &Scaling::lhs(scales_plane.at(&lane)),
+                    &x_plane.at(&lane).plain(),
                     config,
                     Semiring::SUM_PROD,
                 );

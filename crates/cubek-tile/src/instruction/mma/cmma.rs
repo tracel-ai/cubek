@@ -13,7 +13,7 @@ use cubecl::{
 };
 
 use crate::instruction::registers::contract::{
-    ContractEdges, EdgeOrdinal, ScaleLevel, check_scales_ride, combined_scales,
+    ContractEdges, EdgeOrdinal, ScaleLevel, Side, combined_scales, level_of,
 };
 use crate::instruction::registers::lines::{Lines, LinesExpand};
 use crate::*;
@@ -80,76 +80,109 @@ impl<A: Numeric> CmmaData<A> {
     /// plane's shared memory, unpacked and scaled by the lanes, and loaded as its fragment; the
     /// other loads from its window as it stands. Marlin's shape, with the landing where Metal's
     /// fragment load wants memory.
-    pub(crate) fn mma_scaled<L: Numeric, R: Numeric, S: Numeric>(
+    pub(crate) fn mma_scaled<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &self,
-        lhs: &Tile<L>,
-        rhs: &Tile<R>,
-        #[comptime] side: ScaleSide,
-        scales: &Sequence<Tile<S>>,
+        lhs: &Scaled<EL, LS>,
+        rhs: &Scaled<ER, RS>,
         #[comptime] out: Space,
     ) {
+        let lhs_values = lhs.values();
+        let rhs_values = rhs.values();
+        let lhs_levels = lhs.levels();
+        let rhs_levels = rhs.levels();
+        let lhs_count = lhs_levels.len();
+        let rhs_count = rhs_levels.len();
+        // Which factor is landed is which one carries scales. Both at once is a quantized signal
+        // against a quantized weight, and the landing would have to hold two.
+        let side = comptime!(match (lhs_count > 0, rhs_count > 0) {
+            (true, false) => Side::Lhs,
+            (false, true) => Side::Rhs,
+            _ => panic!(
+                "mma: a tensor-core contraction lands one scaled factor in the plane's window; \
+                 scale one side"
+            ),
+        });
+
         // The fragment's edges off the accumulator's axes and the contracted extent, as the plain
         // leaf reads them: a split contraction is one `k` edge, whatever its digits.
-        let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs.space));
+        let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs_values.space));
         let m = comptime!(acc_axes.rows(&out));
         let n = comptime!(acc_axes.cols(&out));
-        let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+        let operands = comptime!(Space::merge(&[&lhs_values.space, &rhs_values.space]));
         let k = comptime!(operands.contracted_extent(&out));
-        let lrank = comptime!(lhs.space.rank());
-        let contracted = comptime!(lhs.space.axis_at(lrank - 1));
-        let layout = comptime!(rhs_layout(&rhs.space, contracted));
+        let lrank = comptime!(lhs_values.space.rank());
+        let contracted = comptime!(lhs_values.space.axis_at(lrank - 1));
+        let layout = comptime!(rhs_layout(&rhs_values.space, contracted));
         let transposed = comptime!(layout == MatrixLayout::ColMajor);
-        let lw = lhs.vector_size();
-        let rw = rhs.vector_size();
-        let inner = scales.index(0);
-        let sw = inner.vector_size();
-        comptime!(check_scales_ride(side, &inner.space, &out, acc_axes));
-        // The level as the landing reads it: a line of the scaled operand takes the scale at
-        // its own row and its block's column, one scale a read.
-        let invariant = inner.invariant_over(comptime!(operands.clone()));
-        let level = comptime!(ScaleLevel::of(
-            &inner.space,
-            &ContractEdges {
-                mr: m,
-                kc: k,
-                cols: n,
-                reduce: operands
-                    .contracting(&out)
-                    .iter()
-                    .map(|&axis| (axis, operands.extent(axis)))
-                    .collect::<Vec<_>>(),
-                columns: (acc_axes.col_split..out.rank())
-                    .map(|p| (out.axis_at(p), out.extent_at(p)))
-                    .collect::<Vec<_>>(),
-                lw,
-                // A col-major rhs lands lines along the contraction, one column each.
-                aw: if transposed { 1 } else { rw },
-                contracted_per_step: 1,
-                ordinal: EdgeOrdinal::Constant,
+
+        let lw = lhs_values.vector_size();
+        let rw = rhs_values.vector_size();
+        // This leaf's own edges, which is all a scale level needs of it. The landing reads one
+        // scale a line, each line under its own constant ordinal.
+        let edges = comptime!(ContractEdges {
+            mr: m,
+            kc: k,
+            cols: n,
+            reduce: operands
+                .contracting(&out)
+                .iter()
+                .map(|&axis| (axis, operands.extent(axis)))
+                .collect::<Vec<_>>(),
+            columns: (acc_axes.col_split..out.rank())
+                .map(|p| (out.axis_at(p), out.extent_at(p)))
+                .collect::<Vec<_>>(),
+            lw,
+            aw: match transposed {
+                true => 1,
+                false => rw,
             },
-            side,
-            &invariant,
-            sw,
-        ));
-        comptime!(assert!(
-            level.lanes == 1,
-            "mma_scaled: the landing reads one scale a line; bind the scales one wide for the \
-             fragment leaf"
-        ));
+            contracted_per_step: 1,
+            ordinal: EdgeOrdinal::Constant,
+        });
 
         let mut a_frag =
-            unsafe { Matrix::<L>::uninitialized(MatrixIdent::A, m, n, k, MatrixLayout::RowMajor) };
-        let mut b_frag = unsafe { Matrix::<R>::uninitialized(MatrixIdent::B, m, n, k, layout) };
+            unsafe { Matrix::<EL>::uninitialized(MatrixIdent::A, m, n, k, MatrixLayout::RowMajor) };
+        let mut b_frag = unsafe { Matrix::<ER>::uninitialized(MatrixIdent::B, m, n, k, layout) };
         match comptime!(side) {
-            ScaleSide::Lhs => {
-                let landed = land_scaled::<L, S>(lhs, scales, level, m, k, false);
+            Side::Lhs => {
+                let level = level_of(
+                    &lhs_levels,
+                    comptime!(operands.clone()),
+                    comptime!(out.clone()),
+                    comptime!(acc_axes),
+                    comptime!(edges),
+                    comptime!(Side::Lhs),
+                );
+                let landed = land_scaled::<EL, LS>(
+                    &lhs_values,
+                    &lhs_levels,
+                    comptime!(one_scale_a_line(level)),
+                    m,
+                    k,
+                    false,
+                );
                 cmma::load(&mut a_frag, &landed, comptime!(k as u32));
-                load_fragment(&mut b_frag, rhs);
+                load_fragment(&mut b_frag, &rhs_values);
             }
-            ScaleSide::Rhs => {
-                load_fragment(&mut a_frag, lhs);
+            Side::Rhs => {
+                let level = level_of(
+                    &rhs_levels,
+                    comptime!(operands.clone()),
+                    comptime!(out.clone()),
+                    comptime!(acc_axes),
+                    comptime!(edges),
+                    comptime!(Side::Rhs),
+                );
+                load_fragment(&mut a_frag, &lhs_values);
                 let (rows, cols) = comptime!(if transposed { (n, k) } else { (k, n) });
-                let landed = land_scaled::<R, S>(rhs, scales, level, rows, cols, transposed);
+                let landed = land_scaled::<ER, RS>(
+                    &rhs_values,
+                    &rhs_levels,
+                    comptime!(one_scale_a_line(level)),
+                    rows,
+                    cols,
+                    transposed,
+                );
                 cmma::load(&mut b_frag, &landed, comptime!(cols as u32));
             }
         }
@@ -157,6 +190,18 @@ impl<A: Numeric> CmmaData<A> {
         // The landing is this region's until every lane's load has read it.
         sync_plane();
     }
+}
+
+/// The level a landing folds, which reads one scale per line: several at a time would need each
+/// value line's ordinal along the shared edge, and the landing walks its lines at runtime.
+fn one_scale_a_line(level: Option<ScaleLevel>) -> ScaleLevel {
+    let level = level.expect("mma_scaled: the scaled factor carries a level");
+    assert!(
+        level.lanes == 1,
+        "mma_scaled: the landing reads one scale a line; bind the scales one wide for the \
+         fragment leaf"
+    );
+    level
 }
 
 /// `frag` loaded from `tile`'s memory window, as the plain leaf loads it.
