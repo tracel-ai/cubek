@@ -898,11 +898,7 @@ impl<T: Numeric> Tile<T> {
     /// share a slot, so every spill happens, then one barrier, then every add: two barriers for the
     /// drain however many tiles it has. That is the whole reason the size is a setting
     /// ([`Resident`]).
-    pub fn drained_into<Out: Numeric>(
-        &self,
-        dest: &Tile<Out>,
-        #[comptime] cells: Option<Level>,
-    ) {
+    pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Option<Level>) {
         match cells {
             // A grid below the drain: one region of `cells` per tile of it.
             Some(cells) => self.drain_grid(dest, cells),
