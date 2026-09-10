@@ -137,6 +137,16 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    pub(crate) fn scale(&mut self, factor: T) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                "PlaneTile::scale: a hardware mma fragment is not read cell by cell, so a scale \
+                 over one folds at the store instead"
+            ),
+            PlaneTile::Register(d) => d.scale(factor),
+        }
+    }
+
     /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
     /// transport reads element by element through the quant-transparent matrix view, so it needs
     /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
@@ -517,6 +527,18 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
                 frag.init(val);
+            }
+        }
+    }
+
+    /// Multiply every tile by `factor`.
+    pub(crate) fn scale(&self, factor: T) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                frag.scale(factor);
             }
         }
     }

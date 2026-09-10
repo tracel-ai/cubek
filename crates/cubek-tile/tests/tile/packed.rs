@@ -63,7 +63,9 @@ fn packed_matmul<E: Numeric>(
 ) {
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_scale(&scale.tile(comptime!(space.clone())));
+        .scaled(&ComptimeOption::new_Some(
+            scale.tile(comptime!(space.clone())),
+        ));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
@@ -93,8 +95,12 @@ fn nvfp4_shaped_matmul<E: Numeric>(
     // Two levels, said twice: the blocks, then the factor over the whole tensor.
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_scale(&blocks.tile(comptime!(space.clone())))
-        .with_scale(&global.tile(comptime!(space.clone())));
+        .scaled(&ComptimeOption::new_Some(
+            blocks.tile(comptime!(space.clone())),
+        ))
+        .scaled(&ComptimeOption::new_Some(
+            global.tile(comptime!(space.clone())),
+        ));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
@@ -259,7 +265,9 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
     let x = x.tile(comptime!(space.clone()));
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_scale(&scale.tile(comptime!(space.clone())));
+        .scaled(&ComptimeOption::new_Some(
+            scale.tile(comptime!(space.clone())),
+        ));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
@@ -289,7 +297,9 @@ fn native_matmul<E: Numeric>(
 ) {
     let w = w.tile(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
-    let w = w.with_scale(&scale.tile(comptime!(space.clone())));
+    let w = w.scaled(&ComptimeOption::new_Some(
+        scale.tile(comptime!(space.clone())),
+    ));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
@@ -317,7 +327,9 @@ fn packed_gemv<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.with_scale(&scale.tile(comptime!(space.clone())));
+    let w = values.scaled(&ComptimeOption::new_Some(
+        scale.tile(comptime!(space.clone())),
+    ));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);
@@ -358,7 +370,9 @@ fn packed_matmul_byte_scales<E: Numeric>(
 ) {
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_scale(&scale.tile_as::<E>(comptime!(space.clone())));
+        .scaled(&ComptimeOption::new_Some(
+            scale.tile_as::<E>(comptime!(space.clone())),
+        ));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
@@ -385,7 +399,9 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let values = w.tile_as::<E>(comptime!(space.clone()));
-    let w = values.with_scale(&scale.tile_as::<E>(comptime!(space.clone())));
+    let w = values.scaled(&ComptimeOption::new_Some(
+        scale.tile_as::<E>(comptime!(space.clone())),
+    ));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);
@@ -430,7 +446,9 @@ fn packed_cmma_rhs<E: Numeric>(
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
         .with_landing(planes, lanes)
-        .with_scale(&scale.tile_as::<E>(comptime!(space.clone())));
+        .scaled(&ComptimeOption::new_Some(
+            scale.tile_as::<E>(comptime!(space.clone())),
+        ));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &x,

@@ -6,16 +6,16 @@
 //! Which factor they multiply is where the kernel wrote them. How deep they go is how many times
 //! it said so. Nothing here states a side and nothing counts levels.
 //!
-//! **Nothing here multiplies anything.** `with_scale` says which level a factor carries, and the
+//! **Nothing here multiplies anything.** `scaled` says which level a factor carries, and the
 //! multiply happens once per line, at the read, inside the leaf
 //! ([`ScaledLines`](crate::ScaledLines)) — which is the only place it can happen without
-//! materializing a dequantized tile. So a factor that says `with_scale` twice is multiplied twice
+//! materializing a dequantized tile. So a factor that says `scaled` twice is multiplied twice
 //! per line, not twice up front, and the verb that applies them is the contraction's
 //! ([`mm_scaled`](Tile::mm_scaled) and its twins).
 //!
 //! A factor that carries none is [`Tile::plain`], and the leaf reads it with no arithmetic at
 //! all, which is why a float kernel compiles to what it always did. A level the launch binds is
-//! written with [`Tile::with_scale_arg`], once per level and named: binding none of them is
+//! written with [`Tile::scaled`], once per level and named: binding none of them is
 //! scaling by one.
 //!
 //! A level above the first is read once per leaf region at its origin, so it is only correct
@@ -26,7 +26,7 @@ use cubecl::prelude::*;
 use crate::*;
 
 /// A factor and the scales it carries, which are a pair and not a product: the values, and the
-/// levels that will multiply them when the leaf reads a line. [`Tile::with_scale`], said once per
+/// levels that will multiply them when the leaf reads a line. [`Tile::scaled`], said once per
 /// level.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
@@ -52,34 +52,18 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// This factor, carrying `level`: stated here, folded in per line by the contraction. Say it
-    /// again for a level above that one.
-    pub fn with_scale<S: Numeric>(&self, level: &Tile<S>) -> Scaled<E, S> {
-        let mut levels = Sequence::new();
-        levels.push(level.clone());
-        Scaled::<E, S> {
-            values: self.clone(),
-            levels,
-        }
-    }
-
-    /// [`with_scale`](Tile::with_scale) for a level a launch bound, which a scheme may not have:
-    /// absent, it folds nothing and emits nothing, which is scaling by one. Say it again for a
-    /// level above that one, the innermost first.
+    /// This factor, carrying `level`, which a scheme may not have: absent, it folds
+    /// nothing and emits nothing, which is scaling by one.
     ///
-    /// A bound level is stored words, read in its own width: which width is its
-    /// [`Field`](crate::Field), which the launch states on it and nothing here asks about.
-    pub fn with_scale_arg<S: Numeric>(
-        &self,
-        level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-        #[comptime] space: Partitioning,
-    ) -> Scaled<E, S> {
+    /// A scale that does not cover everything an accumulator sums has to ride its factor like
+    /// this, because the running sum already holds terms it does not apply to. One that does
+    /// cover everything belongs on the accumulator instead ([`Tile::scale`]), where it costs one
+    /// multiply per cell rather than one per value read.
+    pub fn scaled<S: Numeric>(&self, level: &ComptimeOption<Tile<S>>) -> Scaled<E, S> {
         let mut levels = Sequence::new();
         #[comptime]
         match level {
-            ComptimeOption::Some(level) => {
-                levels.push(level.tile_as::<S>(comptime!(space.clone())))
-            }
+            ComptimeOption::Some(level) => levels.push(level.clone()),
             ComptimeOption::None => {}
         }
         Scaled::<E, S> {
@@ -91,28 +75,12 @@ impl<E: Numeric> Tile<E> {
 
 #[cube]
 impl<E: Numeric, S: Numeric> Scaled<E, S> {
-    /// This factor, carrying one level more.
-    pub fn with_scale(&self, level: &Tile<S>) -> Scaled<E, S> {
-        let mut levels = self.levels.clone();
-        levels.push(level.clone());
-        Scaled::<E, S> {
-            values: self.values.clone(),
-            levels,
-        }
-    }
-
-    /// [`with_scale`](Scaled::with_scale) for one bound level more, which a scheme may not have.
-    pub fn with_scale_arg(
-        &self,
-        level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
-        #[comptime] space: Partitioning,
-    ) -> Scaled<E, S> {
+    /// This factor, carrying one level more, which a scheme may not have.
+    pub fn scaled(&self, level: &ComptimeOption<Tile<S>>) -> Scaled<E, S> {
         let mut levels = self.levels.clone();
         #[comptime]
         match level {
-            ComptimeOption::Some(level) => {
-                levels.push(level.tile_as::<S>(comptime!(space.clone())))
-            }
+            ComptimeOption::Some(level) => levels.push(level.clone()),
             ComptimeOption::None => {}
         }
         Scaled::<E, S> {
@@ -143,5 +111,44 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     /// Every scale that multiplies them, innermost first. Empty is a factor carrying none.
     pub(crate) fn levels(&self) -> Sequence<Tile<S>> {
         self.levels.clone()
+    }
+}
+
+/// A scale level a launch may or may not have bound, as the tile it serves: `u32` words read in
+/// the level's own width, which its [`Field`](crate::Field) states and nothing here asks about.
+#[cube]
+pub fn scale_tile<S: Numeric>(
+    level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
+    #[comptime] space: Partitioning,
+) -> ComptimeOption<Tile<S>> {
+    #[comptime]
+    match level {
+        ComptimeOption::Some(level) => {
+            ComptimeOption::new_Some(level.tile_as::<S>(comptime!(space.clone())))
+        }
+        ComptimeOption::None => ComptimeOption::new_None(),
+    }
+}
+
+/// A scale level windowed the way the factor it multiplies is, or nothing where none was bound.
+#[cube]
+pub trait MaybeTile: CubeType {
+    /// The element the level is served at.
+    type E: Numeric;
+
+    /// This level at `region`, descending it as [`Tile::at`] descends a factor.
+    fn at(&self, region: &Region) -> ComptimeOption<Tile<Self::E>>;
+}
+
+#[cube]
+impl<E: Numeric> MaybeTile for ComptimeOption<Tile<E>> {
+    type E = E;
+
+    fn at(&self, region: &Region) -> ComptimeOption<Tile<E>> {
+        #[comptime]
+        match self {
+            ComptimeOption::Some(level) => ComptimeOption::new_Some(level.at(region)),
+            ComptimeOption::None => ComptimeOption::new_None(),
+        }
     }
 }

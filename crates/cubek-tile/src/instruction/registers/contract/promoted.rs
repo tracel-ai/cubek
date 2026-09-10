@@ -47,10 +47,6 @@ impl<T: Numeric> RegisterData<T> {
         let rhs_values = rhs.values();
         let lhs_levels = lhs.levels();
         let rhs_levels = rhs.levels();
-        let lhs_count = lhs_levels.len();
-        let rhs_count = rhs_levels.len();
-        let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
-
         comptime!(assert!(
             semiring.add() == self.monoid,
             "RegisterData::mma: this block folds its partials under {:?} and drains them that \
@@ -91,14 +87,6 @@ impl<T: Numeric> RegisterData<T> {
             "RegisterData::mma: a step consumes {fold} contracted values, so the lhs must line \
              along the contraction at that width (it is {lw} wide)"
         ));
-        // A scaled step walks one contracted value at a time, so this block's lanes are
-        // neighbouring cells: a folded step here would need the scale level to step by lines.
-        comptime!(assert!(
-            !scaled || fold == 1,
-            "RegisterData::mma: the rhs lines along a contracted axis, which folds into one \
-             cell; the memory-backed leaf serves a scaled step of that shape (Tile::mma_with)"
-        ));
-
         let size!(L) = lw;
         let lsw = scale_width(&lhs_levels);
         let rsw = scale_width(&rhs_levels);
@@ -152,7 +140,7 @@ impl<T: Numeric> RegisterData<T> {
                 columns: columns.clone(),
                 lw,
                 aw: vw,
-                contracted_per_step: 1,
+                contracted_per_step: fold,
                 ordinal: EdgeOrdinal::Runtime(
                     "this block walks the contraction at runtime".to_string()
                 ),
@@ -172,8 +160,15 @@ impl<T: Numeric> RegisterData<T> {
                 columns,
                 lw,
                 aw: vw,
-                contracted_per_step: 1,
-                ordinal: EdgeOrdinal::Constant,
+                contracted_per_step: fold,
+                // A step folding several contracted values takes them from one line at a runtime
+                // index; an unfolded one walks neighbouring cells under a constant ordinal.
+                ordinal: match fold {
+                    1 => EdgeOrdinal::Constant,
+                    folded => EdgeOrdinal::Runtime(format!(
+                        "a step folding {folded} contracted values walks no such edge"
+                    )),
+                },
             }),
             comptime!(Side::Rhs),
         );

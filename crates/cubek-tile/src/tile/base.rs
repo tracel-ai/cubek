@@ -690,6 +690,42 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The one value this tile holds, read through whatever packing its binding states. What a
+    /// scale covering everything is: a tile every axis of which it spans at an extent of one.
+    pub(crate) fn only(&self) -> T {
+        let axes = comptime!(MatrixAxes::trailing_pair(&self.space));
+        let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
+        let origin = 0u32.runtime();
+        matrix.read((origin, origin)).extract(0usize)
+    }
+
+    /// Multiply every partial this accumulator holds by the one value `factor` carries, or by
+    /// nothing where no factor was bound, which is multiplying by one.
+    ///
+    /// A scale that covers everything the accumulator sums belongs here rather than on the terms:
+    /// it costs one multiply per cell instead of one per value read. A scale that does *not*
+    /// cover everything the accumulator sums cannot come here at all — the sum already holds
+    /// terms it does not apply to — and rides its factor instead ([`Tile::scaled`]).
+    pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
+        #[comptime]
+        match factor {
+            ComptimeOption::Some(factor) => {
+                let value = T::cast_from(factor.only());
+                match &mut self.tile_kind {
+                    TileKind::PlaneTile(t) => t.scale(value),
+                    TileKind::PlanePartition(p) => p.scale(value),
+                    TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
+                        "Tile::scale: a memory tile is scaled by the cube, not by one unit                          (Tile::mul)"
+                    ),
+                    TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+                        panic!("Tile::scale: not writable")
+                    }
+                }
+            }
+            ComptimeOption::None => {}
+        }
+    }
+
     /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
     /// grid, a single plane tile's `1 × 1` of its whole window.
     pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
