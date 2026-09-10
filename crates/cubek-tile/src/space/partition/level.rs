@@ -85,6 +85,9 @@ pub struct Level {
     dists: ByAxis<Distribution>,
     scope: LevelScope,
     work: Option<Work>,
+    /// Planes that fill this walk's stages and take no tile of any level
+    /// ([`filled_by`](Level::filled_by)).
+    fillers: usize,
 }
 
 impl Level {
@@ -197,6 +200,26 @@ impl Level {
         self
     }
 
+    /// The stages of this walk are filled by `n` planes of the cube, which take no tile of any
+    /// level and do nothing else.
+    ///
+    /// Those `n` sit at the *end* of the cube, so every plane position below this level is the
+    /// one it would have been without them; the cube is `n` planes wider and nothing is
+    /// renumbered. A ring built over this walk reads the count off the level and hands the two
+    /// roles their own halves of each slot.
+    ///
+    /// Only a walk's regions are staged, so only a walk takes this.
+    pub fn filled_by(mut self, n: usize) -> Level {
+        assert!(
+            self.scope == LevelScope::Sequential,
+            "Level::filled_by: only a walk's regions are staged, and this level deals its tiles \
+             to {:?}",
+            self.scope
+        );
+        self.fillers = n;
+        self
+    }
+
     fn cut_to<D: Into<Cut> + Clone>(
         cuts: &[D],
         scope_of: impl Fn(usize) -> ComputeScope,
@@ -233,6 +256,7 @@ impl Level {
             dists: ByAxis::new(dists),
             scope,
             work,
+            fillers: 0,
         }
     }
 
@@ -315,6 +339,12 @@ impl Level {
     /// The axes this level distributes as one, if any.
     pub fn work(&self) -> Option<&Work> {
         self.work.as_ref()
+    }
+
+    /// Planes that fill this level's stages and do nothing else
+    /// ([`filled_by`](Level::filled_by)).
+    pub fn fillers(&self) -> usize {
+        self.fillers
     }
 
     /// The space one region of this level covers: every axis of `space` cut to its edge (static,
