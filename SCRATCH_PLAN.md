@@ -17,79 +17,99 @@ destination falls to the layout walk where its adds land through the sink's own 
 `scan_transparent` now states the disjointness it rests on: one line per unit striding by the cube.
 `a_copy_into_a_folding_output_adds` proves it, and was checked to fail without the condition.
 
-## The shape
+**The scratch's size is a setting** (`Resident`). Landed as the two endpoints and not a count, for
+the reason the trap below gives. `with_scratch` takes it, sizes the window at `cells * slots *
+planes`, and hands **every tile its own slot** where the whole partition is resident, so no drain
+depends on the order it walks them in. `CmmaData`'s bounce splits into `spill_to_scratch` and
+`add_from_scratch` with the barriers lifted out, and `Tile::drained_into` owns them: three per tile
+at one tile resident, two for the whole drain otherwise.
+
+metabolic states it as `GemmStrategy::scratch`, pays for it in `smem_bytes` beside the stage, and
+races it crossed with the hypercube counts wherever a fragment leaf reads one. The device test pins
+both and counts that the whole-grid drain was actually reached, since a budget that refused the
+window would narrow the block rather than the residency.
+
+## Two things this cost that the plan did not predict
+
+**A wildcard on a single-value cube-enum match does not compile.** `match &self.tile_kind { X(t) =>
+…, _ => panic!() }` fails with `&TileKindExpand: CubeEnum` not satisfied, pointing at the `#[cube]`
+on the whole impl block rather than at the arm. Every arm has to be named, as `dense` and
+`split_share` already do it. A *tuple* match keeps its wildcard, which is why `copy_cast_from` has
+one.
+
+**The window competes with the stage, so it moves the block.** Counting the scratch in `smem_bytes`
+is right — cubecl allocates a cube's shared memory for the whole kernel, so a window the epilogue
+alone reads is resident from the first instruction — but it means a whole-grid row is refused the
+stage a one-tile row affords and comes out with a smaller block. `cube_block`, the rank's estimate,
+is asked before a microkernel exists and cannot see that, so
+`the_block_a_row_is_ranked_on_is_the_one_it_launches` no longer claims exactness for those rows. The
+over-estimate is the safe direction. It also means the whole-grid arm may lose for a reason that has
+nothing to do with barriers, which the race will say.
+
+## The shape, as it landed
 
 ```rust
-/// Where a plane tile becomes addressable cells: a window of shared memory, one per plane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Scratch {
-    /// No window. The tile's own intrinsic does the work.
+/// How much of a plane's accumulator its scratch holds at once.
+pub enum Resident {
+    /// No scratch. The fragment's own intrinsic does the work.
     None,
-    /// This many of the plane's tiles resident at once. One is the smallest footprint and a
-    /// barrier trio per tile; the partition's own count is one trio for the whole drain.
-    Tiles(usize),
+    /// One tile. The smallest footprint, three cube-wide barriers per tile drained.
+    OneTile,
+    /// The plane's whole partition. Two barriers for the drain, at as many times the footprint
+    /// as the partition has tiles.
+    WholePartition,
 }
 ```
 
-Opened where the accumulator opens, and it keeps the two counts it already takes:
+Opened where the accumulator opens, and it keeps the two counts it already took:
 
 ```rust
 let acc = c_cube
     .cmma_accumulator::<EA, EL>(&a_cube, fragments, Monoid::Sum)
-    .with_scratch(scratch, planes, lanes);
+    .with_scratch(resident, planes, lanes);
 ```
 
-`planes` and `lanes` cannot come from cube builtins, which was wrong in the first sketch:
-`Shared::new_slice` needs a comptime length and `CUBE_DIM_Y` is a runtime value. They stay.
+`planes` and `lanes` cannot come from cube builtins, which the first sketch had wrong:
+`Shared::new_slice` needs a comptime length and `CUBE_DIM_Y` is a runtime value.
 
-Sizing: `cells * resident * planes`, and each plane takes the window at
-`(UNIT_POS / lanes) * cells * resident`.
-
-## The verb, and the trap
-
-`Walk::region(i)` takes an index and a constant index folds, so a verb can chunk the cells walk:
+The drain is one verb, and the size alone decides its schedule:
 
 ```rust
-#[cube]
-pub fn drained<E: Numeric, Out: Numeric>(
-    cells: Walk,
-    acc: &Tile<E>,
-    dest: &mut Tile<Out>,
-    #[comptime] resident: usize,
-) {
-    #[unroll]
-    for chunk in 0..comptime!(total.div_ceil(resident)) {
+pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
+    let together = self.drains_together();
+    if comptime!(together) {
         sync_cube();
-        #[unroll]
-        for j in 0..resident { acc.at(&cells.region(i(chunk, j))).spill(j) }
+        for region in … { self.at(&region).spill_to_scratch(); }
         sync_cube();
-        #[unroll]
-        for j in 0..resident { dest.at(&cells.region(i(chunk, j))).add_from(acc, j) }
+        for region in … { dest.at(&region).add_from_scratch(&self.at(&region)); }
         sync_cube();
+    } else {
+        for region in … { dest.at(&region).copy_cast_from(&self.at(&region)); }
     }
 }
 ```
 
-**The slot must come from the verb, not from the fragment.** Today `with_scratch` hands every
-fragment the same window and `accumulate_cast_window` owns the whole bounce. The obvious extension
-is to hand fragment `i` the slot `i % resident` at open time, and that is wrong: the fragment index
-runs in the partition's `(mi, ni)` order and the drain runs in the cells walk's order, and nothing
-makes those the same. So `CmmaData` carries the plane's whole window and the spill and the add take
-a slot index the verb assigns.
+## Why there is no size between the two
 
-The round trip is the same shape with the reload put back, which is `rescale_rows`.
+A middle size has to hand each tile a slot chosen by whoever drains it, because the tiles outnumber
+the slots. The drain walks the partition in its walk's order and the partition indexes its tiles in
+its own, and nothing makes those agree, so `i % slots` over one order does not name the same slot as
+over the other. At these two sizes a tile's slot is a fact about the tile — its own index, or the
+only slot there is — so no drain's order can matter.
+
+`Walk::region(i)` does take an index and a constant index does fold, so the chunked form is
+*expressible*. It is the slot assignment that is not safe, not the loop.
 
 ## What is left, in order
 
-1. `Scratch`, the sizing, and `CmmaData`'s two halves taking a slot. No behaviour change at
-   `Tiles(1)`.
-2. The `drained` verb, and the drain in `matmul/kernel.rs` calling it instead of looping
-   `copy_cast_from` per cell.
+1. ~~`Scratch`, the sizing, and `CmmaData`'s two halves.~~ Landed as `Resident`.
+2. ~~The drain verb, and `matmul/kernel.rs` calling it.~~ Landed as `Tile::drained_into`.
 3. `rescale_rows` onto the same verb, which is where the duplicated lane deal goes away: the
    `lane + t * lanes` loop is written out twice today, in `plane.rs` and in `cmma.rs`.
-4. metabolic: a count on `GemmStrategy`, clamped by the shared-memory budget *after* the stage's
-   claim, raced by the table, printed in the space table. `MatmulNest::Fragments` drops the
-   `Scratch { planes, lanes }` struct for the count.
+4. ~~metabolic: the setting, the budget, the raced rows.~~ Landed as `GemmStrategy::scratch`.
+   Still open there: the printed space table does not show the window, and the race has not been
+   run — the whole-grid arm may lose to the smaller block the budget forces on it rather than to
+   its barriers.
 5. Name the concept once, before cubek-Ringo's `landing` merges and there are two words for one
    window.
 

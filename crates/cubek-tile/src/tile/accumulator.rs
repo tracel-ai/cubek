@@ -57,6 +57,70 @@ impl Fragments {
     }
 }
 
+/// How much of a plane's accumulator its scratch holds at once.
+///
+/// A fragment's cells sit across the plane's lanes in a layout only the hardware knows, so
+/// anything that must touch them one at a time spills the tile to shared memory first. How much is
+/// resident is a trade and not a fact: barriers against bytes.
+///
+/// **There is no size between the two.** A middle size would have to hand each tile a slot chosen
+/// by whoever drains it, and a drain walks the partition in its walk's order while the partition
+/// indexes its tiles in its own — not the same order, and nothing makes them agree. At these two
+/// sizes a tile's slot is a fact about the tile: its own index, or the one slot there is.
+/// Serialized because a caller's setting rides a persisted autotune key, so the
+/// value a winner was measured at has to come back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum Resident {
+    /// No scratch. The fragment's own intrinsic does the work, and a drain that needs cells
+    /// refuses by name.
+    None,
+    /// One tile. The smallest footprint, and three cube-wide barriers per tile drained.
+    OneTile,
+    /// The plane's whole partition. Two barriers for the whole drain, at as many times the
+    /// footprint as the partition has tiles.
+    WholePartition,
+}
+
+/// `none`, `one_tile`, `whole_partition` — what a persisted setting is read by.
+impl core::fmt::Display for Resident {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Resident::None => write!(f, "none"),
+            Resident::OneTile => write!(f, "one_tile"),
+            Resident::WholePartition => write!(f, "whole_partition"),
+        }
+    }
+}
+
+impl Resident {
+    /// Slots the window holds for a partition of `tiles`.
+    pub fn slots(self, tiles: usize) -> usize {
+        match self {
+            Resident::None => 0,
+            Resident::OneTile => 1,
+            Resident::WholePartition => tiles,
+        }
+    }
+
+    /// The slot tile `i` of a partition of `tiles` spills into: its own where every tile has one,
+    /// the only slot otherwise.
+    pub fn slot_of(self, i: usize, tiles: usize) -> usize {
+        match self {
+            Resident::WholePartition => i,
+            Resident::None | Resident::OneTile => {
+                let _ = (i, tiles);
+                0
+            }
+        }
+    }
+
+    /// Whether a drain may hoist its barriers out of the per-tile loop, which it may exactly when
+    /// no two tiles share a slot.
+    pub fn drains_together(self) -> bool {
+        matches!(self, Resident::WholePartition)
+    }
+}
+
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// The plane-resident accumulator this output contracts in through the tensor-core
@@ -166,11 +230,19 @@ impl<Acc: Numeric> Tile<Acc> {
         )
     }
 
-    /// This plane-resident accumulator opened for row-wise ops: a scratch of one tile in shared
-    /// memory per plane, `planes` of them for the cube's planes of `lanes` units, that
-    /// [`rescale_rows`](Tile::rescale_rows) bounces each tile through. Stated where the
-    /// accumulator opens, since the scratch is part of its residence.
-    pub fn with_scratch(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
+    /// This plane-resident accumulator opened with a scratch: a window of shared memory per
+    /// plane, `planes` of them for the cube's planes of `lanes` units, that a fragment bounces
+    /// through where its cells have to be touched one at a time. Stated where the accumulator
+    /// opens, since the scratch is part of its residence.
+    ///
+    /// `resident` is how much of the partition the window holds, which is a trade rather than a
+    /// fact: barriers against bytes ([`Resident`]).
+    pub fn with_scratch(
+        self,
+        #[comptime] resident: Resident,
+        #[comptime] planes: usize,
+        #[comptime] lanes: usize,
+    ) -> Tile<Acc> {
         let space = comptime!(self.space.clone());
         let depth = comptime!(self.depth);
         let levels = comptime!(self.levels.clone());
@@ -178,28 +250,30 @@ impl<Acc: Numeric> Tile<Acc> {
             TileKind::PlanePartition(p) => {
                 let (m, n) = p.at(0usize, 0usize).shape();
                 let cells = comptime!(m * n);
-                let start = (UNIT_POS as usize / lanes) * cells;
-                let end = start + cells;
-                let scratch = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
-                    .map(|scratch| &scratch[start..end]);
-                // Every fragment carries the scratch too: one taken off the partition by `at`
-                // bounces on its own, which is how it drains into a store that folds.
+                let tiles = comptime!(p.m_tiles * p.n_tiles);
+                let slots = comptime!(resident.slots(tiles));
+                // This plane's window, and the cube's whole claim behind it.
+                let plane = (UNIT_POS as usize / lanes) * comptime!(cells * slots);
+                let shared = Shared::<[Acc]>::new_slice(comptime!(cells * slots * planes));
+                // **Every fragment carries its own slot.** One taken off the partition by `at`
+                // then bounces on its own, and — where the whole partition is resident — no two
+                // fragments share a slot, so nothing depends on the order a drain walks them in.
                 let mut frags = Sequence::<PlaneTile<Acc>>::new();
                 #[unroll]
-                for i in 0..comptime!(p.m_tiles * p.n_tiles) {
-                    frags.push(
-                        p.frags
-                            .index(i)
-                            .clone()
-                            .with_scratch(scratch.clone(), lanes),
-                    );
+                for i in 0..tiles {
+                    let start = plane + comptime!(cells * resident.slot_of(i, tiles));
+                    let slot = shared.clone().map(|s| &s[start..start + cells]);
+                    frags.push(p.frags.index(i).clone().with_scratch(slot, lanes));
                 }
                 Tile::<Acc> {
                     tile_kind: TileKind::new_PlanePartition(PlanePartition::<Acc> {
                         frags,
                         m_tiles: comptime!(p.m_tiles),
                         n_tiles: comptime!(p.n_tiles),
-                        scratch: ComptimeOption::new_Some(scratch),
+                        scratch: ComptimeOption::new_Some(
+                            shared.clone().map(|s| &s[plane..plane + cells]),
+                        ),
+                        resident: comptime!(resident),
                     }),
                     space,
                     depth,

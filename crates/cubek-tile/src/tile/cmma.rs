@@ -157,26 +157,31 @@ impl<T: Numeric> CmmaData<T> {
     /// each lane adds its cells through the store's own write, which is the atomic add. The
     /// intrinsic's store replaces and elects no writer; the scratch is what gives each cell one
     /// owner, so a lane adds it once. The syncs are cube-wide, as every fragment bounce's are.
-    pub(crate) fn accumulate_cast_window<Out: Numeric>(
+    /// Store this fragment into its own slot of the plane's scratch: the first half of a bounce,
+    /// and the one thing a fragment can do with its cells.
+    ///
+    /// **The caller owns the barriers.** A whole partition spilled together pays them once for the
+    /// drain instead of once per tile, which is the whole point of the scratch being sizeable.
+    pub(crate) fn spill_to_scratch(&self) {
+        self.store_scratch(&self.scratch_slot("spill_to_scratch"));
+    }
+
+    /// Add this fragment's spilled cells into `mem` through the store's own write, which for a
+    /// folding store is the atomic add: the second half of a bounce.
+    ///
+    /// Lines of the store's width rather than scalars, and the lanes deal them between
+    /// themselves, so every cell has exactly one owner and lands once.
+    pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
         mem: &mut MemData<Out>,
         #[comptime] space: Space,
     ) {
-        let scratch = #[comptime]
-        match &self.scratch {
-            ComptimeOption::Some(scratch) => scratch.clone(),
-            ComptimeOption::None => panic!(
-                "CmmaData::accumulate_cast_window: a fragment folds into an accumulating store \
-                 through a scratch; open the accumulator with `with_scratch`"
-            ),
-        };
+        let scratch = self.scratch_slot("add_from_scratch");
         let (m, n) = comptime!(self.shape);
-        // The store takes lines of its own width, so the tile is dealt out in lines: `n` is the
-        // instruction's and a served width divides it.
         let width = comptime!(mem.store.vector_size);
         comptime!(assert!(
             n.is_multiple_of(width),
-            "CmmaData::accumulate_cast_window: the store's lines ({width}) do not divide the \
+            "CmmaData::add_from_scratch: the store's lines ({width}) do not divide the \
              fragment's columns ({n})"
         ));
         let size!(W) = width;
@@ -186,9 +191,6 @@ impl<T: Numeric> CmmaData<T> {
         let lane = UNIT_POS_X as usize % lanes;
         let axes = comptime!(MatrixAxes::trailing_pair(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
-        sync_cube();
-        self.store_scratch(&scratch);
-        sync_cube();
         #[unroll]
         for t in 0..comptime!(lines.div_ceil(lanes)) {
             let line = lane + t * lanes;
@@ -204,7 +206,32 @@ impl<T: Numeric> CmmaData<T> {
                 );
             }
         }
+    }
+
+    /// Drain this fragment into a store that folds, on its own: spill, wait, add, wait. What a
+    /// partition drained a tile at a time runs, and the barriers a whole-partition drain hoists.
+    pub(crate) fn accumulate_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
         sync_cube();
+        self.spill_to_scratch();
+        sync_cube();
+        self.add_from_scratch(mem, space);
+        sync_cube();
+    }
+
+    /// This fragment's slot of the plane's scratch, or the reason there is none.
+    fn scratch_slot(&self, #[comptime] site: &str) -> Shared<[T]> {
+        #[comptime]
+        match &self.scratch {
+            ComptimeOption::Some(scratch) => scratch.clone(),
+            ComptimeOption::None => panic!(
+                "CmmaData::{site}: a fragment folds into an accumulating store through a \
+                 scratch; open the accumulator with `with_scratch`"
+            ),
+        }
     }
 
     /// Drain this fragment into `mem`'s *window*, casting `T` down to the sink's element

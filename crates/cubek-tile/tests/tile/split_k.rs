@@ -777,7 +777,7 @@ fn atomic_split_cmma<E: Numeric>(
                 comptime!(Fragments::below(&c_cube, &a_cube)),
                 Monoid::Sum,
             )
-            .with_scratch(planes, lanes);
+            .with_scratch(Resident::OneTile, planes, lanes);
         acc.zero();
         let walk = cube.walk();
         let mut ring = Ring::smem(

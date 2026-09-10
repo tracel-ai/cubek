@@ -816,6 +816,82 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Spill this plane-resident tile into its slot of the plane's scratch, the first half of a
+    /// bounce. [`drained_into`](Self::drained_into) owns the barriers around it.
+    pub fn spill_to_scratch(&self) {
+        match &self.tile_kind {
+            TileKind::PlaneTile(t) => t.spill_to_scratch(),
+            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::spill_to_scratch: a plane-resident tile spills; nothing else does")
+            }
+        }
+    }
+
+    /// Add `src`'s spilled cells into this memory window, the second half of a bounce. Where this
+    /// store folds, the add is its atomic one.
+    pub fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
+        let space = comptime!(self.space.clone());
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
+                s.add_from_scratch(d, space)
+            }
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlanePartition(s)) => {
+                s.fragment().add_from_scratch(d, space)
+            }
+            _ => panic!(
+                "Tile::add_from_scratch: a spilled plane tile adds into memory. This is a \
+                         tuple match, which the cube macro reads as plain Rust, so the wildcard is \
+                         allowed here where a single-value match on the enum would need every arm."
+            ),
+        }
+    }
+
+    /// Drain this plane-resident accumulator into `dest`, cast to `dest`'s element, over the tiles
+    /// the `cells` level names.
+    ///
+    /// **The scratch's size decides the barrier count.** With one tile resident each tile drains on
+    /// its own, three cube-wide barriers apiece. With the whole partition resident no two tiles
+    /// share a slot, so every spill happens, then one barrier, then every add: two barriers for the
+    /// drain however many tiles it has. That is the whole reason the size is a setting
+    /// ([`Resident`]).
+    pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
+        let together = self.drains_together();
+        if comptime!(together) {
+            sync_cube();
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                self.at(&region).spill_to_scratch();
+            }
+            sync_cube();
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                window.add_from_scratch(&self.at(&region));
+            }
+            sync_cube();
+        } else {
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                window.copy_cast_from(&self.at(&region));
+            }
+        }
+    }
+
+    /// Whether a drain may hoist its barriers out of the per-tile loop, which it may exactly when
+    /// this accumulator's scratch gives every tile a slot of its own.
+    pub(crate) fn drains_together(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::PlanePartition(p) => comptime!(p.resident.drains_together()),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(false),
+        }
+    }
+
     /// Whether one factor tap lands inside the input axes that factor moves. The physical position
     /// is already stepped from the row's hoisted anchor; the memory window then checks only the
     /// physical carriers of `axis`, avoiding rebuilding the projection per tap.
