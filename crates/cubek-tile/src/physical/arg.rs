@@ -3,7 +3,7 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
@@ -93,8 +93,19 @@ impl TileSpec {
     /// `field`-wide slot, innermost axis first; the tile then serves those values, unpacking at
     /// the read. Values and nothing else: scales are a second tensor and folding them in is a verb
     /// the kernel writes, so a packed operand is sayable on its own and a q4 kernel needs no scheme.
-    pub fn packed(self, field: QuantValue) -> Self {
-        self.packing(Packing::Packed { field })
+    pub fn packed(self, field: impl Into<Field>) -> Self {
+        self.packing(Packing::Packed {
+            field: field.into(),
+        })
+    }
+
+    /// [`packed`](Self::packed) served `width` values a line out of one bound word, for a reader
+    /// stepping one value at a time: a scales operand stored as bytes is read this way.
+    pub fn subword(self, field: impl Into<Field>, width: usize) -> Self {
+        self.packing(Packing::Subword {
+            field: field.into(),
+            width,
+        })
     }
 
     /// [`packed`](Self::packed) for a caller holding the [`Packing`] itself, which the launch
@@ -215,11 +226,17 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .under(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) for a [`packed`](TileSpec::packed) operand: `E` is the *stored*
-    /// element (`u32` words) and `O` the served value, unpacked at the read. The two differ, so
-    /// the served type is stated at the call rather than read off the binding.
-    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
-        Tile::<O>::of_packed(
+    /// [`tile`](Self::tile) with the element stated instead of inferred: `E` is what the binding
+    /// *stores* and `O` what the tile reads out of it, unpacked where the binding states a
+    /// [`packing`](TileSpec::packed) and read as it lies where it does not. The two differ for a
+    /// packed binding, whose element is the word rather than the value, so `O` cannot be read off
+    /// the binding and is written at the call.
+    ///
+    /// This is what a kernel writes when how its operand is stored is the binding's business and
+    /// not its own: a factor packed into words and a factor lying at its own element are the same
+    /// call.
+    pub fn tile_as<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
+        Tile::<O>::of_stored(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
@@ -245,39 +262,6 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
             offsets,
         )
         .under(comptime!(space.levels().to_vec()))
-    }
-}
-
-/// [`Scales`] as one launch argument. `V` is the block level's served width; the global level
-/// is one scalar, and `'static` because a comptime-optional launch argument has to be.
-#[derive(CubeType, CubeLaunch)]
-pub struct ScalesArg<'a, S: Numeric, V: Size> {
-    pub block: TileArg<'a, S, V>,
-    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
-}
-
-impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
-    pub fn block(block: TileArgLaunch<'static, S, V>) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::None)
-    }
-
-    pub fn block_under(
-        block: TileArgLaunch<'static, S, V>,
-        global: TileArgLaunch<'static, S, Const<1>>,
-    ) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
-    }
-}
-
-#[cube]
-impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
-        let block = self.block.tile(comptime!(space.clone()));
-        #[comptime]
-        match &self.global {
-            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
-            ComptimeOption::None => Scales::<S>::block(block),
-        }
     }
 }
 

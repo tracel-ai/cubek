@@ -466,6 +466,9 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.nd::<u32, WP, W>(guard)
             }
+            Packing::Subword { .. } => {
+                panic!("Tile::nd_packed: a sub-word operand is read as a matrix, one value a step")
+            }
         }
     }
 
@@ -565,6 +568,9 @@ impl<T: Numeric> Tile<T> {
             Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.nd_split::<u32, WP, W>()
+            }
+            Packing::Subword { .. } => {
+                panic!("Tile::nd_split_packed: a sub-word operand is read as a matrix")
             }
         }
     }

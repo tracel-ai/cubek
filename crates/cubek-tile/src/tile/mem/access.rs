@@ -7,11 +7,12 @@ use cubecl::{
     std::quant::unpack_fields,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, ErasedTensor, View, ViewMut, WriteOnly,
-        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn},
+        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout},
     },
 };
 
 use crate::*;
+use cubecl::unexpanded;
 
 #[cube]
 impl<T: Numeric> Tile<T> {
@@ -51,6 +52,24 @@ impl<T: Numeric> Tile<T> {
             }
             TileKind::Procedural(_) => panic!("Tile::view_mut: a procedural tile is not writable"),
         }
+    }
+}
+
+impl<T: Numeric> MemData<T> {
+    /// This store with `landing` as its plane's landing window ([`Tile::with_landing`]).
+    pub(crate) fn with_landing(self, _landing: Shared<[T]>) -> MemData<T> {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> MemDataExpand<T> {
+    pub(crate) fn __expand_with_landing_method(
+        mut self,
+        _scope: &Scope,
+        landing: <Shared<[T]> as CubeType>::ExpandType,
+    ) -> Self {
+        self.landing = ComptimeOptionExpand::Some(landing);
+        self
     }
 }
 
@@ -193,6 +212,10 @@ impl<T: Numeric> MemData<T> {
                             let size!(WP) = comptime!(packing.physical(src.store.vector_size));
                             self.scan_transparent::<u32, WP, W>(src)
                         }
+                        Packing::Subword { .. } => panic!(
+                            "MemData::fill_from: a sub-word operand is read one value a step, \
+                             not staged"
+                        ),
                     }
                 }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
@@ -783,6 +806,18 @@ impl<T: Numeric> MemData<T> {
         self.store.buffer_mut().slice_mut(offset, end)
     }
 
+    /// This plane's landing window, opened by [`Tile::with_landing`].
+    pub(crate) fn landing(&self) -> Shared<[T]> {
+        #[comptime]
+        match &self.landing {
+            ComptimeOption::Some(landing) => landing.clone(),
+            ComptimeOption::None => panic!(
+                "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
+                 shared memory; open the operand with `with_landing(planes, lanes)`"
+            ),
+        }
+    }
+
     /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
     /// one contiguous region, so on a tiled store it must lie inside one storage tile, which is
     /// what [`Storage`] says of it.
@@ -994,7 +1029,40 @@ impl<T: Numeric> MemData<T> {
                     comptime!(guard.checks() && self.access.overhang.masks()),
                 )
             }
+            Packing::Subword { .. } => {
+                panic!("MemData::transparent: a sub-word operand is read through matrix_subword")
+            }
         }
+    }
+
+    /// [`matrix_transparent`](MemData::matrix_transparent) for a sub-word operand: `layout`
+    /// counts its columns in words, and the view serves `W` of a word's fields per read.
+    pub(crate) fn matrix_subword<
+        W: Size,
+        L: TileLayout<Coords2d> + Layout<SourceCoordinates = CoordsDyn> + Clone,
+    >(
+        &self,
+        layout: L,
+        #[comptime] field: Field,
+    ) -> MatrixView<'_, Vector<T, W>> {
+        comptime!(assert!(
+            self.access.storage == Storage::Strided,
+            "MemData::matrix_subword: a sub-word operand lies in global memory as bound"
+        ));
+        let served = comptime!(self.store.vector_size);
+        let per_line = comptime!(field.per_word() / served);
+        // The base and window layouts address served lines; the storage under them maps a line
+        // to its word.
+        let storage = self.lines_storage::<u32, Const<1>>();
+        let window = self.window().with_guard(comptime!(Guard::Checked));
+        let words = storage
+            .view(WordOfLine::new(storage.len(), per_line))
+            .view(self.base())
+            .view(window.clone())
+            .view(layout.clone());
+        let values =
+            SubwordView::<T, W, L>::new(words, layout, window, self.base(), comptime!(field));
+        MaskedView::new(values.view(), comptime!(self.access.overhang.masks()))
     }
 
     /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves
@@ -1290,6 +1358,7 @@ impl<T: Numeric> MemData<T> {
             // A region step moves this window and the source window by the same physical delta,
             // so the source window rides down as it was filled and only `origin` above moves.
             source_window: self.source_window.clone(),
+            landing: self.landing.clone(),
             map,
             offsets: self.offsets.clone(),
             window_start: start,
@@ -1379,6 +1448,7 @@ impl<T: Numeric> MemData<T> {
             ),
             projection: comptime!(proj),
             source_window: self.source_window.clone(),
+            landing: self.landing.clone(),
             map: self.map.clone(),
             offsets: self.offsets.clone(),
             window_start: start,

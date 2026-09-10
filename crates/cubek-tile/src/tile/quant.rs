@@ -85,7 +85,7 @@ pub(crate) fn scheme_packing(scheme: QuantScheme) -> Packing {
     match scheme.num_quants() {
         1 => Packing::Native,
         _ => Packing::Packed {
-            field: scheme.value,
+            field: scheme.value.into(),
         },
     }
 }

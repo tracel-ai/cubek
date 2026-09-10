@@ -449,6 +449,39 @@ impl<T: Numeric> Tile<T> {
                 let size!(WP) = physical;
                 self.matrix_transparent::<u32, WP, W>(axes, i)
             }
+            Packing::Subword { field, .. } => self.matrix_subword::<W>(axes, i, field),
+        }
+    }
+
+    /// [`matrix_packed`](Tile::matrix_packed) for a sub-word operand: the words are laid out one
+    /// per line, so the matrix counts its columns in words, and the view picks the slot.
+    fn matrix_subword<W: Size>(
+        &self,
+        #[comptime] axes: MatrixAxes,
+        i: usize,
+        #[comptime] field: Field,
+    ) -> MatrixView<'_, Vector<T, W>> {
+        let per_word = comptime!(field.per_word());
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let bound = g.extent();
+                let layout = projected_batch_matrix(
+                    &bound,
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    per_word,
+                    axes,
+                    i,
+                );
+                g.matrix_subword::<W, ProjectedMatrix>(layout, field)
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::matrix_subword: a sub-word operand lies in memory")
+            }
         }
     }
 
@@ -511,6 +544,9 @@ impl<T: Numeric> Tile<T> {
             Packing::Packed { field: _ } => {
                 let size!(WP) = physical;
                 self.fragment_matrix::<u32, WP, W>(rows, cols)
+            }
+            Packing::Subword { .. } => {
+                panic!("Tile::fragment_matrix_packed: a fragment reads whole words")
             }
         }
     }

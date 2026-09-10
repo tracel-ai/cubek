@@ -56,18 +56,26 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) from a [`packed`](TileSpec::packed) operand: the binding holds stored
-    /// `u32` words and the tile serves the values inside them, `factor` per word, unpacked at the
-    /// read, so the served width is the binding's × that factor. No scales and no scheme: an
-    /// operand that also has scales names them as its own tensor.
-    pub(crate) fn of_packed<E: CubePrimitive>(
+    /// [`of`](Tile::of) where the stored element `E` and the served element `T` need not be the
+    /// same: a [`packed`](TileSpec::packed) binding holds `u32` words and the tile reads the
+    /// values inside them, `factor` per word; a binding that states no packing reads its own
+    /// element, and this is [`of`](Tile::of) with the type written out rather than inferred. No
+    /// scales and no scheme: an operand that also has scales names them as its own tensor.
+    ///
+    /// `T` is stated at the call because a packed binding's element is the word, not the value,
+    /// so nothing can infer it. Where the binding does read its own element, the two must agree,
+    /// which [`of`](Tile::of) proves in the type system and this checks here.
+    pub(crate) fn of_stored<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        let stored = elem_type_of::<E>();
+        let read = elem_type_of::<T>();
         comptime!(assert!(
-            spec.packing != Packing::Plain,
-            "Tile::of_packed: the operand states no packing, so it is a plain tile (Tile::of)"
+            spec.packing != Packing::Plain || stored == read,
+            "Tile::of_stored: a binding that states no packing is read at the element it is \
+             bound at, {stored:?}, not {read:?}"
         ));
         Tile::<T>::of_tensor::<E>(
             values,
@@ -308,8 +316,8 @@ impl<T: Numeric> Tile<T> {
              its spec may not state a packing too"
         ));
         // A packed store serves `factor` values per stored element, on top of the binding's own
-        // line width.
-        let vector_size = comptime!(bound_width * packing.factor());
+        // line width; a sub-word store serves its stated width out of one word.
+        let vector_size = comptime!(packing.served(bound_width));
         // The operand's own contract, checked here rather than at `TileSpec` construction because
         // it turns on the served width, which only this call, not the spec, ever knows. Same for a
         // padded stage width, which `StridedTileSource` already checked for the specs it builds;
@@ -414,6 +422,7 @@ impl<T: Numeric> Tile<T> {
                 }),
                 split_share,
                 init_from: comptime!(InitFrom::Cell),
+                landing: ComptimeOption::new_None(),
             }),
             space: comptime!(space),
             depth: comptime!(0usize),
