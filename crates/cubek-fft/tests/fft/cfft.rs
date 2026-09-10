@@ -15,7 +15,7 @@ fn empty_tensor(
 }
 
 /// Scale every element of an f32 `HostData` by `factor`.
-fn with_scale(mut host: HostData, factor: f32) -> HostData {
+fn scaled(mut host: HostData, factor: f32) -> HostData {
     match &mut host.data {
         HostDataVec::F32(values) => values.iter_mut().for_each(|v| *v *= factor),
         _ => panic!("expected f32 host data"),

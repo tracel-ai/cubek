@@ -169,9 +169,9 @@ impl<E: Numeric> PlaneTile<E> {
     /// Contract this plane tile, each factor times whatever scales it carries.
     ///
     /// A hardware instruction eats its operands' format, so a scaled factor reaches one through
-    /// memory: [`CmmaData::mma_scaled`] lands it, unpacked and scaled, in the plane's own window
-    /// and loads the fragment from there. The manual-mma form takes its operands from registers
-    /// and has no such landing, so it refuses one.
+    /// memory: [`CmmaData::mma`] lands it, unpacked and scaled, in the plane's own window and
+    /// loads the fragment from there. The manual-mma form takes its operands from registers and
+    /// has no such landing, so it refuses one.
     pub fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &mut self,
         lhs: &Scaled<EL, LS>,
@@ -181,26 +181,18 @@ impl<E: Numeric> PlaneTile<E> {
     ) {
         let lhs_values = lhs.values();
         let rhs_values = rhs.values();
-        let lhs_count = lhs.levels().len();
-        let rhs_count = rhs.levels().len();
-        let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
         match self {
             PlaneTile::Cmma(d) => {
                 let transposed = transposed_rhs(&lhs_values, &rhs_values);
                 strided_2d(&lhs_values, &rhs_values, comptime!(out.clone()), transposed);
                 hardware_semiring(semiring);
-                if comptime!(scaled) {
-                    d.mma_scaled(lhs, rhs, out)
-                } else {
-                    d.mma(&lhs_values, &rhs_values)
-                }
+                d.mma(lhs, rhs, out)
             }
             PlaneTile::Mma(d) => {
-                comptime!(assert!(
-                    !scaled,
-                    "mma: the manual-mma instruction takes its operands from registers, where a \
-                     scaled factor has nowhere to land; open a cmma accumulator"
-                ));
+                // The manual-mma instruction takes its operands from registers, where a scaled
+                // factor has nowhere to land.
+                lhs.refuse_scales();
+                rhs.refuse_scales();
                 flattened_k(&lhs_values, &rhs_values, out);
                 hardware_semiring(semiring);
                 d.mma(&lhs_values, &rhs_values)
