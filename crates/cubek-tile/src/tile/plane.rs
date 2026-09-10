@@ -170,6 +170,19 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    /// Add `src`'s block into this one, casting up. Only the register encoding promotes: a
+    /// hardware fragment's element is the instruction's, so there is no narrow twin of it to
+    /// drain, and the pairing is a plan's mistake rather than a shape this could serve.
+    pub(crate) fn add_cast_from<S: Numeric>(&mut self, src: &PlaneTile<S>) {
+        match (self, src) {
+            (PlaneTile::Register(d), PlaneTile::Register(s)) => d.add_cast_from(s),
+            _ => panic!(
+                "PlaneTile::add_cast_from: a register block promotes into a register block; a \
+                 fragment accumulates in the element its instruction names"
+            ),
+        }
+    }
+
     /// `space` is the sink window's, and only the software block reads it: a hardware fragment
     /// is exactly the instruction's shape and stores through its own intrinsic.
     pub(crate) fn store_cast_window<Out: Numeric>(

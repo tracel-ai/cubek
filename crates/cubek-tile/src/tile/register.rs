@@ -124,6 +124,39 @@ impl<T: Numeric> RegisterData<T> {
             self.data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
+
+    /// Add `src`'s block into this one, casting each line up to `T`.
+    ///
+    /// The promotion a narrow leaf drains through. A block accumulating in the operands' own
+    /// element is what reaches a device's packed instruction — `hfma2` on an `f16` block, which
+    /// is twice the arithmetic of the `f32` one and the only way past that ceiling on a target
+    /// with no matrix units — but the sum it can carry is bounded by the element: `f16` counts
+    /// integers exactly to 2048, so a long reduction accumulated in it stops advancing part way
+    /// through. Draining the narrow block into a wide one **inside** the walk keeps both: the
+    /// packed instruction on the leaf's own steps, and the wide sum across them, with the error
+    /// bounded by the leaf's depth rather than by the whole contraction.
+    ///
+    /// Both blocks are the same `mr × nr` grid at the same fold, since the narrow one is opened
+    /// against the same sink; the add is line-wise and needs no view of either.
+    pub(crate) fn add_cast_from<S: Numeric>(&mut self, src: &RegisterData<S>) {
+        comptime!(assert!(
+            self.mr == src.mr && self.nr == src.nr && self.fold == src.fold,
+            "RegisterData::add_cast_from: the blocks are {}x{} fold {} and {}x{} fold {}; a \
+             promotion adds line for line and both are opened against one sink",
+            self.mr,
+            self.nr,
+            self.fold,
+            src.mr,
+            src.nr,
+            src.fold
+        ));
+        let count = comptime!(self.mr * self.nr);
+        #[allow(clippy::needless_range_loop)]
+        #[unroll]
+        for i in 0..count {
+            self.data[i] += Vector::<T, RA>::cast_from(src.data[i]);
+        }
+    }
 }
 
 #[cube]
