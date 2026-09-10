@@ -26,13 +26,17 @@ plan continues `QUANT_PLAN.md`; the vocabulary is that file's. Trees: `cubek-Rin
 
 ## Decisions
 
-1. **Explicit sides, one type.** `Scaling<S> { lhs: ComptimeOption<Scales<S>>, rhs: ComptimeOption<Scales<S>> }`
-   with `Scaling::lhs(s)` and `Scaling::rhs(s)`. `mm_scaled`, `mma_scaled` and
-   `mma_scaled_with` take `&Scaling<S>`. `ScaleSide` and `scale_side` go; the consumers read the
-   side off which option is present. Both present is refused with a message naming quest 4;
-   neither present is refused with "use `mm`". `ScalesArg` at launch is unchanged; the kernel
-   wraps it. QUANT_PLAN's item 1 (`a.scaled(&s)` through an operand trait) stays the longer
-   road; `Scaling` is what it would produce at the leaf, so it is not a detour.
+1. **The scales ride the factor they multiply.** *(Revised 2026-09-10 after Louis: `Scaling`,
+   `ScaleSide` and the `ScalesArg` bundle were all the same mistake, a type re-encoding which
+   operand a scale belongs to. This is QUANT_PLAN item 1 and phase 4, taken now.)*
+   `Scaled<E, S>` is a tile plus the levels written on it: `w.scaled(&block).scaled(&global)`,
+   one call per level, `maybe_scaled` for a level a scheme may not have, `Tile::plain` for a
+   factor carrying none. `mm_scaled` and its three twins take two of them. The side is where the
+   kernel wrote it; depth is how many times it said so. `ScaleSide`, `Scaling`, `Scales` and
+   `ScalesArg` are deleted, and so are the six duplicated `*_scaled` paths, because a factor's
+   scales are a comptime option inside its own line source: absent, it folds nothing and emits
+   nothing. Proven, not asserted: a float matmul's Metal source is byte-identical across the
+   change, 705 lines both sides.
 2. **The block level stated at the binding.** `Projection::scales_of(values, inside)` derives a
    scales projection that spans the values' axes and omits `inside`, asserting `inside` is the
    inner digit of a split dim; `Projection::global_of(values)` spans them and addresses none.
@@ -59,7 +63,12 @@ plan continues `QUANT_PLAN.md`; the vocabulary is that file's. Trees: `cubek-Rin
    through decision 2. `PackedSide` stays (quest 9's commit 3 deletes it); the kernel spells
    `Scaling::lhs`/`Scaling::rhs` from it. The widen kernel and `needs_widening` go; the
    minifloat bytes bind as words through decision 3.
-6. **Prefill routes to the fragment leaf on the N-packed form.** The scaled matmul's derivation
+6. **~~Prefill routes to the fragment leaf on the N-packed form.~~** *(Dropped 2026-09-10. It was
+   built as a second kernel body with its own space, and software against tensor cores is the
+   family kernel's four nests, not a fork inside this one. The only difference in this algorithm
+   is the scaling. The tensor-core path comes back as the family's staged nest taking a scaled
+   factor, where the scale folds at the stage fill; the cmma landing leaf stays in cubek with its
+   four tests.)* The original text: The scaled matmul's derivation
    offers a `Fragments` microkernel ahead of `Registers` where the device offers a cmma shape for
    `(x, x, f32)` and the rows are a multiple of its `m`; the plan gains a `K` walk level and a
    fragment level; the kernel body branches on the comptime microkernel. The selector's heuristic
