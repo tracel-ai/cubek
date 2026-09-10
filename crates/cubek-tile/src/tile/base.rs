@@ -851,17 +851,36 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Drain this plane-resident accumulator into `dest`, cast to `dest`'s element, over the tiles
-    /// the `cells` level names.
+    /// the `cells` level names — `None` where the accumulator is one tile and the drain one store.
+    ///
+    /// **`self` and `dest` are indexed by the same region**, so a caller that narrows one narrows
+    /// the other to the same window. An accumulator opened wider than the destination handed over
+    /// resolves each region somewhere else and drains the wrong cells.
     ///
     /// **The scratch's size decides the barrier count.** With one tile resident each tile drains on
     /// its own, three cube-wide barriers apiece. With the whole partition resident no two tiles
     /// share a slot, so every spill happens, then one barrier, then every add: two barriers for the
     /// drain however many tiles it has. That is the whole reason the size is a setting
     /// ([`Resident`]).
-    pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
+    pub fn drained_into<Out: Numeric>(
+        &self,
+        dest: &Tile<Out>,
+        #[comptime] cells: Option<Level>,
+    ) {
+        match cells {
+            // A grid below the drain: one region of `cells` per tile of it.
+            Some(cells) => self.drain_grid(dest, cells),
+            // No grid: the accumulator is one tile and the drain is one store.
+            // The register leaves are this shape, since their block is the
+            // plane's whole box rather than a partition of it.
+            None => self.drain_tile(dest),
+        }
+    }
+
+    /// [`drained_into`](Self::drained_into) over a grid of tiles.
+    fn drain_grid<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
         let resident = self.resident();
         if comptime!(!resident.bounces()) {
-            // Straight out through the intrinsic, each tile on its own. No window, no barrier.
             for region in dest.over(&comptime!(cells.clone())).unrolled() {
                 let mut window = dest.at(&region);
                 window.copy_cast_from(&self.at(&region));
@@ -888,6 +907,21 @@ impl<T: Numeric> Tile<T> {
                 window.add_from_scratch(&self.at(&region));
                 sync_cube();
             }
+        }
+    }
+
+    /// [`drained_into`](Self::drained_into) for a single tile.
+    fn drain_tile<Out: Numeric>(&self, dest: &Tile<Out>) {
+        let resident = self.resident();
+        let mut window = dest.clone();
+        if comptime!(!resident.bounces()) {
+            window.copy_cast_from(self);
+        } else {
+            sync_cube();
+            self.spill_to_scratch();
+            sync_cube();
+            window.add_from_scratch(self);
+            sync_cube();
         }
     }
 

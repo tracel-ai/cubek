@@ -75,19 +75,23 @@ let acc = c_cube
 The drain is one verb, and the size alone decides its schedule:
 
 ```rust
-pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
-    let together = self.drains_together();
-    if comptime!(together) {
-        sync_cube();
-        for region in … { self.at(&region).spill_to_scratch(); }
-        sync_cube();
-        for region in … { dest.at(&region).add_from_scratch(&self.at(&region)); }
-        sync_cube();
-    } else {
-        for region in … { dest.at(&region).copy_cast_from(&self.at(&region)); }
+pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Option<Level>) {
+    match cells {
+        Some(cells) => self.drain_grid(dest, cells),
+        None => self.drain_tile(dest),
     }
 }
 ```
+
+`None` is the register leaves' shape: their block is the plane's whole box rather than a partition
+of it, so the drain is one store and there is no grid to walk. `drain_grid` is the three arms — no
+bounce, whole partition together, one tile at a time.
+
+**Both sides take the same region**, which cost two wrong answers to learn. `drain_grid` walks
+`dest.over(&cells)` and applies each region to `self` as well, so a caller narrowing the
+destination to a plane must narrow the accumulator with it. Handing over `acc` opened on the cube
+while `dest` is a plane's window resolves every region elsewhere: the gemv returned zeros. It is
+stated on the verb now.
 
 ## Why there is no size between the two
 
@@ -103,7 +107,10 @@ only slot there is — so no drain's order can matter.
 ## What is left, in order
 
 1. ~~`Scratch`, the sizing, and `CmmaData`'s two halves.~~ Landed as `Resident`.
-2. ~~The drain verb, and `matmul/kernel.rs` calling it.~~ Landed as `Tile::drained_into`.
+2. ~~The drain verb, and `matmul/kernel.rs` calling it.~~ Landed as `Tile::drained_into`, and
+   every one of metabolic's four float matmul decompositions drains through it — the two register
+   ones at `None`, the gemv and the fragment one over their grid. The arms that add in place in
+   gmem, the scaled matmul and attention keep their own drains, by Louis's call.
 3. `rescale_rows` onto the same verb, which is where the duplicated lane deal goes away: the
    `lane + t * lanes` loop is written out twice today, in `plane.rs` and in `cmma.rs`.
 4. ~~metabolic: the setting, the budget, the raced rows.~~ Landed as `GemmStrategy::scratch`.
