@@ -690,6 +690,42 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The one value this tile holds, read through whatever packing its binding states. What a
+    /// scale covering everything is: a tile every axis of which it spans at an extent of one.
+    pub(crate) fn only(&self) -> T {
+        let axes = comptime!(MatrixAxes::trailing_pair(&self.space));
+        let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
+        let origin = 0u32.runtime();
+        matrix.read((origin, origin)).extract(0usize)
+    }
+
+    /// Multiply every partial this accumulator holds by the one value `factor` carries, or by
+    /// nothing where no factor was bound, which is multiplying by one.
+    ///
+    /// A scale that covers everything the accumulator sums belongs here rather than on the terms:
+    /// it costs one multiply per cell instead of one per value read. A scale that does *not*
+    /// cover everything the accumulator sums cannot come here at all — the sum already holds
+    /// terms it does not apply to — and rides its factor instead ([`Tile::scaled`]).
+    pub fn scale<S: Numeric>(&mut self, factor: &ComptimeOption<Tile<S>>) {
+        #[comptime]
+        match factor {
+            ComptimeOption::Some(factor) => {
+                let value = T::cast_from(factor.only());
+                match &mut self.tile_kind {
+                    TileKind::PlaneTile(t) => t.scale(value),
+                    TileKind::PlanePartition(p) => p.scale(value),
+                    TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
+                        "Tile::scale: a memory tile is scaled by the cube, not by one unit                          (Tile::mul)"
+                    ),
+                    TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+                        panic!("Tile::scale: not writable")
+                    }
+                }
+            }
+            ComptimeOption::None => {}
+        }
+    }
+
     /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
     /// grid, a single plane tile's `1 × 1` of its whole window.
     pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
@@ -799,6 +835,10 @@ impl<T: Numeric> Tile<T> {
     /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
     /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
     /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
+    ///
+    /// Into a destination that folds ([`Write::Accumulate`]), a cmma fragment drains through the
+    /// scratch its accumulator was opened with, cell by cell, since its intrinsic's store cannot
+    /// add.
     pub fn copy_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
         let space = comptime!(self.space.clone());
         match (&mut self.tile_kind, &src.tile_kind) {
@@ -809,6 +849,128 @@ impl<T: Numeric> Tile<T> {
                 s.fragment().store_cast_window(d, space)
             }
             _ => panic!("Tile::copy_cast_from: a fragment stores into memory; nothing else casts"),
+        }
+    }
+
+    /// Spill this plane-resident tile into its slot of the plane's scratch, the first half of a
+    /// bounce. [`drained_into`](Self::drained_into) owns the barriers around it.
+    pub fn spill_to_scratch(&self) {
+        match &self.tile_kind {
+            TileKind::PlaneTile(t) => t.spill_to_scratch(),
+            TileKind::PlanePartition(p) => p.fragment().spill_to_scratch(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::spill_to_scratch: a plane-resident tile spills; nothing else does")
+            }
+        }
+    }
+
+    /// Add `src`'s spilled cells into this memory window, the second half of a bounce. Where this
+    /// store folds, the add is its atomic one.
+    pub fn add_from_scratch<S: Numeric>(&mut self, src: &Tile<S>) {
+        let space = comptime!(self.space.clone());
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlaneTile(s)) => {
+                s.add_from_scratch(d, space)
+            }
+            (TileKind::Gmem(d) | TileKind::Smem(d), TileKind::PlanePartition(s)) => {
+                s.fragment().add_from_scratch(d, space)
+            }
+            _ => panic!(
+                "Tile::add_from_scratch: a spilled plane tile adds into memory. This is a \
+                         tuple match, which the cube macro reads as plain Rust, so the wildcard is \
+                         allowed here where a single-value match on the enum would need every arm."
+            ),
+        }
+    }
+
+    /// Drain this plane-resident accumulator into `dest`, cast to `dest`'s element, over the tiles
+    /// the `cells` level names — `None` where the accumulator is one tile and the drain one store.
+    ///
+    /// **`self` and `dest` are indexed by the same region**, so a caller that narrows one narrows
+    /// the other to the same window. An accumulator opened wider than the destination handed over
+    /// resolves each region somewhere else and drains the wrong cells.
+    ///
+    /// **The scratch's size decides the barrier count.** With one tile resident each tile drains on
+    /// its own, three cube-wide barriers apiece. With the whole partition resident no two tiles
+    /// share a slot, so every spill happens, then one barrier, then every add: two barriers for the
+    /// drain however many tiles it has. That is the whole reason the size is a setting
+    /// ([`Resident`]).
+    pub fn drained_into<Out: Numeric>(
+        &self,
+        dest: &Tile<Out>,
+        #[comptime] cells: Option<Level>,
+    ) {
+        match cells {
+            // A grid below the drain: one region of `cells` per tile of it.
+            Some(cells) => self.drain_grid(dest, cells),
+            // No grid: the accumulator is one tile and the drain is one store.
+            // The register leaves are this shape, since their block is the
+            // plane's whole box rather than a partition of it.
+            None => self.drain_tile(dest),
+        }
+    }
+
+    /// [`drained_into`](Self::drained_into) over a grid of tiles.
+    fn drain_grid<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
+        let resident = self.resident();
+        if comptime!(!resident.bounces()) {
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                window.copy_cast_from(&self.at(&region));
+            }
+        } else if comptime!(resident.drains_together()) {
+            // Every tile has its own slot, so every spill can happen before any add.
+            sync_cube();
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                self.at(&region).spill_to_scratch();
+            }
+            sync_cube();
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                window.add_from_scratch(&self.at(&region));
+            }
+            sync_cube();
+        } else {
+            // One slot between them, so each tile's spill and add pair off inside the loop.
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                sync_cube();
+                self.at(&region).spill_to_scratch();
+                sync_cube();
+                window.add_from_scratch(&self.at(&region));
+                sync_cube();
+            }
+        }
+    }
+
+    /// [`drained_into`](Self::drained_into) for a single tile.
+    fn drain_tile<Out: Numeric>(&self, dest: &Tile<Out>) {
+        let resident = self.resident();
+        let mut window = dest.clone();
+        if comptime!(!resident.bounces()) {
+            window.copy_cast_from(self);
+        } else {
+            sync_cube();
+            self.spill_to_scratch();
+            sync_cube();
+            window.add_from_scratch(self);
+            sync_cube();
+        }
+    }
+
+    /// How much of this accumulator its scratch holds, which is what tells a drain whether to
+    /// bounce at all and whether it may hoist its barriers.
+    pub(crate) fn resident(&self) -> comptime_type!(Resident) {
+        match &self.tile_kind {
+            TileKind::PlanePartition(p) => comptime!(p.resident),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(Resident::None),
         }
     }
 

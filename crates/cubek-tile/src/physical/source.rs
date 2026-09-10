@@ -6,7 +6,9 @@ use core::marker::PhantomData;
 
 use cubecl::prelude::*;
 
-use cubecl::quant::scheme::{QuantScheme, QuantValue};
+use cubecl::quant::scheme::QuantScheme;
+
+use crate::Field;
 use cubecl::std::tensor::layout::linear::linear_view;
 use cubecl::zspace::Tiling;
 
@@ -175,8 +177,20 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
     /// This operand's values are fields of a stored word, `field` wide each. A fact of the values
     /// alone: the binding's shape and strides count *values*, and this says how many share a word.
     /// Scales are a second tensor and a second operand; nothing here decodes behind a read.
-    pub fn packed(mut self, field: QuantValue) -> Self {
-        self.data.packing = Packing::Packed { field };
+    pub fn packed(mut self, field: impl Into<Field>) -> Self {
+        self.data.packing = Packing::Packed {
+            field: field.into(),
+        };
+        self
+    }
+
+    /// [`packed`](Self::packed) served `width` values a line out of one bound word
+    /// ([`Packing::Subword`]). Bind the operand one word wide.
+    pub fn subword(mut self, field: impl Into<Field>, width: usize) -> Self {
+        self.data.packing = Packing::Subword {
+            field: field.into(),
+            width,
+        };
         self
     }
 
@@ -324,6 +338,14 @@ impl StridedOperand {
     /// The operand as the kernel's [`TileArg`](crate::TileArg) launch argument.
     pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V> {
         TileArgLaunch::new(self.tensor, self.spec)
+    }
+
+    /// The width the binding is typed at: the launch value for the kernel's `Size` generic.
+    /// [`vector_size`](Self::vector_size) is what the operand *serves*, which a packed store
+    /// holds in fewer words. The two are the same for a binding that states no packing, which is
+    /// why a kernel can take this for every operand without knowing which it has.
+    pub fn bound_width(&self) -> usize {
+        self.spec.packing.physical(self.vector_size)
     }
 }
 

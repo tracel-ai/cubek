@@ -367,6 +367,7 @@ impl<T: Numeric> MemData<T> {
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
+                landing: ComptimeOption::new_None(),
             }),
             space: comptime!(meta.space),
             depth: comptime!(0usize),

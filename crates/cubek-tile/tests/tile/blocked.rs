@@ -15,6 +15,13 @@ use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
 
+/// Which factor a test kernel writes its scales on; the engine has no such enum.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Scaled {
+    Lhs,
+    Rhs,
+}
+
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
 /// The contracted axis, unsplit: what the reference kernel walks.
@@ -58,6 +65,7 @@ fn scaled_matmul<E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
+    #[comptime] side: Scaled,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
@@ -66,15 +74,23 @@ fn scaled_matmul<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
-        c_region.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &scales,
-            BLOCK,
-            Semiring::SUM_PROD,
-        );
+        match comptime!(side) {
+            Scaled::Lhs => c_region.mma_scaled_with(
+                &a.at(&region)
+                    .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+                &b.at(&region).plain(),
+                BLOCK,
+                Semiring::SUM_PROD,
+            ),
+            Scaled::Rhs => c_region.mma_scaled_with(
+                &a.at(&region).plain(),
+                &b.at(&region)
+                    .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+                BLOCK,
+                Semiring::SUM_PROD,
+            ),
+        }
     }
 }
 
@@ -299,6 +315,7 @@ fn scales_omit_the_axis_inside_the_block() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        Scaled::Lhs,
         dtype,
     );
 
@@ -489,6 +506,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
+        Scaled::Rhs,
         dtype,
     );
 
@@ -627,12 +645,11 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &scales,
+            &a.at(&region).plain(),
+            &b.at(&region)
+                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
             BLOCK,
             Semiring::SUM_PROD,
         );
@@ -885,9 +902,13 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
     );
     acc.zero();
     for region in space.over(&level).unrolled() {
-        let scales = Scales::block(scale.at(&region));
         let mut acc_region = acc.at(&region);
-        acc_region.mma_scaled(&a.at(&region), &b.at(&region), &scales, Semiring::SUM_PROD);
+        acc_region.mma_scaled(
+            &a.at(&region).plain(),
+            &b.at(&region)
+                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
+            Semiring::SUM_PROD,
+        );
     }
     for r0 in c.over(&level).unrolled() {
         let mut c_w = c.at(&r0);
@@ -1005,12 +1026,11 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     for region in space.over(&level) {
-        let scales = Scales::block(scale.at(&region));
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
-            &a.at(&region),
-            &b.at(&region),
-            &scales,
+            &a.at(&region).plain(),
+            &b.at(&region)
+                .scaled(&ComptimeOption::new_Some(scale.at(&region))),
             BLOCK,
             Semiring::SUM_PROD,
         );

@@ -124,6 +124,19 @@ impl<T: Numeric> RegisterData<T> {
             self.data[i] = Vector::<T, RA>::cast_from(val);
         }
     }
+
+    /// Multiply every partial this block holds by `factor`: one multiply per slot, which is what
+    /// a scale covering the whole block costs when it is applied to the sum rather than to each
+    /// term of it.
+    pub(crate) fn scale(&mut self, factor: T) {
+        let count = comptime!(self.mr * self.nr);
+        let line = Vector::<T, RA>::cast_from(factor);
+        #[allow(clippy::needless_range_loop)]
+        #[unroll]
+        for i in 0..count {
+            self.data[i] *= line;
+        }
+    }
 }
 
 #[cube]

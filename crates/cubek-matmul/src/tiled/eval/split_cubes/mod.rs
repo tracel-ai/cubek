@@ -88,7 +88,7 @@ fn atomic_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     for region in space {
         let mut c_cube = c.at(&region);
         let a_cube = a.at(&region);
@@ -117,7 +117,7 @@ fn atomic_matmul_lanes<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     for cube in space {
         let c_cube = c.at(&cube);
         let a_cube = a.at(&cube);
