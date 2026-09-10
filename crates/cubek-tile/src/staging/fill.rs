@@ -34,6 +34,7 @@ pub(crate) struct SlotPlan {
     operands: Vec<OperandPlan>,
     sync: Sync,
     collective_full: bool,
+    fillers: usize,
 }
 
 impl SlotPlan {
@@ -59,10 +60,21 @@ impl SlotPlan {
             })
             .collect();
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
+        let collective_full = Sync::collective_full(&deliveries);
+        let fillers = level.fillers();
+        // A cooperative fill deals its elements out over every unit position of the cube, so
+        // planes that are not there leave their share of the stage unwritten, and quietly: the
+        // slot publishes on schedule and the wrong bytes are read.
+        assert!(
+            fillers == 0 || !collective_full,
+            "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
+             a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
+        );
         SlotPlan {
             operands: planned_operands,
             sync: Sync::for_deliveries(&deliveries),
-            collective_full: Sync::collective_full(&deliveries),
+            collective_full,
+            fillers,
         }
     }
 
@@ -87,6 +99,11 @@ impl SlotPlan {
 
     pub(crate) fn collective_full(&self) -> bool {
         self.collective_full
+    }
+
+    /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
+    pub(crate) fn fillers(&self) -> usize {
+        self.fillers
     }
 }
 
@@ -142,7 +159,11 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
-                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                Pipeline::new(
+                    comptime!(plan.sync()),
+                    comptime!(plan.collective_full()),
+                    comptime!(plan.fillers()),
+                ),
                 comptime!(SmallVec::from_slice(&[
                     plan.operand_plan(FIRST, slot),
                     plan.operand_plan(SECOND, slot),
@@ -307,7 +328,11 @@ impl<T: Numeric> Ring<Tile<T>> {
             };
             let staging = Staging::wrap(
                 staged_input,
-                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                Pipeline::new(
+                    comptime!(plan.sync()),
+                    comptime!(plan.collective_full()),
+                    comptime!(plan.fillers()),
+                ),
                 comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),
             );
             slots.push(staging);
@@ -467,6 +492,33 @@ mod tests {
         assert_eq!(plan.operand_plan(FIRST, 1).mode, WindowMode::Reused);
         assert!(plan.reuses_first_buffer(FIRST, 1));
         assert_eq!(plan.operand_plan(SECOND, 1).mode, WindowMode::Streamed);
+    }
+
+    /// The count a walk states rides down onto every slot it plans.
+    #[test]
+    fn a_slot_of_a_filled_walk_carries_the_count() {
+        let (space, lhs, rhs) = spaces();
+        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(2);
+        let plan = SlotPlan::new(
+            &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
+            &space,
+            &level,
+        );
+        assert_eq!(plan.fillers(), 2);
+    }
+
+    /// A cooperative fill is spread over every unit position of the cube, so planes that are not
+    /// there leave their share unwritten. Refused by name rather than read back as wrong bytes.
+    #[test]
+    #[should_panic(expected = "cannot be filled by a subset of the cube")]
+    fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
+        let (space, lhs, rhs) = spaces();
+        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(1);
+        SlotPlan::new(
+            &[operand(Delivery::Tma, &lhs), operand(Delivery::Copy, &rhs)],
+            &space,
+            &level,
+        );
     }
 
     /// A barrier pipeline arrives once per fill, so a TMA operand streams even when fixed.

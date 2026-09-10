@@ -55,19 +55,17 @@ impl<T: Numeric> TmaData<T> {
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
-    /// TMA transport leaf, pipelined: issue the elected `tensor_map_load` into `dst`
-    /// onto `barrier`, without arriving or waiting; the caller issues those itself so the copy
-    /// overlaps compute.
+    /// TMA transport leaf, pipelined: issue the `tensor_map_load` into `dst` onto `barrier`,
+    /// without arriving or waiting; the caller issues those itself so the copy overlaps compute.
+    ///
+    /// The caller elects, because the same unit must declare the transaction count: the bytes are
+    /// that unit's alone, and a second issuer would over-count and corrupt the stage.
     pub(crate) fn stage_into(&self, dst: &mut MemData<T>, barrier: &Shared<Barrier>) {
-        // One elected issuer only: the declared transaction count is that unit's alone, so
-        // more issuers would over-count and corrupt the stage.
-        if UNIT_POS == 0 {
-            self.view.tensor_map_load(
-                barrier,
-                dst.store.buffer_mut().downcast_mut(),
-                self.pos.clone(),
-            );
-        }
+        self.view.tensor_map_load(
+            barrier,
+            dst.store.buffer_mut().downcast_mut(),
+            self.pos.clone(),
+        );
     }
 
     /// TMA transport leaf, blocking: bulk-copy into `dst` (shared memory) and wait. Owns its
@@ -75,8 +73,11 @@ impl<T: Numeric> TmaData<T> {
     pub(crate) fn load_into(&self, dst: &mut MemData<T>) {
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();
+        // Unit 0 issues the copy and declares its bytes; every unit arrives and waits.
         let expected = select(UNIT_POS == 0, dst.size_bytes(), 0);
-        self.stage_into(dst, &barrier);
+        if UNIT_POS == 0 {
+            self.stage_into(dst, &barrier);
+        }
         let token = barrier.arrive_and_expect_tx(1, expected);
         barrier.wait(token);
     }
