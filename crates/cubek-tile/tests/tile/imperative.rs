@@ -146,6 +146,26 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
         .enforce()
 }
 
+/// The two roles meet on a barrier and nowhere else, so a device without one is told so by name
+/// rather than handed two loops with no rendezvous between them.
+#[test]
+#[should_panic(expected = "carries no barrier type")]
+fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
+    let (m, n, k, tile) = (8usize, 8usize, 16usize, 4usize);
+    let client = cubecl::test_device().client();
+    Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::walk(&[(M, m), (N, n), (K, 4)]).filled_by(1),
+                Level::walk(&[(M, tile), (N, tile), (K, tile)]),
+            ],
+        ),
+        KernelForm::Static,
+    );
+}
+
 /// The specialized shape runs and is right where no plane is set aside: the compute arm fills
 /// and reads its own slot, and the fill arm compiles beside it, entered by nobody.
 #[test]
