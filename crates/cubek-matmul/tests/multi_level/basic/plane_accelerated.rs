@@ -242,9 +242,6 @@ fn ordered_double_mma() {
     );
 }
 
-// Small k with an output width off the line size once made the Metal compiler corrupt rows
-// 4..7 of some 8x8 output tiles (a `max_total_threads_per_threadgroup(32)` miscompile), so a
-// single launch could pass by luck; the loop makes the check meaningful.
 #[test]
 fn simple_cyclic_cmma_small_k_and_partial_line_width_rows_stay_correct() {
     use crate::harness::{f32_elems, rect};
