@@ -1,5 +1,6 @@
 //! How an operand's values sit in memory, and what a leaf must read to serve one.
 
+use cubecl::ir::FloatKind;
 use cubecl::ir::types::Fp8Format;
 use cubecl::quant::scheme::QuantValue;
 
@@ -37,12 +38,15 @@ pub enum Packing {
 
 /// The slot one packed value occupies.
 ///
-/// A quantized value's field, or an 8-bit float code stored as a byte: a scale in `ue8m0` or
-/// `ue4m3` is one of those, four to a word.
+/// A quantized value's field, an 8-bit float code stored as a byte, or a whole float. Every
+/// width a value is stored at is one of these, which is what lets one binding serve them all:
+/// a scale in `ue8m0` sits four to a word, one in `f16` two, one in `f32` alone, and the read
+/// is the same read.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Field {
     Quant(QuantValue),
     Fp8(Fp8Format),
+    Float(FloatKind),
 }
 
 impl From<QuantValue> for Field {
@@ -57,18 +61,50 @@ impl From<Fp8Format> for Field {
     }
 }
 
+impl From<FloatKind> for Field {
+    fn from(kind: FloatKind) -> Self {
+        Field::Float(kind)
+    }
+}
+
 impl Field {
     /// The slot's width in bits.
     pub fn size_bits(self) -> usize {
         match self {
             Field::Quant(value) => value.size_bits(),
             Field::Fp8(_) => 8,
+            Field::Float(kind) => float_field_bits(kind),
         }
     }
 
     /// Values one `u32` holds.
     pub fn per_word(self) -> usize {
         u32::BITS as usize / self.size_bits()
+    }
+}
+
+/// The field a stored float occupies: an 8-bit code reads back through its own format, anything
+/// wider by reinterpreting its slot. One call, so a caller holding an element type never has to
+/// know which of the two it is looking at.
+pub fn float_field(kind: FloatKind) -> Field {
+    match kind {
+        FloatKind::E4M3 => Field::Fp8(Fp8Format::E4M3),
+        FloatKind::E5M2 => Field::Fp8(Fp8Format::E5M2),
+        FloatKind::UE8M0 => Field::Fp8(Fp8Format::UE8M0),
+        other => Field::Float(other),
+    }
+}
+
+/// The bits a whole float occupies. Two widths, because an 8-bit code is [`Field::Fp8`] and
+/// reads back through its own decoder, not by reinterpreting a slot.
+pub fn float_field_bits(kind: FloatKind) -> usize {
+    match kind {
+        FloatKind::F32 => 32,
+        FloatKind::F16 | FloatKind::BF16 => 16,
+        other => panic!(
+            "Field::Float: a stored float is 16 or 32 bits wide, got {other:?}; an 8-bit code \
+             is Field::Fp8"
+        ),
     }
 }
 
@@ -85,6 +121,8 @@ pub enum FieldDecode {
     Reinterpreted,
     /// An 8-bit float code, read back through the format's own decoder.
     Byte(Fp8Format),
+    /// A whole float, read back by reinterpreting the bits of its slot.
+    Bits(FloatKind),
 }
 
 /// How the packed view reads `field` back.
@@ -102,6 +140,7 @@ pub fn field_decode(field: Field) -> FieldDecode {
         Field::Quant(QuantValue::E4M3) => FieldDecode::Byte(Fp8Format::E4M3),
         Field::Quant(QuantValue::E5M2) => FieldDecode::Byte(Fp8Format::E5M2),
         Field::Fp8(format) => FieldDecode::Byte(format),
+        Field::Float(kind) => FieldDecode::Bits(kind),
     }
 }
 
@@ -201,6 +240,26 @@ mod tests {
         assert_eq!(packing.physical(1), 1);
         assert_eq!(packing.served(1), 1);
         assert_eq!(packing.factor(), 4);
+    }
+
+    /// An 8-bit code is a byte field however it is named; anything wider is its own bits.
+    #[test]
+    fn a_float_element_names_its_own_field() {
+        assert_eq!(float_field(FloatKind::UE8M0), Field::Fp8(Fp8Format::UE8M0));
+        assert_eq!(float_field(FloatKind::E4M3), Field::Fp8(Fp8Format::E4M3));
+        assert_eq!(float_field(FloatKind::F16), Field::Float(FloatKind::F16));
+    }
+
+    /// A stored float is one, two or four to a word, and the widest fills it.
+    #[test]
+    fn a_stored_float_is_a_field_of_its_own_width() {
+        assert_eq!(Field::Float(FloatKind::F32).per_word(), 1);
+        assert_eq!(Field::Float(FloatKind::F16).per_word(), 2);
+        assert_eq!(Field::Float(FloatKind::BF16).size_bits(), 16);
+        assert_eq!(
+            field_decode(FloatKind::F32.into()),
+            FieldDecode::Bits(FloatKind::F32)
+        );
     }
 
     /// The 8-bit float codes decode through their format; the 4-bit one through its pair.

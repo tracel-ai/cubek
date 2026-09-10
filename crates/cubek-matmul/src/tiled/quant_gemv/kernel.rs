@@ -1,9 +1,7 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{
-    Cut, Level, MaybeTile, MaybeTileExpand, Partitioning, RegisterBlock, Semiring, Space, TileArg,
-};
+use cubek_tile::{Cut, Level, Partitioning, RegisterBlock, Semiring, Space, TileArg};
 
 use crate::tiled::{
     M, N,
@@ -90,10 +88,11 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 /// `y = (W ⊗ s) · x`.
 ///
 /// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_packed`]); the
-/// scales arrive as their own tensor at their own element type and fold in at the contraction
-/// ([`cubek_tile::Tile::mma_scaled_with`]), written on the weight. Nothing
+/// scales arrive as their own tensors, one per level, and fold in at the contraction
+/// ([`cubek_tile::Tile::scaled_by`]), written on the weight. Nothing
 /// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
-/// values one scale covers is the scales operand's own axes, stated in the space.
+/// values one scale covers is the scales operand's own axes, stated in the space; how many levels
+/// there are is how many the launch bound.
 ///
 /// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
 /// activation buffer holds, `ES` the scales', `EO` the output's, and the leaf casts each into
@@ -109,8 +108,7 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
-    block_scales: &TileArg<'_, ES, Const<1>>,
-    tensor_scale: &ComptimeOption<TileArg<'static, ES, Const<1>>>,
+    scales: &Sequence<TileArg<'static, u32, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
     space: Partitioning,
     #[comptime] bp: QuantGemvBlueprint,
@@ -123,8 +121,7 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     let config = comptime!(register_block(&bp, &problem));
     let w = w
         .tile_packed::<EC>(comptime!(space.clone()))
-        .scaled(&block_scales.tile(comptime!(space.clone())))
-        .maybe_scaled(&tensor_scale.tile(comptime!(space.clone())));
+        .scaled_by::<ES>(scales, comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.

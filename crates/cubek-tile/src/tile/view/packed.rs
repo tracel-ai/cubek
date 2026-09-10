@@ -10,6 +10,7 @@
 
 use std::marker::PhantomData;
 
+use cubecl::ir::FloatKind;
 use cubecl::ir::VectorSize;
 use cubecl::ir::types::Fp8Format;
 use cubecl::post_processing::minifloat::{fp8_bits_to_f32, ue8m0_bits_to_f32};
@@ -18,7 +19,7 @@ use cubecl::quant::scheme::QuantValue;
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
 use cubecl::std::tensor::layout::{Coords1d, Coords2d, CoordsDyn, Layout, LayoutExpand};
 
-use crate::{Field, FieldDecode, GmemLayout, Window, field_decode};
+use crate::{Field, FieldDecode, GmemLayout, Window, field_decode, float_field_bits};
 use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
@@ -29,10 +30,11 @@ use cubecl::{
 /// `NF / NQ` consecutive fields from its low bits, the whole word unless the line is a sub-word
 /// read.
 ///
-/// Three shapes, because a field decodes three ways. A `Q*` field is an integer: the width says
+/// Four shapes, because a field decodes four ways. A `Q*` field is an integer: the width says
 /// how many bits one holds and the top one is its sign, so `Q4S` is `[-8, 7]` in four bits. An
 /// `e2m1` field is a float code, read back by reinterpreting the byte two of them share. An 8-bit
-/// float code is a byte, read back through its format's decoder.
+/// float code is a byte, read back through its format's decoder. A whole float is its own bits,
+/// reinterpreted out of the slot it sits in.
 #[cube]
 pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
@@ -42,6 +44,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
+        FieldDecode::Bits(kind) => unpack_float_line::<F, NQ, NF>(words, kind),
     }
 }
 
@@ -147,6 +150,63 @@ fn unpack_byte_line<F: Numeric, NQ: Size, NF: Size>(
                 _ => fp8_bits_to_f32::<Const<1>>(byte, format),
             };
             out.insert(base + j, F::cast_from(value.extract(0usize)));
+        }
+    }
+    out
+}
+
+/// One `f16` bit pattern, decoded to `f32` in integer arithmetic. Bits above the low half are
+/// ignored.
+///
+/// Written out rather than reinterpreted through a 16-bit scalar, which not every target admits:
+/// cubecl's own minifloat decoders are the same shape for the same reason.
+#[cube]
+fn f16_bits_to_f32(bits: u32) -> f32 {
+    let sign = (bits & 0x8000u32) << 16u32;
+    let exponent = (bits >> 10u32) & 0x1fu32;
+    let mantissa = bits & 0x3ffu32;
+    // `f16` biases its exponent by 15 and `f32` by 127, and the mantissa moves up to `f32`'s 23
+    // bits. A zero exponent is a subnormal, counted in steps of 2^-24.
+    let normal = sign | ((exponent + 112u32) << 23u32) | (mantissa << 13u32);
+    let subnormal = sign | u32::reinterpret(f32::cast_from(mantissa) * 5.9604645e-8f32);
+    let finite = select(exponent == 0u32, subnormal, normal);
+    let special = select(
+        mantissa == 0u32,
+        sign | 0x7f80_0000u32,
+        sign | 0x7fc0_0000u32,
+    );
+    f32::reinterpret(select(exponent == 31u32, special, finite))
+}
+
+/// The whole floats, each read out of the slot it occupies: one `f32` a word, two `f16` or
+/// `bf16`. A scale stored at its own precision is read here, which is what lets one word-typed
+/// binding serve every scale a scheme can carry.
+#[cube]
+fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
+    words: Vector<u32, NQ>,
+    #[comptime] kind: FloatKind,
+) -> Vector<F, NF> {
+    let bits = comptime!(float_field_bits(kind));
+    let nq = NQ::value();
+    let nf = NF::value();
+    let fields = comptime!(fields_per_word(nq, nf, bits));
+
+    let mut out = Vector::<F, NF>::empty();
+    #[unroll]
+    for w in 0..words.vector_size() {
+        let word = words.extract(w);
+        let base = w * fields;
+        #[unroll]
+        for j in 0..fields {
+            let slot = word >> comptime!((j * bits) as u32);
+            // `bf16` is an `f32` truncated to its top half, so putting it back is the whole
+            // decode. Every kind but these three was refused by `float_field_bits`.
+            let value = match comptime!(kind) {
+                FloatKind::F32 => F::cast_from(f32::reinterpret(slot)),
+                FloatKind::F16 => F::cast_from(f16_bits_to_f32(slot)),
+                _ => F::cast_from(f32::reinterpret((slot & 0xffffu32) << 16u32)),
+            };
+            out.insert(base + j, value);
         }
     }
     out
@@ -378,9 +438,15 @@ pub(crate) fn read_subword<
     } else {
         words.read_unchecked(pos)
     };
-    let line = base.to_source_pos(window.to_source_pos(layout.to_source_pos(pos)));
-    let slot = (line % per_line) as u32;
-    let shifted = word >> Vector::<u32, Const<1>>::new(slot * width * bits);
+    // A field that fills the word it is read from has no slot to find, and an `f32` scale is
+    // exactly that: it costs the address walk below nothing.
+    let shifted = if comptime!(per_line > 1) {
+        let line = base.to_source_pos(window.to_source_pos(layout.to_source_pos(pos)));
+        let slot = (line % per_line) as u32;
+        word >> Vector::<u32, Const<1>>::new(slot * width * bits)
+    } else {
+        word
+    };
     unpack_line::<F, Const<1>, NF>(shifted, field)
 }
 

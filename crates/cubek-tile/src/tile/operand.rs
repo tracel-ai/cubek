@@ -7,7 +7,9 @@
 //! it said so. Nothing here states a side and nothing counts levels.
 //!
 //! A factor that carries none is [`Tile::plain`], and the leaf reads it with no arithmetic at
-//! all, which is why a float kernel compiles to what it always did.
+//! all, which is why a float kernel compiles to what it always did. A kernel whose levels the
+//! launch decides writes [`Tile::scaled_by`] instead and says nothing about how many there are:
+//! binding none of them is scaling by one.
 //!
 //! A level above the first is read once per leaf region at its origin, so it is only correct
 //! where it covers the whole tile the level below spans.
@@ -29,8 +31,16 @@ impl<E: Numeric> Tile<E> {
     /// This tile as a factor carrying no scales: what a float kernel contracts, and what
     /// [`mm`](Tile::mm) hands the leaf for each of its operands.
     pub fn plain(&self) -> Scaled<E, E> {
-        let none = ComptimeOption::<Tile<E>>::new_None();
-        self.maybe_scaled(&none)
+        self.unscaled::<E>()
+    }
+
+    /// [`plain`](Tile::plain) at a scale element of its own, for a factor whose levels are about
+    /// to be pushed onto it.
+    fn unscaled<S: Numeric>(&self) -> Scaled<E, S> {
+        Scaled::<E, S> {
+            values: self.clone(),
+            levels: Sequence::new(),
+        }
     }
 
     /// This factor, scaled by `level`. Say it again for a level above that one.
@@ -43,18 +53,25 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// [`scaled`](Tile::scaled) by a level this scheme may not have: absent, it folds nothing and
-    /// emits nothing, so the kernel writes the same line either way.
-    pub fn maybe_scaled<S: Numeric>(&self, level: &ComptimeOption<Tile<S>>) -> Scaled<E, S> {
-        let mut levels = Sequence::new();
-        #[comptime]
-        match level {
-            ComptimeOption::Some(level) => levels.push(level.clone()),
-            ComptimeOption::None => {}
+    /// This factor, scaled by every level `levels` binds, innermost first: [`scaled`](Tile::scaled)
+    /// said once per bound level. A kernel that writes this states no depth at all, and binding
+    /// no level is scaling by one.
+    ///
+    /// Every level is stored words, read in its own width: which width is its
+    /// [`Field`](crate::Field), which the launch states on it and nothing here asks about.
+    pub fn scaled_by<S: Numeric>(
+        &self,
+        levels: &Sequence<TileArg<'static, u32, Const<1>>>,
+        #[comptime] space: Partitioning,
+    ) -> Scaled<E, S> {
+        let mut tiles = Sequence::new();
+        #[unroll]
+        for i in 0..levels.len() {
+            tiles.push(levels.index(i).tile_packed::<S>(comptime!(space.clone())));
         }
         Scaled::<E, S> {
             values: self.clone(),
-            levels,
+            levels: tiles,
         }
     }
 }
@@ -65,20 +82,6 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     pub fn scaled(&self, level: &Tile<S>) -> Scaled<E, S> {
         let mut levels = self.levels.clone();
         levels.push(level.clone());
-        Scaled::<E, S> {
-            values: self.values.clone(),
-            levels,
-        }
-    }
-
-    /// [`scaled`](Scaled::scaled) by a level this scheme may not have.
-    pub fn maybe_scaled(&self, level: &ComptimeOption<Tile<S>>) -> Scaled<E, S> {
-        let mut levels = self.levels.clone();
-        #[comptime]
-        match level {
-            ComptimeOption::Some(level) => levels.push(level.clone()),
-            ComptimeOption::None => {}
-        }
         Scaled::<E, S> {
             values: self.values.clone(),
             levels,

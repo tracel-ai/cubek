@@ -259,33 +259,6 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     }
 }
 
-/// A level of scales a launch may or may not bind, served as a tile the same way.
-///
-/// The kernel writes the same line whether the scheme has this level or not
-/// ([`Scaled::maybe_scaled`](crate::Scaled::maybe_scaled)); this is what turns the argument into
-/// the tile that line takes.
-#[cube]
-pub trait MaybeTile: CubeType {
-    /// The element the level is served at.
-    type E: Numeric;
-
-    /// This level as a tile of `space`, or nothing.
-    fn tile(&self, #[comptime] space: Partitioning) -> ComptimeOption<Tile<Self::E>>;
-}
-
-#[cube]
-impl<'a, E: Numeric, V: Size> MaybeTile for ComptimeOption<TileArg<'a, E, V>> {
-    type E = E;
-
-    fn tile(&self, #[comptime] space: Partitioning) -> ComptimeOption<Tile<E>> {
-        #[comptime]
-        match self {
-            ComptimeOption::Some(arg) => ComptimeOption::new_Some(arg.tile(space)),
-            ComptimeOption::None => ComptimeOption::new_None(),
-        }
-    }
-}
-
 /// One quantized operand as a single launch argument: the storage-typed values tensor, its scales,
 /// and the comptime spec + scheme. A quantized tensor is one thing, so its pieces travel together;
 /// [`TileArg`] is its plain twin. The kernel's one [`Space`] arrives separately and

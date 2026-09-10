@@ -13,12 +13,13 @@
 //! binding whose shape counts *values* while the packing says how many sit in one stored word.
 
 use cubecl::{
-    bytes::Bytes, features::TypeUsage, ir::types::Fp8Format, prelude::*, quant::scheme::QuantValue,
-    std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes, features::TypeUsage, ir::FloatKind, ir::types::Fp8Format, prelude::*,
+    quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::*;
+use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
 
@@ -2142,6 +2143,151 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
             TileSpec::new(w_projection.scales_per(KB)).subword(Fp8Format::UE8M0, 1),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| w[m * depth + k] as f32 * s[m * blocks + k / block] * x[k * cols + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **Scales stored at their own float width are read as fields of a word too.** Two `f16`
+/// scales share a word, so a row of them need not start on one and the slot is picked at the
+/// read, exactly as a byte field's is.
+#[test]
+fn half_scales_are_read_as_fields_of_a_word() {
+    check_float_scales(FloatKind::F16, 16, 2);
+}
+
+/// An `f32` scale fills the word it is stored in, which is the case with no slot to find: the
+/// read is the word, reinterpreted.
+#[test]
+fn full_width_scales_fill_the_word_they_are_read_from() {
+    check_float_scales(FloatKind::F32, 8, 4);
+}
+
+/// [`check_ue8m0_scales`] with the scales stored as whole floats of `kind`. Halves and quarters,
+/// which every width here holds exactly.
+fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
+    let (field, rows, cols) = (QuantValue::Q8S, 4, 4);
+    let depth = block * blocks;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..rows * depth)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let x: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    let s: Vec<f32> = (0..rows * blocks)
+        .map(|i| 0.25 * (1 + i % 4) as f32)
+        .collect();
+    let scale_words = match kind {
+        FloatKind::F32 => s.iter().map(|v| v.to_bits()).collect(),
+        _ => s
+            .chunks(2)
+            .map(|pair| {
+                pair.iter().enumerate().fold(0u32, |acc, (j, &v)| {
+                    acc | ((f16::from_f32(v).to_bits() as u32) << (j * 16))
+                })
+            })
+            .collect::<Vec<u32>>(),
+    };
+
+    let dtype = f32::elem_type_native();
+    let w_tensor = TensorHandle::new_contiguous(
+        vec![rows, depth],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    // Shape and strides count scales; how many share a word is the field's to say.
+    let s_tensor = TensorHandle::new_contiguous(
+        vec![rows, blocks],
+        client.create(Bytes::from_elems(scale_words)),
+        u32::elem_type_native(),
+    );
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+        ),
+        KernelForm::Static,
+    );
+
+    let w_projection = Projection::new(
+        &[M, KB, KI],
+        &[
+            PhysicalAxisMap::of(M),
+            PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+        ],
+    );
+    packed_matmul_byte_scales::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(w_projection.clone()).packed(field),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            TileSpec::new(w_projection.scales_per(KB)).subword(kind, 1),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),

@@ -30,9 +30,10 @@ plan continues `QUANT_PLAN.md`; the vocabulary is that file's. Trees: `cubek-Rin
    `ScaleSide` and the `ScalesArg` bundle were all the same mistake, a type re-encoding which
    operand a scale belongs to. This is QUANT_PLAN item 1 and phase 4, taken now.)*
    `Scaled<E, S>` is a tile plus the levels written on it: `w.scaled(&block).scaled(&global)`,
-   one call per level, `maybe_scaled` for a level a scheme may not have, `Tile::plain` for a
-   factor carrying none. `mm_scaled` and its three twins take two of them. The side is where the
-   kernel wrote it; depth is how many times it said so. `ScaleSide`, `Scaling`, `Scales` and
+   one call per level, `Tile::plain` for a factor carrying none, and `Tile::scaled_by(levels,
+   space)` where the launch decides the depth. `mm_scaled` and its three twins take two of them.
+   The side is where the kernel wrote it; depth is how many times it said so, or how many levels
+   the launch bound. `ScaleSide`, `Scaling`, `Scales` and
    `ScalesArg` are deleted, and so are the six duplicated `*_scaled` paths, because a factor's
    scales are a comptime option inside its own line source: absent, it folds nothing and emits
    nothing. Proven, not asserted: a float matmul's Metal source is byte-identical across the
@@ -42,7 +43,7 @@ plan continues `QUANT_PLAN.md`; the vocabulary is that file's. Trees: `cubek-Rin
    inner digit of a split dim; `Projection::global_of(values)` spans them and addresses none.
    The host says "tied to `KB`" and never writes `[M, KB]`.
 3. **Narrow scales through the packed view.** `Packing::Packed { field: Field }` with
-   `Field::{Quant(QuantValue), Fp8(Fp8Format)}` and `From<QuantValue>`, so every `.packed(..)`
+   `Field::{Quant(QuantValue), Fp8(Fp8Format), Float(FloatKind)}` and `From<QuantValue>`, so every `.packed(..)`
    call compiles unchanged. `field_decode` serves `Fp8(E4M3 | E5M2 | UE8M0)` through cubecl's
    `fp8_bits_to_f32` and `ue8m0_bits_to_f32`, the byte picked out of its word. A scales buffer
    of bytes binds as `u32` words with `.packed(Field::Fp8(..))` and is served as `f32`. The
@@ -129,3 +130,29 @@ Left for the number: register leaf against fragment leaf at prefill shapes on th
 where the manual-mma form with register operands (Marlin proper) is the next arm. The gemm
 autotune table does not race the fragment arm yet. A plane owns one fragment of rows against one
 block of columns; a fragment grid per plane waits on `partition_grid` reading a split column group.
+
+## Revised again, 2026-09-10 evening
+
+Louis, on the landed kernel: the block level bound twice (plain *or* packed) with a comptime
+match to pick, no way to bind none, no way to scale the left-hand factor, and `x`/`weight` for
+what should be `lhs`/`rhs`. All four are the same missing idea — **every scale is a field in a
+word** — so one binding serves them all.
+
+- `Field::Float(FloatKind)` joins `Quant` and `Fp8`, and `float_field(kind)` names the field an
+  element occupies without the caller knowing which of the three it is. `f32` fills its word,
+  `f16`/`bf16` sit two to one, an 8-bit code four. An `f16` slot decodes in integer arithmetic
+  rather than through a 16-bit reinterpret, which wgpu refuses without an extension, and a field
+  that fills its word skips the slot walk entirely.
+- `Tile::scaled_by::<S>(levels, space)`: the levels a launch bound for this factor, innermost
+  first, as one `Sequence<TileArg<'static, u32, Const<1>>>` argument. Binding none is scaling by
+  one. `maybe_scaled` and the `MaybeTile` trait are deleted; `ComptimeOption` no longer appears
+  in a scales signature anywhere.
+- The scaled kernel is `lhs, lhs_scales, rhs, rhs_scales, out`: symmetric, context-free, no
+  comptime match in the body, and either factor may carry levels.
+- cubek's own `quant_gemv` moved to the same shape, so there is one way to say it. Its scales are
+  `f16` and now read as fields of a word: 4 Metal tests green, unchanged.
+
+Verified: cubek-tile 423 pass / 0 fail (two new tests, `half_scales_are_read_as_fields_of_a_word`
+and `full_width_scales_fill_the_word_they_are_read_from`), cubek-matmul quant gemv 4 pass,
+metabolic-kernels every target pass including `scaled_byte_scales`, metabolic-extension
+correctness pass. The kernel and its launch are 17 lines shorter than the version they replace.
