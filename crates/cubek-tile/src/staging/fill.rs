@@ -40,9 +40,9 @@ pub(crate) struct SlotPlan {
 impl SlotPlan {
     pub(crate) fn new(operands: &[SlotOperand], op_space: &Space, level: &Level) -> SlotPlan {
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
-        let sync = Sync::for_deliveries(&deliveries);
-        let collective_full = Sync::collective_full(&deliveries);
         let fillers = level.fillers();
+        let sync = Sync::for_deliveries(&deliveries, fillers);
+        let collective_full = Sync::collective_full(&deliveries);
         // A cooperative fill deals its elements out over every unit position of the cube, so
         // planes that are not there leave their share of the stage unwritten, and quietly: the
         // slot publishes on schedule and the wrong bytes are read.
@@ -172,7 +172,40 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth)
+        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth, comptime!(plan.fillers()))
+    }
+}
+
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Fill slot `slot` from `region`'s window: one step of a [`Fill`](Role::Fill) plane's walk.
+    /// The ring knows its sources, so the caller names only which slot and which region.
+    ///
+    /// This is the same fill [`pipelined`] runs one lap ahead of its own reads; here the two
+    /// halves are separate walks, so the kernel spells the schedule and the ring spells the step.
+    pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
+        let lhs = self.sources.0.clone();
+        let rhs = self.sources.1.clone();
+        self.slot_mut(slot).fill_streamed(&lhs, &rhs, region);
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk. Waits the
+    /// slot's fill, hands `compute` the two staged tiles, then frees the slot.
+    /// See [`RingExpand::__expand_consume_method`].
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> RingExpand<(Tile<Lhs>, Tile<Rhs>)> {
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+    {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_consume_method(scope, compute);
     }
 }
 
@@ -338,7 +371,34 @@ impl<T: Numeric> Ring<Tile<T>> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, input.clone(), depth)
+        Ring::wrap(slots, input.clone(), depth, comptime!(plan.fillers()))
+    }
+}
+
+#[cube]
+impl<T: Numeric> Ring<Tile<T>> {
+    /// [`fill`](Ring::fill) for the sole operand.
+    pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
+        let input = self.sources.clone();
+        self.slot_mut(slot).fill_streamed(&input, region);
+    }
+}
+
+impl<T: Numeric> Ring<Tile<T>> {
+    /// [`consume`](Ring::consume) for the sole operand.
+    /// See [`RingExpand::__expand_consume_method`].
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<T>)) {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> RingExpand<Tile<T>> {
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<T>),
+    {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_consume_method(scope, compute);
     }
 }
 

@@ -23,14 +23,17 @@ pub enum Sync {
 }
 
 impl Sync {
-    /// Join the rendezvous requirements of a slot's sources. `Barrier` dominates `Cube` because
-    /// TMA transaction completion must be included in the slot's publication.
-    pub(crate) fn for_deliveries(deliveries: &[Delivery]) -> Sync {
+    /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill.
+    /// `Barrier` dominates `Cube` because TMA transaction completion must be included in the
+    /// slot's publication, and a filled slot starts there: `Cube` rendezvouses on `sync_cube`,
+    /// which needs every unit of the cube, and the two roles never meet there.
+    pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Sync {
         assert!(
             !deliveries.is_empty(),
             "Staging: a slot must have at least one delivery"
         );
-        deliveries.iter().fold(Sync::Cube, |sync, delivery| {
+        let floor = if fillers > 0 { Sync::Barrier } else { Sync::Cube };
+        deliveries.iter().fold(floor, |sync, delivery| {
             match (sync, delivery.rendezvous()) {
                 (Sync::Barrier, _) | (_, Sync::Barrier) => Sync::Barrier,
                 (Sync::Cube, Sync::Cube) => Sync::Cube,
@@ -184,7 +187,7 @@ mod tests {
     #[test]
     fn procedural_and_strided_share_a_cube_pipeline() {
         assert_eq!(
-            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Copy]),
+            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0),
             Sync::Cube
         );
     }
@@ -192,7 +195,7 @@ mod tests {
     #[test]
     fn procedural_and_tma_share_a_barrier_pipeline() {
         assert_eq!(
-            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma]),
+            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
             Sync::Barrier
         );
         assert!(Sync::collective_full(&[
@@ -204,6 +207,13 @@ mod tests {
     #[test]
     fn pure_tma_keeps_its_single_producer_arrival() {
         assert!(!Sync::collective_full(&[Delivery::Tma]));
+    }
+
+    /// `sync_cube` needs every unit of the cube, and a walk that sets planes aside to fill has
+    /// none of its slots reached by all of them.
+    #[test]
+    fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
+        assert_eq!(Sync::for_deliveries(&[Delivery::Copy], 1), Sync::Barrier);
     }
 }
 
