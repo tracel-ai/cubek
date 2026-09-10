@@ -109,18 +109,18 @@ impl<T: CubeType> Staging<T> {
     }
 
     /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
-    /// declared by [`Pipeline::fill`] land. A mixed slot needs every producer; a pure bulk copy
-    /// is published by the one unit that issued it.
+    /// declared by [`Pipeline::fill`] land. Which units arrive is the slot's to say
+    /// ([`Pipeline::producers`]).
     pub(crate) fn release_write(&mut self) {
         match &mut self.pipeline {
             Pipeline::Barrier {
                 full,
-                collective_full,
+                all_publish,
                 elected,
                 writes,
                 ..
             } => {
-                if *collective_full || UNIT_POS == *elected {
+                if *all_publish || UNIT_POS == *elected {
                     full.arrive();
                 }
                 *writes ^= 1;

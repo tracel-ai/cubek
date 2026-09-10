@@ -78,9 +78,9 @@ pub enum Pipeline {
         /// Consumer→producer (one arrival per unit that reads): flips once every one of them has
         /// read and freed the slot.
         empty: Shared<Barrier>,
-        /// A mixed TMA/synchronous slot needs every producer to publish; a pure TMA slot is
-        /// published by its elected issuer alone.
-        collective_full: bool,
+        /// Whether `full` counts every producer's arrival or only the elected issuer's
+        /// ([`Pipeline::producers`]).
+        all_publish: bool,
         /// The one unit that issues this slot's bulk copies and declares their bytes
         /// ([`Pipeline::elected`]).
         elected: u32,
@@ -110,21 +110,34 @@ impl Pipeline {
             Sync::Solo => Pipeline::new_Solo(),
             Sync::Cube => Pipeline::new_Cube(),
             Sync::Barrier => {
-                let full = Barrier::shared(Pipeline::producers(collective_full), UNIT_POS == 0);
+                let full = Barrier::shared(
+                    Pipeline::producers(collective_full, fillers),
+                    UNIT_POS == 0,
+                );
                 let empty = Barrier::shared(Pipeline::consumers(fillers), UNIT_POS == 0);
                 sync_async_proxy_shared();
                 sync_cube();
                 let elected = Pipeline::elected(fillers);
-                Pipeline::new_Barrier(full, empty, collective_full, elected, 0, 0)
+                let all_publish = comptime!(collective_full || fillers > 0);
+                Pipeline::new_Barrier(full, empty, all_publish, elected, 0, 0)
             }
         }
     }
 
-    /// Units that arrive on `full`. A pure TMA slot is published by the one unit that issued its
-    /// copy; a mixed slot also holds a cooperative fill, so every unit that wrote it publishes.
-    pub fn producers(#[comptime] collective_full: bool) -> u32 {
+    /// Units that arrive on `full`. A bulk copy into a slot no plane was set aside for is
+    /// published by the one unit that issued it. A slot that also holds a cooperative fill needs
+    /// every unit that wrote it. And a slot filled by planes of their own needs every one of
+    /// their units: nothing else holds a filling plane in step with the elected one, and a plane
+    /// that falls a lap behind waits on a parity that has already gone by.
+    ///
+    /// The elected unit is one of the arrivals, and it declares the transaction bytes before it
+    /// arrives, so the phase cannot complete on the others' arrivals with the bytes still to
+    /// come.
+    pub fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
         if comptime!(collective_full) {
             CUBE_DIM
+        } else if comptime!(fillers > 0) {
+            comptime!(fillers as u32) * CUBE_DIM_X
         } else {
             1u32.runtime()
         }
