@@ -39,12 +39,24 @@ pub(crate) struct SlotPlan {
 
 impl SlotPlan {
     pub(crate) fn new(operands: &[SlotOperand], op_space: &Space, level: &Level) -> SlotPlan {
+        let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
+        let sync = Sync::for_deliveries(&deliveries);
+        let collective_full = Sync::collective_full(&deliveries);
+        let fillers = level.fillers();
+        // A cooperative fill deals its elements out over every unit position of the cube, so
+        // planes that are not there leave their share of the stage unwritten, and quietly: the
+        // slot publishes on schedule and the wrong bytes are read.
+        assert!(
+            fillers == 0 || !collective_full,
+            "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
+             a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
+        );
         // Fix an operand only when its window is genuinely invariant across the walk. A barrier
-        // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
-        // splitting an invariant out would corrupt its phase. A dynamic level can't decide
-        // invariance at comptime. Both fall back to streaming.
-        let can_fix_invariants =
-            op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
+        // slot arrives `full` once per fill, so lifting one operand out of the joint per-region
+        // fill leaves the slot's parity counting fills that no longer happen; the whole slot
+        // streams instead. A dynamic level can't decide invariance at comptime. Both fall back
+        // to streaming.
+        let can_fix_invariants = op_space.is_static() && sync != Sync::Barrier;
         let planned_operands = operands
             .iter()
             .map(|op| {
@@ -59,20 +71,9 @@ impl SlotPlan {
                 }
             })
             .collect();
-        let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
-        let collective_full = Sync::collective_full(&deliveries);
-        let fillers = level.fillers();
-        // A cooperative fill deals its elements out over every unit position of the cube, so
-        // planes that are not there leave their share of the stage unwritten, and quietly: the
-        // slot publishes on schedule and the wrong bytes are read.
-        assert!(
-            fillers == 0 || !collective_full,
-            "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
-             a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
-        );
         SlotPlan {
             operands: planned_operands,
-            sync: Sync::for_deliveries(&deliveries),
+            sync,
             collective_full,
             fillers,
         }
