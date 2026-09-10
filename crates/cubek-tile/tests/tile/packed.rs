@@ -3,7 +3,7 @@
 //! A packed tensor is *values*, stored small. Saying so takes one fact (how wide a field is and
 //! how it reads back), and that fact belongs to the values, not to a quantization scheme: there
 //! are no scales here, no block grid, no scale binding, nothing for a scheme to carry. The tile
-//! serves what the words hold ([`TileArg::tile_packed`]) and the read unpacks.
+//! serves what the words hold ([`TileArg::served`]) and the read unpacks.
 //!
 //! What a *quantized* operand adds on top is its scales, which are their own tensor and their own
 //! operand; folding them in is a verb the kernel writes ([`Tile::mm_scaled`], see
@@ -44,7 +44,7 @@ fn packed_copy<O: Numeric, V: Size>(
     space: Partitioning,
     #[define(O)] _dtype: ElemType,
 ) {
-    let input = input.tile_packed::<O>(comptime!(space.clone()));
+    let input = input.served::<O>(comptime!(space.clone()));
     let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&input);
 }
@@ -62,7 +62,7 @@ fn packed_matmul<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w
-        .tile_packed::<E>(comptime!(space.clone()))
+        .served::<E>(comptime!(space.clone()))
         .scaled(&scale.tile(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
@@ -92,7 +92,7 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 ) {
     // Two levels, said twice: the blocks, then the factor over the whole tensor.
     let w = w
-        .tile_packed::<E>(comptime!(space.clone()))
+        .served::<E>(comptime!(space.clone()))
         .scaled(&blocks.tile(comptime!(space.clone())))
         .scaled(&global.tile(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
@@ -258,7 +258,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w
-        .tile_packed::<E>(comptime!(space.clone()))
+        .served::<E>(comptime!(space.clone()))
         .scaled(&scale.tile(comptime!(space.clone())));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
@@ -316,7 +316,7 @@ fn packed_gemv<E: Numeric, V: Size>(
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_packed::<E>(comptime!(space.clone()));
+    let values = w.served::<E>(comptime!(space.clone()));
     let w = values.scaled(&scale.tile(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
@@ -357,8 +357,8 @@ fn packed_matmul_byte_scales<E: Numeric>(
     #[define(E)] _dtype: ElemType,
 ) {
     let w = w
-        .tile_packed::<E>(comptime!(space.clone()))
-        .scaled(&scale.tile_packed::<E>(comptime!(space.clone())));
+        .served::<E>(comptime!(space.clone()))
+        .scaled(&scale.served::<E>(comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
@@ -384,8 +384,8 @@ fn packed_gemv_byte_scales<E: Numeric, V: Size>(
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
-    let values = w.tile_packed::<E>(comptime!(space.clone()));
-    let w = values.scaled(&scale.tile_packed::<E>(comptime!(space.clone())));
+    let values = w.served::<E>(comptime!(space.clone()));
+    let w = values.scaled(&scale.served::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);
@@ -428,9 +428,9 @@ fn packed_cmma_rhs<E: Numeric>(
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w
-        .tile_packed::<E>(comptime!(space.clone()))
+        .served::<E>(comptime!(space.clone()))
         .with_landing(planes, lanes)
-        .scaled(&scale.tile_packed::<E>(comptime!(space.clone())));
+        .scaled(&scale.served::<E>(comptime!(space.clone())));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
         &x,
@@ -1825,7 +1825,7 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
-    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let w = w.served::<E>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
         let x = x.at(&cube);

@@ -56,18 +56,27 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) from a [`packed`](TileSpec::packed) operand: the binding holds stored
-    /// `u32` words and the tile serves the values inside them, `factor` per word, unpacked at the
-    /// read, so the served width is the binding's × that factor. No scales and no scheme: an
-    /// operand that also has scales names them as its own tensor.
-    pub(crate) fn of_packed<E: CubePrimitive>(
+    /// [`of`](Tile::of) at a served type of its own: the binding holds whatever it holds, and the
+    /// tile serves `T` out of it. A [`packed`](TileSpec::packed) binding holds `u32` words and
+    /// serves the values inside them, `factor` per word, unpacked at the read; a binding that
+    /// states no packing serves its own element, and this is [`of`](Tile::of) with the type
+    /// written out. No scales and no scheme: an operand that also has scales names them as its
+    /// own tensor.
+    ///
+    /// The served type is stated at the call because a packed binding's element is the word, not
+    /// the value, so nothing can infer it. Where the binding does serve its own element, the two
+    /// must agree, which [`of`](Tile::of) proves in the type system and this checks here.
+    pub(crate) fn of_served<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
+        let bound = elem_type_of::<E>();
+        let served = elem_type_of::<T>();
         comptime!(assert!(
-            spec.packing != Packing::Plain,
-            "Tile::of_packed: the operand states no packing, so it is a plain tile (Tile::of)"
+            spec.packing != Packing::Plain || bound == served,
+            "Tile::of_served: a binding that states no packing serves the element it is bound \
+             at, {bound:?}, not {served:?}"
         ));
         Tile::<T>::of_tensor::<E>(
             values,

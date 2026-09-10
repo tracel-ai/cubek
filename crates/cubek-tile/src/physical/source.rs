@@ -339,6 +339,14 @@ impl StridedOperand {
     pub fn arg<E: Numeric, V: Size>(self) -> TileArgLaunch<'static, E, V> {
         TileArgLaunch::new(self.tensor, self.spec)
     }
+
+    /// The width the binding is typed at: the launch value for the kernel's `Size` generic.
+    /// [`vector_size`](Self::vector_size) is what the operand *serves*, which a packed store
+    /// holds in fewer words. The two are the same for a binding that states no packing, which is
+    /// why a kernel can take this for every operand without knowing which it has.
+    pub fn bound_width(&self) -> usize {
+        self.spec.packing.physical(self.vector_size)
+    }
 }
 
 /// What [`build_spec`](StridedTileSource::build_spec) settles for an operand with no tensor to

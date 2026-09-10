@@ -31,7 +31,7 @@ fn dequantize<E: Numeric, S: Numeric, W: Size, F: Size>(
     space: Partitioning,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let weights = weights.tile_packed::<E>(comptime!(space.clone()));
+    let weights = weights.served::<E>(comptime!(space.clone()));
     let scales = scales.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
     out.mul(&weights, &scales);

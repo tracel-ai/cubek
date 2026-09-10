@@ -7,9 +7,9 @@
 //! it said so. Nothing here states a side and nothing counts levels.
 //!
 //! A factor that carries none is [`Tile::plain`], and the leaf reads it with no arithmetic at
-//! all, which is why a float kernel compiles to what it always did. A kernel whose levels the
-//! launch decides writes [`Tile::scaled_by`] instead and says nothing about how many there are:
-//! binding none of them is scaling by one.
+//! all, which is why a float kernel compiles to what it always did. A level the launch binds is
+//! written with [`Tile::scaled_by`], once per level and named: binding none of them is scaling
+//! by one.
 //!
 //! A level above the first is read once per leaf region at its origin, so it is only correct
 //! where it covers the whole tile the level below spans.
@@ -53,25 +53,26 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// This factor, scaled by every level `levels` binds, innermost first: [`scaled`](Tile::scaled)
-    /// said once per bound level. A kernel that writes this states no depth at all, and binding
-    /// no level is scaling by one.
+    /// [`scaled`](Tile::scaled) by a level a launch bound, which a scheme may not have: absent,
+    /// it folds nothing and emits nothing, which is scaling by one. Say it again for a level
+    /// above that one, the innermost first.
     ///
-    /// Every level is stored words, read in its own width: which width is its
+    /// A bound level is stored words, read in its own width: which width is its
     /// [`Field`](crate::Field), which the launch states on it and nothing here asks about.
     pub fn scaled_by<S: Numeric>(
         &self,
-        levels: &Sequence<TileArg<'static, u32, Const<1>>>,
+        level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
         #[comptime] space: Partitioning,
     ) -> Scaled<E, S> {
-        let mut tiles = Sequence::new();
-        #[unroll]
-        for i in 0..levels.len() {
-            tiles.push(levels.index(i).tile_packed::<S>(comptime!(space.clone())));
+        let mut levels = Sequence::new();
+        #[comptime]
+        match level {
+            ComptimeOption::Some(level) => levels.push(level.served::<S>(comptime!(space.clone()))),
+            ComptimeOption::None => {}
         }
         Scaled::<E, S> {
             values: self.clone(),
-            levels: tiles,
+            levels,
         }
     }
 }
@@ -82,6 +83,24 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     pub fn scaled(&self, level: &Tile<S>) -> Scaled<E, S> {
         let mut levels = self.levels.clone();
         levels.push(level.clone());
+        Scaled::<E, S> {
+            values: self.values.clone(),
+            levels,
+        }
+    }
+
+    /// [`scaled`](Scaled::scaled) by one bound level more, which a scheme may not have.
+    pub fn scaled_by(
+        &self,
+        level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
+        #[comptime] space: Partitioning,
+    ) -> Scaled<E, S> {
+        let mut levels = self.levels.clone();
+        #[comptime]
+        match level {
+            ComptimeOption::Some(level) => levels.push(level.served::<S>(comptime!(space.clone()))),
+            ComptimeOption::None => {}
+        }
         Scaled::<E, S> {
             values: self.values.clone(),
             levels,

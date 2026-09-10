@@ -39,7 +39,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let w = w.served::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
@@ -90,7 +90,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.tile_packed::<E>(comptime!(space.clone()));
+    let w = w.served::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));

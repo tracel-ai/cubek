@@ -226,11 +226,16 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .under(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) for a [`packed`](TileSpec::packed) operand: `E` is the *stored*
-    /// element (`u32` words) and `O` the served value, unpacked at the read. The two differ, so
-    /// the served type is stated at the call rather than read off the binding.
-    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
-        Tile::<O>::of_packed(
+    /// [`tile`](Self::tile) served at a type of its own: `E` is the *stored* element and `O` what
+    /// the tile serves out of it, unpacked at the read where the binding states a
+    /// [`packing`](TileSpec::packed) and read as it lies where it does not. The two differ for a
+    /// packed binding, whose element is the word rather than the value, so the served type is
+    /// stated at the call rather than read off the binding.
+    ///
+    /// What a kernel writes when how its operand is stored is the binding's business and not its
+    /// own: a factor packed into words and a factor lying at its own element are the same call.
+    pub fn served<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
+        Tile::<O>::of_served(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),

@@ -143,12 +143,24 @@ word** — so one binding serves them all.
   `f16`/`bf16` sit two to one, an 8-bit code four. An `f16` slot decodes in integer arithmetic
   rather than through a 16-bit reinterpret, which wgpu refuses without an extension, and a field
   that fills its word skips the slot walk entirely.
-- `Tile::scaled_by::<S>(levels, space)`: the levels a launch bound for this factor, innermost
-  first, as one `Sequence<TileArg<'static, u32, Const<1>>>` argument. Binding none is scaling by
-  one. `maybe_scaled` and the `MaybeTile` trait are deleted; `ComptimeOption` no longer appears
-  in a scales signature anywhere.
-- The scaled kernel is `lhs, lhs_scales, rhs, rhs_scales, out`: symmetric, context-free, no
-  comptime match in the body, and either factor may carry levels.
+- `Tile::scaled_by::<S>(level, space)`: one level a launch bound, said once per level, innermost
+  first. Unbound is scaling by one. `maybe_scaled` and the `MaybeTile` trait are deleted.
+  *(A `Sequence` of levels was tried first and Louis turned it down, rightly: a block scale and a
+  per-tensor scale are different facts, not two elements of a list, and a sequence makes their
+  order a silent contract — push them backwards and every scale applies at the wrong granularity
+  with nothing to catch it. Named arguments make that a compile error, and no scheme carries a
+  third level, so the generality bought nothing.)*
+- The scaled kernel takes each side's two levels by name: `lhs_block_scale`, `lhs_global_scale`,
+  `rhs_block_scale`, `rhs_global_scale`.
+- **Both factors are the same type.** `TileArg::tile_packed` becomes `TileArg::served::<O>`,
+  which serves any binding at the element the contraction wants: unpacked from words where the
+  binding states a packing, read as it lies where it does not. So each side is
+  `TileArg<'_, S, V>` with its own stored element and its own served element, and the kernel no
+  longer declares which side is packed. `Tile::of_served` keeps the guarantee `Tile::of` had in
+  the type system by checking it in comptime, through `elem_type_of`, which sees past the
+  runtime erasure that makes `elem_type_native` unavailable to a kernel generic.
+  `StridedOperand::bound_width()` is what a launch passes for the `Size` generic, so the launch
+  does not have to know either.
 - cubek's own `quant_gemv` moved to the same shape, so there is one way to say it. Its scales are
   `f16` and now read as fields of a word: 4 Metal tests green, unchanged.
 

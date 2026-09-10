@@ -87,12 +87,12 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 
 /// `y = (W ⊗ s) · x`.
 ///
-/// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_packed`]); the
-/// scales arrive as their own tensors, one per level, and fold in at the contraction
-/// ([`cubek_tile::Tile::scaled_by`]), written on the weight. Nothing
+/// The weight arrives as `u32` words and unpacks at the read ([`TileArg::served`]); each
+/// scale level arrives as its own tensor and folds in at the contraction
+/// ([`cubek_tile::Scaled::scaled_by`]), written on the weight. A scheme always has the block
+/// level and may have the factor over the whole tensor; unbound, that one scales by one. Nothing
 /// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
-/// values one scale covers is the scales operand's own axes, stated in the space; how many levels
-/// there are is how many the launch bound.
+/// values one scale covers is the scales operand's own axes, stated in the space.
 ///
 /// Every operand keeps its own element: `EC` is what the words decode to, `EX` what the
 /// activation buffer holds, `ES` the scales', `EO` the output's, and the leaf casts each into
@@ -108,7 +108,8 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX: Size, VO: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, EX, VX>,
-    scales: &Sequence<TileArg<'static, u32, Const<1>>>,
+    block_scale: &TileArg<'_, u32, Const<1>>,
+    global_scale: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
     out: &TileArg<'_, EO, VO>,
     space: Partitioning,
     #[comptime] bp: QuantGemvBlueprint,
@@ -120,8 +121,9 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
 ) {
     let config = comptime!(register_block(&bp, &problem));
     let w = w
-        .tile_packed::<EC>(comptime!(space.clone()))
-        .scaled_by::<ES>(scales, comptime!(space.clone()));
+        .served::<EC>(comptime!(space.clone()))
+        .scaled(&block_scale.served::<ES>(comptime!(space.clone())))
+        .scaled_by(global_scale, comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
