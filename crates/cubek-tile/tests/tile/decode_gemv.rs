@@ -39,7 +39,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.served::<E>(comptime!(space.clone()));
+    let w = w.tile_as::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
@@ -62,7 +62,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             for lane in plane {
                 let mut out_lane = out_plane.at(&lane);
                 out_lane.mma_scaled_with(
-                    &w_plane.at(&lane).scaled(&scale_plane.at(&lane)),
+                    &w_plane.at(&lane).with_scale(&scale_plane.at(&lane)),
                     &x_plane.at(&lane).plain(),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
@@ -90,7 +90,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
     #[comptime] budget: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let w = w.served::<E>(comptime!(space.clone()));
+    let w = w.tile_as::<E>(comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
@@ -115,7 +115,7 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             for lane in plane {
                 let mut acc_lane = acc_plane.at(&lane);
                 acc_lane.mma_scaled(
-                    &w_plane.at(&lane).scaled(&scale_plane.at(&lane)),
+                    &w_plane.at(&lane).with_scale(&scale_plane.at(&lane)),
                     &x_plane.at(&lane).plain(),
                     Semiring::SUM_PROD,
                 );

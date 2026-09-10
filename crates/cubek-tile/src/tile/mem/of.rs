@@ -56,27 +56,26 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) at a served type of its own: the binding holds whatever it holds, and the
-    /// tile serves `T` out of it. A [`packed`](TileSpec::packed) binding holds `u32` words and
-    /// serves the values inside them, `factor` per word, unpacked at the read; a binding that
-    /// states no packing serves its own element, and this is [`of`](Tile::of) with the type
-    /// written out. No scales and no scheme: an operand that also has scales names them as its
-    /// own tensor.
+    /// [`of`](Tile::of) where the stored element `E` and the served element `T` need not be the
+    /// same: a [`packed`](TileSpec::packed) binding holds `u32` words and the tile reads the
+    /// values inside them, `factor` per word; a binding that states no packing reads its own
+    /// element, and this is [`of`](Tile::of) with the type written out rather than inferred. No
+    /// scales and no scheme: an operand that also has scales names them as its own tensor.
     ///
-    /// The served type is stated at the call because a packed binding's element is the word, not
-    /// the value, so nothing can infer it. Where the binding does serve its own element, the two
-    /// must agree, which [`of`](Tile::of) proves in the type system and this checks here.
-    pub(crate) fn of_served<E: CubePrimitive>(
+    /// `T` is stated at the call because a packed binding's element is the word, not the value,
+    /// so nothing can infer it. Where the binding does read its own element, the two must agree,
+    /// which [`of`](Tile::of) proves in the type system and this checks here.
+    pub(crate) fn of_stored<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
     ) -> Tile<T> {
-        let bound = elem_type_of::<E>();
-        let served = elem_type_of::<T>();
+        let stored = elem_type_of::<E>();
+        let read = elem_type_of::<T>();
         comptime!(assert!(
-            spec.packing != Packing::Plain || bound == served,
-            "Tile::of_served: a binding that states no packing serves the element it is bound \
-             at, {bound:?}, not {served:?}"
+            spec.packing != Packing::Plain || stored == read,
+            "Tile::of_stored: a binding that states no packing is read at the element it is \
+             bound at, {stored:?}, not {read:?}"
         ));
         Tile::<T>::of_tensor::<E>(
             values,

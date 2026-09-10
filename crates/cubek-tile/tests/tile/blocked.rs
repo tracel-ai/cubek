@@ -77,14 +77,14 @@ fn scaled_matmul<E: Numeric>(
         let mut c_region = c.at(&region);
         match comptime!(side) {
             Scaled::Lhs => c_region.mma_scaled_with(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 BLOCK,
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => c_region.mma_scaled_with(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 BLOCK,
                 Semiring::SUM_PROD,
             ),
@@ -646,7 +646,7 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
             &a.at(&region).plain(),
-            &b.at(&region).scaled(&scale.at(&region)),
+            &b.at(&region).with_scale(&scale.at(&region)),
             BLOCK,
             Semiring::SUM_PROD,
         );
@@ -902,7 +902,7 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
         let mut acc_region = acc.at(&region);
         acc_region.mma_scaled(
             &a.at(&region).plain(),
-            &b.at(&region).scaled(&scale.at(&region)),
+            &b.at(&region).with_scale(&scale.at(&region)),
             Semiring::SUM_PROD,
         );
     }
@@ -1025,7 +1025,7 @@ fn wide_typed_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
         let mut c_region = c.at(&region);
         c_region.mma_scaled_with(
             &a.at(&region).plain(),
-            &b.at(&region).scaled(&scale.at(&region)),
+            &b.at(&region).with_scale(&scale.at(&region)),
             BLOCK,
             Semiring::SUM_PROD,
         );

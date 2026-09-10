@@ -6,10 +6,17 @@
 //! Which factor they multiply is where the kernel wrote them. How deep they go is how many times
 //! it said so. Nothing here states a side and nothing counts levels.
 //!
+//! **Nothing here multiplies anything.** `with_scale` says which level a factor carries, and the
+//! multiply happens once per line, at the read, inside the leaf
+//! ([`ScaledLines`](crate::ScaledLines)) — which is the only place it can happen without
+//! materializing a dequantized tile. So a factor that says `with_scale` twice is multiplied twice
+//! per line, not twice up front, and the verb that applies them is the contraction's
+//! ([`mm_scaled`](Tile::mm_scaled) and its twins).
+//!
 //! A factor that carries none is [`Tile::plain`], and the leaf reads it with no arithmetic at
 //! all, which is why a float kernel compiles to what it always did. A level the launch binds is
-//! written with [`Tile::scaled_by`], once per level and named: binding none of them is scaling
-//! by one.
+//! written with [`Tile::with_scale_arg`], once per level and named: binding none of them is
+//! scaling by one.
 //!
 //! A level above the first is read once per leaf region at its origin, so it is only correct
 //! where it covers the whole tile the level below spans.
@@ -18,7 +25,9 @@ use cubecl::prelude::*;
 
 use crate::*;
 
-/// A factor and the scales it carries: [`Tile::scaled`], said once per level.
+/// A factor and the scales it carries, which are a pair and not a product: the values, and the
+/// levels that will multiply them when the leaf reads a line. [`Tile::with_scale`], said once per
+/// level.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Scaled<E: Numeric, S: Numeric> {
@@ -43,8 +52,9 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// This factor, scaled by `level`. Say it again for a level above that one.
-    pub fn scaled<S: Numeric>(&self, level: &Tile<S>) -> Scaled<E, S> {
+    /// This factor, carrying `level`: stated here, folded in per line by the contraction. Say it
+    /// again for a level above that one.
+    pub fn with_scale<S: Numeric>(&self, level: &Tile<S>) -> Scaled<E, S> {
         let mut levels = Sequence::new();
         levels.push(level.clone());
         Scaled::<E, S> {
@@ -53,13 +63,13 @@ impl<E: Numeric> Tile<E> {
         }
     }
 
-    /// [`scaled`](Tile::scaled) by a level a launch bound, which a scheme may not have: absent,
-    /// it folds nothing and emits nothing, which is scaling by one. Say it again for a level
-    /// above that one, the innermost first.
+    /// [`with_scale`](Tile::with_scale) for a level a launch bound, which a scheme may not have:
+    /// absent, it folds nothing and emits nothing, which is scaling by one. Say it again for a
+    /// level above that one, the innermost first.
     ///
     /// A bound level is stored words, read in its own width: which width is its
     /// [`Field`](crate::Field), which the launch states on it and nothing here asks about.
-    pub fn scaled_by<S: Numeric>(
+    pub fn with_scale_arg<S: Numeric>(
         &self,
         level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
         #[comptime] space: Partitioning,
@@ -67,7 +77,9 @@ impl<E: Numeric> Tile<E> {
         let mut levels = Sequence::new();
         #[comptime]
         match level {
-            ComptimeOption::Some(level) => levels.push(level.served::<S>(comptime!(space.clone()))),
+            ComptimeOption::Some(level) => {
+                levels.push(level.tile_as::<S>(comptime!(space.clone())))
+            }
             ComptimeOption::None => {}
         }
         Scaled::<E, S> {
@@ -79,8 +91,8 @@ impl<E: Numeric> Tile<E> {
 
 #[cube]
 impl<E: Numeric, S: Numeric> Scaled<E, S> {
-    /// This factor, scaled by one level more.
-    pub fn scaled(&self, level: &Tile<S>) -> Scaled<E, S> {
+    /// This factor, carrying one level more.
+    pub fn with_scale(&self, level: &Tile<S>) -> Scaled<E, S> {
         let mut levels = self.levels.clone();
         levels.push(level.clone());
         Scaled::<E, S> {
@@ -89,8 +101,8 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         }
     }
 
-    /// [`scaled`](Scaled::scaled) by one bound level more, which a scheme may not have.
-    pub fn scaled_by(
+    /// [`with_scale`](Scaled::with_scale) for one bound level more, which a scheme may not have.
+    pub fn with_scale_arg(
         &self,
         level: &ComptimeOption<TileArg<'static, u32, Const<1>>>,
         #[comptime] space: Partitioning,
@@ -98,7 +110,9 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let mut levels = self.levels.clone();
         #[comptime]
         match level {
-            ComptimeOption::Some(level) => levels.push(level.served::<S>(comptime!(space.clone()))),
+            ComptimeOption::Some(level) => {
+                levels.push(level.tile_as::<S>(comptime!(space.clone())))
+            }
             ComptimeOption::None => {}
         }
         Scaled::<E, S> {

@@ -1,4 +1,4 @@
-//! `c.mm(&a.scaled(&s), &b, semiring)`: the contraction with one factor scaled by a **real
+//! `c.mm(&a.with_scale(&s), &b, semiring)`: the contraction with one factor scaled by a **real
 //! operand**, on the factor the kernel wrote it on.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
@@ -23,7 +23,7 @@ use half::f16;
 use super::matmul::require_cmma_8x8x8_f32;
 
 /// Which factor a test kernel writes its scales on. The engine has no such enum: a kernel says
-/// which by where it writes `.scaled()`, and these kernels serve both cases from one launch.
+/// which by where it writes `.with_scale()`, and these kernels serve both cases from one launch.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Scaled {
     Lhs,
@@ -60,14 +60,14 @@ fn scaled_matmul<E: Numeric, S: Numeric>(
         let mut c_r = c.at(&region);
         match comptime!(side) {
             Scaled::Lhs => c_r.mma_scaled_with(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => c_r.mma_scaled_with(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
             ),
@@ -108,13 +108,13 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
             Scaled::Lhs => acc_r.mma_scaled(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => acc_r.mma_scaled(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 Semiring::SUM_PROD,
             ),
         }
@@ -153,8 +153,8 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
         match comptime!(side) {
             Scaled::Lhs => c_r.mma_scaled_with(
                 &a.at(&region)
-                    .scaled(&blocks.at(&region))
-                    .scaled(&global.at(&region)),
+                    .with_scale(&blocks.at(&region))
+                    .with_scale(&global.at(&region)),
                 &b.at(&region).plain(),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
@@ -162,8 +162,8 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
             Scaled::Rhs => c_r.mma_scaled_with(
                 &a.at(&region).plain(),
                 &b.at(&region)
-                    .scaled(&blocks.at(&region))
-                    .scaled(&global.at(&region)),
+                    .with_scale(&blocks.at(&region))
+                    .with_scale(&global.at(&region)),
                 REGISTER_BLOCK,
                 Semiring::SUM_PROD,
             ),
@@ -206,13 +206,13 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
             Scaled::Lhs => acc_r.mma_scaled(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => acc_r.mma_scaled(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 Semiring::SUM_PROD,
             ),
         }
@@ -1272,13 +1272,13 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         let mut acc_r = acc.at(&region);
         match comptime!(side) {
             Scaled::Lhs => acc_r.mma_scaled(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => acc_r.mma_scaled(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 Semiring::SUM_PROD,
             ),
         }
@@ -1423,14 +1423,14 @@ fn wide_lhs_scaled_matmul<E: Numeric, S: Numeric, SW: Size>(
         let mut c_r = c.at(&region);
         match comptime!(side) {
             Scaled::Lhs => c_r.mma_scaled_with(
-                &a.at(&region).scaled(&scale.at(&region)),
+                &a.at(&region).with_scale(&scale.at(&region)),
                 &b.at(&region).plain(),
                 comptime!(RegisterBlock::new(64).lane_fanout()),
                 Semiring::SUM_PROD,
             ),
             Scaled::Rhs => c_r.mma_scaled_with(
                 &a.at(&region).plain(),
-                &b.at(&region).scaled(&scale.at(&region)),
+                &b.at(&region).with_scale(&scale.at(&region)),
                 comptime!(RegisterBlock::new(64).lane_fanout()),
                 Semiring::SUM_PROD,
             ),

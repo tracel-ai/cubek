@@ -36,7 +36,7 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// [`mm`](Tile::mm) over factors that carry their own scales: `c = (a ⊗ s) · b` is
-    /// `c.mm_scaled(&a.scaled(&s), &b.plain(), semiring)`.
+    /// `c.mm_scaled(&a.with_scale(&s), &b.plain(), semiring)`.
     ///
     /// Which factor a scale multiplies is where the kernel wrote it, and how deep the scales go
     /// is how many times it said `scaled`. Nothing infers a side and nothing counts levels; a

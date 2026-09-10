@@ -87,9 +87,9 @@ pub fn register_block(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Re
 
 /// `y = (W ⊗ s) · x`.
 ///
-/// The weight arrives as `u32` words and unpacks at the read ([`TileArg::served`]); each
+/// The weight arrives as `u32` words and unpacks at the read ([`TileArg::tile_as`]); each
 /// scale level arrives as its own tensor and folds in at the contraction
-/// ([`cubek_tile::Scaled::scaled_by`]), written on the weight. A scheme always has the block
+/// ([`cubek_tile::Scaled::with_scale_arg`]), written on the weight. A scheme always has the block
 /// level and may have the factor over the whole tensor; unbound, that one scales by one. Nothing
 /// here mentions a quantization scheme, a block size or a scale binding riding the weight: which
 /// values one scale covers is the scales operand's own axes, stated in the space.
@@ -121,9 +121,9 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
 ) {
     let config = comptime!(register_block(&bp, &problem));
     let w = w
-        .served::<EC>(comptime!(space.clone()))
-        .scaled(&block_scale.served::<ES>(comptime!(space.clone())))
-        .scaled_by(global_scale, comptime!(space.clone()));
+        .tile_as::<EC>(comptime!(space.clone()))
+        .with_scale(&block_scale.tile_as::<ES>(comptime!(space.clone())))
+        .with_scale_arg(global_scale, comptime!(space.clone()));
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
