@@ -109,6 +109,25 @@ impl SlotPlan {
 }
 
 #[cube]
+impl<T: Numeric> Tile<T> {
+    /// One shared-memory stage of this tile, laid out as `storage` and served at `width` where one
+    /// is stated ([`Ring::smem_single_at`]), for a ring `depth` slots deep.
+    ///
+    /// A gathered operand keeps its compacted physical window and projection, so staging does not
+    /// replicate each logical element for every gather tap; the leaf performs the gather on read
+    /// instead.
+    pub(crate) fn staged(
+        &self,
+        #[comptime] level: Level,
+        #[comptime] depth: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+    ) -> Tile<T> {
+        MemData::stage(self, level, storage, width).at_depth(depth)
+    }
+}
+
+#[cube]
 impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
     /// Build the `depth` slots staging both operands into shared memory laid out as `storage`,
     /// for a kernel walking `walk` itself, with [`Sync`] deduced from the operands' delivery.
@@ -139,8 +158,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.0.clone()
             } else {
-                stage_smem(
-                    lhs,
+                lhs.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -150,8 +168,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
                 slots.index(FIRST_SLOT).data.1.clone()
             } else {
-                stage_smem(
-                    rhs,
+                rhs.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -172,7 +189,12 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth, comptime!(plan.fillers()))
+        Ring::wrap(
+            slots,
+            (lhs.clone(), rhs.clone()),
+            depth,
+            comptime!(plan.fillers()),
+        )
     }
 }
 
@@ -352,8 +374,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
-                stage_smem(
-                    input,
+                input.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -488,21 +509,6 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
         self.__expand_release_read_method(scope);
     }
 }
-/// Allocate one shared-memory stage for `input` laid out as `storage`, served at `width` where
-/// one is stated ([`Ring::smem_single_at`]). A gathered operand keeps its compacted physical
-/// window and projection, so staging does not replicate each logical element for every gather
-/// tap; the leaf performs the gather on read instead.
-#[cube]
-fn stage_smem<T: Numeric>(
-    input: &Tile<T>,
-    #[comptime] level: Level,
-    #[comptime] depth: usize,
-    #[comptime] storage: StageStorage,
-    #[comptime] width: Option<usize>,
-) -> Tile<T> {
-    MemData::stage(input, level, storage, width).at_depth(depth)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

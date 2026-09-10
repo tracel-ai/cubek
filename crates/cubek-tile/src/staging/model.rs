@@ -108,7 +108,11 @@ struct Shape {
 impl Shape {
     /// The arrivals `full` is armed with.
     fn publishers(&self) -> u32 {
-        if self.publishes_all { self.producers } else { 1 }
+        if self.publishes_all {
+            self.producers
+        } else {
+            1
+        }
     }
 
     fn start(&self) -> State {
@@ -130,112 +134,114 @@ impl Shape {
         let walked = |units: &Vec<Unit>| units.iter().all(|u| u.step == self.regions && u.waiting);
         walked(&state.producers) && walked(&state.consumers)
     }
-}
 
-/// Every move one unit could make from `state`, as the state it would leave behind. A unit that
-/// has walked every region, or whose wait does not pass, makes none.
-fn moves(shape: Shape, state: &State) -> Vec<State> {
-    let mut next = Vec::new();
+    /// Walk every reachable state of this shape, checking the protocol at each. Returns how many
+    /// distinct states the two sides can be in, which is the interleaving count the run covered.
+    fn explore(&self) -> usize {
+        self.explore_from(self.start())
+    }
 
-    for u in 0..state.producers.len() {
-        let unit = state.producers[u].clone();
-        if unit.step == shape.regions {
-            continue;
-        }
-        let slot = unit.step % shape.depth;
-        let mut after = state.clone();
-        if unit.waiting {
-            if !after.slots[slot].empty.passes(unit.parity(shape.depth) ^ 1) {
-                continue;
-            }
-            // The wait passed. The elected unit is the one that writes, so it is the one whose
-            // pass has to mean the slot is free; the others fill nothing and only keep step.
-            if u == 0 {
+    /// [`explore`](Shape::explore) from a state of the caller's own, so a test can arm a barrier
+    /// wrongly and watch what it does.
+    fn explore_from(&self, start: State) -> usize {
+        let mut seen = HashSet::new();
+        let mut stack = vec![start.clone()];
+        seen.insert(start);
+
+        while let Some(state) = stack.pop() {
+            let next = state.moves(*self);
+            if next.is_empty() {
                 assert!(
-                    after.slots[slot].holds.is_none() || after.slots[slot].readers == 0,
-                    "a slot was refilled while a consumer was still reading it"
+                    self.done(&state),
+                    "every unfinished unit is waiting and none can pass: {self:?} deadlocks at \
+                     {state:?}"
                 );
-                after.slots[slot].holds = Some(unit.step);
-            }
-            after.producers[u].waiting = false;
-        } else {
-            if shape.publishes_all || u == 0 {
-                after.slots[slot].full.arrive();
-            }
-            after.producers[u].step += 1;
-            after.producers[u].waiting = true;
-        }
-        next.push(after);
-    }
-
-    for u in 0..state.consumers.len() {
-        let unit = state.consumers[u].clone();
-        if unit.step == shape.regions {
-            continue;
-        }
-        let slot = unit.step % shape.depth;
-        let mut after = state.clone();
-        if unit.waiting {
-            if !after.slots[slot].full.passes(unit.parity(shape.depth)) {
+                for (s, slot) in state.slots.iter().enumerate() {
+                    assert_eq!(
+                        slot.full.parity, slot.empty.parity,
+                        "slot {s} was filled and read a different number of times"
+                    );
+                    assert_eq!(slot.readers, 0, "slot {s} ends with a reader in it");
+                }
                 continue;
             }
-            assert_eq!(
-                after.slots[slot].holds,
-                Some(unit.step),
-                "a slot was read holding a region other than the one being walked"
-            );
-            after.slots[slot].readers += 1;
-            after.consumers[u].waiting = false;
-        } else {
-            after.slots[slot].readers -= 1;
-            after.slots[slot].empty.arrive();
-            after.consumers[u].step += 1;
-            after.consumers[u].waiting = true;
+            for state in next {
+                if seen.insert(state.clone()) {
+                    stack.push(state);
+                }
+            }
         }
-        next.push(after);
+
+        seen.len()
     }
-
-    next
 }
 
-/// Walk every reachable state of `shape`, checking the protocol at each. Returns how many
-/// distinct states the two sides can be in, which is the interleaving count the run covered.
-fn explore(shape: Shape) -> usize {
-    explore_from(shape, shape.start())
-}
+impl State {
+    /// Every move one unit could make from here, as the state it would leave behind. A unit that
+    /// has walked every region, or whose wait does not pass, makes none.
+    fn moves(&self, shape: Shape) -> Vec<State> {
+        let mut next = Vec::new();
 
-/// [`explore`] from a state of the caller's own, so a test can arm a barrier wrongly and watch
-/// what it does.
-fn explore_from(shape: Shape, start: State) -> usize {
-    let mut seen = HashSet::new();
-    let mut stack = vec![start.clone()];
-    seen.insert(start);
+        for u in 0..self.producers.len() {
+            let unit = self.producers[u].clone();
+            if unit.step == shape.regions {
+                continue;
+            }
+            let slot = unit.step % shape.depth;
+            let mut after = self.clone();
+            if unit.waiting {
+                if !after.slots[slot].empty.passes(unit.parity(shape.depth) ^ 1) {
+                    continue;
+                }
+                // The wait passed. The elected unit is the one that writes, so it is the one whose
+                // pass has to mean the slot is free; the others fill nothing and only keep step.
+                if u == 0 {
+                    assert!(
+                        after.slots[slot].holds.is_none() || after.slots[slot].readers == 0,
+                        "a slot was refilled while a consumer was still reading it"
+                    );
+                    after.slots[slot].holds = Some(unit.step);
+                }
+                after.producers[u].waiting = false;
+            } else {
+                if shape.publishes_all || u == 0 {
+                    after.slots[slot].full.arrive();
+                }
+                after.producers[u].step += 1;
+                after.producers[u].waiting = true;
+            }
+            next.push(after);
+        }
 
-    while let Some(state) = stack.pop() {
-        let next = moves(shape, &state);
-        if next.is_empty() {
-            assert!(
-                shape.done(&state),
-                "every unfinished unit is waiting and none can pass: {shape:?} deadlocks at \
-                 {state:?}"
-            );
-            for (s, slot) in state.slots.iter().enumerate() {
+        for u in 0..self.consumers.len() {
+            let unit = self.consumers[u].clone();
+            if unit.step == shape.regions {
+                continue;
+            }
+            let slot = unit.step % shape.depth;
+            let mut after = self.clone();
+            if unit.waiting {
+                if !after.slots[slot].full.passes(unit.parity(shape.depth)) {
+                    continue;
+                }
                 assert_eq!(
-                    slot.full.parity, slot.empty.parity,
-                    "slot {s} was filled and read a different number of times"
+                    after.slots[slot].holds,
+                    Some(unit.step),
+                    "a slot was read holding a region other than the one being walked"
                 );
-                assert_eq!(slot.readers, 0, "slot {s} ends with a reader in it");
+                after.slots[slot].readers += 1;
+                after.consumers[u].waiting = false;
+            } else {
+                after.slots[slot].readers -= 1;
+                after.slots[slot].empty.arrive();
+                after.consumers[u].step += 1;
+                after.consumers[u].waiting = true;
             }
-            continue;
+            next.push(after);
         }
-        for state in next {
-            if seen.insert(state.clone()) {
-                stack.push(state);
-            }
-        }
-    }
 
-    seen.len()
+        next
+    }
 }
 
 /// Every ring the two sides can be run over, from a single slot to one deeper than the walk.
@@ -244,15 +250,14 @@ fn the_two_sides_agree_however_they_interleave() {
     for depth in 1..=3 {
         for regions in 1..=4 {
             for consumers in 1..=3 {
-                assert!(
-                    explore(Shape {
-                        depth,
-                        regions,
-                        producers: 2,
-                        consumers,
-                        publishes_all: true,
-                    }) > 0
-                );
+                let shape = Shape {
+                    depth,
+                    regions,
+                    producers: 2,
+                    consumers,
+                    publishes_all: true,
+                };
+                assert!(shape.explore() > 0);
             }
         }
     }
@@ -262,13 +267,14 @@ fn the_two_sides_agree_however_they_interleave() {
 /// each region is filled, read, and freed before the next is touched.
 #[test]
 fn a_single_slot_never_runs_ahead() {
-    explore(Shape {
+    let shape = Shape {
         depth: 1,
         regions: 3,
         producers: 1,
         consumers: 1,
         publishes_all: true,
-    });
+    };
+    shape.explore();
 }
 
 /// The producer may run `depth - 1` regions ahead and no further, which is the whole point of
@@ -288,7 +294,7 @@ fn the_producer_runs_at_most_a_ring_ahead() {
     let mut lead = 0;
     while let Some(state) = stack.pop() {
         lead = lead.max(state.producers[0].step - state.consumers[0].step);
-        for state in moves(shape, &state) {
+        for state in state.moves(shape) {
             if seen.insert(state.clone()) {
                 stack.push(state);
             }
@@ -313,7 +319,7 @@ fn a_slot_freed_by_fewer_units_than_it_waits_for_hangs() {
     let mut start = shape.start();
     // As if `empty` had been armed with `CUBE_DIM` while only the planes that compute arrive.
     start.slots[0].empty.arrivals = 2;
-    explore_from(shape, start);
+    shape.explore_from(start);
 }
 
 /// And why `full` counts every producer. Published by the elected unit alone, a filling plane
@@ -323,11 +329,12 @@ fn a_slot_freed_by_fewer_units_than_it_waits_for_hangs() {
 #[test]
 #[should_panic(expected = "deadlocks")]
 fn a_slot_published_by_the_elected_unit_alone_lets_a_second_filling_plane_drift() {
-    explore(Shape {
+    let shape = Shape {
         depth: 1,
         regions: 1,
         producers: 2,
         consumers: 1,
         publishes_all: false,
-    });
+    };
+    shape.explore();
 }

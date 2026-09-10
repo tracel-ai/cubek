@@ -547,9 +547,9 @@ impl StageForm {
     /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]` split,
     /// so the buffer lays the innermost block down contiguously.
     fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
-        let nesting = stage_nesting(space, &stage);
+        let nesting = stage.nesting(space);
         StageForm {
-            extents: storage_extents(space, vector_size, &nesting),
+            extents: StageForm::dense_extents(space, vector_size, &nesting),
             positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
             // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
             // whatever the operand it stages was gathered through.
@@ -596,6 +596,36 @@ impl StageForm {
             .map(|p| self.extents[p + 1..].iter().product())
             .collect()
     }
+
+    /// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid per
+    /// level of `nesting`. A level contributes how many of the next block down it holds; the innermost
+    /// contributes its own extents.
+    fn dense_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
+        let rank = space.rank();
+        let mut extents = Vec::new();
+        let mut outer = space;
+        for block in nesting {
+            for p in 0..rank {
+                let (e, b) = (outer.extent_at(p), block.extent_at(p));
+                assert!(
+                    e.is_multiple_of(b),
+                    "MemData::smem: a {b}-element storage block must divide the {e}-element block \
+                     enclosing it on axis {p}"
+                );
+                extents.push(e / b);
+            }
+            outer = block;
+        }
+        for p in 0..rank {
+            extents.push(outer.extent_at(p));
+        }
+        // Rounded up, not truncated: a padded stage's innermost extent need not fill whole lines, and
+        // the spare lanes of the last one are its padding. `fill_extent` refuses the case where the
+        // rounding would instead mean the stage and its source disagree; every fill path asks it.
+        let last = extents.len() - 1;
+        extents[last] = extents[last].div_ceil(vector_size);
+        extents
+    }
 }
 
 /// A stage's physical shape and strides, in lines like [`Tile::of`]'s.
@@ -615,70 +645,6 @@ fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
     (shape, strides)
 }
 
-/// The storage-tiling nesting a stage over `space` gets: the blocks its buffer lays down
-/// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
-/// outermost). Empty is a plain row-major buffer.
-///
-/// A `Tiled` stage groups the stated block, the fragment a cmma transaction reads unstrided,
-/// projected onto the operand's own axes. A space that is the block already has no grid left to
-/// tile, so it stays plain whatever the layout asks for.
-fn stage_nesting(space: &Space, stage: &StageStorage) -> Vec<Space> {
-    match stage {
-        StageStorage::Tiled { block } => {
-            let nested = Space::new(
-                &space
-                    .axes()
-                    .map(|axis| {
-                        let edge = block
-                            .iter()
-                            .find(|&&(a, _)| a == axis)
-                            .unwrap_or_else(|| {
-                                panic!("StageStorage::Tiled: the block states no edge for {axis:?}")
-                            })
-                            .1;
-                        (axis, edge)
-                    })
-                    .collect::<Vec<_>>(),
-            );
-            if nested.laid_out_like(space) {
-                return Vec::new();
-            }
-            vec![nested]
-        }
-        StageStorage::Strided => Vec::new(),
-    }
-}
-
-/// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid per
-/// level of `nesting`. A level contributes how many of the next block down it holds; the innermost
-/// contributes its own extents.
-fn storage_extents(space: &Space, vector_size: usize, nesting: &[Space]) -> Vec<usize> {
-    let rank = space.rank();
-    let mut extents = Vec::new();
-    let mut outer = space;
-    for block in nesting {
-        for p in 0..rank {
-            let (e, b) = (outer.extent_at(p), block.extent_at(p));
-            assert!(
-                e.is_multiple_of(b),
-                "MemData::smem: a {b}-element storage block must divide the {e}-element block \
-                 enclosing it on axis {p}"
-            );
-            extents.push(e / b);
-        }
-        outer = block;
-    }
-    for p in 0..rank {
-        extents.push(outer.extent_at(p));
-    }
-    // Rounded up, not truncated: a padded stage's innermost extent need not fill whole lines, and
-    // the spare lanes of the last one are its padding. `fill_extent` refuses the case where the
-    // rounding would instead mean the stage and its source disagree; every fill path asks it.
-    let last = extents.len() - 1;
-    extents[last] = extents[last].div_ceil(vector_size);
-    extents
-}
-
 /// What a padded fill needs beyond the two boxes: `width` scalar source cells assembled per
 /// destination line, and `lanes` the innermost extent past which those cells are padding. `None`
 /// lanes is a `Dynamic` extent, where nothing is known at comptime and the source's own bounds
@@ -690,6 +656,44 @@ pub(crate) struct Padding {
     /// The physical rank both boxes share, which only this path needs: the 1:1 copy reads its
     /// line whole and never rebuilds a coordinate.
     pub(crate) rank: usize,
+}
+
+impl StageStorage {
+    /// The storage-tiling nesting a stage over `space` gets: the blocks its buffer lays down
+    /// contiguously, coarse to fine, each dividing the one before it (`space` is the implicit
+    /// outermost). Empty is a plain row-major buffer.
+    ///
+    /// A `Tiled` stage groups the stated block, the fragment a cmma transaction reads unstrided,
+    /// projected onto the operand's own axes. A space that is the block already has no grid left to
+    /// tile, so it stays plain whatever the layout asks for.
+    pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
+        match self {
+            StageStorage::Tiled { block } => {
+                let nested = Space::new(
+                    &space
+                        .axes()
+                        .map(|axis| {
+                            let edge = block
+                                .iter()
+                                .find(|&&(a, _)| a == axis)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "StageStorage::Tiled: the block states no edge for {axis:?}"
+                                    )
+                                })
+                                .1;
+                            (axis, edge)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                if nested.laid_out_like(space) {
+                    return Vec::new();
+                }
+                vec![nested]
+            }
+            StageStorage::Strided => Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -722,8 +726,8 @@ mod tests {
     #[test]
     fn flat_nesting_is_the_space_itself() {
         let (space, _) = space();
-        assert_eq!(storage_extents(&space, 1, &[]), vec![16, 16]);
-        assert_eq!(storage_extents(&space, 4, &[]), vec![16, 4]);
+        assert_eq!(StageForm::dense_extents(&space, 1, &[]), vec![16, 16]);
+        assert_eq!(StageForm::dense_extents(&space, 4, &[]), vec![16, 4]);
     }
 
     /// One block is the `[grid…, tile…]` split: each axis holds `16 / 4` tiles of `4`.
@@ -731,7 +735,7 @@ mod tests {
     fn one_block_splits_grid_and_tile() {
         let (space, levels) = space();
         assert_eq!(
-            storage_extents(&space, 1, &[space.leaf(&levels)]),
+            StageForm::dense_extents(&space, 1, &[space.leaf(&levels)]),
             vec![4, 4, 4, 4]
         );
     }
@@ -742,7 +746,7 @@ mod tests {
     fn two_blocks_nest() {
         let (space, levels) = space();
         let nesting = [levels[0].child(&space), space.leaf(&levels)];
-        let extents = storage_extents(&space, 1, &nesting);
+        let extents = StageForm::dense_extents(&space, 1, &nesting);
         assert_eq!(extents, vec![2, 2, 2, 2, 4, 4]);
         // The nesting only regroups the buffer, never resizes it.
         assert_eq!(extents.iter().product::<usize>(), space.tile_size());
@@ -818,19 +822,19 @@ mod tests {
     fn a_block_must_divide_its_enclosing_block() {
         let (space, levels) = space();
         // Reversed: the coarse block sits inside the fine one.
-        storage_extents(&space, 1, &[space.leaf(&levels), levels[0].child(&space)]);
+        StageForm::dense_extents(&space, 1, &[space.leaf(&levels), levels[0].child(&space)]);
     }
 
     /// A `Tiled` stage groups the stated block; a space that is the block already has no grid
     /// left, so it stays plain.
     #[test]
-    fn stage_nesting_follows_the_layout() {
+    fn the_nesting_follows_the_layout() {
         let (space, levels) = space();
         let tiled = StageStorage::Tiled {
             block: space.leaf(&levels).extents(),
         };
-        assert!(stage_nesting(&space, &tiled)[0].laid_out_like(&space.leaf(&levels)));
-        assert!(stage_nesting(&space, &StageStorage::Strided).is_empty());
-        assert!(stage_nesting(&space.leaf(&levels), &tiled).is_empty());
+        assert!(tiled.nesting(&space)[0].laid_out_like(&space.leaf(&levels)));
+        assert!(StageStorage::Strided.nesting(&space).is_empty());
+        assert!(tiled.nesting(&space.leaf(&levels)).is_empty());
     }
 }

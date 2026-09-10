@@ -32,7 +32,11 @@ impl Sync {
             !deliveries.is_empty(),
             "Staging: a slot must have at least one delivery"
         );
-        let floor = if fillers > 0 { Sync::Barrier } else { Sync::Cube };
+        let floor = if fillers > 0 {
+            Sync::Barrier
+        } else {
+            Sync::Cube
+        };
         deliveries.iter().fold(floor, |sync, delivery| {
             match (sync, delivery.rendezvous()) {
                 (Sync::Barrier, _) | (_, Sync::Barrier) => Sync::Barrier,
@@ -110,10 +114,8 @@ impl Pipeline {
             Sync::Solo => Pipeline::new_Solo(),
             Sync::Cube => Pipeline::new_Cube(),
             Sync::Barrier => {
-                let full = Barrier::shared(
-                    Pipeline::producers(collective_full, fillers),
-                    UNIT_POS == 0,
-                );
+                let full =
+                    Barrier::shared(Pipeline::producers(collective_full, fillers), UNIT_POS == 0);
                 let empty = Barrier::shared(Pipeline::consumers(fillers), UNIT_POS == 0);
                 sync_async_proxy_shared();
                 sync_cube();
@@ -229,4 +231,3 @@ mod tests {
         assert_eq!(Sync::for_deliveries(&[Delivery::Copy], 1), Sync::Barrier);
     }
 }
-
