@@ -71,10 +71,11 @@ impl Fragments {
 /// value a winner was measured at has to come back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Resident {
-    /// No scratch. The fragment's own intrinsic does the work, and a drain that needs cells
-    /// refuses by name.
+    /// No window. A fragment stores straight to memory through its own intrinsic, which is the
+    /// cheapest drain there is and the only one that cannot add: a folding destination refuses.
     None,
-    /// One tile. The smallest footprint, and three cube-wide barriers per tile drained.
+    /// One tile. A fragment bounces through shared memory, one at a time, three cube-wide
+    /// barriers each. The smallest window that lets a drain touch a fragment's cells.
     OneTile,
     /// The plane's whole partition. Two barriers for the whole drain, at as many times the
     /// footprint as the partition has tiles.
@@ -114,10 +115,31 @@ impl Resident {
         }
     }
 
-    /// Whether a drain may hoist its barriers out of the per-tile loop, which it may exactly when
-    /// no two tiles share a slot.
+    /// Whether a fragment goes through shared memory on its way out at all.
+    ///
+    /// **Two reasons to want that, and only one of them is forced.** A destination that folds
+    /// leaves no choice: the intrinsic's store overwrites, so the cells have to become addressable
+    /// before they can be added. A destination that merely replaces can want it too, because a
+    /// bounced drain writes through the layout in lines the lanes deal between them where the
+    /// intrinsic writes wherever the fragment's own layout puts each lane. Which is faster is a
+    /// measurement, so this is a setting rather than a consequence of the write mode.
+    pub fn bounces(self) -> bool {
+        !matches!(self, Resident::None)
+    }
+
+    /// Whether a bouncing drain may hoist its barriers out of the per-tile loop, which it may
+    /// exactly when no two tiles share a slot.
     pub fn drains_together(self) -> bool {
         matches!(self, Resident::WholePartition)
+    }
+
+    /// This setting raised to what `folds` demands: a folding destination cannot be drained
+    /// without a window, so [`None`](Self::None) is not a value it admits.
+    pub fn at_least_bouncing(self, folds: bool) -> Resident {
+        match (folds, self) {
+            (true, Resident::None) => Resident::OneTile,
+            (_, resident) => resident,
+        }
     }
 }
 

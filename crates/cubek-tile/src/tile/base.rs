@@ -859,8 +859,15 @@ impl<T: Numeric> Tile<T> {
     /// drain however many tiles it has. That is the whole reason the size is a setting
     /// ([`Resident`]).
     pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Level) {
-        let together = self.drains_together();
-        if comptime!(together) {
+        let resident = self.resident();
+        if comptime!(!resident.bounces()) {
+            // Straight out through the intrinsic, each tile on its own. No window, no barrier.
+            for region in dest.over(&comptime!(cells.clone())).unrolled() {
+                let mut window = dest.at(&region);
+                window.copy_cast_from(&self.at(&region));
+            }
+        } else if comptime!(resident.drains_together()) {
+            // Every tile has its own slot, so every spill can happen before any add.
             sync_cube();
             for region in dest.over(&comptime!(cells.clone())).unrolled() {
                 self.at(&region).spill_to_scratch();
@@ -872,23 +879,28 @@ impl<T: Numeric> Tile<T> {
             }
             sync_cube();
         } else {
+            // One slot between them, so each tile's spill and add pair off inside the loop.
             for region in dest.over(&comptime!(cells.clone())).unrolled() {
                 let mut window = dest.at(&region);
-                window.copy_cast_from(&self.at(&region));
+                sync_cube();
+                self.at(&region).spill_to_scratch();
+                sync_cube();
+                window.add_from_scratch(&self.at(&region));
+                sync_cube();
             }
         }
     }
 
-    /// Whether a drain may hoist its barriers out of the per-tile loop, which it may exactly when
-    /// this accumulator's scratch gives every tile a slot of its own.
-    pub(crate) fn drains_together(&self) -> comptime_type!(bool) {
+    /// How much of this accumulator its scratch holds, which is what tells a drain whether to
+    /// bounce at all and whether it may hoist its barriers.
+    pub(crate) fn resident(&self) -> comptime_type!(Resident) {
         match &self.tile_kind {
-            TileKind::PlanePartition(p) => comptime!(p.resident.drains_together()),
+            TileKind::PlanePartition(p) => comptime!(p.resident),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
+            | TileKind::Procedural(_) => comptime!(Resident::None),
         }
     }
 
