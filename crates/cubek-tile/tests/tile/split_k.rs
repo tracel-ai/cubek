@@ -910,3 +910,102 @@ fn a_fragment_folds_into_the_output_through_the_scratch() {
         }
     }
 }
+
+// -- A plain copy into a folding destination -------------------------------------------------
+//
+// `copy_from` is the memory-to-memory door, and it picks its path on the destination's shape.
+// A folding destination has no address, so it must take the layout walk; before the write mode
+// entered that condition, a destination that was whole, unmasked and plain took the straight
+// path instead and panicked about addresses rather than about folding.
+
+/// Whether this device's buffers take an `f32` atomic add; reported rather than silently passed.
+fn adds_atomically(client: &cubecl::client::Client) -> bool {
+    let adds = client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add);
+    if !adds {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+    }
+    adds
+}
+
+/// Copy a whole source tile into a whole output whose writes add.
+///
+/// Whole on purpose: `at()` narrows the window and clears `Access::whole`, and it is the *whole*
+/// destination that used to take the straight buffer fill. Narrowed first, this would take the
+/// layout walk either way and prove nothing about the condition.
+#[cube(launch)]
+fn copy_into_folding<E: Numeric>(
+    src: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    space: Partitioning,
+    #[define(E)] _dtype: ElemType,
+) {
+    let src = src.tile(comptime!(space.clone()));
+    let mut out = out.tile::<Const<1>>(comptime!(space.clone()));
+    out.copy_from(&src);
+}
+
+/// The whole claim: the copy adds, it does not replace, and it does not panic on the way. Drop
+/// the write mode from the straight fill's condition and this panics about addresses instead.
+#[test]
+fn a_copy_into_a_folding_output_adds() {
+    let client = cubecl::test_device().client();
+    if !adds_atomically(&client) {
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let (rows, cols) = (4usize, 8usize);
+    let values: Vec<f32> = (0..rows * cols).map(|i| (i % 5) as f32 + 1.0).collect();
+    let (src, _) = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .custom(values.clone())
+        .generate_with_f32_host_data();
+    // Seeded, not zeroed: a store would erase the seed and an add keeps it, so the seed is
+    // what tells the two apart.
+    let seed = 10.0f32;
+    let (out, _) = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .custom(vec![seed; rows * cols])
+        .generate_with_f32_host_data();
+
+    // One cube over the whole tile, so the destination stays whole and each cell is added once.
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols)]),
+            vec![Level::cubes(&[(M, rows), (N, cols)])],
+        ),
+        KernelForm::Static,
+    );
+    copy_into_folding::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            src.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        AccumulateArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(
+                got.get_f32(&[r, c]),
+                values[r * cols + c] + seed,
+                "at ({r}, {c}): the copy replaced the seed instead of adding to it"
+            );
+        }
+    }
+}
