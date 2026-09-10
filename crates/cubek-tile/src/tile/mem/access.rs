@@ -152,9 +152,14 @@ impl<T: Numeric> MemData<T> {
             self.access.whole
                 && !self.access.overhang.masks()
                 && src.store.packing == Packing::Plain
+                && self.access.write == Write::Replace
         ) {
-            // Plain → plain, whole destination: fill in destination-physical order (the write is
-            // linear and only the source decodes, once per line by constants on a static store).
+            // Plain → plain, whole destination that *replaces*: fill in destination-physical
+            // order (the write is linear and only the source decodes, once per line by constants
+            // on a static store). A destination that folds is excluded by the write above, not by
+            // the shape: this path addresses the buffer directly and a folding store has no
+            // address, so it takes the layout walk below — where its adds land through the sink's
+            // own call.
             // A padded stage is served in lines its source cannot hand out whole, so assemble each
             // destination line lane by lane.
             if comptime!(self.store.vector_size != src.store.vector_size) {
@@ -425,6 +430,10 @@ impl<T: Numeric> MemData<T> {
         let s = src.flat_transparent::<I, WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
+        // One line per unit, striding by the cube: **the deal is disjoint**, and that is what a
+        // folding destination rests on. An identical store is idempotent, so a repeated deal would
+        // be invisible here under `Write::Replace` and land once per repeat under
+        // `Write::Accumulate`. Any future deal on this path owes the same property.
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {

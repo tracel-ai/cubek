@@ -9,8 +9,8 @@ use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
     Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, Partitioning,
-    RegisterBlock, RowState, Semiring, Space, StageStorage, StreamFold, TileArg, TileArgLaunch,
-    TileSpec,
+    RegisterBlock, Resident, RowState, Semiring, Space, StageStorage, StreamFold, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -415,7 +415,7 @@ fn attention_fold_cmma_kernel<E: Float>(
                 }),
                 Monoid::Sum,
             )
-            .with_scratch(planes, lanes);
+            .with_scratch(Resident::OneTile, planes, lanes);
         acc.zero();
         // The fragment grids of every operand, cells in row-major order.
         let acc_cells = out_w.over(&comptime!(Level::walk(&[(QP, frag), (V, frag)])));

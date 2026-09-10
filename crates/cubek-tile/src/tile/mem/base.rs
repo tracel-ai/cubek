@@ -213,14 +213,20 @@ impl Write {
     ///
     /// A hardware fragment stores through its own intrinsic, over a slice of the destination or
     /// over its lanes' own positions, and neither leaves anywhere to put the election accumulating
-    /// needs. The register block is the one drain that writes cell by cell and so can.
+    /// needs. The register block writes cell by cell and so can; a cmma partition opened with a
+    /// scratch ([`Tile::with_scratch`](crate::Tile::with_scratch)) bounces each fragment through
+    /// it and adds cell by cell too ([`CmmaData::accumulate_cast_window`]); an mma tile has no
+    /// bounce and is refused here.
+    ///
+    /// [`CmmaData::accumulate_cast_window`]: crate::CmmaData::accumulate_cast_window
     pub(crate) fn validate_fragment_drain(self, fragment: &str) {
         match self {
             Write::Replace => {}
             Write::Accumulate => panic!(
                 "{fragment}: a hardware fragment stores through its own intrinsic and elects no \
                  writer, so it cannot drain into a destination that folds. Contract through a \
-                 register block, which drains cell by cell."
+                 register block, or through a cmma partition opened with `with_scratch`, which \
+                 bounces each fragment through the scratch and adds cell by cell."
             ),
         }
     }
