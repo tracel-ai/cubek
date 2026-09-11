@@ -273,7 +273,7 @@ pub(crate) fn launch_reduce_with_indices(
             },
             ReduceOperationConfig::ArgTopK(k),
         ),
-        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Max>(
+        ReduceOperationConfig::Max | ReduceOperationConfig::ArgMax => launch_fused::<Extremum>(
             client,
             input,
             values,
@@ -281,10 +281,13 @@ pub(crate) fn launch_reduce_with_indices(
             reduce_axis,
             strategy,
             dtypes,
-            ReduceOutputMode::Indices,
+            ExtremumConfig {
+                order: ValueOrder::Descending,
+                output: ReduceOutputMode::Indices,
+            },
             ReduceOperationConfig::ArgMax,
         ),
-        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Min>(
+        ReduceOperationConfig::Min | ReduceOperationConfig::ArgMin => launch_fused::<Extremum>(
             client,
             input,
             values,
@@ -292,7 +295,10 @@ pub(crate) fn launch_reduce_with_indices(
             reduce_axis,
             strategy,
             dtypes,
-            ReduceOutputMode::Indices,
+            ExtremumConfig {
+                order: ValueOrder::Ascending,
+                output: ReduceOutputMode::Indices,
+            },
             ReduceOperationConfig::ArgMin,
         ),
         _ => unreachable!("reduce_with_indices rejects operations without indices"),

@@ -1,7 +1,7 @@
 use cubecl::features::TypeUsage;
 use cubecl::prelude::*;
 
-use super::extrema::numeric_is_nan;
+use super::extremum::numeric_is_nan;
 use crate::components::instructions::ReduceOutputMode;
 use crate::components::precision::ReducePrecision;
 
