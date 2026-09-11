@@ -8,6 +8,9 @@ use cubecl::prelude::*;
 
 use crate::*;
 
+/// Split counts [`Tile::merge_splits`] unrolls its walk over the states for.
+const MERGE_UNROLL: usize = 64;
+
 #[cube]
 impl<EA: Float> Tile<EA> {
     /// `self = self * scale`, masked entries driven to `min_value` (below the
@@ -143,9 +146,11 @@ impl<EA: Float> Tile<EA> {
     /// of rows, innermost lets the drain contract it as a matmul's `k`.
     ///
     /// A fully-masked row gets weights of exactly zero, and a split that folded
-    /// nothing published `(min, 0)` so it weighs zero on its own. One unit per
-    /// row, cyclic over the cube; the caller syncs on both sides. A single split
-    /// degenerates to the plain epilogue.
+    /// nothing published `(min, 0)` so it weighs zero on its own. A unit per
+    /// cell where the cube has that many, syncing between its three passes;
+    /// otherwise one unit per row, cyclic over the cube. Every unit of the cube
+    /// calls it, and the caller syncs on both sides. A single split degenerates
+    /// to the plain epilogue.
     pub fn merge_splits(&mut self, m: &Tile<EA>, l: &Tile<EA>, #[comptime] split: Axis) {
         let space = comptime!(self.space.clone());
         comptime!(assert!(
@@ -180,28 +185,78 @@ impl<EA: Float> Tile<EA> {
         let mut wf = self.flat_mut::<W>();
 
         let workers = CUBE_DIM as usize;
-        let mut r = UNIT_POS as usize;
-        while r < rows {
-            // Row `r`'s first cell; its splits step by `stride` from there.
-            let base = (r / stride) * slice + r % stride;
-            let mut mstar = EA::min_value();
-            for t in 0..splits {
-                mstar = max(mstar, mf.read(base + t * stride).extract(0usize));
+        let cells = comptime!(rows * splits);
+        if cells <= workers {
+            // A unit per cell, which is every merge a split walk closes: the
+            // states load at once, and the row's maximum and normalizer are
+            // scans of the tile this merge writes, where a unit per row read
+            // every split's state in turn through the operand's layout — 26
+            // µs for 32 splits on GP100, as long as the walk it closed.
+            let cell = UNIT_POS as usize;
+            let owns = cell < cells;
+            let t = (cell / stride) % splits;
+            let base = cell - t * stride;
+            let mut m_cell = EA::min_value();
+            let mut l_cell = EA::from_int(0);
+            if owns {
+                m_cell = mf.read(cell).extract(0usize);
+                l_cell = lf.read(cell).extract(0usize);
+                wf.write(cell, Vector::cast_from(m_cell));
             }
-            // The normalizer needs every split, so park the unnormalized
-            // weights and scale them where they sit.
-            let mut lstar = EA::from_int(0);
-            for t in 0..splits {
-                let w = (mf.read(base + t * stride).extract(0usize) - mstar).exp();
-                lstar += lf.read(base + t * stride).extract(0usize) * w;
-                wf.write(base + t * stride, Vector::cast_from(w));
+            sync_cube();
+            let mut weight = EA::from_int(0);
+            if owns {
+                let mut mstar = EA::min_value();
+                #[unroll(splits <= MERGE_UNROLL)]
+                for s in 0..splits {
+                    mstar = max(mstar, wf.read(base + s * stride).extract(0usize));
+                }
+                weight = (m_cell - mstar).exp();
             }
-            let recip = masked_recip::<EA>(lstar);
-            for t in 0..splits {
-                let w = wf.read(base + t * stride).extract(0usize) * recip;
-                wf.write(base + t * stride, Vector::cast_from(w));
+            sync_cube();
+            if owns {
+                wf.write(cell, Vector::cast_from(weight * l_cell));
             }
-            r += workers;
+            sync_cube();
+            if owns {
+                let mut lstar = EA::from_int(0);
+                #[unroll(splits <= MERGE_UNROLL)]
+                for s in 0..splits {
+                    lstar += wf.read(base + s * stride).extract(0usize);
+                }
+                weight *= masked_recip::<EA>(lstar);
+            }
+            sync_cube();
+            if owns {
+                wf.write(cell, Vector::cast_from(weight));
+            }
+        } else {
+            let mut r = UNIT_POS as usize;
+            while r < rows {
+                // Row `r`'s first cell; its splits step by `stride` from there.
+                let base = (r / stride) * slice + r % stride;
+                let mut mstar = EA::min_value();
+                #[unroll(splits <= MERGE_UNROLL)]
+                for t in 0..splits {
+                    mstar = max(mstar, mf.read(base + t * stride).extract(0usize));
+                }
+                // The normalizer needs every split, so park the unnormalized
+                // weights and scale them where they sit.
+                let mut lstar = EA::from_int(0);
+                #[unroll(splits <= MERGE_UNROLL)]
+                for t in 0..splits {
+                    let w = (mf.read(base + t * stride).extract(0usize) - mstar).exp();
+                    lstar += lf.read(base + t * stride).extract(0usize) * w;
+                    wf.write(base + t * stride, Vector::cast_from(w));
+                }
+                let recip = masked_recip::<EA>(lstar);
+                #[unroll(splits <= MERGE_UNROLL)]
+                for t in 0..splits {
+                    let w = wf.read(base + t * stride).extract(0usize) * recip;
+                    wf.write(base + t * stride, Vector::cast_from(w));
+                }
+                r += workers;
+            }
         }
     }
 
