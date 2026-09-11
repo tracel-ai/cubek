@@ -135,6 +135,74 @@ pub(crate) fn select_argmin<E: Numeric, N: Size>(
     )
 }
 
+/// As [`select_argmax`], for a candidate that comes after everything the
+/// accumulator has already seen: the coordinate moves only when the candidate
+/// takes the slot outright, so a tie keeps the lower one without comparing
+/// coordinates.
+///
+/// Every test is an ordered comparison, since WGSL does not promise how a NaN
+/// compares with itself. Merging accumulators or folding lanes cannot use this:
+/// there the candidate's coordinate can be the lower one.
+#[cube]
+pub(crate) fn advance_argmax<E: Numeric, N: Size>(
+    current: Vector<E, N>,
+    current_coord: Vector<u32, N>,
+    candidate: Vector<E, N>,
+    candidate_coord: Vector<u32, N>,
+) -> (Vector<E, N>, Vector<u32, N>) {
+    let elem_type = elem_type_of::<E>();
+
+    let keep_current = if comptime!(elem_type.is_float()) {
+        numeric_is_nan(current).or(current.greater_than(&candidate))
+    } else {
+        current.greater_than(&candidate)
+    };
+
+    // The accumulator starts at the identity with a coordinate above every real
+    // one, and the input can hold that identity, so an untouched slot yields even
+    // on a tie.
+    let untouched = current_coord.equal(&Vector::new(u32::MAX));
+    let keep_coord = select_many(
+        untouched,
+        Vector::new(false),
+        keep_current.or(current.equal(&candidate)),
+    );
+
+    (
+        select_many(keep_current, current, candidate),
+        select_many(keep_coord, current_coord, candidate_coord),
+    )
+}
+
+/// [`advance_argmax`] for the smallest value.
+#[cube]
+pub(crate) fn advance_argmin<E: Numeric, N: Size>(
+    current: Vector<E, N>,
+    current_coord: Vector<u32, N>,
+    candidate: Vector<E, N>,
+    candidate_coord: Vector<u32, N>,
+) -> (Vector<E, N>, Vector<u32, N>) {
+    let elem_type = elem_type_of::<E>();
+
+    let keep_current = if comptime!(elem_type.is_float()) {
+        numeric_is_nan(current).or(current.less_than(&candidate))
+    } else {
+        current.less_than(&candidate)
+    };
+
+    let untouched = current_coord.equal(&Vector::new(u32::MAX));
+    let keep_coord = select_many(
+        untouched,
+        Vector::new(false),
+        keep_current.or(current.equal(&candidate)),
+    );
+
+    (
+        select_many(keep_current, current, candidate),
+        select_many(keep_coord, current_coord, candidate_coord),
+    )
+}
+
 #[cube]
 pub(crate) fn plane_max_propagating_nan<E: Numeric, N: Size>(item: Vector<E, N>) -> Vector<E, N> {
     let elem_type = elem_type_of::<E>();

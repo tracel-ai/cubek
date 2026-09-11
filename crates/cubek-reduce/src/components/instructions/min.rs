@@ -1,6 +1,6 @@
 use super::{
-    ArgAccumulator, ReduceFamily, ReduceInstruction, min_identity, plane_argmin_propagating_nan,
-    plane_min_propagating_nan, select_argmin, select_min,
+    ArgAccumulator, ReduceFamily, ReduceInstruction, advance_argmin, min_identity,
+    plane_argmin_propagating_nan, plane_min_propagating_nan, select_argmin, select_min,
 };
 use crate::components::{
     instructions::{
@@ -29,6 +29,31 @@ impl ReduceFamily for Min {
 impl ReduceWithIndicesFamily for Min {
     type Instruction<P: ReducePrecision> = Self;
     type Config = ReduceOutputMode;
+}
+
+/// As [`min_insert`], for a candidate that comes after everything the
+/// accumulator has seen. Only the per-element path can promise that.
+#[cube]
+fn min_advance<T: Numeric, N: Size>(
+    elements: &mut Value<Vector<T, N>>,
+    coordinates: &mut Value<Vector<u32, N>>,
+    candidate: Vector<T, N>,
+    candidate_coord: &Value<Vector<u32, N>>,
+) {
+    let acc = elements.item();
+
+    match candidate_coord {
+        Value::None => elements.assign(&Value::new_single(select_min(acc, candidate))),
+        Value::Single(coord) => {
+            let candidate_coord = coord.unwrap();
+            let acc_coord = coordinates.item();
+            let (selected, selected_coord) =
+                advance_argmin(acc, acc_coord, candidate, candidate_coord);
+            elements.assign(&Value::new_single(selected));
+            coordinates.assign(&Value::new_single(selected_coord));
+        }
+        Value::Multiple(_) => panic!("a min candidate carries at most one coordinate"),
+    }
 }
 
 /// Fold `candidate` into the accumulator, keeping the smaller item per vector
@@ -126,7 +151,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Min {
                     ReduceStep::Identity => (item.elements, item.args),
                 };
 
-                min_insert(
+                min_advance(
                     elements,
                     args,
                     Vector::cast_from(candidate),

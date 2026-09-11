@@ -1,6 +1,6 @@
 use super::{
-    ArgAccumulator, ReduceFamily, ReduceInstruction, max_identity, plane_argmax_propagating_nan,
-    plane_max_propagating_nan, select_argmax, select_max,
+    ArgAccumulator, ReduceFamily, ReduceInstruction, advance_argmax, max_identity,
+    plane_argmax_propagating_nan, plane_max_propagating_nan, select_argmax, select_max,
 };
 use crate::components::{
     instructions::{
@@ -29,6 +29,31 @@ impl ReduceFamily for Max {
 impl ReduceWithIndicesFamily for Max {
     type Instruction<P: ReducePrecision> = Self;
     type Config = ReduceOutputMode;
+}
+
+/// As [`max_insert`], for a candidate that comes after everything the
+/// accumulator has seen. Only the per-element path can promise that.
+#[cube]
+fn max_advance<T: Numeric, N: Size>(
+    elements: &mut Value<Vector<T, N>>,
+    coordinates: &mut Value<Vector<u32, N>>,
+    candidate: Vector<T, N>,
+    candidate_coord: &Value<Vector<u32, N>>,
+) {
+    let acc = elements.item();
+
+    match candidate_coord {
+        Value::None => elements.assign(&Value::new_single(select_max(acc, candidate))),
+        Value::Single(coord) => {
+            let candidate_coord = coord.unwrap();
+            let acc_coord = coordinates.item();
+            let (selected, selected_coord) =
+                advance_argmax(acc, acc_coord, candidate, candidate_coord);
+            elements.assign(&Value::new_single(selected));
+            coordinates.assign(&Value::new_single(selected_coord));
+        }
+        Value::Multiple(_) => panic!("a max candidate carries at most one coordinate"),
+    }
 }
 
 /// Fold `candidate` into the accumulator, keeping the larger item per vector
@@ -126,7 +151,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
                     ReduceStep::Identity => (item.elements, item.args),
                 };
 
-                max_insert(
+                max_advance(
                     elements,
                     args,
                     Vector::cast_from(candidate),
