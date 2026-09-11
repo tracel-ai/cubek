@@ -56,6 +56,9 @@ struct TileSourceData<'a> {
     levels: &'a [Level],
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization>,
+    /// Whether the subspace dims are bound in the order they step rather than the order the
+    /// binding names them ([`stored`](StridedTileSource::stored)).
+    stored: bool,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -96,6 +99,7 @@ impl<'a> StridedTileSource<'a, Unset, Unset, Unset> {
                 units: 0,
                 levels: &[],
                 quant: None,
+                stored: false,
             },
             _state: PhantomData,
         }
@@ -139,6 +143,17 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
             data: self.data,
             _state: PhantomData,
         }
+    }
+
+    /// Bind the subspace dims in the order they step, coarsest stride first, whatever order the
+    /// binding names them in: a transposed view binds as the buffer it is, the same bytes and
+    /// never a copy, so its unit-strided dim is innermost and can be served in lines. The labels
+    /// follow their dims, so `subspace(&[K, N])` over an `[n, k]` buffer viewed `[k, n]` binds
+    /// `[N, K]`. Batch dims stay where they are: a broadcast one strides by zero, and where it
+    /// sorts says nothing about which way the operand's own dims run.
+    pub fn stored(mut self) -> Self {
+        self.data.stored = true;
+        self
     }
 
     /// The outer (batch) axes in the output's order, right-aligned to this operand's leading
@@ -436,8 +451,27 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             units,
             levels,
             quant,
+            stored,
         } = self.data;
         let space = space.unwrap();
+
+        // The subspace dims and their labels, in the order the buffer steps them where the
+        // caller asked for that order. Settled before the tiling and the labeling read them,
+        // so both see one order.
+        let subspace_stored: Vec<Axis>;
+        let subspace = match stored {
+            true => {
+                assert!(
+                    projection.is_none() && !binding.as_ref().is_some_and(|b| b.tiling.is_tiled()),
+                    "StridedTileSource::stored: the order a buffer steps is read off strides, \
+                     which a gathered mapping states for itself and a storage-tiled binding \
+                     stores in tiles"
+                );
+                subspace_stored = in_stored_order(&mut geometry, subspace);
+                subspace_stored.as_slice()
+            }
+            false => subspace,
+        };
 
         // How the bound tensor says it is stored: the tiling is a fact of the tensor, read off
         // its binding rather than stated at the launch. An unbound operand (a fused store) has
@@ -664,6 +698,26 @@ fn storage_level(
     Storage::Tiled(innermost.expect("a tiled operand has at least one nesting"))
 }
 
+/// Reorder the trailing `subspace.len()` dims of `geometry` by stride, coarsest first, and
+/// return the subspace labels in that same order. The leading (batch) dims are left alone.
+fn in_stored_order(geometry: &mut Geometry, subspace: &[Axis]) -> Vec<Axis> {
+    let rank = geometry.rank();
+    let batch_dims = rank - subspace.len();
+    let mut trailing: Vec<(usize, (usize, usize))> =
+        geometry.dims().enumerate().skip(batch_dims).collect();
+    trailing.sort_by_key(|&(_, (_, stride))| core::cmp::Reverse(stride));
+    let dims: Vec<(usize, usize)> = geometry
+        .dims()
+        .take(batch_dims)
+        .chain(trailing.iter().map(|&(_, dim)| dim))
+        .collect();
+    *geometry = Geometry::of_dims(&dims);
+    trailing
+        .iter()
+        .map(|&(dim, _)| subspace[dim - batch_dims])
+        .collect()
+}
+
 /// Derives a [`Projection`] from labeled subspace and batch axes. Leading batch dims align with
 /// `batch_axes` (size-1 broadcast dims omitted), the inner subspace axes follow `tiling`. Returns
 /// the projection plus every physical axis prior to broadcast omission, for bounds checking.
@@ -813,5 +867,35 @@ impl<'a> StridedTileSource<'a, Set, Set, Set> {
     /// Build the quantized operand.
     pub fn build(self) -> QuantOperand {
         self.build_quant()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const K: Axis = Axis(2);
+    const N: Axis = Axis(1);
+
+    /// A transposed view comes back as the buffer it is: the dims in the order they step, the
+    /// labels following them, and a leading batch dim left where it was.
+    #[test]
+    fn a_stored_operand_orders_its_dims_by_stride_and_its_labels_with_them() {
+        // `[n, k]` behind a `[k, n]` view: `k` strides by one.
+        let mut dims = Geometry::of_dims(&[(4096, 1), (6144, 4096)]);
+        let labels = in_stored_order(&mut dims, &[K, N]);
+        assert_eq!(labels, vec![N, K]);
+        assert_eq!(dims, Geometry::of_dims(&[(6144, 4096), (4096, 1)]));
+
+        // Already in order: nothing moves.
+        let mut dims = Geometry::of_dims(&[(4096, 6144), (6144, 1)]);
+        assert_eq!(in_stored_order(&mut dims, &[K, N]), vec![K, N]);
+        assert_eq!(dims, Geometry::of_dims(&[(4096, 6144), (6144, 1)]));
+
+        // A broadcast batch dim strides by zero and stays first all the same.
+        let mut dims = Geometry::of_dims(&[(8, 0), (4096, 1), (6144, 4096)]);
+        let labels = in_stored_order(&mut dims, &[K, N]);
+        assert_eq!(labels, vec![N, K]);
+        assert_eq!(dims, Geometry::of_dims(&[(8, 0), (6144, 4096), (4096, 1)]));
     }
 }

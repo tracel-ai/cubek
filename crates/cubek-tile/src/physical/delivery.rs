@@ -26,8 +26,9 @@ pub enum Delivery {
 }
 
 /// CUDA caps each TMA box dimension at 256; a bulk copy fills one smem stage, so the
-/// stage edges are the box dims.
-const TMA_MAX_BOX_DIM: usize = 256;
+/// stage edges are the box dims. Public so a derivation can size a stage to it before
+/// [`validate_tma`](Delivery::validate_tma) refuses one past it.
+pub const TMA_MAX_BOX_DIM: usize = 256;
 
 impl Delivery {
     pub fn is_tma(&self) -> bool {
