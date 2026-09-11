@@ -95,3 +95,30 @@ would hit them:
 Packing as the innermost storage level, a line addressing a word-sized tile,
 the blob. Each is an engine design of its own and none is what makes the
 metabolic side unreadable today.
+
+## The follow-ups, 2026-09-11
+
+Louis's call on the brainstorm: #2, #3, #4 yes; #1 and #6 are goals, too
+risky now; #5 as a storage level is not elegant.
+
+- **#3 landed** (`08ef582d`): the scaled K form and the gemv's row form
+  carry every activation row; the accumulators grow with the rows;
+  `gemv_settings` and the quantized col-form test check three rows.
+- **#2 landed** (`58809862`): `PlaneFold`, `CubeFold`, `KSplit`,
+  `UnitPerVector`; one `space()` in the table's shape; the plane fold at the
+  plane scope emits the levels it did.
+- **#4 landed** (metabolic + cubek `e1c06096`): `StridedTileSource::stored`
+  orders the subspace dims by stride and carries the labels; the gemv and the
+  gemm bind the view and say `[K, N]`; `physical_weight`, the gemm's
+  `in_buffer_order`, `RhsOrder::axes` gone. `RhsOrder` stays as the plan's
+  choice between stored and stated, for the leaf reason.
+- **#5, the honest version, is blocked by a quest 3 decision.** The space
+  could be `M, N, K` with the scales projected as `K / block` — the lane cut
+  needs no second granularity, a single word-wide interleave of `K` gives
+  every lane the same words. But cubek refuses a scales operand that divides
+  (`check_scales_omit_rather_than_divide`, `contract/scale.rs`), by design:
+  "spell the block as an axis and omit the position inside it, so one scale
+  per block is what the axes say rather than what the arithmetic does." That
+  is quest 3's "block level stated" rung. Doing #5 means reverting it and
+  moving the line-straddles-a-block check to the launch, where
+  `validate_scheme` already states it arithmetically. Louis's call.
