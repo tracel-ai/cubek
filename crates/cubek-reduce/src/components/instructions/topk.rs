@@ -77,7 +77,8 @@ fn topk_rejects<P: ReducePrecision>(
 ///
 /// Ranking is the cheap half of a [`Packed`] and orders values on its own, so
 /// where [`topk_rejects`] holds, a candidate that cannot reach the weakest slot
-/// pays only that half. A NaN outranks any threshold, so it is never skipped.
+/// pays only that half. A NaN is skipped only when the weakest slot already
+/// holds one, where the earlier coordinate wins anyway.
 #[cube]
 fn topk_insert_packed<P: ReducePrecision, N: Numeric, S: Size>(
     packed: &mut Array<Vector<Packed, S>>,
