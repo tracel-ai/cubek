@@ -194,19 +194,31 @@ impl FragmentRead {
 impl<E: Numeric, S: Numeric> Scaled<E, S> {
     /// This factor read into `frag`.
     ///
-    /// A factor carrying no scales is read from its window as it lies, which is what a fragment
-    /// load wants and why the window must be staged: a gmem layout is unchecked. One carrying
-    /// scales cannot be, so it lands first ([`land`](Scaled::land)) and the load reads the
-    /// landing, which is row-major by construction.
+    /// A fragment loads a window as it lies, so the window's layout has to be one the
+    /// instruction can be told: a shared one is, and a global one is not. **The landing is how a
+    /// factor answers that** ([`land`](Scaled::land)) — it holds the factor's own values in the
+    /// plane's shared window, row-major by construction, and the load reads them from there.
+    /// A factor carrying scales has no other route, since its values do not exist anywhere
+    /// until they are scaled; one carrying none takes it when it has a landing, and is read
+    /// from its window as it lies when the window is already shared.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
-        let levels = self.levels();
-        let count = levels.len();
-        if comptime!(count == 0) {
-            match &self.values().tile_kind {
+        let values = self.values();
+        let count = self.levels().len();
+        let landed = values.has_landing();
+        if comptime!(count > 0 || landed) {
+            let landing = match comptime!(count > 0) {
+                true => self.land(comptime!(read.clone())),
+                false => self.land_plain(comptime!(read.clone())),
+            };
+            cmma::load(frag, &landing, comptime!(read.cols as u32));
+            // The landing is this region's until every lane's load has read it.
+            sync_plane();
+        } else {
+            match &values.tile_kind {
                 TileKind::Smem(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
                 TileKind::Gmem(_) => panic!(
                     "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
-                     stage the operand first"
+                     open the operand with `with_landing(planes, lanes)`, or stage it"
                 ),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
@@ -215,11 +227,6 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                     panic!("mma: an operand reaches a fragment from a memory window")
                 }
             }
-        } else {
-            let landing = self.land(comptime!(read.clone()));
-            cmma::load(frag, &landing, comptime!(read.cols as u32));
-            // The landing is this region's until every lane's load has read it.
-            sync_plane();
         }
     }
 
@@ -234,9 +241,13 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         ));
     }
 
-    /// This factor folded into its plane's landing as `values ⊗ scales`, row-major: each lane
-    /// reads lines through the values' packed view, scales each by the block scale covering it,
-    /// and writes them; the plane then syncs past the writes.
+    /// This factor in its plane's landing, row-major: each lane reads lines through the values'
+    /// packed view, multiplies each by the block scale covering it where the factor carries
+    /// one, and writes them; the plane then syncs past the writes.
+    ///
+    /// A factor with no scales lands its values as they lie, which is what makes the landing an
+    /// operand's *residence* rather than a scale mechanism: it is the answer to a layout a
+    /// fragment cannot be told, and a packed or scaled factor needs it for its values as well.
     fn land(&self, #[comptime] read: FragmentRead) -> Shared<[E]> {
         let values = self.values();
         let mut landing = match &values.tile_kind {
@@ -292,6 +303,43 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             #[unroll]
             for j in 0..vw {
                 landing[base + j] = scaled.extract(j);
+            }
+        }
+        sync_plane();
+        landing
+    }
+
+    /// [`land`](Scaled::land) for a factor that carries no scales: the same walk, writing each
+    /// line as it lies. What the landing buys here is the layout alone — a window the fragment
+    /// load can be told the stride of.
+    fn land_plain(&self, #[comptime] read: FragmentRead) -> Shared<[E]> {
+        let values = self.values();
+        let mut landing = match &values.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.landing(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("mma: an operand lands from its memory window")
+            }
+        };
+        let vw = values.vector_size();
+        let size!(VW) = vw;
+        let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
+        let matrix = values.matrix_packed::<VW>(axes, 0usize);
+
+        let per_row = comptime!((read.cols / vw) as u32);
+        let lines = comptime!((read.rows * read.cols / vw) as u32);
+        let width = comptime!(vw as u32);
+        let row_cells = comptime!(read.cols as u32);
+        for i in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
+            let r = i / per_row;
+            let c = i % per_row;
+            let line = matrix.read((r, c));
+            let base = (r * row_cells + c * width) as usize;
+            #[unroll]
+            for j in 0..vw {
+                landing[base + j] = line.extract(j);
             }
         }
         sync_plane();

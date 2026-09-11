@@ -338,6 +338,18 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
+    /// Whether this operand was opened with a landing ([`with_landing`](Tile::with_landing)),
+    /// which is what lets a fragment load read it whatever its own window's layout is.
+    pub fn has_landing(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.has_landing(),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(false),
+        }
+    }
+
     /// This operand with a landing: `planes` windows of shared memory, one per plane of `lanes`
     /// units, each one leaf window of this operand wide, that the fragment leaf lands the
     /// operand's `values ⊗ scales` in before loading them as a fragment
