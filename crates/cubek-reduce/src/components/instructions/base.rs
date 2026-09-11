@@ -1,4 +1,7 @@
-use crate::components::{instructions::lowest_coordinate_matching, precision::ReducePrecision};
+use crate::components::{
+    instructions::{Packed, Packing, lowest_coordinate_matching},
+    precision::ReducePrecision,
+};
 use cubecl::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -53,17 +56,34 @@ pub struct ReduceRequirements {
     pub coordinates: bool,
 }
 
+/// How many slots an accumulator keeps, which decides whether it holds a scalar
+/// or an array: [`Single`](SlotCount::Single) is not `Multiple(1)`, it skips the
+/// array and its indexing entirely.
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
+pub enum SlotCount {
+    Single,
+    Multiple(usize),
+}
+
+/// Whether an accumulator stores each slot's value and coordinate separately or
+/// folded into one `Packed`.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, CubeType)]
 pub enum AccumulatorFormat {
-    Multiple(usize),
-    Single,
+    Unpacked(SlotCount),
+    Packed(SlotCount),
 }
 
 impl AccumulatorFormat {
-    pub fn len(&self) -> usize {
+    pub fn slots(&self) -> SlotCount {
         match self {
-            AccumulatorFormat::Multiple(k) => *k,
-            AccumulatorFormat::Single => 1,
+            AccumulatorFormat::Unpacked(slots) | AccumulatorFormat::Packed(slots) => *slots,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self.slots() {
+            SlotCount::Single => 1,
+            SlotCount::Multiple(k) => k,
         }
     }
 
@@ -154,7 +174,7 @@ impl<X: CubePrimitive> Value<X> {
 ///
 /// The selection networks below are `k`-by-`k`: every candidate walks all `k`
 /// accumulator slots. Unrolling both levels keeps the accumulator in registers
-/// with constant slot indices, which is worth a lot — rolled, the slots move to
+/// with constant slot indices, which is worth a lot: rolled, the slots move to
 /// scratch memory and every step becomes a load/store. Measured on a
 /// `32x512x4095` `ArgTopK` (device timing, RTX 5090 / Vulkan), unrolling is
 /// worth 5.8x at `k = 32` and 2.2x at `k = 64`.
@@ -269,6 +289,39 @@ fn plane_topk_insert_values<N: Numeric, S: Size>(
     }
 }
 
+/// Plane-cooperative insertion of one packed candidate per lane.
+///
+/// A candidate already carries the tie-break, so the plane's winner is a plain
+/// [`plane_max`](fn@plane_max) and the lane holding it is the lane whose candidate
+/// equals it: two lanes cannot hold the same candidate, since the coordinate is
+/// part of it.
+#[cube]
+pub(crate) fn plane_topk_insert_packed<N: Numeric, S: Size>(
+    packed: &mut Array<Vector<Packed, S>>,
+    item: Vector<Packed, S>,
+    #[comptime] k: usize,
+) {
+    let mut local_best = item;
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for _i in 0..k {
+        let winning = plane_max(local_best);
+        Packing::insert_ranked::<S>(
+            packed,
+            winning,
+            k,
+            comptime!(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET),
+        );
+
+        let is_winner = local_best.equal(&winning);
+        local_best = select_many(
+            is_winner,
+            Packing::empty::<N, S>(Vector::new(N::min_value())),
+            local_best,
+        );
+    }
+}
+
 /// Plane-cooperative merge of per-lane top-k candidates; the accumulator's
 /// coordinates decide which algorithm runs, as in [`plane_topk_insert`].
 #[cube]
@@ -358,6 +411,41 @@ fn plane_topk_merge_values<N: Numeric, S: Size>(
     #[unroll]
     for i in 0..k {
         elements[i] = final_elements[i];
+    }
+}
+
+/// Plane-cooperative merge of per-lane packed accumulators.
+#[cube]
+pub(crate) fn plane_topk_merge_packed<N: Numeric, S: Size>(
+    packed: &mut Array<Vector<Packed, S>>,
+    #[comptime] k: usize,
+) {
+    let mut final_keys = Array::new(k);
+    let mut cursor = Vector::new(0u32);
+    let lane_id = Vector::new(UNIT_POS_X);
+
+    #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+    for i in 0..k {
+        let mut local = Packing::empty::<N, S>(Vector::new(N::min_value()));
+
+        #[unroll(k * k <= crate::components::instructions::TOPK_UNROLL_BUDGET)]
+        for j in 0..k {
+            let is_pointed = cursor.equal(&Vector::new(j as u32));
+            local = select_many(is_pointed, packed[j], local);
+        }
+
+        let winning = plane_max(local);
+        final_keys[i] = winning;
+
+        let is_cand = local.equal(&winning);
+        let winning_lane = plane_min(select_many(is_cand, lane_id, Vector::new(u32::MAX)));
+        let is_winner_thread = lane_id.equal(&winning_lane);
+        cursor = select_many(is_winner_thread, cursor + Vector::new(1u32), cursor);
+    }
+
+    #[unroll]
+    for i in 0..k {
+        packed[i] = final_keys[i];
     }
 }
 
@@ -488,9 +576,40 @@ pub struct Item<P: ReducePrecision> {
 }
 
 #[derive(CubeType)]
-pub struct Accumulator<P: ReducePrecision> {
-    pub elements: Value<Vector<P::EA, P::SI>>,
-    pub args: Value<Vector<u32, P::SI>>,
+pub enum Accumulator<P: ReducePrecision> {
+    /// Values, beside their coordinates when the instruction tracks them.
+    Unpacked {
+        elements: Value<Vector<P::EA, P::SI>>,
+        args: Value<Vector<u32, P::SI>>,
+    },
+    /// Each value packed with its coordinate into one candidate.
+    Packed(Value<Vector<Packed, P::SI>>),
+}
+
+#[cube]
+impl<P: ReducePrecision> Accumulator<P> {
+    /// The values of an accumulator that keeps them apart from their
+    /// coordinates, for the instructions that never pack.
+    pub fn elements(&self) -> &Value<Vector<P::EA, P::SI>> {
+        match self {
+            Accumulator::Unpacked { elements, .. } => elements,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate values"),
+        }
+    }
+
+    pub fn elements_mut(&mut self) -> &mut Value<Vector<P::EA, P::SI>> {
+        match self {
+            Accumulator::Unpacked { elements, .. } => elements,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate values"),
+        }
+    }
+
+    pub fn args(&self) -> &Value<Vector<u32, P::SI>> {
+        match self {
+            Accumulator::Unpacked { args, .. } => args,
+            Accumulator::Packed(_) => panic!("a packed accumulator holds no separate coordinates"),
+        }
+    }
 }
 
 /// A simple trait that abstract over a single or multiple shared memory.
@@ -514,24 +633,26 @@ impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I>
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        Accumulator::<P> {
-            elements: Value::new_single(accumulator[index]),
-            args: Value::new_None(),
-        }
+        Accumulator::new_Unpacked(Value::new_single(accumulator[index]), Value::new_None())
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator[index] = item.elements.item();
+        accumulator[index] = item.elements().item();
     }
 }
 
-/// A pair of shared memory used for [`Max`](super::Max) and [`Min`](super::Min).
+/// The shared memory used by [`Max`](super::Max) and [`Min`](super::Min), in
+/// whichever of the two representations the instruction accumulates in.
 #[derive(CubeType)]
-pub struct ArgAccumulator<P: ReducePrecision> {
-    pub elements: Shared<[Vector<P::EA, P::SI>]>,
-    /// Empty unless the instruction tracks coordinates; its length is the single
-    /// source of truth for whether coordinates are staged (see `read`/`write`).
-    pub args: Sequence<Shared<[Vector<u32, P::SI>]>>,
+pub enum ArgAccumulator<P: ReducePrecision> {
+    /// A slice of values, beside a slice of coordinates when the instruction
+    /// stages those separately.
+    Unpacked {
+        elements: Shared<[Vector<P::EA, P::SI>]>,
+        args: SharedAccumulatorKind<Vector<u32, P::SI>>,
+    },
+    /// A slice of packed, each a value packed with its coordinate.
+    Packed(Shared<[Vector<Packed, P::SI>]>),
 }
 
 /// For a single reduce step whether we need to do plane reduction
@@ -545,39 +666,55 @@ pub enum ReduceStep {
 
 #[cube]
 impl<P: ReducePrecision, I: ReduceInstruction<P>> SharedAccumulator<P, I> for ArgAccumulator<P> {
-    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, _inst: &I) -> Self {
-        let mut args = Sequence::new();
-        if coordinate {
-            args.push(Shared::new_slice(length));
-        }
+    fn allocate(#[comptime] length: usize, #[comptime] coordinate: bool, inst: &I) -> Self {
+        let format = I::accumulator_format(inst);
+        let is_packed = comptime!(matches!(
+            format,
+            AccumulatorFormat::Packed(SlotCount::Single)
+        ));
 
-        ArgAccumulator::<P> {
-            elements: Shared::new_slice(length),
-            args,
+        if comptime!(is_packed) {
+            ArgAccumulator::new_Packed(Shared::new_slice(length))
+        } else {
+            let args = if coordinate {
+                SharedAccumulatorKind::new_Single(Shared::new_slice(length))
+            } else {
+                SharedAccumulatorKind::new_None()
+            };
+
+            ArgAccumulator::new_Unpacked(Shared::new_slice(length), args)
         }
     }
 
     fn read(accumulator: &Self, index: usize) -> Accumulator<P> {
-        let num_args = comptime!(accumulator.args.len());
-        let args = if comptime!(num_args != 0) {
-            Value::new_single(accumulator.args[0][index])
-        } else {
-            Value::new_None()
-        };
-
-        Accumulator::<P> {
-            elements: Value::new_single(accumulator.elements[index]),
-            args,
+        match accumulator {
+            ArgAccumulator::Packed(packed) => {
+                Accumulator::new_Packed(Value::new_single(packed[index]))
+            }
+            ArgAccumulator::Unpacked { elements, args } => {
+                Accumulator::new_Unpacked(Value::new_single(elements[index]), args.get(index))
+            }
         }
     }
 
     fn write(accumulator: &mut Self, index: usize, item: Accumulator<P>) {
-        accumulator.elements[index] = item.elements.item();
-
-        let num_args = comptime!(accumulator.args.len());
-        if comptime!(num_args != 0) {
-            let shared_args = &mut accumulator.args[0];
-            shared_args[index] = item.args.item();
+        match accumulator {
+            ArgAccumulator::Packed(slots) => match item {
+                Accumulator::Packed(candidate) => slots[index] = candidate.item(),
+                Accumulator::Unpacked { .. } => panic!("a packed slot takes a packed accumulator"),
+            },
+            ArgAccumulator::Unpacked {
+                elements: shared_elements,
+                args: shared_args,
+            } => match item {
+                Accumulator::Unpacked { elements, args } => {
+                    shared_elements[index] = elements.item();
+                    shared_args.set(index, args);
+                }
+                Accumulator::Packed(_) => {
+                    panic!("an unpacked slot takes an unpacked accumulator")
+                }
+            },
         }
     }
 }

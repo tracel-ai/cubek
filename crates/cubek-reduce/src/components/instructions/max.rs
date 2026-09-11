@@ -4,8 +4,9 @@ use super::{
 };
 use crate::components::{
     instructions::{
-        Accumulator, AccumulatorFormat, Item, ReduceOutputMode, ReduceRequirements, ReduceStep,
-        ReduceWithIndices, ReduceWithIndicesFamily, Value, ValueExpand,
+        Accumulator, AccumulatorExpand, AccumulatorFormat, Item, ReduceOutputMode,
+        ReduceRequirements, ReduceStep, ReduceWithIndices, ReduceWithIndicesFamily, SlotCount,
+        Value, ValueExpand,
     },
     precision::ReducePrecision,
 };
@@ -87,7 +88,7 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
     }
 
     fn accumulator_format(_this: &Self) -> comptime_type!(AccumulatorFormat) {
-        AccumulatorFormat::Single
+        comptime!(AccumulatorFormat::Unpacked(SlotCount::Single))
     }
 
     fn from_config(#[comptime] config: Self::Config) -> Self {
@@ -105,10 +106,10 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
             Value::new_None()
         };
 
-        Accumulator::<P> {
-            elements: Value::new_single(Vector::empty().fill(max_identity::<P::EA>())),
+        Accumulator::new_Unpacked(
+            Value::new_single(Vector::empty().fill(max_identity::<P::EA>())),
             args,
-        }
+        )
     }
 
     fn reduce(
@@ -117,38 +118,45 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         item: Item<P>,
         #[comptime] reduce_step: ReduceStep,
     ) {
-        let (candidate, candidate_coord) = match reduce_step {
-            ReduceStep::Plane => plane_max_candidate(item.elements, &item.args),
-            ReduceStep::Identity => (item.elements, item.args),
-        };
+        match accumulator {
+            Accumulator::Packed(_) => panic!("max never packs: one slot ranks cheaper unpacked"),
+            Accumulator::Unpacked { elements, args } => {
+                let (candidate, candidate_coord) = match reduce_step {
+                    ReduceStep::Plane => plane_max_candidate(item.elements, &item.args),
+                    ReduceStep::Identity => (item.elements, item.args),
+                };
 
-        max_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            Vector::cast_from(candidate),
-            &candidate_coord,
-        );
+                max_insert(
+                    elements,
+                    args,
+                    Vector::cast_from(candidate),
+                    &candidate_coord,
+                );
+            }
+        }
     }
 
     fn plane_reduce_inplace(_this: &Self, accumulator: &mut Accumulator<P>) {
-        let (candidate, candidate_coord) =
-            plane_max_candidate(accumulator.elements.item(), &accumulator.args);
-
-        max_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            candidate,
-            &candidate_coord,
-        );
+        match accumulator {
+            Accumulator::Packed(_) => panic!("max never packs: one slot ranks cheaper unpacked"),
+            Accumulator::Unpacked { elements, args } => {
+                let (candidate, candidate_coord) = plane_max_candidate(elements.item(), &*args);
+                max_insert(elements, args, candidate, &candidate_coord);
+            }
+        }
     }
 
     fn fuse_accumulators(_this: &Self, accumulator: &mut Accumulator<P>, other: &Accumulator<P>) {
-        max_insert(
-            &mut accumulator.elements,
-            &mut accumulator.args,
-            other.elements.item(),
-            &other.args,
-        );
+        match (accumulator, other) {
+            (
+                Accumulator::Unpacked { elements, args },
+                Accumulator::Unpacked {
+                    elements: other_elements,
+                    args: other_args,
+                },
+            ) => max_insert(elements, args, other_elements.item(), other_args),
+            _ => panic!("max never packs: one slot ranks cheaper unpacked"),
+        }
     }
 
     fn output_mode(this: &Self) -> comptime_type!(ReduceOutputMode) {
@@ -160,29 +168,34 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Out>, Value<Idx>) {
-        match accumulator.args {
-            Value::None => {
-                let acc = accumulator.elements.item();
-                let mut max = max_identity::<P::EA>();
-                #[unroll]
-                for k in 0..acc.vector_size() {
-                    let candidate = acc.extract(k);
-                    max = select_max(
-                        Vector::<P::EA, Const<1>>::new(candidate),
-                        Vector::<P::EA, Const<1>>::new(max),
-                    )
-                    .extract(0usize);
+        match accumulator {
+            Accumulator::Packed(_) => panic!("max never packs: one slot ranks cheaper unpacked"),
+            Accumulator::Unpacked { elements, args } => match args {
+                Value::None => {
+                    let acc = elements.item();
+                    let mut max = max_identity::<P::EA>();
+                    #[unroll]
+                    for k in 0..acc.vector_size() {
+                        let candidate = acc.extract(k);
+                        max = select_max(
+                            Vector::<P::EA, Const<1>>::new(candidate),
+                            Vector::<P::EA, Const<1>>::new(max),
+                        )
+                        .extract(0usize);
+                    }
+                    (Value::new_single(Out::cast_from(max)), Value::new_None())
                 }
-                (Value::new_single(Out::cast_from(max)), Value::new_None())
-            }
-            Value::Single(_) => {
-                let (max, coordinate) = max_finalize_with_coords::<P>(&accumulator);
-                (
-                    Value::new_single(Out::cast_from(max)),
-                    Value::new_single(Idx::cast_from(coordinate)),
-                )
-            }
-            Value::Multiple(_) => panic!("a max accumulator holds at most one coordinate vector"),
+                Value::Single(_) => {
+                    let (max, coordinate) = max_finalize_with_coords::<P>(&elements, &args);
+                    (
+                        Value::new_single(Out::cast_from(max)),
+                        Value::new_single(Idx::cast_from(coordinate)),
+                    )
+                }
+                Value::Multiple(_) => {
+                    panic!("a max accumulator holds at most one coordinate vector")
+                }
+            },
         }
     }
 
@@ -191,13 +204,20 @@ impl<P: ReducePrecision> ReduceInstruction<P> for Max {
         accumulator: Accumulator<P>,
         _shape_axis_reduce: usize,
     ) -> (Value<Vector<Out, P::SI>>, Value<Vector<Idx, P::SI>>) {
-        let values = Value::new_single(Vector::cast_from(accumulator.elements.item()));
-        let indices = match accumulator.args {
-            Value::None => Value::new_None(),
-            Value::Single(coord) => Value::new_single(Vector::cast_from(coord.unwrap())),
-            Value::Multiple(_) => panic!("a max accumulator holds at most one coordinate vector"),
-        };
-        (values, indices)
+        match accumulator {
+            Accumulator::Packed(_) => panic!("max never packs: one slot ranks cheaper unpacked"),
+            Accumulator::Unpacked { elements, args } => {
+                let values = Value::new_single(Vector::cast_from(elements.item()));
+                let indices = match args {
+                    Value::None => Value::new_None(),
+                    Value::Single(coord) => Value::new_single(Vector::cast_from(coord.unwrap())),
+                    Value::Multiple(_) => {
+                        panic!("a max accumulator holds at most one coordinate vector")
+                    }
+                };
+                (values, indices)
+            }
+        }
     }
 }
 
@@ -209,8 +229,11 @@ impl<P: ReducePrecision> ReduceWithIndices<P> for Max {}
 /// Ties break towards the lower coordinate, matching the CPU reference. The
 /// accumulator must have been built with coordinate tracking on.
 #[cube]
-fn max_finalize_with_coords<P: ReducePrecision>(accumulator: &Accumulator<P>) -> (P::EA, u32) {
-    let vector_size = accumulator.elements.item().vector_size().comptime();
+fn max_finalize_with_coords<P: ReducePrecision>(
+    elements: &Value<Vector<P::EA, P::SI>>,
+    args: &Value<Vector<u32, P::SI>>,
+) -> (P::EA, u32) {
+    let vector_size = elements.item().vector_size().comptime();
 
     if vector_size > 1 {
         let mut max = max_identity::<P::EA>();
@@ -218,8 +241,8 @@ fn max_finalize_with_coords<P: ReducePrecision>(accumulator: &Accumulator<P>) ->
 
         #[unroll]
         for k in 0..vector_size {
-            let acc_element = accumulator.elements.item().extract(k);
-            let acc_coordinate = accumulator.args.item().extract(k);
+            let acc_element = elements.item().extract(k);
+            let acc_coordinate = args.item().extract(k);
 
             let (selected, selected_coordinate) = select_argmax(
                 Vector::<P::EA, Const<1>>::new(max),
@@ -234,9 +257,6 @@ fn max_finalize_with_coords<P: ReducePrecision>(accumulator: &Accumulator<P>) ->
 
         (max, coordinate)
     } else {
-        (
-            accumulator.elements.item().extract(0usize),
-            accumulator.args.item().extract(0usize),
-        )
+        (elements.item().extract(0usize), args.item().extract(0usize))
     }
 }

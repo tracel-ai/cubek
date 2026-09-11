@@ -29,10 +29,28 @@ fn run_extrema(case: TestCase, data: Vec<f32>) {
     case.test_argmin();
     case.test_max_with_indices();
     case.test_min_with_indices();
+
+    // Top-k with indices is the only reduction left that ranks through a packed
+    // value, so it is the only coverage the packed total order gets. Values-only
+    // top-k is deliberately not here: it ranks with a bare `>` and gives a NaN
+    // none of the precedence the reference and every other row above state.
+    if case.shape[case.axis.unwrap()] >= 3 {
+        case.test_topk_with_indices(3);
+    }
 }
 
 fn run_nan_extrema(case: TestCase) {
     let data = nan_extrema_data(&case.shape, case.axis.unwrap());
+    run_extrema(case, data);
+}
+
+fn run_mixed_nan_extrema(case: TestCase) {
+    let data = mixed_nan_extrema_data(&case.shape, case.axis.unwrap());
+    run_extrema(case, data);
+}
+
+fn run_signed_zero_extrema(case: TestCase) {
+    let data = signed_zero_data(&case.shape, case.axis.unwrap());
     run_extrema(case, data);
 }
 
@@ -87,6 +105,57 @@ fn plane_parallel_f32() {
         return;
     }
     run_nan_extrema(plane_case(
+        Shape::new([9, 64]),
+        Strides::new(&[64, 1]),
+        1,
+        false,
+        true,
+    ));
+}
+
+#[test]
+fn unit_parallel_mixed_nan_f32() {
+    run_mixed_nan_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
+}
+
+#[test]
+fn plane_parallel_mixed_nan_f32() {
+    if !supports_plane() {
+        return;
+    }
+    run_mixed_nan_extrema(plane_case(
+        Shape::new([9, 64]),
+        Strides::new(&[64, 1]),
+        1,
+        false,
+        true,
+    ));
+}
+
+#[test]
+fn unit_seed_valued_topk_f32() {
+    // Every value equals the value a slot is seeded with, so each one reaches
+    // the weakest slot without passing it. A ranked insert that asks only for
+    // strictly better leaves all three slots holding the seed's `u32::MAX`
+    // coordinate instead of 0, 1 and 2.
+    let case =
+        unit_case(Shape::new([2, 64]), Strides::new(&[64, 1]), 1).with_data(vec![f32::MIN; 128]);
+
+    case.test_topk_with_indices(3);
+    case.test_argmax();
+}
+
+#[test]
+fn unit_parallel_signed_zero_f32() {
+    run_signed_zero_extrema(unit_case(Shape::new([9, 64]), Strides::new(&[64, 1]), 1));
+}
+
+#[test]
+fn plane_parallel_signed_zero_f32() {
+    if !supports_plane() {
+        return;
+    }
+    run_signed_zero_extrema(plane_case(
         Shape::new([9, 64]),
         Strides::new(&[64, 1]),
         1,
@@ -243,6 +312,50 @@ fn nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
                 7 if axis_coordinate + 1 == axis_len => f32::INFINITY,
                 7 if axis_coordinate == axis_len / 2 => f32::NAN,
                 _ => base,
+            }
+        })
+        .collect()
+}
+
+/// The NaN layout of [`nan_extrema_data`] with every NaN given its own payload and
+/// sign, so that nothing but the coordinate can separate two of them.
+fn mixed_nan_extrema_data(shape: &Shape, axis: usize) -> Vec<f32> {
+    nan_extrema_data(shape, axis)
+        .into_iter()
+        .enumerate()
+        .map(|(linear, value)| {
+            if !value.is_nan() {
+                return value;
+            }
+            let payload = 0x7FC0_0000 | ((linear as u32 % 0x3F_FFFF) + 1);
+            let sign = if linear % 2 == 0 { 0 } else { 0x8000_0000 };
+            f32::from_bits(payload | sign)
+        })
+        .collect()
+}
+
+/// Both signed zeros in every row, above every other value, at coordinates that
+/// interleave so each order of appearance is covered.
+///
+/// `-0.0` and `0.0` compare equal, so the coordinate breaks the tie. A ranking
+/// that told the two apart would pass every other test here and pick the wrong
+/// index for exactly this input.
+fn signed_zero_data(shape: &Shape, axis: usize) -> Vec<f32> {
+    let axis_len = shape[axis];
+    let inner_len = shape.iter().skip(axis + 1).product::<usize>();
+    let num_elements = shape.iter().product::<usize>();
+
+    (0..num_elements)
+        .map(|linear| {
+            let axis_coordinate = (linear / inner_len) % axis_len;
+            let outer = linear / (inner_len * axis_len);
+            let inner = linear % inner_len;
+            let slice = outer * inner_len + inner;
+
+            match (axis_coordinate + slice) % 4 {
+                0 => -0.0,
+                1 => 0.0,
+                _ => -((axis_coordinate % 5) as f32) - 1.0,
             }
         })
         .collect()
