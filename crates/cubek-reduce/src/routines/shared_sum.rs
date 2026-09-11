@@ -76,7 +76,8 @@ pub fn shared_sum(
     }
 
     let input_len = input.shape.iter().product::<usize>();
-    let contiguous_buffer = input_len * input_elem.size() == input.handle.size_in_used() as usize;
+    let contiguous_buffer = input_len * input_elem.size() == input.handle.size_in_used() as usize
+        && is_dense(&input.shape, &input.strides);
 
     // Compute the optimal vector size.
     let vector_size = if contiguous_buffer {
@@ -98,8 +99,9 @@ pub fn shared_sum(
         .required_address_type(input_elem.size())
         .max(output.required_address_type(input_elem.size()));
 
-    // Sum is commutative so we don't care about order, but need to care if there are holes since
-    // they're not guaranteed to contain `0`.
+    // Sum is commutative so dimension order does not matter, but every buffer element must
+    // occur exactly once. Equal logical and physical sizes alone do not rule out overlapping
+    // windows or broadcasts that repeat some elements and leave others unused.
     let input_view = if contiguous_buffer {
         let layout = LinearViewLayoutLaunch::new();
         let buffer = unsafe { BufferArg::from_raw_parts_binding(input.handle, input_len) };
@@ -141,6 +143,25 @@ pub fn shared_sum(
     };
 
     Ok(())
+}
+
+/// Whether the view visits consecutive elements exactly once, in any dimension order.
+fn is_dense(shape: &[usize], strides: &[usize]) -> bool {
+    let mut dims: Vec<_> = shape
+        .iter()
+        .zip(strides)
+        .filter(|&(&dim, _)| dim > 1)
+        .collect();
+    dims.sort_unstable_by_key(|&(_, stride)| *stride);
+
+    let mut expected = 1;
+    for (&dim, &stride) in dims {
+        if stride != expected {
+            return false;
+        }
+        expected *= dim;
+    }
+    true
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
