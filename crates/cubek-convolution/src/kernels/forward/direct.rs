@@ -1,12 +1,3 @@
-//! Direct convolution: one unit computes one output element of the result.
-//!
-//! This is the routine every CPU convolution reaches. The accelerated routines in this crate
-//! contract over channels through `Cmma`/`Mma` tiles, which need a plane of 32 or 64 lanes, and a
-//! CPU plane is one lane wide. So it is written straight against cubecl rather than the tile DSL,
-//! the way `cubek-pool` and `cubek-reduce` are, and like [`super::depthwise`] it is its own entry
-//! point rather than a `ConvAlgorithm`: with no stage hierarchy there is nothing for a blueprint
-//! to size.
-
 use cubecl::{
     calculate_cube_count_elemwise,
     client::Client,
@@ -19,7 +10,6 @@ use cubecl::{
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 
-/// Splits a linear position into its coordinates, innermost dimension first.
 #[cube]
 fn decompose_linear<I: FastDivmodInt>(pos: I, shape: &Sequence<FastDivmod<I>>) -> (I, Sequence<I>) {
     let rank = comptime![shape.len()];
@@ -309,10 +299,6 @@ fn accumulate_per_step<E: Numeric, NIn: Size, NOut: Size>(
     }
 }
 
-/// The bindings one direct convolution reads and writes.
-///
-/// The caller owns the output: it allocates it and, where the channel stride is not one, makes
-/// the operands contiguous. Both are tensor-library concerns rather than kernel ones.
 pub struct DirectTensors {
     pub input: TensorBinding,
     pub weight: TensorBinding,
@@ -346,8 +332,8 @@ pub fn launch_direct<const N: usize>(
     let channels_per_group = out_channels / groups;
     let check_spatial_bounds = should_check_spatial_bounds(in_shape, kernel_shape, out_size, &args);
 
-    // The vector size is taken over `channels_per_group` rather than the whole channel axis, so a
-    // grouped convolution never vectorizes across a group boundary.
+    // Need custom vector size calculation here to account for the groups division. Need to vectorize
+    // over `channels_per_group` instead.
     let mut grouped_out_shape = out.shape.clone();
     grouped_out_shape[dim_c] = channels_per_group;
     let vector_size_out = tensor_vector_size_parallel(
@@ -356,6 +342,7 @@ pub fn launch_direct<const N: usize>(
         &out.strides,
         dim_c,
     );
+    // Use channels_per_group instead of in_channels to avoid issues here
     let vector_size_in = tensor_vector_size_parallel(
         client.io_optimized_vector_sizes(dtype.size()),
         &weight.shape,

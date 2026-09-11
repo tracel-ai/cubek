@@ -23,6 +23,4 @@ pub use kernels::forward::{
     DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling, launch_depthwise,
 };
 
-// The direct routine is its own entry point for the same reason depthwise is: no stage
-// hierarchy, so there is nothing for a blueprint to size. It is what every CPU convolution runs.
 pub use kernels::forward::{DirectTensors, launch_direct};
