@@ -1,7 +1,7 @@
 use cubecl::features::Plane;
 use cubecl::frontend::CompilationArg;
 use cubecl::{CubeCount, CubeDim, cube, prelude::*, std::tensor::TensorHandle, zspace::Shape};
-use cubek_reduce::components::instructions::{Value, plane_topk_insert, plane_topk_merge};
+use cubek_reduce::components::instructions::{ReduceOutputMode, TopK, Value};
 use cubek_reduce::eval::cpu_reference::contiguous_strides;
 use cubek_test_utils::{InputDataType, StridedLayout, TestInput};
 
@@ -90,7 +90,11 @@ fn launch_plane_reduce_inplace<N: Numeric, S: Size>(
     }
 
     let mut args = Value::new_None();
-    plane_topk_merge::<N, S>(&mut elements, &mut args, k);
+    TopK {
+        k,
+        output: ReduceOutputMode::Values,
+    }
+    .plane_merge::<N, S>(&mut elements, &mut args);
 
     #[unroll]
     for i in 0..k {
@@ -230,7 +234,11 @@ fn launch_plane_topk_insert<N: Numeric, S: Size>(
     let args = Value::new_None();
     let mut coordinates = Value::new_None();
 
-    plane_topk_insert::<N, S>(&mut elements, &mut coordinates, item, &args, k);
+    TopK {
+        k,
+        output: ReduceOutputMode::Values,
+    }
+    .plane_insert::<N, S>(&mut elements, &mut coordinates, item, &args);
 
     if valid {
         #[unroll]
