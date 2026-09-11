@@ -116,6 +116,10 @@ name = "depthwise"
 
 [[bench]]
 harness = false
+name = "direct_conv"
+
+[[bench]]
+harness = false
 name = "memcpy_async"
 
 [[bench]]
