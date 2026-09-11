@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::contiguous_strides;
+use super::{contiguous_strides, max_rank};
 
 /// TopK returns the `k` largest values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
@@ -34,13 +34,13 @@ pub fn reference_topk(
             rem /= batch_shape[d];
         }
 
-        let mut values: Vec<f32> = Vec::with_capacity(axis_len);
+        let mut candidates: Vec<(f32, u32)> = Vec::with_capacity(axis_len);
         let mut coord = batch_coord.clone();
         for i in 0..axis_len {
             coord[axis] = i;
-            values.push(input.get_f32(&coord));
+            candidates.push((input.get_f32(&coord), i as u32));
         }
-        values.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| max_rank(*a, *b));
 
         for i in 0..k {
             coord[axis] = i;
@@ -49,8 +49,8 @@ pub fn reference_topk(
                 .zip(out_strides.iter())
                 .map(|(c, s)| c * s)
                 .sum::<usize>();
-            data[idx] = if i < values.len() {
-                values[i]
+            data[idx] = if i < candidates.len() {
+                candidates[i].0
             } else {
                 f32::MIN
             };
