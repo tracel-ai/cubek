@@ -30,6 +30,8 @@ pub use prod::reference_prod;
 pub use sum::reference_sum;
 pub use topk::reference_topk;
 
+use std::cmp::Ordering;
+
 use cubecl::{
     client::Client,
     prelude::*,
@@ -347,6 +349,19 @@ pub(super) fn should_replace_max(current: f32, candidate: f32) -> bool {
 
 pub(super) fn should_replace_min(current: f32, candidate: f32) -> bool {
     !current.is_nan() && (candidate.is_nan() || candidate < current)
+}
+
+/// The order top-k ranks candidates in, best first: [`should_replace_max`]'s
+/// rule, made total by breaking every tie (NaN against NaN included) towards
+/// the lower coordinate, since `partial_cmp`'s NaN-is-equal-to-everything isn't transitive.
+pub(super) fn max_rank(candidate: (f32, u32), other: (f32, u32)) -> Ordering {
+    if should_replace_max(other.0, candidate.0) {
+        Ordering::Less
+    } else if should_replace_max(candidate.0, other.0) {
+        Ordering::Greater
+    } else {
+        candidate.1.cmp(&other.1)
+    }
 }
 
 pub(crate) fn for_each_output_coord(output_shape: &[usize], mut f: impl FnMut(usize, &[usize])) {

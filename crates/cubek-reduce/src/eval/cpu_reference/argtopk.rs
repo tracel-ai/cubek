@@ -1,7 +1,7 @@
 use cubecl::zspace::Shape;
 use cubek_test_utils::{HostData, HostDataVec, Progress};
 
-use super::contiguous_strides;
+use super::{contiguous_strides, max_rank};
 
 /// ArgTopK returns the `k` axis indices of the top values per output slice.
 /// The output shape has `axis` set to `k` (rather than `1` as for scalar reductions).
@@ -40,7 +40,7 @@ pub fn reference_argtopk(
             coord[axis] = i;
             pairs.push((input.get_f32(&coord), i as u32));
         }
-        pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.sort_by(|a, b| max_rank(*a, *b));
 
         for i in 0..k {
             coord[axis] = i;
