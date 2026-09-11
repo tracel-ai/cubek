@@ -71,8 +71,9 @@ deletes it.
   `kIOGPUCommandBufferCallbackErrorImpactingInteractivity` while two other
   sessions ran device suites on the same M2.
 - cubek `quest1/one-layout-word` (`7bbc7329`): `Axis` derives serde, the TMA
-  box limit is public. metabolic's working tree carries a LOCAL-ONLY
-  `[patch]` to `../cubek-Paul` as its tip commit until the pin moves; drop it when it does.
+  box limit is public. metabolic carries a LOCAL-ONLY `[patch]` to
+  `../cubek-Paul` as `fbb1c131`, mid-history since that commit was pushed
+  before the follow-ups landed: drop it with `git revert fbb1c131`.
 - Not exercised on this Mac: the cube-scope gemv (`cube_fold`), whose sink
   now states its own spec, since Metal's fixture carries no shared f32 atomic
   add; and the fused gemv carrier, which is behind the `matmul-epilogue`
@@ -101,10 +102,10 @@ metabolic side unreadable today.
 Louis's call on the brainstorm: #2, #3, #4 yes; #1 and #6 are goals, too
 risky now; #5 as a storage level is not elegant.
 
-- **#3 landed** (`08ef582d`): the scaled K form and the gemv's row form
+- **#3 landed** (`b725e7fe`): the scaled K form and the gemv's row form
   carry every activation row; the accumulators grow with the rows;
   `gemv_settings` and the quantized col-form test check three rows.
-- **#2 landed** (`58809862`): `PlaneFold`, `CubeFold`, `KSplit`,
+- **#2 landed** (`fe1c415d`): `PlaneFold`, `CubeFold`, `KSplit`,
   `UnitPerVector`; one `space()` in the table's shape; the plane fold at the
   plane scope emits the levels it did.
 - **#4 landed** (metabolic + cubek `e1c06096`): `StridedTileSource::stored`
