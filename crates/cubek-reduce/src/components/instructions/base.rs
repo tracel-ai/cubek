@@ -168,9 +168,28 @@ impl<X: CubePrimitive> Value<X> {
 /// `k` at all.
 pub(crate) const TOPK_UNROLL_BUDGET: usize = 1024;
 
+/// Whether any lane of `item` reaches the list slot `kth` — reaches, not only
+/// beats, so a tie still goes through the insertion and its coordinate rule.
+#[cube]
+pub(crate) fn reaches<N: Numeric, S: Size>(item: Vector<N, S>, kth: Vector<N, S>) -> bool {
+    let mut any = false;
+    #[unroll]
+    for i in 0..item.vector_size().comptime() {
+        if !(item.extract(i) < kth.extract(i)) {
+            any = true;
+        }
+    }
+    any
+}
+
 /// Plane-cooperative top-k insertion; the candidate's coordinate decides which
 /// algorithm runs, since winners are identified by their coordinate when one
 /// rides along and by lane id otherwise.
+///
+/// A step none of whose lanes reaches the list's last kept slot changes nothing
+/// and is skipped: the insertion is `k` plane reductions per step, and over a
+/// long row almost every step is such a step — on a 151936-wide row of logits
+/// the insertion was the whole cost of a top-20 (4.7 ms on GP100).
 #[cube]
 pub fn plane_topk_insert<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
@@ -179,16 +198,18 @@ pub fn plane_topk_insert<N: Numeric, S: Size>(
     coord: &Value<Vector<u32, S>>,
     #[comptime] k: usize,
 ) {
-    match coord {
-        Value::None => plane_topk_insert_values(elements, item, k),
-        Value::Single(coord) => plane_topk_insert_with_coords(
-            elements,
-            coordinates.multiple_mut(),
-            item,
-            coord.unwrap(),
-            k,
-        ),
-        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
+    if plane_any(reaches(item, elements[k - 1])) {
+        match coord {
+            Value::None => plane_topk_insert_values(elements, item, k),
+            Value::Single(coord) => plane_topk_insert_with_coords(
+                elements,
+                coordinates.multiple_mut(),
+                item,
+                coord.unwrap(),
+                k,
+            ),
+            Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
+        }
     }
 }
 

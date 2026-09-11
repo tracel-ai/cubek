@@ -7,6 +7,7 @@ use crate::components::instructions::AccumulatorFormat;
 
 use crate::components::instructions::plane_topk_insert;
 use crate::components::instructions::plane_topk_merge;
+use crate::components::instructions::reaches;
 use crate::components::instructions::{Accumulator, Item, Value, ValueExpand};
 use crate::{
     ReduceFamily, ReduceInstruction, ReducePrecision,
@@ -47,6 +48,9 @@ impl ReduceWithIndicesFamily for TopK {
 ///
 /// Ties break towards the lower coordinate, matching the CPU reference. A
 /// coordinate-less candidate emits no index arithmetic at all.
+///
+/// A candidate that reaches no lane's last kept slot changes nothing and skips
+/// the `k`-slot walk — over a long row, almost every candidate.
 #[cube]
 pub(crate) fn topk_insert<N: Numeric, S: Size>(
     elements: &mut Array<Vector<N, S>>,
@@ -55,38 +59,40 @@ pub(crate) fn topk_insert<N: Numeric, S: Size>(
     insert_coord: &Value<Vector<u32, S>>,
     #[comptime] k: usize,
 ) {
-    let mut insert_val = insert_val;
+    if reaches(insert_val, elements[k - 1]) {
+        let mut insert_val = insert_val;
 
-    match insert_coord {
-        Value::None => {
-            for j in 0..k {
-                let to_keep = elements[j].greater_than(&insert_val);
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
+        match insert_coord {
+            Value::None => {
+                for j in 0..k {
+                    let to_keep = elements[j].greater_than(&insert_val);
+                    let next_val = select_many(to_keep, insert_val, elements[j]);
+                    elements[j] = select_many(to_keep, elements[j], insert_val);
+                    insert_val = next_val;
+                }
             }
-        }
-        Value::Single(coord) => {
-            let mut insert_coord = coord.unwrap();
-            let coords = coordinates.multiple_mut();
+            Value::Single(coord) => {
+                let mut insert_coord = coord.unwrap();
+                let coords = coordinates.multiple_mut();
 
-            for j in 0..k {
-                let to_keep = select_many(
-                    elements[j].equal(&insert_val),
-                    coords[j].less_than(&insert_coord),
-                    elements[j].greater_than(&insert_val),
-                );
+                for j in 0..k {
+                    let to_keep = select_many(
+                        elements[j].equal(&insert_val),
+                        coords[j].less_than(&insert_coord),
+                        elements[j].greater_than(&insert_val),
+                    );
 
-                let next_val = select_many(to_keep, insert_val, elements[j]);
-                elements[j] = select_many(to_keep, elements[j], insert_val);
-                insert_val = next_val;
+                    let next_val = select_many(to_keep, insert_val, elements[j]);
+                    elements[j] = select_many(to_keep, elements[j], insert_val);
+                    insert_val = next_val;
 
-                let next_coord = select_many(to_keep, insert_coord, coords[j]);
-                coords[j] = select_many(to_keep, coords[j], insert_coord);
-                insert_coord = next_coord;
+                    let next_coord = select_many(to_keep, insert_coord, coords[j]);
+                    coords[j] = select_many(to_keep, coords[j], insert_coord);
+                    insert_coord = next_coord;
+                }
             }
+            Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
         }
-        Value::Multiple(_) => panic!("a top-k candidate carries at most one coordinate"),
     }
 }
 
