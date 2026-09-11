@@ -22,3 +22,5 @@ pub use launch::{
 pub use kernels::forward::{
     DepthwiseStrategy, DepthwiseTensors, DepthwiseTiling, launch_depthwise,
 };
+
+pub use kernels::forward::{DirectTensors, launch_direct};
