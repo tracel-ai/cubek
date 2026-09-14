@@ -10,9 +10,13 @@ use cubecl::{
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 
-/// Wider than this and the accumulators stop fitting in registers: eight of them cost 8x the
-/// stores on AVX2, which outweighs every load the block saves.
-const CHANNEL_BLOCK: usize = 4;
+/// Half of AVX2's sixteen vector registers, so the input read, the weight loads and the products
+/// keep the rest. An accumulator that does not fit spills, and every add becomes a load and a store.
+const ACCUMULATOR_REGISTERS: usize = 8;
+
+/// Not `load_width`, which cubecl-cpu reports as 512 on every CPU; on AVX2 that is two registers.
+/// Read the hardware instead once it reports the register width.
+const REGISTER_BITS: usize = 256;
 
 #[cube]
 fn decompose_linear<I: FastDivmodInt>(pos: I, shape: &Sequence<FastDivmod<I>>) -> (I, Sequence<I>) {
@@ -56,6 +60,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     shape_out_c: FastDivmod<u32>,
     #[comptime] has_padding: bool,
     #[comptime] accumulate_lanes: bool,
+    #[comptime] channel_block: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -110,13 +115,12 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     };
 
     let vector_size_in = input.vector_size();
-    let block = comptime![usize::min(CHANNEL_BLOCK, vector_size_out)];
 
     if accumulate_lanes {
         #[unroll]
-        for bi in 0..comptime![vector_size_out / block] {
-            let base_v = bi * block;
-            let mut lanes = Array::<Vector<E, NIn>>::new(block);
+        for bi in 0..comptime![vector_size_out / channel_block] {
+            let base_v = bi * channel_block;
+            let mut lanes = Array::<Vector<E, NIn>>::new(channel_block);
 
             kernel_loop(
                 input,
@@ -134,7 +138,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
             );
 
             #[unroll]
-            for j in 0..block {
+            for j in 0..channel_block {
                 let mut channel = sum.extract(base_v + j);
 
                 #[unroll]
@@ -404,6 +408,7 @@ pub fn launch_direct<const N: usize>(
     let accumulate_lanes = client.properties().hardware.plane_size_max == 1
         && vector_size_in > 1
         && weight.shape[dim_c] > vector_size_in as usize;
+    let channel_block = channel_block(vector_size_in, vector_size_out, dtype.size() * 8);
 
     let shape_out = out.shape[1..dim_c].iter().map(|s| *s as u32).collect();
     let shape_out_c = out_channels as u32;
@@ -444,11 +449,20 @@ pub fn launch_direct<const N: usize>(
             shape_out_c,
             check_spatial_bounds,
             accumulate_lanes,
+            channel_block,
             dtype,
         )
     };
 
     Ok(())
+}
+
+/// How many output channels share one input read. A power of two, so it divides the output vector.
+fn channel_block(vector_size_in: usize, vector_size_out: usize, elem_bits: usize) -> usize {
+    let registers_per_accumulator = (vector_size_in * elem_bits).div_ceil(REGISTER_BITS);
+    let block = (ACCUMULATOR_REGISTERS / registers_per_accumulator).max(1);
+
+    (1 << block.ilog2()).min(vector_size_out)
 }
 
 fn should_check_spatial_bounds<const N: usize>(
@@ -465,4 +479,35 @@ fn should_check_spatial_bounds<const N: usize>(
             - begin;
         first < 0 || last >= in_shape[dim] as i64
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_512_bit_accumulator_spends_two_registers() {
+        assert_eq!(channel_block(16, 16, 32), 4);
+        assert_eq!(channel_block(32, 32, 16), 4);
+    }
+
+    #[test]
+    fn a_register_wide_accumulator_spends_one() {
+        assert_eq!(channel_block(8, 16, 32), 8);
+    }
+
+    #[test]
+    fn a_narrow_accumulator_still_spends_a_whole_register() {
+        assert_eq!(channel_block(2, 16, 32), 8);
+    }
+
+    #[test]
+    fn the_block_never_outgrows_the_output_vector() {
+        assert_eq!(channel_block(8, 2, 32), 2);
+    }
+
+    #[test]
+    fn an_accumulator_wider_than_the_budget_still_gets_a_block_of_one() {
+        assert_eq!(channel_block(64, 16, 64), 1);
+    }
 }
