@@ -9,6 +9,10 @@
 //!   closes with a plane sum and feeds the accumulator immediately. Decode's shape: a single query
 //!   position per group.
 //!
+//! [`splits`] closes a split walk of either shape: the teams publish their running states and
+//! [`merge_splits`](crate::Tile::merge_splits) turns them into the cross-split weights the drain
+//! contracts.
+//!
 //! The hardware form has no leaf of its own: the two matmuls are the general contraction
 //! ([`cmma_accumulator`](crate::Tile::cmma_accumulator), [`mma`](crate::Tile::mma)) on a
 //! plane-resident accumulator, and the rescale between them is
@@ -16,7 +20,8 @@
 //! [`softmax`](crate::Tile::softmax) these are leaf ops: the caller owns the walk and the syncs.
 
 mod columns;
+mod splits;
 mod stream;
 
 pub use stream::*;
-// columns adds `Tile` impls only; nothing to re-export.
+// columns and splits add `Tile` impls only; nothing to re-export.
