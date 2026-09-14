@@ -170,7 +170,16 @@ pub(crate) const TOPK_UNROLL_BUDGET: usize = 1024;
 
 /// Whether any lane of `item` reaches the list slot `kth` — reaches, not only
 /// beats, so a tie still goes through the insertion and its coordinate rule.
+///
+/// The negation is load-bearing and is not `>=`: this guard only skips what
+/// provably cannot enter, so a NaN, which compares unordered against every
+/// slot, has to reach the insertion the way it did before the guard existed.
+/// There it takes slot 0 — `elements[j] > NaN` is false — and carries its own
+/// coordinate out. Under `>=` a NaN would fail the guard instead, and an
+/// all-NaN row would insert nothing and emit the `u32::MAX` null-accumulator
+/// sentinel as its index.
 #[cube]
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 pub(crate) fn reaches<N: Numeric, S: Size>(item: Vector<N, S>, kth: Vector<N, S>) -> bool {
     let mut any = false;
     #[unroll]
