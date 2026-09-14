@@ -24,15 +24,6 @@ use cubek_reduce::{
 
 use crate::reduce::it::test_case::TestCase;
 
-/// The cube tree merge (`use_planes: false`) produces wrong top-k results for
-/// `k > 1` on the CPU runtime, for the values-only path through plain `reduce`
-/// just as much as for the fused one; every GPU backend passes. The affected
-/// tests skip that runtime so the pre-existing bug does not fail the CPU CI job.
-fn cpu_runtime() -> bool {
-    let client = cubecl::test_device().client();
-    client.name() == "cpu"
-}
-
 fn cube_strategy(use_planes: bool) -> ReduceStrategy {
     ReduceStrategy {
         vectorization: VectorizationStrategy {
@@ -99,17 +90,11 @@ fn cube_units_max_with_indices() {
 
 #[test]
 fn cube_units_topk_with_indices_k3() {
-    if cpu_runtime() {
-        return;
-    }
     case(false).test_topk_with_indices(3);
 }
 
 #[test]
 fn cube_units_topk_with_indices_k5() {
-    if cpu_runtime() {
-        return;
-    }
     case(false).test_topk_with_indices(5);
 }
 

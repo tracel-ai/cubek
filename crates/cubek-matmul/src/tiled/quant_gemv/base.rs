@@ -23,7 +23,6 @@
 use std::fmt::Display;
 
 use cubecl::quant::scheme::QuantValue;
-use cubek_tile::{FieldDecode, field_decode};
 
 use crate::definition::MatmulSetupError;
 
@@ -202,14 +201,6 @@ impl QuantGemvRoutine {
         plane_dim: usize,
     ) -> Result<(), MatmulSetupError> {
         let refuse = |what: String| Err(MatmulSetupError::InvalidConfig(Box::new(what)));
-        // Asked first: the kernel's own refusal is a comptime panic on a worker thread, which
-        // surfaces as a zeroed output rather than as an error.
-        if field_decode(problem.field) == FieldDecode::Unserved {
-            return refuse(format!(
-                "QuantGemv: the packed view does not serve a {:?} field",
-                problem.field
-            ));
-        }
         let factor = problem.factor();
         if !problem.block.is_multiple_of(factor) {
             return refuse(format!(

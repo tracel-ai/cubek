@@ -14,6 +14,16 @@ use cubecl::unexpanded;
 
 use crate::*;
 
+/// What a plane of the cube does with a ring's slots ([`Ring::role`]).
+#[derive(CubeType, CubeTypeMut, IntoRuntime)]
+#[cube(runtime_variants)]
+pub enum Role {
+    /// Fills the slots, and takes no tile of any level ([`Level::filled_by`]).
+    Fill,
+    /// Reads the slots and computes out of them, and fills none.
+    Compute,
+}
+
 /// The `depth` slots of one buffered walk, and the operands they are filled from: the same
 /// payload shape at this level, so [`pipelined`] can fill a slot for a region on its own.
 #[derive(CubeType)]
@@ -22,6 +32,9 @@ pub struct Ring<T: CubeType> {
     pub(crate) sources: T,
     #[cube(comptime)]
     pub(crate) depth: usize,
+    /// Planes of the cube that fill these slots and do nothing else ([`Level::filled_by`]).
+    #[cube(comptime)]
+    pub(crate) fillers: usize,
 }
 
 #[cube]
@@ -32,6 +45,7 @@ impl<T: CubeType> Ring<T> {
         slots: Sequence<Staging<T>>,
         sources: T,
         #[comptime] depth: usize,
+        #[comptime] fillers: usize,
     ) -> Ring<T> {
         comptime!(assert!(
             depth > 0,
@@ -41,6 +55,23 @@ impl<T: CubeType> Ring<T> {
             slots,
             sources,
             depth,
+            fillers,
+        }
+    }
+
+    /// What this plane does with the ring's slots. The planes a walk sets aside to fill sit at
+    /// the end of the cube ([`Level::filled_by`]), so a unit fills exactly when it stands at or
+    /// past the ones that compute, and every plane below is the one it would have been.
+    ///
+    /// Where the walk set none aside, every plane computes and fills its own slots, which is the
+    /// schedule [`pipelined`] writes.
+    pub fn role(&self) -> Role {
+        if comptime!(self.fillers == 0) {
+            Role::new_Compute()
+        } else if UNIT_POS >= Pipeline::consumers(comptime!(self.fillers)) {
+            Role::new_Fill()
+        } else {
+            Role::new_Compute()
         }
     }
 
@@ -71,12 +102,15 @@ pub trait RingFill {
     fn publish(&mut self, scope: &Scope, slot: usize);
 }
 
-/// Walk `walk`'s regions through `ring`, `compute` consuming each region out of its slot. The
-/// ring knows its sources, so every fill is the ring's; the closure sees the slot (already this
-/// region's) and the region, and reads the slot through [`consume`](Staging::consume).
+/// Walk `walk`'s regions through `ring`, `compute` consuming each region out of its slot, the
+/// ring filling from its own sources. The closure sees the slot (already this region's) and the
+/// region, and reads the slot through [`consume`](Staging::consume).
 ///
 /// Unrolling is the walk's statement ([`Walk::unrolled`]): a fragment output or a fragment read
 /// needs constant coordinates, and the kernel that allocated either says so on the walk.
+///
+/// To fill some other way — a third operand, a transform on the way in — keep this schedule and
+/// bring the fill: [`pipelined_with`].
 pub fn pipelined<T: CubeType, F>(_walk: Walk, _ring: &mut Ring<T>, _compute: F)
 where
     F: FnMut(&mut Staging<T>, &Region),
@@ -84,17 +118,109 @@ where
     unexpanded!()
 }
 
+/// [`pipelined`] with the fill the caller's too: `fill` writes a slot for a region, `compute`
+/// reads it back.
+///
+/// **The schedule is the part worth sharing, not the fill.** The prologue, the lap that
+/// prefetches one region ahead of the one it computes, and which consume publishes a slot that
+/// no later fill will, are the protocol — and a kernel that wanted its own fill used to have to
+/// re-derive all of it to get one. What a fill *does* is the kernel's: it writes the slot's
+/// buffers through [`Staging::fill`], from wherever and through whatever transform.
+///
+/// # Panics
+///
+/// A ring with a fixed operand — one whose window the walk leaves invariant, filled once above
+/// the loop. Hoisting that fill is the ring reading its own sources, which is exactly what this
+/// entry hands over, so the two cannot both be true. Build the ring over a walk that streams
+/// every operand, or use [`pipelined`].
+pub fn pipelined_with<T: CubeType, Fill, F>(
+    _walk: Walk,
+    _ring: &mut Ring<T>,
+    _fill: Fill,
+    _compute: F,
+) where
+    Fill: FnMut(&mut Staging<T>, &Region),
+    F: FnMut(&mut Staging<T>, &Region),
+{
+    unexpanded!()
+}
+
 /// The expand of [`pipelined`], spelled at expand level so the compute body can be a closure.
 pub mod pipelined {
+    use super::schedule::run;
     use super::*;
 
     pub fn expand<T: CubeType, F>(
         scope: &Scope,
         walk: WalkExpand,
         ring: &mut RingExpand<T>,
+        compute: F,
+    ) where
+        RingExpand<T>: RingFill,
+        F: FnMut(&Scope, &mut StagingExpand<T>, &RegionExpand),
+    {
+        // The ring's own fill, which is what makes this the convenience entry.
+        run(
+            scope,
+            walk,
+            ring,
+            |scope, ring, slot, region| ring.fill_streamed(scope, slot, region),
+            compute,
+        )
+    }
+}
+
+/// The expand of [`pipelined_with`].
+pub mod pipelined_with {
+    use super::schedule::run;
+    use super::*;
+
+    pub fn expand<T: CubeType, Fill, F>(
+        scope: &Scope,
+        walk: WalkExpand,
+        ring: &mut RingExpand<T>,
+        mut fill: Fill,
+        compute: F,
+    ) where
+        RingExpand<T>: RingFill,
+        Fill: FnMut(&Scope, &mut StagingExpand<T>, &RegionExpand),
+        F: FnMut(&Scope, &mut StagingExpand<T>, &RegionExpand),
+    {
+        assert!(
+            !ring.has_fixed(scope),
+            "pipelined_with: this ring holds an operand the walk leaves fixed, which the \
+             schedule fills once from the ring's own sources — the one thing a caller's fill \
+             cannot be handed. Stream every operand, or use `pipelined`."
+        );
+        run(
+            scope,
+            walk,
+            ring,
+            move |scope, ring, slot, region| {
+                let slot = ring.__expand_slot_mut_method(scope, slot);
+                fill(scope, slot, region)
+            },
+            compute,
+        )
+    }
+}
+
+/// The one schedule both entries drive: prologue, then a lap that prefetches one region ahead of
+/// the one it computes, with the drain publishing what no later fill will.
+///
+/// `fill` writes slot `slot` for `region`; `compute` reads it back.
+mod schedule {
+    use super::*;
+
+    pub(super) fn run<T: CubeType, Fill, F>(
+        scope: &Scope,
+        walk: WalkExpand,
+        ring: &mut RingExpand<T>,
+        mut fill: Fill,
         mut compute: F,
     ) where
         RingExpand<T>: RingFill,
+        Fill: FnMut(&Scope, &mut RingExpand<T>, usize, &RegionExpand),
         F: FnMut(&Scope, &mut StagingExpand<T>, &RegionExpand),
     {
         let depth = ring.depth;
@@ -114,7 +240,7 @@ pub mod pipelined {
             let cond = index.__expand_lt_method(scope, &total);
             if_expand(scope, cond, |scope| {
                 let region = walk.__expand_region_method(scope, slot.into_expand(scope));
-                ring.fill_streamed(scope, slot, &region);
+                fill(scope, ring, slot, &region);
             });
         }
 
@@ -129,7 +255,7 @@ pub mod pipelined {
                 if depth == 1 {
                     // Nothing is in flight: this region's fill is the last event before its read.
                     let region = walk.__expand_region_method(scope, region_idx);
-                    ring.fill_streamed(scope, FIRST_SLOT, &region);
+                    fill(scope, ring, FIRST_SLOT, &region);
                     ring.publish(scope, FIRST_SLOT);
                     let slot = ring.__expand_slot_mut_method(scope, FIRST_SLOT);
                     compute(scope, slot, &region);
@@ -140,7 +266,7 @@ pub mod pipelined {
                     let draining = region_idx.__expand_lt_method(scope, &total);
                     if_else_expand(scope, prefetching, |scope| {
                         let prefetch = walk.__expand_region_method(scope, ahead);
-                        ring.fill_streamed(scope, (j + depth - 1) % depth, &prefetch);
+                        fill(scope, ring, (j + depth - 1) % depth, &prefetch);
                         let region = walk.__expand_region_method(scope, region_idx);
                         let slot = ring.__expand_slot_mut_method(scope, j);
                         compute(scope, slot, &region);

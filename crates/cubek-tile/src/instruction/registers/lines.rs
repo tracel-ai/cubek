@@ -138,7 +138,9 @@ impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
 #[derive(CubeType)]
 pub struct ScaledLines<V: Lines, S: Lines> {
     values: V,
-    scales: S,
+    /// The scales, where this factor carries any. Absent is a plain operand, and every line of
+    /// it reads exactly as the values' own.
+    scales: ComptimeOption<S>,
     /// Value lines one scale covers along the shared edge.
     #[cube(comptime)]
     lines_per_scale: usize,
@@ -149,9 +151,10 @@ pub struct ScaledLines<V: Lines, S: Lines> {
 
 #[cube]
 impl<V: Lines, S: Lines> ScaledLines<V, S> {
+    /// This factor's values under `scales`, or the values alone where it carries none.
     pub fn new(
         values: V,
-        scales: S,
+        scales: ComptimeOption<S>,
         #[comptime] lines_per_scale: usize,
         #[comptime] lanes: usize,
     ) -> Self {
@@ -176,28 +179,40 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
 
     fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<V::E, V::V> {
         let value = self.values.line(pos, run);
-        let (row, col) = pos;
-        let per_line = comptime!(self.lines_per_scale * self.lanes);
-        // One line of these scales covers `per_line` value lines, so that is both the column it
-        // sits at and the ordinal it is read under: the level above indexes scale lines, not value
-        // lines, and per_load its own scale in on the way back.
-        let scale = self.scales.line(
-            (row, col / comptime!(per_line as u32)),
-            comptime!(run / per_line),
-        );
-        let lane = comptime!((run / self.lines_per_scale) % self.lanes);
-        value * Vector::<V::E, V::V>::cast_from(scale.extract(lane))
+        #[comptime]
+        match &self.scales {
+            ComptimeOption::Some(scales) => {
+                let (row, col) = pos;
+                let per_line = comptime!(self.lines_per_scale * self.lanes);
+                // One line of these scales covers `per_line` value lines, so that is both the column
+                // it sits at and the ordinal it is read under: the level above indexes scale lines,
+                // not value lines, and folds its own scale in on the way back.
+                let scale = scales.line(
+                    (row, col / comptime!(per_line as u32)),
+                    comptime!(run / per_line),
+                );
+                let lane = comptime!((run / self.lines_per_scale) % self.lanes);
+                value * Vector::<V::E, V::V>::cast_from(scale.extract(lane))
+            }
+            ComptimeOption::None => value,
+        }
     }
 
     fn reuse(&self) -> comptime_type!(Reuse) {
-        let above = self.scales.reuse();
-        comptime!(
-            Reuse {
-                per_load: self.lanes,
-                steps: self.lines_per_scale,
+        #[comptime]
+        match &self.scales {
+            ComptimeOption::Some(scales) => {
+                let above = scales.reuse();
+                comptime!(
+                    Reuse {
+                        per_load: self.lanes,
+                        steps: self.lines_per_scale,
+                    }
+                    .compose(above, self.lines_per_scale * self.lanes)
+                )
             }
-            .compose(above, self.lines_per_scale * self.lanes)
-        )
+            ComptimeOption::None => self.values.reuse(),
+        }
     }
 }
 

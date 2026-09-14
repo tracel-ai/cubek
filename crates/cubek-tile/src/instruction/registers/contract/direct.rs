@@ -2,7 +2,8 @@
 
 use cubecl::prelude::*;
 
-use super::scale::{Apply, ContractEdges, EdgeOrdinal, ScaleLevel, ScaleSide};
+use super::factor::{level_of, scale_width, scales_of, spread};
+use super::scale::{ContractEdges, EdgeOrdinal, Side};
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};
@@ -11,14 +12,22 @@ use crate::*;
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
 /// of accumulators lives in registers (load once, `kc / contracted_per_step` steps, store once).
 ///
+/// Each factor arrives as its values and the levels of scales that multiply them, innermost
+/// first. A factor carrying none reads as its values alone, so this is the one nest whatever is
+/// quantized: the scales fold in under the factor's own line source and the block below runs the
+/// same contraction either way.
+///
 /// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` (or
 /// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything
 /// else to the N-D nest, so the conditions below are re-asserted rather than re-decided.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
+    lhs_levels: &Sequence<Tile<LS>>,
     rhs: &Tile<ER>,
+    rhs_levels: &Sequence<Tile<RS>>,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
@@ -53,26 +62,50 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
          gives one; the N-D nest reads them a cell at a time"
     ));
 
+    // Each factor's scales are read at their own width; one that carries none reads nothing.
+    let lsw = scale_width(lhs_levels);
+    let rsw = scale_width(rhs_levels);
+    let size!(LSW) = lsw;
+    let size!(RSW) = rsw;
+
     // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
     // `aw`-wide neighbouring cells otherwise.
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, LS, LSW, ER, W, RS, RSW, A>(
+            acc, lhs, lhs_levels, rhs, rhs_levels, shape, config, semiring,
+        );
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, LS, LSW, ER, A, RS, RSW, A>(
+            acc, lhs, lhs_levels, rhs, rhs_levels, shape, config, semiring,
+        );
     }
 }
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
-/// accumulator's.
+/// accumulator's, `LSW` and `RSW` the widths each factor's scales are read at.
 #[cube]
-fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
+#[allow(clippy::too_many_arguments)]
+fn nest<
+    E: Numeric,
+    EL: Numeric,
+    L: Size,
+    LS: Numeric,
+    LSW: Size,
+    ER: Numeric,
+    V: Size,
+    RS: Numeric,
+    RSW: Size,
+    A: Size,
+>(
     acc: &mut MemData<E>,
     lhs: &Tile<EL>,
+    lhs_levels: &Sequence<Tile<LS>>,
     rhs: &Tile<ER>,
+    rhs_levels: &Sequence<Tile<RS>>,
     #[comptime] shape: ContractShape,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -88,6 +121,46 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 
     let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
     let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
+
+    // This nest's own edges, which is all a scale level needs of it; what a level *is* against
+    // the values it covers is `ScaleLevel`'s to read, here and in the promoted block alike.
+    let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
+    let edges = comptime!(ContractEdges {
+        mr,
+        kc,
+        cols,
+        reduce: shape.reduce_edge(),
+        columns: shape.column_edge(),
+        lw,
+        aw,
+        contracted_per_step,
+        // A step folding several contracted values takes them from one line at a runtime index;
+        // an unfolded one walks its lines under a constant ordinal.
+        ordinal: match contracted_per_step {
+            1 => EdgeOrdinal::Constant,
+            folded => EdgeOrdinal::Runtime(format!(
+                "a step folding {folded} contracted values walks no such edge"
+            )),
+        },
+    });
+    let lhs_level = level_of(
+        lhs_levels,
+        comptime!(operands.clone()),
+        comptime!(shape.space.clone()),
+        comptime!(shape.acc_axes),
+        comptime!(edges.clone()),
+        comptime!(Side::Lhs),
+    );
+    let rhs_level = level_of(
+        rhs_levels,
+        comptime!(operands.clone()),
+        comptime!(shape.space.clone()),
+        comptime!(shape.acc_axes),
+        comptime!(edges),
+        comptime!(Side::Rhs),
+    );
+    let lhs_spread = comptime!(spread(lhs_level));
+    let rhs_spread = comptime!(spread(rhs_level));
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
@@ -114,7 +187,7 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         let eligible = comptime!(shape.scalars() <= config.budget);
         let split_edge =
             comptime!(eligible && config.split_edge && (lhs_check || rhs_check || acc_check));
-        if comptime!(split_edge) {
+        let in_bounds = if comptime!(split_edge) {
             let origin = (0u32.runtime(), 0u32.runtime());
             let lhs_extent = (
                 comptime!(mr as u32).runtime(),
@@ -135,14 +208,42 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                 comptime!(mr as u32).runtime(),
                 comptime!(nr as u32).runtime(),
             );
-            let in_bounds = lhs_mat.block_in_bounds(origin, lhs_extent)
+            lhs_mat.block_in_bounds(origin, lhs_extent)
                 && rhs_mat.block_in_bounds(origin, rhs_extent)
-                && acc_view.block_in_bounds(origin, acc_extent);
+                && acc_view.block_in_bounds(origin, acc_extent)
+        } else {
+            false.runtime()
+        };
+
+        // Each factor as the block reads it: its values, times whatever scales it carries.
+        let lhs_f = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>::new(
+            lhs_mat,
+            scales_of::<LS, LSW>(lhs_levels, comptime!(lhs_level), mat),
+            comptime!(lhs_spread.0),
+            comptime!(lhs_spread.1),
+        );
+        let rhs_f = ScaledLines::<MatrixView<Vector<ER, V>>, CombinedScales<RS, RSW>>::new(
+            rhs_mat,
+            scales_of::<RS, RSW>(rhs_levels, comptime!(rhs_level), mat),
+            comptime!(rhs_spread.0),
+            comptime!(rhs_spread.1),
+        );
+
+        if comptime!(split_edge) {
             if in_bounds {
-                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>,
+                    ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<RS, RSW>>,
+                >(
                     &mut acc_view,
-                    &lhs_mat,
-                    &rhs_mat,
+                    &lhs_f,
+                    &rhs_f,
                     lw,
                     contracted_per_step,
                     aw,
@@ -155,10 +256,19 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
                     semiring,
                 );
             } else {
-                body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
+                body::<
+                    E,
+                    EL,
+                    L,
+                    ER,
+                    V,
+                    A,
+                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>,
+                    ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<RS, RSW>>,
+                >(
                     &mut acc_view,
-                    &lhs_mat,
-                    &rhs_mat,
+                    &lhs_f,
+                    &rhs_f,
                     lw,
                     contracted_per_step,
                     aw,
@@ -173,10 +283,19 @@ fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            body::<E, EL, L, ER, V, A, MatrixView<Vector<EL, L>>, MatrixView<Vector<ER, V>>>(
+            body::<
+                E,
+                EL,
+                L,
+                ER,
+                V,
+                A,
+                ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>,
+                ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<RS, RSW>>,
+            >(
                 &mut acc_view,
-                &lhs_mat,
-                &rhs_mat,
+                &lhs_f,
+                &rhs_f,
                 lw,
                 contracted_per_step,
                 aw,
@@ -245,275 +364,4 @@ fn body<
         cols,
         unroll,
     );
-}
-
-/// [`contract`] with one operand scaled: `c += (lhs ⊗ scale) · rhs` or `c += lhs · (rhs ⊗ scale)`,
-/// the scale a real operand read through its own view and [`ScaleSide`] saying which factor it
-/// meets. Same nest, same block: the scale folds in under the operand's view, so the block
-/// below runs the plain contraction.
-///
-/// The scales are read where the values are, never staged: one value per block is already
-/// cache-served, and staging one would materialize the expansion reading it in place avoids.
-#[cube]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn contract_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
-    acc: &mut MemData<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    scales: &Sequence<Tile<ES>>,
-    #[comptime] space: Space,
-    #[comptime] contracted_per_step: usize,
-    #[comptime] side: ScaleSide,
-    #[comptime] config: RegisterBlock,
-    #[comptime] semiring: Semiring,
-) {
-    let lhs_gathered = lhs.gathered();
-    let rhs_gathered = rhs.gathered();
-    comptime!(assert!(
-        !lhs_gathered && !rhs_gathered,
-        "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
-    ));
-
-    let lw = lhs.vector_size();
-    let aw = comptime!(acc.store.vector_size);
-    let rw = rhs.vector_size();
-    let sw = scales.index(0).vector_size();
-    comptime!(assert!(
-        rw == aw || contracted_per_step > 1,
-        "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
-    ));
-
-    let shape = comptime!(ContractShape::new(
-        &lhs.space,
-        &rhs.space,
-        space,
-        contracted_per_step,
-        lw,
-        rw,
-        aw,
-    ));
-
-    let size!(S) = sw;
-    if comptime!(contracted_per_step > 1) {
-        let size!(W) = contracted_per_step;
-        let size!(A) = 1usize;
-        nest_scaled::<E, EL, W, ER, W, A, ES, S>(
-            acc, lhs, rhs, scales, shape, side, sw, config, semiring,
-        );
-    } else {
-        let size!(W) = lw;
-        let size!(A) = aw;
-        nest_scaled::<E, EL, W, ER, A, A, ES, S>(
-            acc, lhs, rhs, scales, shape, side, sw, config, semiring,
-        );
-    }
-}
-
-/// [`nest`] with the scales view built beside the operands'.
-#[cube]
-#[allow(clippy::too_many_arguments)]
-fn nest_scaled<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    ER: Numeric,
-    V: Size,
-    A: Size,
-    ES: Numeric,
-    S: Size,
->(
-    acc: &mut MemData<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    scales: &Sequence<Tile<ES>>,
-    #[comptime] shape: ContractShape,
-    #[comptime] side: ScaleSide,
-    #[comptime] sw: usize,
-    #[comptime] config: RegisterBlock,
-    #[comptime] semiring: Semiring,
-) {
-    let mr = comptime!(shape.mr);
-    let nr = comptime!(shape.nr);
-    let cols = comptime!(shape.cols);
-    let kc = comptime!(shape.kc);
-    let contracted_per_step = comptime!(shape.contracted_per_step);
-    let lw = comptime!(shape.lw);
-    let aw = comptime!(shape.aw);
-    let matrices = comptime!(shape.matrices());
-    let space = comptime!(shape.space.clone());
-    let lane_fanout = comptime!(config.lane_fanout);
-
-    let lhs_axes = comptime!(shape.lhs_axes(&lhs.space));
-    let rhs_axes = comptime!(shape.rhs_axes(&rhs.space));
-    // This nest's own geometry, which is all a scale level needs of it; what the level *is*
-    // against those values is [`ScaleLevel`]'s to read, here and in the promoted block alike.
-    // Every query about "the scales" is about the level nearest the values; the coarser ones cover
-    // a tile of its tiles and neither pick the side nor set the granularity.
-    let inner = scales.index(0);
-    let operands = comptime!(Space::merge(&[&lhs.space, &rhs.space]));
-    let invariant = inner.invariant_over(operands);
-    let level = comptime!(ScaleLevel::of(
-        &inner.space,
-        &ContractEdges {
-            mr,
-            kc,
-            cols,
-            reduce: shape.reduce_edge(),
-            columns: shape.column_edge(),
-            lw,
-            aw,
-            contracted_per_step,
-            // A step folding several contracted values takes them from one line at a runtime
-            // index; an unfolded one walks its lines under a constant ordinal.
-            ordinal: match contracted_per_step {
-                1 => EdgeOrdinal::Constant,
-                folded => EdgeOrdinal::Runtime(format!(
-                    "a step folding {folded} contracted values walks no such edge"
-                )),
-            },
-        },
-        side,
-        &invariant,
-        sw,
-    ));
-    let eligible = comptime!(mr * nr * contracted_per_step * aw <= config.budget);
-
-    for mat in 0..matrices {
-        let mut acc_view = acc.matrix_accumulate::<A>(
-            mat,
-            comptime!(shape.acc_axes),
-            comptime!(space.clone()),
-            comptime!(semiring.add()),
-        );
-        let acc_check = acc_view.check();
-
-        // The scale folds into the operand that carries it, so the block below contracts one
-        // scaled line source against one plain one and runs the same body either way. Which
-        // operand that is decides two types, so it decides two calls.
-        match comptime!(side) {
-            ScaleSide::Lhs => {
-                let values = lhs.matrix_packed::<L>(lhs_axes, mat);
-                let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
-                let unroll = comptime!(eligible && !values.check && !rhs_mat.check && !acc_check);
-                let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>::new(
-                    values,
-                    combined_scales::<ES, S>(scales, comptime!(level), mat),
-                    comptime!(level.lines_per_scale),
-                    comptime!(level.lanes),
-                );
-                body::<
-                    E,
-                    EL,
-                    L,
-                    ER,
-                    V,
-                    A,
-                    ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<ES, S>>,
-                    MatrixView<Vector<ER, V>>,
-                >(
-                    &mut acc_view,
-                    &lhs_mat,
-                    &rhs_mat,
-                    lw,
-                    contracted_per_step,
-                    aw,
-                    mr,
-                    nr,
-                    cols,
-                    kc,
-                    unroll,
-                    lane_fanout,
-                    semiring,
-                );
-            }
-            ScaleSide::Rhs => {
-                let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
-                let values = rhs.matrix_packed::<V>(rhs_axes, mat);
-                let unroll = comptime!(eligible && !lhs_mat.check && !values.check && !acc_check);
-                let rhs_mat = ScaledLines::<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>::new(
-                    values,
-                    combined_scales::<ES, S>(scales, comptime!(level), mat),
-                    comptime!(level.lines_per_scale),
-                    comptime!(level.lanes),
-                );
-                body::<
-                    E,
-                    EL,
-                    L,
-                    ER,
-                    V,
-                    A,
-                    MatrixView<Vector<EL, L>>,
-                    ScaledLines<MatrixView<Vector<ER, V>>, CombinedScales<ES, S>>,
-                >(
-                    &mut acc_view,
-                    &lhs_mat,
-                    &rhs_mat,
-                    lw,
-                    contracted_per_step,
-                    aw,
-                    mr,
-                    nr,
-                    cols,
-                    kc,
-                    unroll,
-                    lane_fanout,
-                    semiring,
-                );
-            }
-        }
-    }
-}
-
-/// Every level of a scales operand as one line source.
-///
-/// The innermost level is read at the width its cut gives it; each coarser one is read a single
-/// scale at a time and broadcast across that line. All of them are read at the same position: a
-/// level resolves it to its own granularity through its own projection, which is what "one scale
-/// per block" already means.
-#[cube]
-pub(super) fn combined_scales<'a, ES: Numeric, S: Size>(
-    scales: &'a Sequence<Tile<ES>>,
-    #[comptime] level: ScaleLevel,
-    mat: usize,
-) -> CombinedScales<'a, ES, S> {
-    let inner = scales.index(0);
-    let count = scales.len();
-    let origin = (0u32.runtime(), 0u32.runtime());
-    let mut coarser = Vector::<ES, Const<1>>::cast_from(1);
-    #[unroll]
-    for k in 1..count {
-        let level_above = scales.index(k);
-        // Same axes at the same extents, so one `MatrixAxes` reads every level. What differs is
-        // which of those axes each level's projection addresses, and that is what makes one cover
-        // a tile of the other's tiles.
-        comptime!(assert!(
-            level_above.space.axes().collect::<Vec<_>>() == inner.space.axes().collect::<Vec<_>>()
-                && (0..level_above.space.rank())
-                    .all(|p| { level_above.space.extent_at(p) == inner.space.extent_at(p) }),
-            "mm_scaled: a coarser scale level spans {:?} at extents {:?} where the level below it \
-             spans {:?} at {:?}. Levels declare the same axes and differ by what their projections \
-             address, which is what makes one cover a tile of the other's tiles",
-            level_above.space.axes().collect::<Vec<_>>(),
-            (0..level_above.space.rank())
-                .map(|p| level_above.space.extent_at(p))
-                .collect::<Vec<_>>(),
-            inner.space.axes().collect::<Vec<_>>(),
-            (0..inner.space.rank())
-                .map(|p| inner.space.extent_at(p))
-                .collect::<Vec<_>>()
-        ));
-        // Read once, here, which is once per region. A coarser level covers this whole region, so
-        // it has no position of its own inside it; that it does is what the assert above says.
-        let one = level_above
-            .matrix_packed::<Const<1>>(comptime!(level.axes), mat)
-            .read(origin);
-        match comptime!(level.apply) {
-            Apply::Product => coarser *= one,
-        }
-    }
-    CombinedScales::<ES, S>::new(
-        inner.matrix_packed::<S>(comptime!(level.axes), mat),
-        coarser,
-    )
 }

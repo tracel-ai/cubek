@@ -322,7 +322,7 @@ fn atomic_split_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     // The accumulator mirrors the output's grid at this level: opened above the walk, one
     // fragment per region, drained once through the sink after it.
     let mut acc = c.block_accumulator::<E, E, E>(
@@ -657,7 +657,7 @@ fn atomic_split_matmul_in_place<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     for region in space.over(&level) {
         let mut c_region = c.at(&region);
         c_region.mm_with(
@@ -740,6 +740,271 @@ fn a_folding_output_contracts_in_place() {
             assert!(
                 (have - want).abs() < 1e-3,
                 "at ({i}, {j}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+// -- The in-kernel combine, tensor-core leaf --------------------------------------------------
+//
+// A cmma accumulator stores through its intrinsic, which replaces and elects no writer, so on
+// its own it cannot drain into a store that folds. Opened with a scratch, the partition bounces
+// each fragment through shared memory and the lanes add its cells one atomic at a time — the
+// same fold the register block does, reached through the one door a fragment has.
+
+/// [`atomic_split_matmul`]'s tensor-core twin: the cube's slice of `K` staged and contracted in
+/// fragments, the accumulator opened with a scratch and drained through the folding sink.
+#[cube(launch)]
+fn atomic_split_cmma<E: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    space: Partitioning,
+    #[comptime] planes: usize,
+    #[comptime] lanes: usize,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    for cube in space {
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
+        let c_cube = c.at(&cube);
+        let mut acc = c_cube
+            .cmma_accumulator::<E, E>(
+                &a_cube,
+                comptime!(Fragments::below(&c_cube, &a_cube)),
+                Monoid::Sum,
+            )
+            .with_scratch(Resident::OneTile, planes, lanes);
+        acc.zero();
+        let walk = cube.walk();
+        let mut ring = Ring::smem(
+            &walk,
+            &a_cube,
+            &b_cube,
+            comptime!(StageStorage::Strided),
+            1usize,
+        );
+        pipelined(walk, &mut ring, |slot, stage| {
+            let mut acc_s = acc.at(stage);
+            slot.consume(|a_s, b_s| {
+                acc_s.mma(a_s, b_s, Semiring::SUM_PROD);
+            });
+        });
+        for stage in c_cube.walk() {
+            let mut c_w = c_cube.at(&stage);
+            c_w.copy_cast_from(&acc.at(&stage));
+        }
+    }
+}
+
+/// Whether this device contracts `8×8×8` `f32` fragments and adds `f32` atomically into a
+/// buffer, the two things the fragment fold needs; reported rather than silently passed.
+fn folds_fragments(client: &cubecl::client::Client) -> bool {
+    let f32_ty = f32::elem_type_native();
+    let cmma = client.properties().features.matmul.cmma.iter().any(|cfg| {
+        cfg.a_type == f32_ty
+            && cfg.b_type == f32_ty
+            && cfg.cd_type == f32_ty
+            && cfg.m == 8
+            && cfg.n == 8
+            && cfg.k == 8
+    });
+    let adds = client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add);
+    if !(cmma && adds) {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no 8x8x8 f32 cmma fragment or no f32 atomic add".to_string(),
+        ))
+        .enforce();
+    }
+    cmma && adds
+}
+
+/// `a·b` in fragments with `K` dealt to `splits` cubes, folded atomically into a zeroed output.
+fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
+    let client = cubecl::test_device().client();
+    let dtype = f32::elem_type_native();
+    let (m, n, edge) = (8usize, 8usize, 8usize);
+    let lanes = client.properties().hardware.plane_size_max as usize;
+
+    let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
+    let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
+    let (a_handle, _) = TestInput::builder(client.clone(), shape![m, k])
+        .dtype(dtype)
+        .custom(a)
+        .generate_with_f32_host_data();
+    let (b_handle, _) = TestInput::builder(client.clone(), shape![k, n])
+        .dtype(dtype)
+        .custom(b)
+        .generate_with_f32_host_data();
+    let out = TestInput::builder(client.clone(), shape![m, n])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // One plane per cube, the whole output per cube, `K` dealt in runs of one stage.
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::cubes(&[
+                    Cut::new(M, m),
+                    Cut::new(N, n),
+                    Cut::new(K, edge).across(splits),
+                ]),
+                Level::walk(&[(K, edge)]),
+            ],
+        ),
+        KernelForm::Static,
+    );
+
+    atomic_split_cmma::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            a_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, K]),
+        ),
+        TileArgLaunch::new(
+            b_handle.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[K, N]),
+        ),
+        AccumulateArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        1usize,
+        lanes,
+        dtype,
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
+}
+
+/// A fragment folds into the output through the scratch: every split sums to the whole
+/// contraction, exactly, since the values are small integers.
+#[test]
+fn a_fragment_folds_into_the_output_through_the_scratch() {
+    let client = cubecl::test_device().client();
+    if !folds_fragments(&client) {
+        return;
+    }
+    let (m, n, k) = (8usize, 8usize, 64usize);
+    let a = |i: usize, p: usize| ((i * k + p) % 7) as f32 - 3.0;
+    let b = |p: usize, j: usize| ((p * n + j) % 5) as f32 - 2.0;
+    for splits in [1usize, 2, 4, 8] {
+        let got = run_atomic_split_cmma(k, splits);
+        for i in 0..m {
+            for j in 0..n {
+                let want: f32 = (0..k).map(|p| a(i, p) * b(p, j)).sum();
+                assert_eq!(got.get_f32(&[i, j]), want, "{splits} splits: ({i}, {j})");
+            }
+        }
+    }
+}
+
+// -- A plain copy into a folding destination -------------------------------------------------
+//
+// `copy_from` is the memory-to-memory door, and it picks its path on the destination's shape.
+// A folding destination has no address, so it must take the layout walk; before the write mode
+// entered that condition, a destination that was whole, unmasked and plain took the straight
+// path instead and panicked about addresses rather than about folding.
+
+/// Whether this device's buffers take an `f32` atomic add; reported rather than silently passed.
+fn adds_atomically(client: &cubecl::client::Client) -> bool {
+    let adds = client
+        .properties()
+        .atomic_type_usage(Type::atomic(ElemType::Float(FloatKind::F32)))
+        .contains(AtomicUsage::Add);
+    if !adds {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no f32 atomic add".to_string(),
+        ))
+        .enforce();
+    }
+    adds
+}
+
+/// Copy a whole source tile into a whole output whose writes add.
+///
+/// Whole on purpose: `at()` narrows the window and clears `Access::whole`, and it is the *whole*
+/// destination that used to take the straight buffer fill. Narrowed first, this would take the
+/// layout walk either way and prove nothing about the condition.
+#[cube(launch)]
+fn copy_into_folding<E: Numeric>(
+    src: &TileArg<'_, E, Const<1>>,
+    out: &AccumulateArg<'_, E>,
+    space: Partitioning,
+    #[define(E)] _dtype: ElemType,
+) {
+    let src = src.tile(comptime!(space.clone()));
+    let mut out = out.tile::<Const<1>>(comptime!(space.clone()));
+    out.copy_from(&src);
+}
+
+/// The whole claim: the copy adds, it does not replace, and it does not panic on the way. Drop
+/// the write mode from the straight fill's condition and this panics about addresses instead.
+#[test]
+fn a_copy_into_a_folding_output_adds() {
+    let client = cubecl::test_device().client();
+    if !adds_atomically(&client) {
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let (rows, cols) = (4usize, 8usize);
+    let values: Vec<f32> = (0..rows * cols).map(|i| (i % 5) as f32 + 1.0).collect();
+    let (src, _) = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .custom(values.clone())
+        .generate_with_f32_host_data();
+    // Seeded, not zeroed: a store would erase the seed and an add keeps it, so the seed is
+    // what tells the two apart.
+    let seed = 10.0f32;
+    let (out, _) = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .custom(vec![seed; rows * cols])
+        .generate_with_f32_host_data();
+
+    // One cube over the whole tile, so the destination stays whole and each cell is added once.
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols)]),
+            vec![Level::cubes(&[(M, rows), (N, cols)])],
+        ),
+        KernelForm::Static,
+    );
+    copy_into_folding::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            src.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        AccumulateArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, out, HostDataType::F32);
+    for r in 0..rows {
+        for c in 0..cols {
+            assert_eq!(
+                got.get_f32(&[r, c]),
+                values[r * cols + c] + seed,
+                "at ({r}, {c}): the copy replaced the seed instead of adding to it"
             );
         }
     }

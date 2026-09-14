@@ -90,6 +90,14 @@ plane, so one lane of every plane of every cube folds its own contribution.
 
 **Phase 5, `2c9b545f`.** `cargo bench -p benchmarks --bench split_cubes --features cubecl/metal`.
 
+**The fragment drain.** A cmma accumulator stores through its intrinsic, which replaces and elects
+no writer, so a tensor-core leaf could not drain into a folding output. Now it can: opened with a
+scratch (`with_scratch`), every fragment carries it, and `CmmaData::accumulate_cast_window` bounces
+the fragment through it and has each lane add its lines through the store's own write, which is the
+atomic add. `AccumulateArg::tile::<V>` states the served width where the tile is served, so the
+sink is no longer scalar. `tests/tile/split_k.rs::a_fragment_folds_into_the_output_through_the_scratch`.
+The mma transport's manual store still refuses.
+
 ## What the numbers say
 
 Medians, metal, two runs. Every mapping verifies against a reference before it is timed.
@@ -263,3 +271,13 @@ know the destination folds, which is the operand's statement rather than the spa
   host-side stamping off the concrete space.
 - `an_i8_operand_contracts_against_its_scales` fails on metal, and did before any of this. Unrelated
   (quantized i8 against scales), untouched.
+- **An arrival counter, for the merges that are not a plain add** (attention's running max and
+  rescale). The shape is the classic one: every cube publishes its partial, fences, and adds one to
+  a `u32` counter; the cube whose add returns `cubes - 1` is last and merges the others' partials in
+  place, no second dispatch. What it needs and cubecl does not have is the fence: `sync_storage` is
+  documented as giving *no* guarantee that one cube's storage writes are visible to another (the
+  memory order is bounded by WebGPU's), so the last arriver may read a partial before it landed.
+  CUDA (`__threadfence`) and Metal (device-scope `atomic_thread_fence`) both have the primitive; it
+  wants a `SyncScope::Device` with release/acquire meaning, declared per backend and refused where
+  the backend cannot promise it. Until then a merge that is not an add closes with a second
+  dispatch, and the atomic drain above serves the sums.

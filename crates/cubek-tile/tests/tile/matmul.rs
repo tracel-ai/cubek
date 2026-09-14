@@ -28,7 +28,7 @@ use super::references;
 /// fragment shapes they advertise, and an unsupported shape is rejected at
 /// compile time. Returns `false` (after enforcing a skip outcome) when the
 /// device doesn't advertise the exact configuration.
-fn require_cmma_8x8x8_f32(client: &Client) -> bool {
+pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
         cfg.a_type == f32_ty
@@ -2994,6 +2994,104 @@ fn register_matmul_promoted_cube_plane() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
+/// One body, whatever a plane contracts through: the instruction is an argument, and both
+/// [`Tile::accumulator`] and [`PlanePartition::operand`] take it.
+///
+/// The kernel a derivation writes when it elects a form from what the device offers. It matches
+/// on nothing: the register form reads its operands out of the tiles it was handed and the
+/// matrix forms load fragments, and that difference is the engine's.
+#[cube(launch)]
+fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, E, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] instruction: Instruction,
+    #[define(E)] _dtype: ElemType,
+    #[define(EA)] _acc_dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        for plane in cube {
+            let c_p = c.at(&plane);
+            let a_p = a.at(&plane);
+            let b_p = b.at(&plane);
+            let mut acc = c_p.accumulator::<EA, E, E>(
+                &a_p,
+                &b_p,
+                comptime!(Fragments::below(&c_p, &a_p)),
+                instruction,
+                Monoid::Sum,
+            );
+            acc.zero();
+            for step in plane {
+                let mut acc_s = acc.at(&step);
+                let a_f = PlanePartition::<E>::operand(&a_p.at(&step), &acc_s, instruction);
+                let b_f = PlanePartition::<E>::operand(&b_p.at(&step), &acc_s, instruction);
+                acc_s.mma(&a_f, &b_f, Semiring::SUM_PROD);
+            }
+            for r0 in c_p.walk().unrolled() {
+                let mut c_p_w = c_p.at(&r0);
+                c_p_w.copy_cast_from(&acc.at(&r0));
+            }
+        }
+    }
+}
+
+/// The register form of [`matmul_on_a_stated_instruction`], which every device runs.
+///
+/// What it proves is that the pair is form-blind on the side that asks nothing of the hardware:
+/// `operand` hands a register block the tile it was given, so a kernel written for a fragment
+/// form runs unchanged where there is no fragment. The cmma form of the same body is
+/// [`instruction_stated_once_runs_on_cmma`].
+#[test]
+fn instruction_stated_once_runs_in_registers() {
+    let client = cubecl::test_device().client();
+    let (m, n, k) = (4usize, 4usize, 16usize);
+    let (leaf_m, leaf_n, leaf_k) = (2usize, 2usize, 4usize);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![
+                Level::cubes(&[(M, m), (N, n)]),
+                Level::planes(&[(M, leaf_m), (N, leaf_n)]),
+                Level::walk(&[(K, leaf_k)]),
+            ],
+        ),
+        KernelForm::Static,
+    );
+
+    let dtype = f32::elem_type_native();
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    matmul_on_a_stated_instruction::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.partitioning_arg(),
+        Instruction::Registers {
+            config: REGISTER_BLOCK,
+        },
+        dtype,
+        dtype,
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
+}
+
 /// A buffered level that *cuts* a promoted (fragment) accumulator: each region selects its own
 /// block, so the ring's walk has to unroll and hand every region comptime coordinates.
 ///
@@ -4052,6 +4150,115 @@ fn check_cmma_matmul_k_walk_with(
     } else {
         assert_matmul_arange(&client, c.handle(), m, n, k);
     }
+}
+
+/// [`cmma_matmul_k_walk`] with the instruction stated rather than picked: one body, launched at
+/// a register block and at cmma.
+///
+/// The whole of the difference between the two is the argument. Nothing below matches on it —
+/// [`Tile::accumulator`] opens what the plane sums into, and `mma` reads the staged operands the
+/// way that accumulator wants them.
+#[cube(launch)]
+fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
+    a: &TileArg<'_, E, V>,
+    b: &TileArg<'_, E, V>,
+    c: &TileArg<'_, E, V>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[comptime] storage: StageStorage,
+    #[comptime] depth: usize,
+    #[comptime] instruction: Instruction,
+    #[define(E)] _dtype: ElemType,
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    let mut acc = c.accumulator::<E, E, E>(
+        &a,
+        &b,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        instruction,
+        Monoid::Sum,
+    );
+    acc.zero();
+    let walk = space.over(&level);
+    let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
+    pipelined(walk, &mut ring, |slot, region| {
+        let mut acc_r = acc.at(region);
+        slot.consume(|a_s, b_s| {
+            acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
+        });
+    });
+    for r0 in c.over(&level).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
+}
+
+/// The staged body at a register block, which every device runs.
+#[test]
+fn one_staged_body_at_a_register_block() {
+    check_staged_matmul_on_a_stated_instruction(Instruction::Registers {
+        config: REGISTER_BLOCK,
+    });
+}
+
+/// The same body at cmma, on a device that offers `8x8x8`.
+///
+/// The pair of tests is the claim the stated instruction exists for: a kernel whose form is
+/// *data* is written once. Two tests rather than one loop, so a device without tensor cores
+/// reports the cmma leg as skipped instead of quietly running half the claim.
+#[test]
+fn one_staged_body_at_cmma() {
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    check_staged_matmul_on_a_stated_instruction(Instruction::Cmma);
+}
+
+/// [`staged_matmul_on_a_stated_instruction`] against the arange reference, at whichever form.
+fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
+    let client = cubecl::test_device().client();
+    let (m, n, k, edge) = (8usize, 8usize, 16usize, 8usize);
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, m), (N, n), (K, k)]),
+            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+        ),
+        KernelForm::Static,
+    );
+    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+        .untiled()
+        .arange();
+    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+        .untiled()
+        .arange();
+    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+        .untiled()
+        .uniform(4242, 10., 100.);
+
+    staged_matmul_on_a_stated_instruction::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        1,
+        a.arg(),
+        b.arg(),
+        c.arg(),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        StageLayout::Tiled.storage(&launcher),
+        1,
+        instruction,
+        f32::elem_type_native(),
+    );
+    assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
 /// The manual/raw-mma instruction: the raw-mma twin of `cmma_matmul_staged_k_walk`: the same

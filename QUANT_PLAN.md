@@ -69,6 +69,8 @@ space cannot name has to be a verb in the kernel* — pointed at quantization.
    everywhere.
 
 4. **The side is read, not stated** (`ScaleSide`, `tests/tile/scaled.rs`, `tests/tile/packed.rs`).
+   *Superseded by `QUEST3_PLAN.md` decision 1: the kernel states the side through `Scaling`, and
+   the leaf checks the statement against the axes.*
    `mm_scaled` scales whichever operand the scales' *own axes* name: one spanning the output's
    columns is a fact about the rhs's columns and nothing else could fold it in; anything else
    scales the lhs. Same verb, same kernel body, both sides — `(a ⊗ s) · b` and `a · (b ⊗ s)` are

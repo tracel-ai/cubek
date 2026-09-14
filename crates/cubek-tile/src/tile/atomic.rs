@@ -47,14 +47,10 @@ impl<T: Numeric> Tile<T> {
             comptime!(spec.projection.physical_rank()),
         );
         let sink = ErasedTensor::<T, WriteOnly>::of_atomic_accumulate::<N>(values);
-        Tile::<T>::of_sink(
-            sink,
-            geometry,
-            comptime!(N::value()),
-            space,
-            spec,
-            Write::Accumulate,
-        )
+        // Read at expansion, not as a Rust constant: a launch-time `Size` has no `value()`
+        // until the kernel is being defined.
+        let width = N::value();
+        Tile::<T>::of_sink(sink, geometry, width, space, spec, Write::Accumulate)
     }
 }
 

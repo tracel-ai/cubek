@@ -34,16 +34,29 @@ pub(crate) struct SlotPlan {
     operands: Vec<OperandPlan>,
     sync: Sync,
     collective_full: bool,
+    fillers: usize,
 }
 
 impl SlotPlan {
     pub(crate) fn new(operands: &[SlotOperand], op_space: &Space, level: &Level) -> SlotPlan {
+        let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
+        let fillers = level.fillers();
+        let sync = Sync::for_deliveries(&deliveries, fillers);
+        let collective_full = Sync::collective_full(&deliveries);
+        // A cooperative fill deals its elements out over every unit position of the cube, so
+        // planes that are not there leave their share of the stage unwritten, and quietly: the
+        // slot publishes on schedule and the wrong bytes are read.
+        assert!(
+            fillers == 0 || !collective_full,
+            "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
+             a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
+        );
         // Fix an operand only when its window is genuinely invariant across the walk. A barrier
-        // pipeline arrives `full` once per fill, so a TMA pair keeps the joint per-region fill;
-        // splitting an invariant out would corrupt its phase. A dynamic level can't decide
-        // invariance at comptime. Both fall back to streaming.
-        let can_fix_invariants =
-            op_space.is_static() && !operands.iter().any(|op| op.delivery.is_tma());
+        // slot arrives `full` once per fill, so lifting one operand out of the joint per-region
+        // fill leaves the slot's parity counting fills that no longer happen; the whole slot
+        // streams instead. A dynamic level can't decide invariance at comptime. Both fall back
+        // to streaming.
+        let can_fix_invariants = op_space.is_static() && sync != Sync::Barrier;
         let planned_operands = operands
             .iter()
             .map(|op| {
@@ -58,11 +71,11 @@ impl SlotPlan {
                 }
             })
             .collect();
-        let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
         SlotPlan {
             operands: planned_operands,
-            sync: Sync::for_deliveries(&deliveries),
-            collective_full: Sync::collective_full(&deliveries),
+            sync,
+            collective_full,
+            fillers,
         }
     }
 
@@ -87,6 +100,30 @@ impl SlotPlan {
 
     pub(crate) fn collective_full(&self) -> bool {
         self.collective_full
+    }
+
+    /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
+    pub(crate) fn fillers(&self) -> usize {
+        self.fillers
+    }
+}
+
+#[cube]
+impl<T: Numeric> Tile<T> {
+    /// One shared-memory stage of this tile, laid out as `storage` and served at `width` where one
+    /// is stated ([`Ring::smem_single_at`]), for a ring `depth` slots deep.
+    ///
+    /// A gathered operand keeps its compacted physical window and projection, so staging does not
+    /// replicate each logical element for every gather tap; the leaf performs the gather on read
+    /// instead.
+    pub(crate) fn staged(
+        &self,
+        #[comptime] level: Level,
+        #[comptime] depth: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+    ) -> Tile<T> {
+        MemData::stage(self, level, storage, width).at_depth(depth)
     }
 }
 
@@ -121,8 +158,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_lhs = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.0.clone()
             } else {
-                stage_smem(
-                    lhs,
+                lhs.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -132,8 +168,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             let staged_rhs = if comptime!(plan.reuses_first_buffer(SECOND, slot)) {
                 slots.index(FIRST_SLOT).data.1.clone()
             } else {
-                stage_smem(
-                    rhs,
+                rhs.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -142,7 +177,11 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
-                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                Pipeline::new(
+                    comptime!(plan.sync()),
+                    comptime!(plan.collective_full()),
+                    comptime!(plan.fillers()),
+                ),
                 comptime!(SmallVec::from_slice(&[
                     plan.operand_plan(FIRST, slot),
                     plan.operand_plan(SECOND, slot),
@@ -150,7 +189,45 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, (lhs.clone(), rhs.clone()), depth)
+        Ring::wrap(
+            slots,
+            (lhs.clone(), rhs.clone()),
+            depth,
+            comptime!(plan.fillers()),
+        )
+    }
+}
+
+#[cube]
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Fill slot `slot` from `region`'s window: one step of a [`Fill`](Role::Fill) plane's walk.
+    /// The ring knows its sources, so the caller names only which slot and which region.
+    ///
+    /// This is the same fill [`pipelined`] runs one lap ahead of its own reads; here the two
+    /// halves are separate walks, so the kernel spells the schedule and the ring spells the step.
+    pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
+        let lhs = self.sources.0.clone();
+        let rhs = self.sources.1.clone();
+        self.slot_mut(slot).fill_streamed(&lhs, &rhs, region);
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
+    /// Consume slot `slot`: one step of a [`Compute`](Role::Compute) plane's walk. Waits the
+    /// slot's fill, hands `compute` the two staged tiles, then frees the slot.
+    /// See [`RingExpand::__expand_consume_method`].
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<Lhs>, &Tile<Rhs>)) {
+        unexpanded!()
+    }
+}
+
+impl<Lhs: Numeric, Rhs: Numeric> RingExpand<(Tile<Lhs>, Tile<Rhs>)> {
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<Lhs>, &TileExpand<Rhs>),
+    {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_consume_method(scope, compute);
     }
 }
 
@@ -297,8 +374,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             let staged_input = if comptime!(plan.reuses_first_buffer(FIRST, slot)) {
                 slots.index(FIRST_SLOT).data.clone()
             } else {
-                stage_smem(
-                    input,
+                input.staged(
                     comptime!(walk.level.clone()),
                     comptime!(walk.depth()),
                     comptime!(storage.clone()),
@@ -307,12 +383,43 @@ impl<T: Numeric> Ring<Tile<T>> {
             };
             let staging = Staging::wrap(
                 staged_input,
-                Pipeline::new(comptime!(plan.sync()), comptime!(plan.collective_full())),
+                Pipeline::new(
+                    comptime!(plan.sync()),
+                    comptime!(plan.collective_full()),
+                    comptime!(plan.fillers()),
+                ),
                 comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),
             );
             slots.push(staging);
         }
-        Ring::wrap(slots, input.clone(), depth)
+        Ring::wrap(slots, input.clone(), depth, comptime!(plan.fillers()))
+    }
+}
+
+#[cube]
+impl<T: Numeric> Ring<Tile<T>> {
+    /// [`fill`](Ring::fill) for the sole operand.
+    pub fn fill(&mut self, #[comptime] slot: usize, region: &Region) {
+        let input = self.sources.clone();
+        self.slot_mut(slot).fill_streamed(&input, region);
+    }
+}
+
+impl<T: Numeric> Ring<Tile<T>> {
+    /// [`consume`](Ring::consume) for the sole operand.
+    /// See [`RingExpand::__expand_consume_method`].
+    pub fn consume(&mut self, _slot: usize, _compute: impl FnOnce(&Tile<T>)) {
+        unexpanded!()
+    }
+}
+
+impl<T: Numeric> RingExpand<Tile<T>> {
+    pub fn __expand_consume_method<F>(&mut self, scope: &Scope, slot: usize, compute: F)
+    where
+        F: FnOnce(&Scope, &TileExpand<T>),
+    {
+        self.__expand_slot_mut_method(scope, slot)
+            .__expand_consume_method(scope, compute);
     }
 }
 
@@ -402,21 +509,6 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
         self.__expand_release_read_method(scope);
     }
 }
-/// Allocate one shared-memory stage for `input` laid out as `storage`, served at `width` where
-/// one is stated ([`Ring::smem_single_at`]). A gathered operand keeps its compacted physical
-/// window and projection, so staging does not replicate each logical element for every gather
-/// tap; the leaf performs the gather on read instead.
-#[cube]
-fn stage_smem<T: Numeric>(
-    input: &Tile<T>,
-    #[comptime] level: Level,
-    #[comptime] depth: usize,
-    #[comptime] storage: StageStorage,
-    #[comptime] width: Option<usize>,
-) -> Tile<T> {
-    MemData::stage(input, level, storage, width).at_depth(depth)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -467,6 +559,33 @@ mod tests {
         assert_eq!(plan.operand_plan(FIRST, 1).mode, WindowMode::Reused);
         assert!(plan.reuses_first_buffer(FIRST, 1));
         assert_eq!(plan.operand_plan(SECOND, 1).mode, WindowMode::Streamed);
+    }
+
+    /// The count a walk states rides down onto every slot it plans.
+    #[test]
+    fn a_slot_of_a_filled_walk_carries_the_count() {
+        let (space, lhs, rhs) = spaces();
+        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(2);
+        let plan = SlotPlan::new(
+            &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
+            &space,
+            &level,
+        );
+        assert_eq!(plan.fillers(), 2);
+    }
+
+    /// A cooperative fill is spread over every unit position of the cube, so planes that are not
+    /// there leave their share unwritten. Refused by name rather than read back as wrong bytes.
+    #[test]
+    #[should_panic(expected = "cannot be filled by a subset of the cube")]
+    fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
+        let (space, lhs, rhs) = spaces();
+        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(1);
+        SlotPlan::new(
+            &[operand(Delivery::Tma, &lhs), operand(Delivery::Copy, &rhs)],
+            &space,
+            &level,
+        );
     }
 
     /// A barrier pipeline arrives once per fill, so a TMA operand streams even when fixed.

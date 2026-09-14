@@ -255,9 +255,19 @@ impl Partitioning {
         )
     }
 
-    /// Planes one cube holds, read off the levels' plane cuts.
+    /// Planes one cube holds: the levels' plane cuts, plus any that only fill.
     pub fn planes_per_cube(&self) -> u32 {
-        self.instances(ComputeScope::Plane)
+        self.instances(ComputeScope::Plane) + self.fillers()
+    }
+
+    /// Planes the cube holds that fill a walk's stages and take no tile
+    /// ([`Level::filled_by`]).
+    ///
+    /// Added to the instance count rather than multiplied into it, and read by nothing else: a
+    /// filling plane is a disjoint set of planes, not a cut of the ones that compute, and no
+    /// level decode has anything to read off it.
+    pub fn fillers(&self) -> u32 {
+        self.levels.iter().map(|level| level.fillers() as u32).sum()
     }
 
     /// Lanes one instance holds, read off the levels' unit cuts. `1` where no level cuts to
@@ -270,5 +280,70 @@ impl Partitioning {
     /// cube holds.
     pub fn cube_dim(&self, plane_size: u32) -> CubeDim {
         CubeDim::new_2d(plane_size, self.planes_per_cube())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    /// A cube grid over `M`/`N`, a `K` walk, then one partition per plane: the staged shape,
+    /// with `fillers` planes filling the walk's stages.
+    fn staged(fillers: usize) -> Partitioning {
+        Partitioning::new(
+            Space::new(&[(M, 256), (N, 256), (K, 512)]),
+            vec![
+                Level::cubes(&[(M, 128), (N, 128)]),
+                Level::walk(&[(K, 64)]).filled_by(fillers),
+                Level::planes(&[(M, 64), (N, 64)]),
+            ],
+        )
+    }
+
+    #[test]
+    fn a_walk_with_no_fillers_is_the_partitioning_it_always_was() {
+        let plain = staged(0);
+        assert_eq!(plain.fillers(), 0);
+        assert_eq!(plain.planes_per_cube(), 4);
+        assert_eq!(plain.cube_dim(32), CubeDim::new_2d(32, 4));
+    }
+
+    /// The cube is wider by the count and nothing else moves: the instances a level deals, and
+    /// so every position decoded below it, are the ones they were.
+    #[test]
+    fn a_filling_plane_widens_the_cube_and_nothing_else() {
+        let plain = staged(0);
+        let filled = staged(1);
+
+        assert_eq!(filled.planes_per_cube(), plain.planes_per_cube() + 1);
+        assert_eq!(filled.cube_dim(32), CubeDim::new_2d(32, 5));
+
+        assert_eq!(
+            filled.instances(ComputeScope::Plane),
+            plain.instances(ComputeScope::Plane)
+        );
+        assert_eq!(filled.lanes(), plain.lanes());
+        for dim in [CubeAxis::X, CubeAxis::Y, CubeAxis::Z] {
+            assert_eq!(
+                filled.instances(ComputeScope::Cube(dim)),
+                plain.instances(ComputeScope::Cube(dim))
+            );
+        }
+    }
+
+    #[test]
+    fn the_fillers_of_every_level_are_counted() {
+        assert_eq!(staged(3).fillers(), 3);
+    }
+
+    /// Only a walk's regions are staged, so only a walk can say who fills them.
+    #[test]
+    #[should_panic(expected = "only a walk's regions are staged")]
+    fn a_level_that_deals_its_tiles_cannot_be_filled_by_anyone() {
+        Level::planes(&[(M, 64)]).filled_by(1);
     }
 }

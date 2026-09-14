@@ -3,6 +3,7 @@
 //! axis); the vocabulary stays agnostic.
 
 use cubecl::zspace::SmallVec;
+use serde::{Deserialize, Serialize};
 
 /// Inline capacity for per-axis allocations in small vectors (spills to heap if exceeded).
 pub(crate) const MAX_AXES: usize = 6;
@@ -11,7 +12,10 @@ pub(crate) const MAX_AXES: usize = 6;
 pub(crate) const MAX_LEVELS: usize = 6;
 
 /// A labeled axis. The `u8` is a client-assigned index, not a position.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+///
+/// Serialized as that index, so a client's persisted record (an autotune key naming the axis an
+/// operand is contiguous along) can carry one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Axis(pub u8);
 
 /// A comptime map from [`Axis`] to a value, in declared order. This is the

@@ -3,7 +3,7 @@
 //! (a tensor map cannot ride a plain tensor binding, so it keeps its own carrier).
 
 use cubecl::prelude::*;
-use cubecl::quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
+use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::quant::view::KnownScale;
 use cubecl::std::tensor::{
     ViewMut,
@@ -93,8 +93,19 @@ impl TileSpec {
     /// `field`-wide slot, innermost axis first; the tile then serves those values, unpacking at
     /// the read. Values and nothing else: scales are a second tensor and folding them in is a verb
     /// the kernel writes, so a packed operand is sayable on its own and a q4 kernel needs no scheme.
-    pub fn packed(self, field: QuantValue) -> Self {
-        self.packing(Packing::Packed { field })
+    pub fn packed(self, field: impl Into<Field>) -> Self {
+        self.packing(Packing::Packed {
+            field: field.into(),
+        })
+    }
+
+    /// [`packed`](Self::packed) served `width` values a line out of one bound word, for a reader
+    /// stepping one value at a time: a scales operand stored as bytes is read this way.
+    pub fn subword(self, field: impl Into<Field>, width: usize) -> Self {
+        self.packing(Packing::Subword {
+            field: field.into(),
+            width,
+        })
     }
 
     /// [`packed`](Self::packed) for a caller holding the [`Packing`] itself, which the launch
@@ -174,9 +185,9 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 
 /// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
 /// for a destination whose writes add rather than replace. Bound as `Atomic<E>`, which carries no
-/// served width, so the tile is served scalar and its register block works in scalars where a
-/// storing one works in lines. A limit, not a design: serving it wider is sound, but the width
-/// would have to be stated on the [`TileSpec`], and today no operand states one.
+/// served width, so the width is stated where the tile is served ([`tile`](Self::tile)), as
+/// [`tile_packed`](TileArg::tile_packed) states its value type: the tile addresses lines of that
+/// width and the drain adds each line's scalars one atomic at a time.
 ///
 /// **The buffer arrives holding the monoid's identity.** A cell here belongs to several instances
 /// and none of them may seed it, so the seeding happens once at the launch. Nothing can check it:
@@ -190,10 +201,11 @@ pub struct AccumulateArg<'a, E: Numeric> {
 
 #[cube]
 impl<'a, E: Numeric> AccumulateArg<'a, E> {
-    /// Serve the output as a [`Tile`] that accumulates into it. [`TileArg::tile`]'s twin, and the same
-    /// call: the kernel's one `space` projected onto this operand's `spec` axes.
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
-        Tile::<E>::of_atomic_accumulate::<Const<1>>(
+    /// Serve the output as a [`Tile`] that accumulates into it at width `V`. [`TileArg::tile`]'s
+    /// twin, and the same call: the kernel's one `space` projected onto this operand's `spec`
+    /// axes.
+    pub fn tile<V: Size>(&self, #[comptime] space: Partitioning) -> Tile<E> {
+        Tile::<E>::of_atomic_accumulate::<V>(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
@@ -215,11 +227,17 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .under(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) for a [`packed`](TileSpec::packed) operand: `E` is the *stored*
-    /// element (`u32` words) and `O` the served value, unpacked at the read. The two differ, so
-    /// the served type is stated at the call rather than read off the binding.
-    pub fn tile_packed<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
-        Tile::<O>::of_packed(
+    /// [`tile`](Self::tile) with the element stated instead of inferred: `E` is what the binding
+    /// *stores* and `O` what the tile reads out of it, unpacked where the binding states a
+    /// [`packing`](TileSpec::packed) and read as it lies where it does not. The two differ for a
+    /// packed binding, whose element is the word rather than the value, so `O` cannot be read off
+    /// the binding and is written at the call.
+    ///
+    /// This is what a kernel writes when how its operand is stored is the binding's business and
+    /// not its own: a factor packed into words and a factor lying at its own element are the same
+    /// call.
+    pub fn tile_as<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
+        Tile::<O>::of_stored(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
@@ -245,39 +263,6 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
             offsets,
         )
         .under(comptime!(space.levels().to_vec()))
-    }
-}
-
-/// [`Scales`] as one launch argument. `V` is the block level's served width; the global level
-/// is one scalar, and `'static` because a comptime-optional launch argument has to be.
-#[derive(CubeType, CubeLaunch)]
-pub struct ScalesArg<'a, S: Numeric, V: Size> {
-    pub block: TileArg<'a, S, V>,
-    pub global: ComptimeOption<TileArg<'static, S, Const<1>>>,
-}
-
-impl<S: Numeric, V: Size> ScalesArgLaunch<'static, S, V> {
-    pub fn block(block: TileArgLaunch<'static, S, V>) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::None)
-    }
-
-    pub fn block_under(
-        block: TileArgLaunch<'static, S, V>,
-        global: TileArgLaunch<'static, S, Const<1>>,
-    ) -> Self {
-        ScalesArgLaunch::new(block, ComptimeOptionArgs::Some(global))
-    }
-}
-
-#[cube]
-impl<'a, S: Numeric, V: Size> ScalesArg<'a, S, V> {
-    pub fn tile(&self, #[comptime] space: Partitioning) -> Scales<S> {
-        let block = self.block.tile(comptime!(space.clone()));
-        #[comptime]
-        match &self.global {
-            ComptimeOption::Some(global) => Scales::<S>::block_under(block, global.tile(space)),
-            ComptimeOption::None => Scales::<S>::block(block),
-        }
     }
 }
 

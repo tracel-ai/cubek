@@ -13,7 +13,7 @@ use cubecl::{
 
 use crate::*;
 
-/// One plane-level tile, by encoding ([`PlaneForm`]).
+/// One plane-level tile, by encoding ([`Instruction`]).
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub enum PlaneTile<T: Numeric> {
@@ -32,7 +32,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// ([`RegisterData::fold`]); the hardware encodings have no say in their layout.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn acc(
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
         #[comptime] m: usize,
         #[comptime] n: usize,
         #[comptime] axes: MatrixAxes,
@@ -42,17 +42,17 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] monoid: Monoid,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(
+            Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(
                 MatrixIdent::Accumulator,
                 m,
                 n,
                 k,
                 MatrixLayout::RowMajor,
             )),
-            PlaneForm::Mma { io } => {
+            Instruction::Mma { io } => {
                 PlaneTile::new_Mma(MmaData::<T>::acc(m, n, k, MatrixLayout::RowMajor, io))
             }
-            PlaneForm::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
+            Instruction::Registers { config } => PlaneTile::new_Register(RegisterData::<T>::alloc(
                 m,
                 n,
                 axes,
@@ -68,7 +68,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// order, or its transpose where the operand lies that way. `k` is the operand's own
     /// contraction depth, not the instruction's.
     pub(crate) fn operand(
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
         #[comptime] ident: MatrixIdent,
         #[comptime] m: usize,
         #[comptime] n: usize,
@@ -76,16 +76,57 @@ impl<T: Numeric> PlaneTile<T> {
         #[comptime] layout: MatrixLayout,
     ) -> PlaneTile<T> {
         match comptime!(form) {
-            PlaneForm::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k, layout)),
-            PlaneForm::Mma { io } => match comptime!(ident) {
+            Instruction::Cmma => PlaneTile::new_Cmma(CmmaData::<T>::alloc(ident, m, n, k, layout)),
+            Instruction::Mma { io } => match comptime!(ident) {
                 MatrixIdent::A => PlaneTile::new_Mma(MmaData::<T>::lhs(m, n, k, layout, io)),
                 MatrixIdent::B => PlaneTile::new_Mma(MmaData::<T>::rhs(m, n, k, layout, io)),
                 MatrixIdent::Accumulator => {
                     panic!("PlaneTile::operand: an accumulator is not an operand")
                 }
             },
-            PlaneForm::Registers { .. } => {
+            Instruction::Registers { .. } => {
                 panic!("PlaneTile::operand: the software form stages no operand plane tile")
+            }
+        }
+    }
+
+    /// This tile carrying the scratch its partition was opened with, so a fragment taken off the
+    /// partition can bounce on its own. Only a cmma tile bounces.
+    pub(crate) fn with_scratch(
+        self,
+        scratch: Shared<[T]>,
+        #[comptime] lanes: usize,
+    ) -> PlaneTile<T> {
+        match self {
+            PlaneTile::Cmma(d) => PlaneTile::new_Cmma(d.with_scratch(scratch, lanes)),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::with_scratch: only a cmma tile bounces through a scratch")
+            }
+        }
+    }
+
+    /// Spill this tile into its slot of the plane's scratch. Only a cmma tile bounces.
+    pub(crate) fn spill_to_scratch(&self) {
+        match self {
+            PlaneTile::Cmma(d) => d.spill_to_scratch(),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::spill_to_scratch: only a cmma tile bounces through a scratch")
+            }
+        }
+    }
+
+    /// Add this tile's spilled cells into `mem`. The other half of [`spill_to_scratch`].
+    ///
+    /// [`spill_to_scratch`]: Self::spill_to_scratch
+    pub(crate) fn add_from_scratch<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
+        match self {
+            PlaneTile::Cmma(d) => d.add_from_scratch(mem, space),
+            PlaneTile::Mma(_) | PlaneTile::Register(_) => {
+                panic!("PlaneTile::add_from_scratch: only a cmma tile bounces through a scratch")
             }
         }
     }
@@ -137,6 +178,16 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    pub(crate) fn scale(&mut self, factor: T) {
+        match self {
+            PlaneTile::Cmma(_) | PlaneTile::Mma(_) => panic!(
+                "PlaneTile::scale: a hardware mma fragment is not read cell by cell, so a scale \
+                 over one folds at the store instead"
+            ),
+            PlaneTile::Register(d) => d.scale(factor),
+        }
+    }
+
     /// Fill this fragment from a memory `src`. Takes the whole tile, not its store: the manual-mma
     /// transport reads element by element through the quant-transparent matrix view, so it needs
     /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
@@ -183,18 +234,19 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// `space` is the sink window's, and only the software block reads it: a hardware fragment
-    /// is exactly the instruction's shape and stores through its own intrinsic.
+    /// `space` is the sink window's: a hardware fragment is exactly the instruction's shape and
+    /// stores through its own intrinsic, so only the software block and a cmma fragment draining
+    /// into a store that folds read it.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut MemData<Out>,
         #[comptime] space: Space,
     ) {
         match self {
-            PlaneTile::Cmma(d) => {
-                comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Cmma"));
-                d.store_cast_window(mem)
-            }
+            PlaneTile::Cmma(d) => match comptime!(mem.access.write) {
+                Write::Replace => d.store_cast_window(mem),
+                Write::Accumulate => d.accumulate_cast_window(mem, space),
+            },
             PlaneTile::Mma(d) => {
                 comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Mma"));
                 d.store_cast_window(mem)
@@ -219,6 +271,10 @@ pub struct PlanePartition<T: Numeric> {
     /// through: a tile's cells are not addressable in registers. Opened by
     /// [`with_scratch`](Tile::with_scratch); a partition without one contracts and drains only.
     pub scratch: ComptimeOption<Shared<[T]>>,
+    /// How much of this partition the scratch holds, which is what tells a drain whether it may
+    /// hoist its barriers out of the per-tile loop ([`Resident::drains_together`]).
+    #[cube(comptime)]
+    pub resident: Resident,
 }
 
 #[cube]
@@ -264,6 +320,7 @@ impl<T: Numeric> PlanePartition<T> {
             m_tiles,
             n_tiles,
             scratch: self.scratch.clone(),
+            resident: comptime!(self.resident),
         }
     }
 
@@ -327,7 +384,7 @@ impl<T: Numeric> PlanePartition<T> {
     pub(crate) fn mirror(
         #[comptime] space: Space,
         #[comptime] axes: MatrixAxes,
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
         #[comptime] fragments: Fragments,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
@@ -361,6 +418,7 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles,
                 n_tiles,
                 scratch: ComptimeOption::new_None(),
+                resident: Resident::None,
             }),
             // The space of the tile it mirrors: what the levels below it cut, as they cut it.
             // The fragments were sized from the statement alone, so a `Dynamic` extent here is
@@ -377,7 +435,7 @@ impl<T: Numeric> PlanePartition<T> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn store(
         #[comptime] window: Space,
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
         #[comptime] out: Space,
         #[comptime] grid: (usize, usize),
         #[comptime] m: usize,
@@ -438,6 +496,7 @@ impl<T: Numeric> PlanePartition<T> {
                 m_tiles: t0,
                 n_tiles: t1,
                 scratch: ComptimeOption::new_None(),
+                resident: Resident::None,
             }),
             space: comptime!(window),
             depth,
@@ -445,11 +504,30 @@ impl<T: Numeric> PlanePartition<T> {
         }
     }
 
+    /// This region of an operand, in the form `instruction` reads it.
+    ///
+    /// **The one loader a kernel whose instruction is data wants**, and the twin of
+    /// [`Tile::accumulator`](crate::Tile::accumulator). A register block takes its lines out of
+    /// whatever tile it is handed, so the tile *is* the answer and nothing is loaded; the matrix
+    /// forms want their own fragments. A kernel that states its instruction once therefore reads
+    /// its operands the same way whichever form it was given.
+    pub fn operand<Acc: Numeric>(
+        src: &Tile<T>,
+        acc: &Tile<Acc>,
+        #[comptime] instruction: Instruction,
+    ) -> Tile<T> {
+        match comptime!(instruction) {
+            Instruction::Registers { .. } => src.clone(),
+            Instruction::Cmma => PlanePartition::<T>::cmma_fragments(src, acc),
+            Instruction::Mma { io } => PlanePartition::<T>::mma_fragments(src, acc, io),
+        }
+    }
+
     /// This region of an operand loaded into cmma fragments, one per final tile of its grid,
     /// built where the kernel reads it. `acc` is the accumulator the fragments contract into,
     /// which fixes the fragment shape and the operand's role.
     pub fn cmma_fragments<Acc: Numeric>(src: &Tile<T>, acc: &Tile<Acc>) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(PlaneForm::Cmma))
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Cmma))
     }
 
     /// [`cmma_fragments`](PlanePartition::cmma_fragments) in the manual-mma encoding, loaded by
@@ -459,13 +537,13 @@ impl<T: Numeric> PlanePartition<T> {
         acc: &Tile<Acc>,
         #[comptime] io: MmaIOConfig,
     ) -> Tile<T> {
-        PlanePartition::<T>::fragments_in(src, acc, comptime!(PlaneForm::Mma { io }))
+        PlanePartition::<T>::fragments_in(src, acc, comptime!(Instruction::Mma { io }))
     }
 
     fn fragments_in<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
     ) -> Tile<T> {
         let gathered = src.gathered();
         comptime!(assert!(
@@ -530,6 +608,18 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
                 frag.init(val);
+            }
+        }
+    }
+
+    /// Multiply every tile by `factor`.
+    pub(crate) fn scale(&self, factor: T) {
+        #[unroll]
+        for mi in 0..comptime!(self.m_tiles) {
+            #[unroll]
+            for ni in 0..comptime!(self.n_tiles) {
+                let mut frag = self.at(mi, ni);
+                frag.scale(factor);
             }
         }
     }

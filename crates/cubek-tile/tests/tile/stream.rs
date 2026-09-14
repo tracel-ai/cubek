@@ -257,7 +257,7 @@ fn stream_matmul<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     let run = space.over(&outer).run(comptime!(inner.clone()));
     for i in 0..run.touched() {
         let region = run.region(i);
@@ -303,7 +303,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
-    let c = out.tile(comptime!(space.clone()));
+    let c = out.tile::<Const<1>>(comptime!(space.clone()));
     let run = space.over(&outer).run(comptime!(inner.clone()));
     for i in 0..run.touched() {
         let region = run.region(i);

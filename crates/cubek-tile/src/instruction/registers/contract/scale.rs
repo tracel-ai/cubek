@@ -1,10 +1,11 @@
 //! What a scales operand is against the values it covers.
 //!
 //! A scale is a tile that spans fewer axes than the values it multiplies, and "one scale per block"
-//! is what its axes say rather than what any arithmetic does. Reading that off takes four facts —
-//! which side it folds into, which edge it shares with the values, how many of their lines one
-//! scale covers, and how many scales arrive per read — and every one of them is derived here and
-//! nowhere else. Two accumulators need them, and a decision re-derived at each caller is one that
+//! is what its axes say rather than what any arithmetic does. Reading that off takes three facts —
+//! which edge it shares with the values, how many of their lines one scale covers, and how many
+//! scales arrive per read — and every one of them is derived here and nowhere else. Which side it
+//! folds into is the kernel's statement ([`Scaling`](crate::Scaling)), checked here against the
+//! axes. Two accumulators need all of it, and a decision re-derived at each caller is one that
 //! has already drifted.
 //!
 //! What stays with each accumulator is its own geometry, which genuinely differs: the edges it can
@@ -13,27 +14,29 @@
 
 use crate::*;
 
-/// Which factor of the term a scales operand multiplies. Read off the axes it spans, never
-/// stated: a scale over the accumulator's column axis is a fact about the rhs's columns and
-/// nothing else could fold it in; anything else scales the lhs.
+/// Which factor of a contraction's terms an operand is: the argument position, which the caller
+/// knows because it is the one filling the slots.
 ///
-/// One verb, then, not two. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms — the scale
-/// is one more factor of each — and which operand it rides is only *where* it folds in cheapest:
-/// once per `(row, k)` beside the lhs, or once per `(col, k)` beside the rhs.
+/// One verb serves both. `(a ⊗ s) · b` and `a · (b ⊗ s)` are the same sum of terms, the scale one
+/// more factor of each, and which operand carries it is only *where* it folds in cheapest: once
+/// per `(row, k)` beside the lhs, once per `(col, k)` beside the rhs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ScaleSide {
-    /// The scale spans the accumulator's rows (or the contracted axis alone): folded into the
-    /// lhs value before it forms its products.
+pub(crate) enum Side {
+    /// The contraction's left factor: its scales span the accumulator's rows, or the contracted
+    /// axis alone, and fold into the value before it forms its products.
     Lhs,
-    /// The scale spans the accumulator's columns: folded into each rhs line.
+    /// The contraction's right factor: its scales span the accumulator's columns, or the
+    /// contracted axis alone, and fold into each line.
     Rhs,
 }
 
-/// The side a scales operand multiplies on, from the axes it spans against the accumulator's.
+/// Refuse scales that do not ride the operand the kernel put them on.
 ///
-/// A scale over neither matrix axis (per-tensor, or one value per block of `k`) is the same
-/// number wherever it folds, so it takes the lhs side.
-pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> ScaleSide {
+/// A scales operand over the accumulator's columns is a fact about the rhs's columns and folds
+/// nowhere else; one over its rows, about the lhs's. Either on the other operand is a scale of
+/// the output, not a factor of a term. A scale over neither axis (per-tensor, or one value per
+/// block of `k`) is the same number wherever it folds, and rides whichever side was stated.
+pub(crate) fn check_scales_ride(side: Side, scales: &Space, output: &Space, axes: MatrixAxes) {
     let group = |range: core::ops::Range<usize>| {
         range
             .filter(|&p| scales.contains(output.axis_at(p)))
@@ -42,15 +45,16 @@ pub(crate) fn scale_side(scales: &Space, output: &Space, axes: MatrixAxes) -> Sc
     };
     let rows = group(axes.row_split..axes.col_split);
     let cols = group(axes.col_split..output.rank());
+    let (own, other, foreign) = match side {
+        Side::Lhs => ("lhs", "rhs", cols),
+        Side::Rhs => ("rhs", "lhs", rows),
+    };
     assert!(
-        rows.is_empty() || cols.is_empty(),
-        "mm_scaled: a scales operand over the accumulator's rows {rows:?} and its columns \
-         {cols:?} is a scale of the output, not a factor of either operand's term"
+        foreign.is_empty(),
+        "mm_scaled: the scales ride the {own} but span {foreign:?}, which only the {other} \
+         varies over; a scale over both operands' own axes is a scale of the output, not a \
+         factor of either term"
     );
-    match cols.is_empty() {
-        false => ScaleSide::Rhs,
-        true => ScaleSide::Lhs,
-    }
 }
 
 /// Refuse a scales operand that spells its granularity by dividing.
@@ -80,6 +84,7 @@ pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
 /// runtime. Whether the ordinal is a constant is a fact about how the caller steps, so the caller
 /// states it and the rule reads off it — once, here, rather than as an exception each caller
 /// spells for itself.
+#[derive(Clone)]
 pub(crate) enum EdgeOrdinal {
     /// Each line's position along the shared edge is a constant, so the scales may be served
     /// several at a time.
@@ -100,13 +105,14 @@ pub enum Apply {
     Product,
 }
 
-/// A caller's contraction geometry, as a scale level needs to see it: the two edges its values can
+/// A caller's contraction shape, as a scale level needs to see it: the two edges its values can
 /// be read along, the row counts their matrices take, and the widths each edge is served at.
 ///
 /// Stating this is each accumulator's own business — the memory nest reads it off a
 /// [`ContractShape`](super::shape::ContractShape), the promoted block off its own cells — and
 /// nothing here decides any of it. What is decided here is which of the two edges a given scales
 /// operand shares, which is not a fact about the accumulator at all.
+#[derive(Clone)]
 pub(crate) struct ContractEdges {
     /// Rows of the lhs's matrix.
     pub mr: usize,
@@ -161,15 +167,15 @@ impl ScaleLevel {
     pub(crate) fn of(
         scales: &Space,
         edges: &ContractEdges,
-        side: ScaleSide,
+        side: Side,
         invariant: &[Axis],
         lanes: usize,
     ) -> Self {
         let folded = edges.contracted_per_step > 1;
         let (rows, edge, value_width) = match (side, folded) {
-            (ScaleSide::Lhs, _) => (edges.mr, &edges.reduce, edges.lw),
-            (ScaleSide::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
-            (ScaleSide::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
+            (Side::Lhs, _) => (edges.mr, &edges.reduce, edges.lw),
+            (Side::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
+            (Side::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
         match &edges.ordinal {
             EdgeOrdinal::Constant => {}
@@ -194,5 +200,51 @@ impl ScaleLevel {
             lines_per_scale,
             lanes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const M: Axis = Axis(0);
+    const N: Axis = Axis(1);
+    const K: Axis = Axis(2);
+
+    fn contraction() -> (Space, MatrixAxes) {
+        let out = Space::new(&[(M, 4), (N, 4)]);
+        let lhs = Space::new(&[(M, 4), (K, 8)]);
+        let axes = MatrixAxes::accumulator(&out, &lhs);
+        (out, axes)
+    }
+
+    /// Scales over the accumulator's rows ride the lhs; over its columns, the rhs.
+    #[test]
+    fn scales_ride_the_operand_whose_axis_they_span() {
+        let (out, axes) = contraction();
+        check_scales_ride(Side::Lhs, &Space::new(&[(M, 4)]), &out, axes);
+        check_scales_ride(Side::Rhs, &Space::new(&[(N, 4)]), &out, axes);
+    }
+
+    /// A scale over no matrix axis is the same number on either side, so the statement stands.
+    #[test]
+    fn a_scale_over_no_axis_rides_either_side() {
+        let (out, axes) = contraction();
+        check_scales_ride(Side::Lhs, &Space::new(&[(K, 8)]), &out, axes);
+        check_scales_ride(Side::Rhs, &Space::new(&[(K, 8)]), &out, axes);
+    }
+
+    #[test]
+    #[should_panic(expected = "ride the lhs but span [Axis(1)]")]
+    fn column_scales_cannot_ride_the_lhs() {
+        let (out, axes) = contraction();
+        check_scales_ride(Side::Lhs, &Space::new(&[(N, 4)]), &out, axes);
+    }
+
+    #[test]
+    #[should_panic(expected = "ride the rhs but span [Axis(0)]")]
+    fn row_scales_cannot_ride_the_rhs() {
+        let (out, axes) = contraction();
+        check_scales_ride(Side::Rhs, &Space::new(&[(M, 4)]), &out, axes);
     }
 }

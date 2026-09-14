@@ -5,50 +5,68 @@ use cubecl::prelude::*;
 
 use super::direct;
 use super::gather;
-use super::scale::{check_scales_omit_rather_than_divide, scale_side};
 use super::shape::ContractShape;
 use crate::*;
 
 /// Run the register instruction over each batch matrix, reading operands through the
-/// quant-transparent [`matrix_packed`](Tile::matrix_packed). Each operand resolves its own
-/// [`Packing`], so neither side constrains the other's.
+/// quant-transparent [`matrix_packed`](Tile::matrix_packed). Each factor resolves its own
+/// [`Packing`], so neither side constrains the other's, and each carries its own scales.
 ///
 /// The 2-D nest reads each operand as a batch matrix, which describes it only when one axis is
 /// contracted *and* a logical coordinate is a physical one. Either condition failing takes the
 /// N-D nest, so a stencil contracting a single axis is a gather just as much as a two-axis
-/// reduce is.
+/// reduce is. A scaled factor takes the 2-D nest alone: the N-D nest reads its operands through
+/// compacted gather windows, where a step has no single scalar `k` to address a scale with, and
+/// that is a second design question rather than a second copy of this one.
 #[cube]
-pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
+pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
     acc: &mut MemData<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
+    lhs: &Scaled<EL, LS>,
+    rhs: &Scaled<ER, RS>,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_gathered = lhs.gathered();
-    let rhs_gathered = rhs.gathered();
-    let lhs_procedural = lhs.is_procedural();
-    let rhs_procedural = rhs.is_procedural();
-    let lw = lhs.vector_size();
-    let rw = rhs.vector_size();
+    let lhs_values = lhs.values();
+    let rhs_values = rhs.values();
+    let lhs_levels = lhs.levels();
+    let rhs_levels = rhs.levels();
+    let lhs_count = lhs_levels.len();
+    let rhs_count = rhs_levels.len();
+    let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
+
+    let lhs_gathered = lhs_values.gathered();
+    let rhs_gathered = rhs_values.gathered();
+    let lhs_procedural = lhs_values.is_procedural();
+    let rhs_procedural = rhs_values.is_procedural();
+    let lw = lhs_values.vector_size();
+    let rw = rhs_values.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let contracted_per_step = comptime!(contracted_per_step(
-        &lhs.space, &rhs.space, &space, lw, rw, aw
+        &lhs_values.space,
+        &rhs_values.space,
+        &space,
+        lw,
+        rw,
+        aw
     ));
     // Whether a 2-D reading describes the operands is the operands' own answer, not an axis count:
     // several contracted axes still form one `k` edge when the operand carries them as one run,
     // which is what a partitioned axis is.
     let shape = comptime!(ContractShape::new(
-        &lhs.space,
-        &rhs.space,
+        &lhs_values.space,
+        &rhs_values.space,
         space.clone(),
         contracted_per_step,
         lw,
         rw,
         aw
     ));
-    let flat = comptime!(shape.matrix_axes(&lhs.space, &rhs.space).is_some());
+    let flat = comptime!(
+        shape
+            .matrix_axes(&lhs_values.space, &rhs_values.space)
+            .is_some()
+    );
     let nd = comptime!(
         !flat
             || lhs_gathered
@@ -57,80 +75,35 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, ER: Numeric>(
             || rhs_procedural
             || (contracted_per_step == 1 && rw != aw)
     );
+    comptime!(assert!(
+        !(nd && scaled),
+        "mm: a scaled factor reads as one matrix. This contraction needs the N-D nest, which \
+         addresses every operand at the cell instead"
+    ));
 
     if nd {
-        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
+        gather::contract::<E, EL, ER>(
+            acc,
+            &lhs_values,
+            &rhs_values,
+            space,
+            contracted_per_step,
+            config,
+            semiring,
+        );
     } else {
-        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
+        direct::contract::<E, EL, LS, ER, RS>(
+            acc,
+            &lhs_values,
+            &lhs_levels,
+            &rhs_values,
+            &rhs_levels,
+            space,
+            contracted_per_step,
+            config,
+            semiring,
+        );
     }
-}
-
-/// [`memory`] with one operand scaled by a real operand: `acc += (lhs ⊗ scale) · rhs`, or its
-/// rhs twin, whichever [`scale_side`] reads off the scales' axes.
-///
-/// The 2-D nest only, deliberately. The N-D nest reads its operands through compacted gather
-/// windows, where a step has no single scalar `k` to address a scale with; that is a second
-/// design question, not a second copy of this one, and a routine reaching it gets told so here
-/// rather than getting a wrong answer.
-#[cube]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn memory_scaled<E: Numeric, EL: Numeric, ER: Numeric, ES: Numeric>(
-    acc: &mut MemData<E>,
-    lhs: &Tile<EL>,
-    rhs: &Tile<ER>,
-    scales: &Sequence<Tile<ES>>,
-    #[comptime] space: Space,
-    #[comptime] config: RegisterBlock,
-    #[comptime] semiring: Semiring,
-) {
-    let lhs_gathered = lhs.gathered();
-    let rhs_gathered = rhs.gathered();
-    let lhs_procedural = lhs.is_procedural();
-    let rhs_procedural = rhs.is_procedural();
-    let lw = lhs.vector_size();
-    let rw = rhs.vector_size();
-    let aw = comptime!(acc.store.vector_size);
-    let contracted_per_step = comptime!(contracted_per_step(
-        &lhs.space, &rhs.space, &space, lw, rw, aw
-    ));
-    // Same question the plain contraction asks: whether a 2-D reading describes the operands, not
-    // how many axes they contract over.
-    let shape = comptime!(ContractShape::new(
-        &lhs.space,
-        &rhs.space,
-        space.clone(),
-        contracted_per_step,
-        lw,
-        rw,
-        aw
-    ));
-    let flat = comptime!(shape.matrix_axes(&lhs.space, &rhs.space).is_some());
-    comptime!(assert!(
-        flat && !lhs_gathered
-            && !rhs_gathered
-            && !lhs_procedural
-            && !rhs_procedural
-            && !(contracted_per_step == 1 && rw != aw),
-        "mm_scaled: the scaled contraction reads each operand as one matrix. This one needs the \
-         N-D nest, which addresses every operand at the cell instead"
-    ));
-    // Every query about "the scales" is about the level nearest the values: the coarser ones cover
-    // a tile of its tiles, so they neither pick the side nor set the granularity.
-    let inner = scales.index(0);
-    let side = comptime!(scale_side(&inner.space, &space, shape.acc_axes));
-    let scales_projection = inner.projection();
-    comptime!(check_scales_omit_rather_than_divide(&scales_projection));
-    direct::contract_scaled::<E, EL, ER, ES>(
-        acc,
-        lhs,
-        rhs,
-        scales,
-        space,
-        contracted_per_step,
-        side,
-        config,
-        semiring,
-    );
 }
 
 /// How many contracted values one step consumes, reconciled across both operands and the
