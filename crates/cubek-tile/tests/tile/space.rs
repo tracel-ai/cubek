@@ -374,3 +374,55 @@ fn a_level_that_cuts_nothing_is_kept() {
     assert_eq!(launcher.level(0).child(launcher.space()).extent(M), 16);
     assert_eq!(launcher.partitioning().leaf().extent(M), 16);
 }
+
+/// A grouped level rides its first two entries on `x` as one index, so the grid is their
+/// product on `x` and a third entry and the batches keep their own dimensions.
+#[test]
+fn grouped_entries_ride_x_as_one_index() {
+    let launcher = Launcher::implied(
+        &cubecl::test_device().client(),
+        Partitioning::new(
+            Space::new(&[(B0, 3), (M, 64), (N, 64), (K, 16)]),
+            vec![
+                Level::cubes(&[Cut::new(M, 16), Cut::new(N, 32), Cut::new(K, 4).across(4)])
+                    .grouped(2)
+                    .batches(&[B0]),
+                Level::walk(&[(K, 4)]),
+            ],
+        ),
+        KernelForm::Static,
+    );
+    assert_eq!(launcher.level(0).group_width(), Some(2));
+    // `4 · 2` tiles on `x` as one index; the `K` runs and the batch on `z` as before.
+    assert!(matches!(launcher.cube_count(), CubeCount::Static(8, 1, 12)));
+    assert_eq!(
+        Level::cubes(&[(M, 16), (N, 32)]).group_width(),
+        None,
+        "a box per entry states no order"
+    );
+}
+
+/// An order is a cube grid's, over two plain entries, and never over a share of the whole.
+#[test]
+#[should_panic(expected = "Level::grouped")]
+fn grouping_a_walk_is_refused() {
+    let _ = Level::walk(&[(M, 16), (N, 32)]).grouped(2);
+}
+
+#[test]
+#[should_panic(expected = "Level::grouped")]
+fn grouping_one_entry_is_refused() {
+    let _ = Level::cubes(&[(M, 16)]).grouped(2);
+}
+
+#[test]
+#[should_panic(expected = "Level::grouped")]
+fn grouping_an_entry_with_a_knob_is_refused() {
+    let _ = Level::cubes(&[Cut::new(M, 16).interleaved(), Cut::new(N, 32)]).grouped(2);
+}
+
+#[test]
+#[should_panic(expected = "Level::shared_by")]
+fn sharing_a_grouped_level_is_refused() {
+    let _ = Level::cubes(&[(M, 16), (N, 32)]).grouped(2).shared_by(3);
+}

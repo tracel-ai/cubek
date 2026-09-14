@@ -159,11 +159,33 @@ impl Walk {
                         .filter(|&q| level.distribution(space.axis_at(q)).scope() == dist.scope())
                         .collect::<Vec<_>>()
                 );
-                let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
-                let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
-                let position = hardware_pos(comptime!(dist.scope_unchecked()))
-                    .fdiv(inner_weight)
-                    .frem(instances.at(p));
+                let position = if comptime!(
+                    level
+                        .grouped_axes()
+                        .is_some_and(|(a, b)| axis == a || axis == b)
+                ) {
+                    // The two grouped entries share `x` under an order of their own, decoded
+                    // from the linear id together rather than as an odometer's digits.
+                    let (first, second) = comptime!(level.grouped_axes().unwrap());
+                    comptime!(assert!(
+                        space.contains(first) && space.contains(second),
+                        "Walk: {first:?} and {second:?} are dealt as one index (`grouped`), and a \
+                         walk over a space spanning only one of them cannot decode its digit"
+                    ));
+                    grouped_pos(
+                        hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X))),
+                        instances.at(comptime!(space.position(first))),
+                        instances.at(comptime!(space.position(second))),
+                        comptime!(level.group_width().unwrap()),
+                        comptime!(axis == first),
+                    )
+                } else {
+                    let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
+                    let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
+                    hardware_pos(comptime!(dist.scope_unchecked()))
+                        .fdiv(inner_weight)
+                        .frem(instances.at(p))
+                };
                 // This instance's run of the grid, cut short where the grid does not divide.
                 let run = run_length(grid.at(p), comptime!(dist.coverage()));
                 counts.push(instance_tiles(
@@ -510,6 +532,32 @@ impl Iterable for WalkExpand {
     /// straight through rather than under a one-trip loop.
     fn const_len(&self) -> Option<usize> {
         crate::fold::constant(&self.steps).map(|n| n as usize)
+    }
+}
+
+/// Where cube `linear` of a [`grouped`](Level::grouped) level sits on its two entries, counted
+/// `first` by `second` tiles in groups of `width` of the first: the group is `linear` over a
+/// group's `width · second` cubes, and inside it the first entry runs fastest over the group's
+/// tiles — `width`, or what is left of the count in the last group. `of_first` picks which of
+/// the two coordinates is answered.
+#[cube]
+fn grouped_pos(
+    linear: usize,
+    first: usize,
+    second: usize,
+    #[comptime] width: usize,
+    #[comptime] of_first: bool,
+) -> usize {
+    let width = width.runtime();
+    let per_group = width.fmul(second);
+    let group = linear.fdiv(per_group);
+    let in_group = linear.frem(per_group);
+    let start = group.fmul(width);
+    let size = width.fmin(first.fsub(start));
+    if of_first {
+        start.fadd(in_group.frem(size))
+    } else {
+        in_group.fdiv(size)
     }
 }
 

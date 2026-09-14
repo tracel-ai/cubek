@@ -88,6 +88,9 @@ pub struct Level {
     /// Planes that fill this walk's stages and take no tile of any level
     /// ([`filled_by`](Level::filled_by)).
     fillers: usize,
+    /// The width the first two cube entries are dealt in where they ride the grid's `x` as one
+    /// index ([`grouped`](Level::grouped)); `None` is a box of the grid per entry.
+    grouped: Option<usize>,
 }
 
 impl Level {
@@ -179,6 +182,11 @@ impl Level {
             self.work.is_none(),
             "Level::shared_by: this level already cuts its tiles as one"
         );
+        assert!(
+            self.grouped.is_none(),
+            "Level::shared_by: this level already deals its first two entries as one index \
+             (`grouped`), and a share of the whole has no order of its own"
+        );
         let axes = self.axes();
         for &axis in &axes {
             let plain = matches!(
@@ -220,6 +228,94 @@ impl Level {
         self
     }
 
+    /// The tiles of the first two entries dealt onto the grid's `x` as **one index**, in groups
+    /// of `width` tiles of the first entry: consecutive cubes take `width` tiles of the first
+    /// entry at one tile of the second, walk every tile of the second at those, then move to
+    /// the next `width`. The order the cubes of a level are dispatched in, which is what decides
+    /// which cubes are resident together and so which operand's tiles a cache serves twice.
+    ///
+    /// The two plain orders are its ends. Every device this crate targets dispatches a grid's
+    /// `x` fastest, so a box per entry ([`cubes`](Level::cubes)) is the first entry fastest, and
+    /// a `width` of the first entry's whole count is that same order under a linear id; a
+    /// `width` of one is the second entry fastest. Between them a window of `w` resident cubes
+    /// spans `width` tiles of the first entry and `w / width` of the second, which is what bounds
+    /// the traffic of both operands when neither fits the cache whole.
+    ///
+    /// A last group short of `width` is dealt whole and short, so the first entry's count need
+    /// not divide. The entries stay a tile each, contiguous: a count or a spread of their own
+    /// has no meaning inside an order that already says which cube takes which tile. Any entry
+    /// past the first two, and the batch axes, keep their own dimension.
+    ///
+    /// Every walk of this level decodes the two entries together, so a walk over a space that
+    /// spans only one of them is refused at expansion: the second's digit is not derivable
+    /// without the first's count.
+    pub fn grouped(mut self, width: usize) -> Level {
+        assert!(
+            self.scope == LevelScope::Cubes,
+            "Level::grouped: an order is a cube grid's; this level deals its tiles to {:?}",
+            self.scope
+        );
+        assert!(
+            width >= 1,
+            "Level::grouped: a group holds at least one tile"
+        );
+        assert!(
+            self.work.is_none(),
+            "Level::grouped: this level deals its tiles as one share (`shared_by`), which has no \
+             order of its own"
+        );
+        let axes = self.axes();
+        assert!(
+            axes.len() >= 2,
+            "Level::grouped: an order needs two entries to interleave; this level names {}",
+            axes.len()
+        );
+        for &axis in &axes[..2] {
+            let plain = matches!(
+                self.dists.get(axis),
+                Distribution::Spatial {
+                    spread: Spread::Contiguous,
+                    coverage: Coverage::TilesEach(1),
+                    ..
+                }
+            );
+            assert!(
+                plain,
+                "Level::grouped: {axis:?} states a count or a spread of its own, which an order \
+                 over the two entries has no use for"
+            );
+        }
+        // The second entry joins the first on `x`; everything else keeps its dimension.
+        let dists: Vec<_> = axes
+            .iter()
+            .enumerate()
+            .map(|(i, &axis)| match i {
+                1 => (
+                    axis,
+                    Cut::new(axis, self.edge(axis)).distribution(ComputeScope::Cube(CubeAxis::X)),
+                ),
+                _ => (axis, self.dists.get(axis)),
+            })
+            .collect();
+        self.dists = ByAxis::new(&dists);
+        self.grouped = Some(width);
+        self
+    }
+
+    /// The group width this level deals its first two entries in, where it does
+    /// ([`grouped`](Level::grouped)).
+    pub fn group_width(&self) -> Option<usize> {
+        self.grouped
+    }
+
+    /// The two entries a grouped level decodes together, first entry first, where it is one.
+    pub(crate) fn grouped_axes(&self) -> Option<(Axis, Axis)> {
+        self.grouped.map(|_| {
+            let axes = self.axes();
+            (axes[0], axes[1])
+        })
+    }
+
     fn cut_to<D: Into<Cut> + Clone>(
         cuts: &[D],
         scope_of: impl Fn(usize) -> ComputeScope,
@@ -257,6 +353,7 @@ impl Level {
             scope,
             work,
             fillers: 0,
+            grouped: None,
         }
     }
 
