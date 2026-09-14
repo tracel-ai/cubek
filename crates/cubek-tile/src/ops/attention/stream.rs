@@ -280,6 +280,12 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     /// Close the plane's teams into one state: every lane leaves holding the
     /// plane's `(m, l)` and, for its lines, the plane's accumulator — the
     /// split-plane merge, run across lane bits instead of shared memory.
+    ///
+    /// Run once and only once. A second pass finds `m` already uniform, so its
+    /// weight is `exp(0) = 1`, and folds the already-folded `l` and `acc`
+    /// across the teams again — scaling both by `teams`, silently and with
+    /// nothing out of range to catch it. The two endings consume the fold for
+    /// exactly this reason, so there is no way to reach it twice.
     fn close_teams(&mut self) {
         let teams = comptime!(self.lanes / self.span);
         if comptime!(teams > 1) {
@@ -318,19 +324,23 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     /// merges the states across splits and writes the normalized output,
     /// vectorized and cast to the output element. Fully-masked rows store
     /// exact zeros.
-    pub fn store<EI: Numeric>(&mut self, out: &mut Tile<EI>, #[comptime] splits: usize) {
-        self.close_teams();
-        let rows = comptime!(self.rows);
-        let per_lane = comptime!(self.per_lane);
-        let span = comptime!(self.span);
-        let lines = comptime!(self.lines);
+    ///
+    /// Consumes the fold: an ending closes the teams, which is not a thing that
+    /// can be done twice (see [`close_teams`](Self::close_teams)).
+    pub fn store<EI: Numeric>(self, out: &mut Tile<EI>, #[comptime] splits: usize) {
+        let mut this = self;
+        this.close_teams();
+        let rows = comptime!(this.rows);
+        let per_lane = comptime!(this.per_lane);
+        let span = comptime!(this.span);
+        let lines = comptime!(this.lines);
         let wo = out.vector_size();
         comptime!(assert!(
-            wo == self.width,
+            wo == this.width,
             "StreamFold::store: the output shares the fold's line width"
         ));
         comptime!(assert!(
-            out.space.tile_size() == rows * lines * self.width,
+            out.space.tile_size() == rows * lines * this.width,
             "StreamFold::store: the output window is rows x head_dim"
         ));
 
@@ -346,8 +356,8 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         if lane == 0 {
             #[unroll]
             for g in 0..rows {
-                maxes[g * splits + split] = self.state.m[g];
-                sums[g * splits + split] = self.state.l[g];
+                maxes[g * splits + split] = this.state.m[g];
+                sums[g * splits + split] = this.state.l[g];
             }
         }
         if speaks {
@@ -356,7 +366,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                 #[unroll]
                 for i in 0..per_lane {
                     partials[((g * splits + split) * per_lane + i) * span + lane] =
-                        self.acc[g * per_lane + i];
+                        this.acc[g * per_lane + i];
                 }
             }
         }
@@ -399,24 +409,28 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     /// accumulator lines into the team's windows of the split-wide buffers.
     /// The caller syncs, merges ([`Tile::merge_splits`]) and drains with the
     /// weights folded in.
-    pub fn publish(&mut self, m_win: &mut Tile<EA>, l_win: &mut Tile<EA>, acc_win: &mut Tile<EA>) {
-        self.close_teams();
-        let rows = comptime!(self.rows);
+    ///
+    /// Consumes the fold, as [`store`](Self::store) does and for the same
+    /// reason: the teams close exactly once.
+    pub fn publish(self, m_win: &mut Tile<EA>, l_win: &mut Tile<EA>, acc_win: &mut Tile<EA>) {
+        let mut this = self;
+        this.close_teams();
+        let rows = comptime!(this.rows);
         // The fold's own share: one worker owning every row, which is what puts
         // lane 0 in range and every other lane past it.
-        let share = comptime!(self.state.share);
-        m_win.store_rows(&self.state.m, share);
-        l_win.store_rows(&self.state.l, share);
+        let share = comptime!(this.state.share);
+        m_win.store_rows(&this.state.m, share);
+        l_win.store_rows(&this.state.l, share);
 
-        let d = comptime!(self.lines * self.width);
+        let d = comptime!(this.lines * this.width);
         comptime!(assert!(
             acc_win.space.tile_size() == rows * d,
             "StreamFold::publish: the accumulator window is {{rows, head_dim}}"
         ));
-        let per_lane = comptime!(self.per_lane);
-        let span = comptime!(self.span);
-        let lines = comptime!(self.lines);
-        let w = comptime!(self.width);
+        let per_lane = comptime!(this.per_lane);
+        let span = comptime!(this.span);
+        let lines = comptime!(this.lines);
+        let w = comptime!(this.width);
         let wa = acc_win.vector_size();
         comptime!(assert!(
             wa == 1,
@@ -436,7 +450,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
                         for j in 0..w {
                             af.write(
                                 g * d + li * w + j,
-                                Vector::cast_from(self.acc[g * per_lane + p].extract(j)),
+                                Vector::cast_from(this.acc[g * per_lane + p].extract(j)),
                             );
                         }
                     }
