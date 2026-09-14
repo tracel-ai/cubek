@@ -271,6 +271,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether this tile is backed by shared memory, which is what a `sync_cube()` between two
+    /// units' accesses actually orders: the barrier covers the workgroup address space, so a
+    /// tile a cube communicates *through* has to live there and not in a global buffer.
+    pub(crate) fn is_shared(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Smem(_) => comptime!(true),
+            TileKind::Gmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
     /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
     /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
     /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is

@@ -145,6 +145,11 @@ impl<EA: Float> Tile<EA> {
     /// space says where `split` sits: outermost gives a team one contiguous run
     /// of rows, innermost lets the drain contract it as a matmul's `k`.
     ///
+    /// `self` must be shared memory: the merge passes each cell's state to the
+    /// rest of its row through the weights themselves, and `sync_cube` orders
+    /// only the workgroup address space. `m` and `l` are read, never written,
+    /// so they may be global.
+    ///
     /// A fully-masked row gets weights of exactly zero, and a split that folded
     /// nothing published `(min, 0)` so it weighs zero on its own. A unit per
     /// cell where the cube has that many, syncing between its three passes;
@@ -152,6 +157,19 @@ impl<EA: Float> Tile<EA> {
     /// calls it, and the caller syncs on both sides. A single split degenerates
     /// to the plain epilogue.
     pub fn merge_splits(&mut self, m: &Tile<EA>, l: &Tile<EA>, #[comptime] split: Axis) {
+        // The cell path passes values *between* units: each cell parks its `m`,
+        // then its `weight * l`, in the weights for its row's other cells to
+        // scan, ordered only by the `sync_cube` between the passes. That
+        // barrier orders the workgroup address space, so the weights have to
+        // live there. Whether that path runs is not known here — it turns on
+        // `CUBE_DIM` — so the requirement is the whole call's, not the branch's.
+        let shared = self.is_shared();
+        comptime!(assert!(
+            shared,
+            "merge_splits: the weights are what the cube merges through, so they must be \
+             shared memory; a global buffer is not ordered by the sync_cube between the \
+             passes. The states may still be global."
+        ));
         let space = comptime!(self.space.clone());
         comptime!(assert!(
             space.contains(split),
