@@ -1319,6 +1319,16 @@ fn stream_fold_idle_teams() {
     run_stream((4, 2, 16, 8, 8), 10, 1);
 }
 
+/// Plain MHA decode: one row, a full 128-wide head, scalar reads. The shape the
+/// per-lane budget is tightest on — `per_lane` is at its maximum, so every team
+/// stages a full `CHUNK` of K and V lines on top of the query and accumulator
+/// lines it already holds. The GQA cases above all carry several rows, which
+/// divides `per_lane` down and hides that.
+#[test]
+fn stream_fold_decode_mha_wide() {
+    run_stream((2, 1, 40, 32, 128), 33, 1);
+}
+
 /// What the probe's bound decides, measured rather than inferred from a result the per-element
 /// masking would make right either way: the walk's own step count, written out.
 #[cube(launch)]

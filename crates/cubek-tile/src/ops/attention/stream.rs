@@ -36,7 +36,30 @@ const CHUNK: usize = 4;
 /// Floats of query and accumulator a lane is sized to hold: what the span is
 /// chosen against, so the lines a lane owns grow as the rows shrink. Past it
 /// the fold would spill before it gained anything.
+///
+/// This covers the query and the accumulator only — the lines a lane holds for
+/// the whole walk. The K and V a step stages are a second, separate claim on
+/// the same registers; see [`STAGE_FLOATS`].
 const LANE_FLOATS: usize = 64;
+
+/// Elements of K and V together a lane stages for one step. The second half of
+/// the register budget, and the reason [`CHUNK`] is a ceiling rather than the
+/// count: a step stages `2 · chunk · per_lane` lines, and `per_lane` is largest
+/// exactly where [`LANE_FLOATS`] has already spent its own budget — one row
+/// over a wide head. Left unbounded, a 128-wide MHA decode staged 256 elements
+/// on top of 64 floats of query and accumulator, which spills on any target
+/// whose lane file this walk was sized to stay inside.
+///
+/// Bounding the *product* is what keeps both decompositions: capping `per_lane`
+/// instead would push the span to the whole plane and leave one team, and
+/// capping `chunk` against what is left of `LANE_FLOATS` would leave one
+/// position in flight and make the walk latency-bound again.
+///
+/// Counted in elements, not weighted by `EI`: K and V are often half the
+/// accumulator's width, so this is conservative where it is wrong. The number
+/// wants tuning against a real lane file — it is set to leave two positions in
+/// flight at the widest head this fold is meant for.
+const STAGE_FLOATS: usize = 128;
 
 /// Lanes on one key position: enough to hold a head's lines at
 /// [`LANE_FLOATS`] per lane, a power of two so a team is an aligned run of
@@ -171,7 +194,15 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let span = comptime!(self.span);
         let teams = comptime!(self.lanes / self.span);
         let w = comptime!(self.width);
-        let chunk = comptime!(CHUNK.min(cols.div_ceil(teams)).max(1));
+        // Positions per step: the ceiling, what the block leaves for a team,
+        // and what the staging budget affords at this `per_lane` — the last is
+        // the one that binds on a wide head, where a lane's lines are many.
+        let chunk = comptime!(
+            CHUNK
+                .min(cols.div_ceil(teams))
+                .min(STAGE_FLOATS / (2 * per_lane * w))
+                .max(1)
+        );
 
         let kf = k.dense::<N>();
         let vf = v.dense::<N>();
