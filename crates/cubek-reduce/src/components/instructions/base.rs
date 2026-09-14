@@ -435,8 +435,8 @@ impl<X: CubePrimitive> SharedAccumulatorKind<X> {
 
 /// An instruction for a reduce algorithm that works with [`Vector`].
 ///
-/// See a provided implementation, such as [`Sum`](super::Sum) or [`Max`](super::Max) for an example how to implement
-/// this trait for a custom instruction.
+/// See a provided implementation, such as [`Sum`](super::Sum), for an example of how to
+/// implement this trait for a custom instruction.
 ///
 /// A reduction works at three levels. First, it takes input data of type `In` and reduce them
 /// with their coordinate into an `AccumulatorItem`. Then, multiple `AccumulatorItem` are possibly fused
