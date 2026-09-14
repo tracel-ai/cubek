@@ -23,12 +23,16 @@
 
 use cubecl::prelude::*;
 
-/// Announce that this cube's partials are written, and answer whether it is the last cube in.
+/// Announce that this cube's partials are written, and answer whether it is the last of the
+/// `cubes` that share `counter`.
 ///
-/// Every unit of the cube reaches it, as for any synchronization: the count is taken once and
-/// read by all of them.
+/// The count is the cubes sharing the counter, not the grid: a launch whose cubes fall into
+/// independent groups — one per output row, one per head — gives each group a counter of its
+/// own and merges them at the same time, so `CUBE_COUNT` is the answer only when the whole grid
+/// meets. Every unit of the cube reaches this, as for any synchronization: the count is taken
+/// once and read by all of them.
 #[cube]
-pub fn last_cube_in(counter: &Atomic<u32>) -> bool {
+pub fn last_cube_in(counter: &Atomic<u32>, #[comptime] cubes: u32) -> bool {
     let mut arrived = Shared::<u32>::new();
 
     // Release. Every unit of this cube has written its partial, and what they wrote is visible
@@ -41,5 +45,5 @@ pub fn last_cube_in(counter: &Atomic<u32>) -> bool {
     // cube, and what the cubes that counted before published is visible here.
     sync_storage();
 
-    *arrived as usize == CUBE_COUNT - 1
+    *arrived == comptime!(cubes - 1)
 }
