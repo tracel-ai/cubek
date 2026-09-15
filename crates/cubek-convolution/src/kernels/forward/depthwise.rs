@@ -83,8 +83,44 @@ impl DepthwiseSpace {
     /// cube's own threads: rows go to planes, channels to lanes. The taps stay whole
     /// throughout: they are the contraction, and every tap of one output position accumulates
     /// into the same register.
+    /// The levels, stated **from the leaf up, in counts**: one lane's channel line by the
+    /// cube's columns by one row; the plane's lanes across channels, in turns; the channel lines
+    /// a lane holds past its first, where the tile is wider than the plane; the cube's rows
+    /// across its planes; and a cube per box, the taps whole. The channel axis takes `X` so
+    /// that the fastest-moving cube index is the one memory is contiguous along.
+    ///
+    /// Round-robin across the lanes, so a lane holding several channel lines takes every
+    /// `plane_size`-th rather than a contiguous run: a contiguous run puts a stride between
+    /// what neighbouring lanes read and breaks the coalescing the whole NHWC layout is for.
+    /// Columns stay whole: they are the register block, not a split. The walk over a lane's
+    /// further lines is stated only where there are any — the old lanes level was that walk
+    /// as well, its length found by dividing the tile.
     pub fn levels(&self) -> Vec<Level> {
-        vec![self.cubes(), self.planes(), self.lanes()]
+        let Self {
+            rows,
+            cols,
+            tile_c,
+            width,
+            plane_size,
+            ..
+        } = *self;
+        let plane_c = width * plane_size;
+        assert!(
+            tile_c.is_multiple_of(plane_c),
+            "DepthwiseSpace: {plane_size} lanes of {width} channels do not divide a tile of {tile_c}"
+        );
+        let lanes = Tiling::leaf(&[(C, width), (OW, cols), (OH, 1)])
+            .lanes(&[(C, plane_size)])
+            .interleaved(C);
+        let lines = match tile_c / plane_c {
+            1 => lanes,
+            further => lanes.walk(&[(C, further)]),
+        };
+        lines
+            .planes(&[(OH, rows)])
+            .cubes(&[C, OW, OH])
+            .batches(&[B])
+            .levels()
     }
 
     pub fn space(&self) -> Space {
@@ -107,30 +143,6 @@ impl DepthwiseSpace {
             ),
             CubeDim::new_2d(self.plane_size as u32, self.rows as u32),
         )
-    }
-
-    /// This cube's box of the output with the taps whole. The channel axis takes X so that the
-    /// fastest-moving cube index is the one memory is contiguous along.
-    pub fn cubes(&self) -> Level {
-        let Self {
-            rows, cols, tile_c, ..
-        } = *self;
-        Level::cubes(&[(C, tile_c), (OW, cols), (OH, rows)]).batches(&[B])
-    }
-
-    /// The cube's rows across its planes, one each.
-    pub fn planes(&self) -> Level {
-        Level::planes(&[Cut::new(OH, 1).across(self.rows)])
-    }
-
-    /// Channels across the plane's lanes. Columns stay whole: they are the register block, not a
-    /// split. Round-robin, so a lane holding several channel lines takes every `plane_size`-th
-    /// rather than a contiguous run: a contiguous run puts a stride between what neighbouring
-    /// lanes read and breaks the coalescing the whole NHWC layout is for.
-    pub fn lanes(&self) -> Level {
-        Level::lanes(&[Cut::new(C, self.width)
-            .across(self.plane_size)
-            .interleaved()])
     }
 }
 
@@ -159,19 +171,35 @@ fn depthwise_kernel<E: Numeric, V: Size>(
     let input = input.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
+    // Three levels, or four where a lane holds channel lines past its first: then the plane's
+    // walk is over those lines and the lanes sit under it.
+    let lines_below_the_lanes = comptime!(space.levels().len() > 3);
     for cube in space {
         let out = out.at(&cube);
         let weight = weight.at(&cube);
         let input = input.at(&cube);
         for plane in cube {
-            for lane in plane {
-                let mut out = out.at(&lane);
-                out.mm_with(
-                    &weight.at(&lane),
-                    &input.at(&lane),
-                    REGISTER_BLOCK,
-                    Semiring::SUM_PROD,
-                );
+            for step in plane {
+                if lines_below_the_lanes {
+                    for lane in step {
+                        let mut out = out.at(&lane);
+                        out.mm_with(
+                            &weight.at(&lane),
+                            &input.at(&lane),
+                            REGISTER_BLOCK,
+                            Semiring::SUM_PROD,
+                        );
+                    }
+                } else {
+                    let lane = step;
+                    let mut out = out.at(&lane);
+                    out.mm_with(
+                        &weight.at(&lane),
+                        &input.at(&lane),
+                        REGISTER_BLOCK,
+                        Semiring::SUM_PROD,
+                    );
+                }
             }
         }
     }
