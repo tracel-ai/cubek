@@ -9,16 +9,17 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
-use crate::instruction::registers::lines::{Lines, LinesExpand, Span};
+use crate::instruction::registers::lines::{Along, Folds, Lines, LinesExpand};
 use crate::*;
 
 /// `c += lhs · rhs` over the block, walked as the runs its scales cover.
 ///
-/// A run is one read of the scales: [`Span::fields`] of them, each covering [`Span::lines`] lines
-/// of the contraction. The walk steps runs, then fields, then the lines of a field, and builds
-/// every index out of them — `line = (run · fields + field) · lines + l`. The field a line works
-/// under is therefore a constant because the walk stepped it, not because anything resolved it,
-/// and an operand carrying no scales is a run of one line and walks as it always did.
+/// A run is the lines of the contraction one scale holds for ([`Span::run`]). At the top of a
+/// run every scale line it needs is read, once, and held ([`Lines::folds`]); the walk then steps
+/// the fields of a line along the contraction, then the lines of a field, and builds every index
+/// out of them — `line = (run · fields + field) · lines + l`. The field a line works under is
+/// therefore a constant because the walk stepped it, not because anything resolved it, and an
+/// operand carrying no scales is a run of one line and walks as it always did.
 ///
 /// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
 /// contracted axis and the block's lanes are partials of one cell that [`commit`] folds. At one,
@@ -51,13 +52,14 @@ pub(crate) fn contract<
     let folded = comptime!(contracted_per_step > 1);
     let lhs_span = lhs.span();
     let rhs_span = rhs.span();
-    // A folded step reads both factors along the contraction, so both group its lines. Unfolded,
-    // the rhs lines along the accumulator instead, and groups the block's columns rather than
-    // these lines — [`rank1_update`] walks those.
-    let span = comptime!(match folded {
-        true => lhs_span.join(rhs_span),
-        false => lhs_span,
+    // The fields the walk steps along the contraction are whichever factor's line runs along
+    // it; a rhs lining along the columns steps its own fields in [`rank1_update`].
+    let fields = comptime!(match rhs_span.along {
+        Along::Contraction => lhs_span.fields.max(rhs_span.fields),
+        Along::Columns => lhs_span.fields,
     });
+    let run = comptime!(lhs_span.join_run(rhs_span));
+    let per_field = comptime!(run / fields);
     // Values one line holds: a folded step takes the whole line at once, an unfolded one a lane of
     // it per step.
     let width = comptime!(match folded {
@@ -66,36 +68,40 @@ pub(crate) fn contract<
     });
     let lines = comptime!(kc / width);
     let tail = comptime!(kc % width);
-    let run = comptime!(span.run());
     comptime!(assert!(
         lines.is_multiple_of(run),
         "block::contract: {lines} lines of a contraction do not divide into runs of {run}, so one \
          run would work under a scale that is not there; cut the contraction at a whole run"
     ));
     comptime!(assert!(
-        tail == 0 || span == Span::PLAIN,
+        tail == 0 || (lhs_span.is_plain() && rhs_span.is_plain()),
         "block::contract: a contraction of {kc} leaves {tail} values past its last whole line, \
          which no scale of a run of {run} covers; cut it at a whole line"
     ));
+    let lhs_count = comptime!(lhs_span.count(mr));
+    let rhs_count = comptime!(rhs_span.count(nr));
     // Lanes as constants, which is what lets the backend fold an `mr`-row fan-out's repeated line
     // reads into one. Where the caller did not ask for that, the lane is the walk's own index.
     let fixed = comptime!(folded || (lane_fanout && lw > 1) || lw == 1);
 
     for r in 0..comptime!(lines / run) {
+        let lhs_folds = lhs.folds(lhs_count, r as u32);
+        let rhs_folds = rhs.folds(rhs_count, r as u32);
         #[unroll]
-        for field in 0..comptime!(span.fields) {
-            for l in 0..comptime!(span.lines) {
-                let line = r * comptime!(run) + comptime!(field * span.lines) + l;
+        for field in 0..fields {
+            for l in 0..per_field {
+                let line = r * comptime!(run) + comptime!(field * per_field) + l;
                 if comptime!(folded) {
                     rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                         lhs,
                         rhs,
+                        &lhs_folds,
+                        &rhs_folds,
                         c,
                         &mut b,
                         0usize,
                         line as u32,
                         0usize,
-                        r as u32,
                         comptime!(Some(0usize)),
                         field,
                         contracted_per_step,
@@ -110,12 +116,13 @@ pub(crate) fn contract<
                         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                             lhs,
                             rhs,
+                            &lhs_folds,
+                            &rhs_folds,
                             c,
                             &mut b,
                             line * lw + lane,
                             line as u32,
                             0usize,
-                            r as u32,
                             comptime!(Some(lane)),
                             field,
                             contracted_per_step,
@@ -130,12 +137,13 @@ pub(crate) fn contract<
                         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                             lhs,
                             rhs,
+                            &lhs_folds,
+                            &rhs_folds,
                             c,
                             &mut b,
                             line * lw + lane,
                             line as u32,
                             lane,
-                            r as u32,
                             comptime!(None),
                             field,
                             contracted_per_step,
@@ -151,19 +159,22 @@ pub(crate) fn contract<
     }
 
     // A line width that does not divide `kc` leaves a partial last line, which the assert above
-    // holds to a factor with no scales. Its lane count is comptime too, so the tail is
+    // holds to factors with no scales. Its lane count is comptime too, so the tail is
     // straight-line code rather than a second, dynamic walk.
+    let no_lhs = lhs.folds(lhs_count, 0u32);
+    let no_rhs = rhs.folds(rhs_count, 0u32);
     #[unroll]
     for lane in 0..tail {
         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
             lhs,
             rhs,
+            &no_lhs,
+            &no_rhs,
             c,
             &mut b,
             comptime!(lines * width + lane),
             comptime!(lines) as u32,
             0usize,
-            0u32,
             comptime!(Some(lane)),
             0usize,
             contracted_per_step,
@@ -176,11 +187,11 @@ pub(crate) fn contract<
 }
 
 /// One step `c += outer(A[:, k], B[k, :])`, at scalar contraction step `k` off the `k_line`-th
-/// K-line of each lhs row, under the scales of run `run`.
+/// K-line of each lhs row, under the scale lines the run holds.
 ///
 /// At `contracted_per_step > 1` both reads are whole lines off the contracted axis, which is why
 /// the rhs is addressed `(n, k_line)` there and `(k, n)` otherwise — and why its scales are the
-/// run's there and the columns' here.
+/// run's field there and the columns' own here.
 ///
 /// `fixed` names the component to take when the walk unrolled its lanes, so `extract` names a
 /// constant and the backend folds the fan-out's `mr` repeated line reads into one; `None` takes
@@ -199,12 +210,13 @@ fn rank1_update<
 >(
     lhs: &Lhs,
     rhs: &Rhs,
+    lhs_folds: &Folds<Lhs::S, Lhs::W>,
+    rhs_folds: &Folds<Rhs::S, Rhs::W>,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     k: usize,
     k_line: u32,
     lane: usize,
-    run: u32,
     #[comptime] fixed: Option<usize>,
     #[comptime] field: usize,
     #[comptime] contracted_per_step: usize,
@@ -219,41 +231,34 @@ fn rank1_update<
         #[unroll(unroll)]
         for n in 0..nr {
             let line = rhs.line((n as u32, k_line));
-            b[n] = Vector::<E, V>::cast_from(rhs.fold((n as u32, run)).apply::<ER, V>(line, field));
+            b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(line, n, field));
         }
     } else {
-        // The rhs lines along the accumulator, so its scales group the block's columns: a run of
-        // them is one read of its scales, and which field a column takes is this walk's to build.
+        // The rhs lines along the accumulator, so its scale lines run along the columns: a
+        // scale line covers `fields · lines` of them, and which field a column takes is this
+        // walk's to build.
         let span = rhs.span();
-        if comptime!(span == Span::PLAIN) {
-            // Ungrouped columns walk as the block's budget decided: a scale, where there is one,
-            // covers exactly this column of this line.
+        if comptime!(span.fields == 1 && span.lines == 1) {
             #[unroll(unroll)]
             for n in 0..nr {
                 let line = rhs.line((k as u32, n as u32));
-                b[n] = Vector::<E, V>::cast_from(
-                    rhs.fold((k as u32, n as u32)).apply::<ER, V>(line, 0usize),
-                );
+                b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(line, n, 0usize));
             }
         } else {
-            comptime!(assert!(
-                nr.is_multiple_of(span.run()),
-                "block::contract: {nr} columns of a block do not divide into runs of {} scales, so \
-                 one run would work under a scale that is not there",
-                span.run()
-            ));
             #[unroll]
-            for column_run in 0..comptime!(nr / span.run()) {
+            for column_run in 0..comptime!(span.count(nr)) {
                 #[unroll]
                 for column_field in 0..comptime!(span.fields) {
                     #[unroll]
                     for l in 0..comptime!(span.lines) {
-                        let n = comptime!(column_run * span.run() + column_field * span.lines + l);
+                        let n =
+                            comptime!((column_run * span.fields + column_field) * span.lines + l);
                         let line = rhs.line((k as u32, comptime!(n as u32).runtime()));
-                        b[n] = Vector::<E, V>::cast_from(
-                            rhs.fold((k as u32, comptime!(column_run as u32).runtime()))
-                                .apply::<ER, V>(line, column_field),
-                        );
+                        b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(
+                            line,
+                            column_run,
+                            column_field,
+                        ));
                     }
                 }
             }
@@ -261,9 +266,7 @@ fn rank1_update<
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let line = lhs
-            .fold((i as u32, run))
-            .apply::<EL, L>(lhs.line((i as u32, k_line)), field);
+        let line = lhs_folds.apply::<EL, L>(lhs.line((i as u32, k_line)), i, field);
         let a = if comptime!(contracted_per_step > 1) {
             Vector::<E, V>::cast_from(line)
         } else if comptime!(fixed.is_some()) {

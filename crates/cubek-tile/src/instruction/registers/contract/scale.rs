@@ -129,6 +129,10 @@ pub(crate) struct ScaleLevel {
     pub lines_per_scale: usize,
     /// Scales one read of them serves.
     pub lanes: usize,
+    /// Whether the edge they share is the contraction or the accumulator's columns.
+    pub along_contraction: bool,
+    /// Lines of the contraction one scale holds for.
+    pub steps: usize,
 }
 
 impl ScaleLevel {
@@ -156,6 +160,7 @@ impl ScaleLevel {
             (Side::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
             (Side::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
+        let along_contraction = matches!((side, folded), (Side::Lhs, _) | (Side::Rhs, true));
         let cols = scales.extent_at(scales.rank() - 1);
         let covered = edge
             .iter()
@@ -170,11 +175,24 @@ impl ScaleLevel {
              whole lines of {value_width}"
         );
         let lines_per_scale = covered / value_width;
+        // Along the contraction one scale holds for its own lines; along the columns it holds
+        // for every step of the contraction it does not distinguish.
+        let steps = match along_contraction {
+            true => lines_per_scale,
+            false => edges
+                .reduce
+                .iter()
+                .filter(|(axis, _)| invariant.contains(axis))
+                .map(|(_, extent)| *extent)
+                .product::<usize>(),
+        };
         ScaleLevel {
             apply: Apply::Product,
             axes: MatrixAxes::of(scales, rows, cols),
             lines_per_scale,
             lanes,
+            along_contraction,
+            steps,
         }
     }
 }
