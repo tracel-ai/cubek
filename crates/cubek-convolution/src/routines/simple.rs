@@ -76,6 +76,7 @@ impl Routine for SimpleAsyncTmaConv {
     type Strategy = SimpleArgs;
     type MatmulRoutine = SimpleAlgorithm<AsyncFullTmaLoading, AsyncFullTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
+    const USES_IM2COL_TMA: bool = true;
 
     fn correct_layout(
         client: &Client,

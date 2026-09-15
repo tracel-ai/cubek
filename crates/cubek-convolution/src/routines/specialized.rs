@@ -57,6 +57,7 @@ impl Routine for SpecializedTmaConv {
     type MatmulRoutine = SpecializedAlgorithm<AsyncPartialTmaLoading, SyncBiasLoading>;
     type Args = TensorMapArgs<RuntimeArgs>;
     const IS_SPECIALIZED: bool = true;
+    const USES_IM2COL_TMA: bool = true;
 
     fn correct_layout(
         client: &Client,
