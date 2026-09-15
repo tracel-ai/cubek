@@ -253,42 +253,75 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             comptime!(read.edges.clone()),
             comptime!(read.side),
         );
-        // The landing reads one scale per line: several at a time would need each value line's
-        // ordinal along the shared edge, and the landing still walks its lines at runtime. Until
-        // it builds them, a scale it takes fills its word.
         let level = comptime!(level.expect("mma: a scaled factor carries a level"));
-        comptime!(assert!(
-            level.lanes == 1,
-            "mma: the landing reads one scale a line, so its scales fill their word; store them \
-             at a width that does, or take the register instruction"
-        ));
 
         let vw = values.vector_size();
         let size!(VW) = vw;
+        let size!(SW) = comptime!(level.lanes);
         let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
         let matrix = values.matrix_packed::<VW>(axes, 0usize);
-        let scale_lines = combined_scales::<S, Const<1>>(&levels, level, 0usize);
+        let scale_lines = combined_scales::<S, SW>(&levels, level, 0usize);
 
-        let lps = comptime!(level.lines_per_scale as u32);
-        let per_row = comptime!((read.cols / vw) as u32);
-        let lines = comptime!((read.rows * read.cols / vw) as u32);
+        // The plane deals the coordinate a scale is constant along — the row, or the line column
+        // of a transposed window — and a lane steps the scale lines of its share, building under
+        // each the `fields · lines` value lines it covers. One read of the scales serves all of
+        // them, every field of the word used.
+        let fields = comptime!(level.lanes);
+        let lps = comptime!(level.lines_per_scale);
+        let per_scale_line = comptime!(fields * lps);
+        let per_row = comptime!(read.cols / vw);
         let width = comptime!(vw as u32);
         let row_cells = comptime!(read.cols as u32);
-        for i in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-            let r = i / per_row;
-            let c = i % per_row;
-            let line = matrix.read((r, c));
+        if comptime!(read.transposed) {
             // A transposed window's line sits at the scales' column, and its row is the block.
-            let scale = if comptime!(read.transposed) {
-                scale_lines.line((c * width, r / lps))
-            } else {
-                scale_lines.line((r, c / lps))
-            };
-            let scaled = line * Vector::<E, VW>::cast_from(scale.extract(0usize));
-            let base = (r * row_cells + c * width) as usize;
-            #[unroll]
-            for j in 0..vw {
-                landing[base + j] = scaled.extract(j);
+            comptime!(assert!(
+                read.rows.is_multiple_of(per_scale_line),
+                "mma: {} rows of a transposed landing are not whole scale lines of {per_scale_line}",
+                read.rows
+            ));
+            for c in range_stepped(UNIT_POS_PLANE, comptime!(per_row as u32), PLANE_DIM) {
+                for s in 0..comptime!(read.rows / per_scale_line) {
+                    let scale = scale_lines.line((c * width, s as u32));
+                    #[unroll]
+                    for field in 0..fields {
+                        for l in 0..lps {
+                            let r =
+                                (s * comptime!(per_scale_line) + comptime!(field * lps) + l) as u32;
+                            let scaled = matrix.read((r, c))
+                                * Vector::<E, VW>::cast_from(scale.extract(field));
+                            let base = (r * row_cells + c * width) as usize;
+                            #[unroll]
+                            for j in 0..vw {
+                                landing[base + j] = scaled.extract(j);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            comptime!(assert!(
+                per_row.is_multiple_of(per_scale_line),
+                "mma: {per_row} lines of a landing's row are not whole scale lines of \
+                 {per_scale_line}"
+            ));
+            for r in range_stepped(UNIT_POS_PLANE, comptime!(read.rows as u32), PLANE_DIM) {
+                for s in 0..comptime!(per_row / per_scale_line) {
+                    let scale = scale_lines.line((r, s as u32));
+                    #[unroll]
+                    for field in 0..fields {
+                        for l in 0..lps {
+                            let c =
+                                (s * comptime!(per_scale_line) + comptime!(field * lps) + l) as u32;
+                            let scaled = matrix.read((r, c))
+                                * Vector::<E, VW>::cast_from(scale.extract(field));
+                            let base = (r * row_cells + c * width) as usize;
+                            #[unroll]
+                            for j in 0..vw {
+                                landing[base + j] = scaled.extract(j);
+                            }
+                        }
+                    }
+                }
             }
         }
         sync_plane();

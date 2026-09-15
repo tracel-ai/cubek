@@ -2642,8 +2642,15 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
     let s: Vec<f32> = (0..blocks_k * blocks_n)
         .map(|i| (i as f32 + 1.0) / 2.0)
         .collect();
-    // The landing reads one scale a line, so its scales fill their word: `f32`, as its bits.
-    let scale_words: Vec<u32> = s.iter().map(|v| v.to_bits()).collect();
+    // Halves, two to a word: one read of the scales is the region's two column blocks, and the
+    // landing builds both blocks' lines under it.
+    let scale_words: Vec<u32> = s
+        .chunks(2)
+        .map(|pair| {
+            (f16::from_f32(pair[0]).to_bits() as u32)
+                | ((f16::from_f32(pair[1]).to_bits() as u32) << 16)
+        })
+        .collect();
 
     let dtype = f32::elem_type_native();
     let (x_tensor, _) = TestInput::builder(client.clone(), shape![rows, depth])
@@ -2717,7 +2724,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
-            .packed(FloatKind::F32),
+            .packed(FloatKind::F16),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
