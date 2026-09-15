@@ -166,23 +166,36 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                 };
 
                 let variant = MatmulOperandLayouts::from_problem(problem)?.variant()?;
-                let planes_split = variant.planes_split();
                 let vector_size = device_settings.vector_sizes.lhs;
-                let accumulators = accumulators_per_plane(
-                    problem,
-                    &properties.hardware,
-                    &dtypes,
-                    variant,
-                    planes_split,
-                    vector_size,
-                );
-
-                let (m_units, n_units) =
-                    output_units(problem, variant, planes_split, vector_size, accumulators);
-                let split_units = match planes_split {
-                    PlanesSplit::M => m_units,
-                    PlanesSplit::N => n_units,
+                let plan = |planes_split| {
+                    let accumulators = accumulators_per_plane(
+                        problem,
+                        &properties.hardware,
+                        &dtypes,
+                        variant,
+                        planes_split,
+                        vector_size,
+                    );
+                    let (m_units, n_units) =
+                        output_units(problem, variant, planes_split, vector_size, accumulators);
+                    let split_units = match planes_split {
+                        PlanesSplit::M => m_units,
+                        PlanesSplit::N => n_units,
+                    };
+                    (planes_split, accumulators, split_units)
                 };
+
+                let preferred = plan(variant.planes_split());
+                let crossed = plan(match preferred.0 {
+                    PlanesSplit::M => PlanesSplit::N,
+                    PlanesSplit::N => PlanesSplit::M,
+                });
+                let (planes_split, accumulators, split_units) = if crossed.2 > preferred.2 {
+                    crossed
+                } else {
+                    preferred
+                };
+
                 let num_planes = max(1, min(target_num_planes, split_units));
 
                 let check_bounds = if split_units.is_multiple_of(num_planes) {
