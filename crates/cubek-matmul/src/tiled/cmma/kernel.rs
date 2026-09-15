@@ -205,7 +205,11 @@ mod tests {
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);
-            assert_eq!(format!("{:?}", partitioning.cube_count()), format!("{count:?}"), "{bp:?}");
+            assert_eq!(
+                format!("{:?}", partitioning.cube_count()),
+                format!("{count:?}"),
+                "{bp:?}"
+            );
             assert_eq!(partitioning.planes_per_cube(), dim.y, "{bp:?}");
         }
     }
