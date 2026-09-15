@@ -1,6 +1,7 @@
 use cubecl::{
     calculate_cube_count_elemwise,
     client::Client,
+    ir::{FloatKind, VectorRegisters},
     num_traits::Zero,
     prelude::*,
     std::tensor::layout::linear::{LinearViewMut, linear_view},
@@ -9,14 +10,6 @@ use cubecl::{
 };
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
-
-/// Half of AVX2's sixteen vector registers, so the input read, the weight loads and the products
-/// keep the rest. An accumulator that does not fit spills, and every add becomes a load and a store.
-const ACCUMULATOR_REGISTERS: usize = 8;
-
-/// Not `load_width`, which cubecl-cpu reports as 512 on every CPU; on AVX2 that is two registers.
-/// Read the hardware instead once it reports the register width.
-const REGISTER_BITS: usize = 256;
 
 #[cube]
 fn decompose_linear<I: FastDivmodInt>(pos: I, shape: &Sequence<FastDivmod<I>>) -> (I, Sequence<I>) {
@@ -402,13 +395,18 @@ pub fn launch_direct<const N: usize>(
         weight.shape.len() - 1,
     );
 
+    let hardware = &client.properties().hardware;
+    let registers = hardware.vector_registers(lane_size(dtype));
     // Only a single-unit plane pays the dependency chain in full; a wide plane hides it and is
     // left with the extra input read per output channel. One lane is exactly as serial as `sum`,
     // and a channel loop of one step has nothing to amortize the fold over.
-    let accumulate_lanes = client.properties().hardware.plane_size_max == 1
+    let accumulate_lanes = hardware.plane_size_max == 1
+        && registers.is_some()
         && vector_size_in > 1
         && weight.shape[dim_c] > vector_size_in as usize;
-    let channel_block = channel_block(vector_size_in, vector_size_out, dtype.size() * 8);
+    let channel_block = registers.map_or(1, |registers| {
+        channel_block(registers, vector_size_in, vector_size_out)
+    });
 
     let shape_out = out.shape[1..dim_c].iter().map(|s| *s as u32).collect();
     let shape_out_c = out_channels as u32;
@@ -458,11 +456,27 @@ pub fn launch_direct<const N: usize>(
 }
 
 /// How many output channels share one input read. A power of two, so it divides the output vector.
-fn channel_block(vector_size_in: usize, vector_size_out: usize, elem_bits: usize) -> usize {
-    let registers_per_accumulator = (vector_size_in * elem_bits).div_ceil(REGISTER_BITS);
-    let block = (ACCUMULATOR_REGISTERS / registers_per_accumulator).max(1);
+///
+/// The block takes half the registers, so the input read, the weight loads and the products keep
+/// the rest. An accumulator that does not fit spills, and every add becomes a load and a store.
+fn channel_block(
+    registers: VectorRegisters,
+    vector_size_in: usize,
+    vector_size_out: usize,
+) -> usize {
+    let block = registers
+        .vectors_fitting(vector_size_in, registers.count() / 2)
+        .max(1);
 
     (1 << block.ilog2()).min(vector_size_out)
+}
+
+/// A host without half arithmetic evaluates a half float in f32 registers.
+fn lane_size(dtype: ElemType) -> usize {
+    match dtype {
+        ElemType::Float(FloatKind::F16 | FloatKind::BF16) => size_of::<f32>(),
+        dtype => dtype.size(),
+    }
 }
 
 fn should_check_spatial_bounds<const N: usize>(
@@ -483,31 +497,66 @@ fn should_check_spatial_bounds<const N: usize>(
 
 #[cfg(test)]
 mod tests {
+    use cubecl::ir::HardwareProperties;
+
     use super::*;
 
+    fn registers(load_width: u32, count: u32, elem_size: usize) -> VectorRegisters {
+        HardwareProperties {
+            load_width,
+            vector_register_count: Some(count),
+            plane_size_min: 1,
+            plane_size_max: 1,
+            max_bindings: u32::MAX,
+            max_shared_memory_size: 48 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 16,
+            max_cube_dim: (16, 16, 16),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: Some(16),
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: usize::MAX,
+            cube_mma_reserved_shared_memory: 0,
+        }
+        .vector_registers(elem_size)
+        .unwrap()
+    }
+
+    fn avx2(elem_size: usize) -> VectorRegisters {
+        registers(256, 16, elem_size)
+    }
+
     #[test]
-    fn a_512_bit_accumulator_spends_two_registers() {
-        assert_eq!(channel_block(16, 16, 32), 4);
-        assert_eq!(channel_block(32, 32, 16), 4);
+    fn a_two_register_accumulator_halves_the_block() {
+        assert_eq!(channel_block(avx2(4), 16, 16), 4);
+    }
+
+    #[test]
+    fn a_half_float_accumulator_spends_f32_registers() {
+        let f16 = avx2(lane_size(ElemType::Float(FloatKind::F16)));
+        assert_eq!(channel_block(f16, 16, 16), 4);
     }
 
     #[test]
     fn a_register_wide_accumulator_spends_one() {
-        assert_eq!(channel_block(8, 16, 32), 8);
+        assert_eq!(channel_block(avx2(4), 8, 16), 8);
+        assert_eq!(channel_block(registers(512, 32, 4), 16, 32), 16);
     }
 
     #[test]
     fn a_narrow_accumulator_still_spends_a_whole_register() {
-        assert_eq!(channel_block(2, 16, 32), 8);
+        assert_eq!(channel_block(avx2(4), 2, 16), 8);
     }
 
     #[test]
     fn the_block_never_outgrows_the_output_vector() {
-        assert_eq!(channel_block(8, 2, 32), 2);
+        assert_eq!(channel_block(avx2(4), 8, 2), 2);
     }
 
     #[test]
     fn an_accumulator_wider_than_the_budget_still_gets_a_block_of_one() {
-        assert_eq!(channel_block(64, 16, 64), 1);
+        assert_eq!(channel_block(avx2(8), 64, 16), 1);
     }
 }
