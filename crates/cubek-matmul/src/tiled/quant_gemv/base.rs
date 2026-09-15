@@ -39,6 +39,8 @@ pub struct QuantGemvProblem {
     pub field: QuantValue,
     /// Values one scale covers, along the contraction.
     pub block: usize,
+    /// Scales that share one stored word: the scale element's count to a `u32`.
+    pub scales_a_word: usize,
 }
 
 impl QuantGemvProblem {
@@ -55,12 +57,12 @@ impl QuantGemvProblem {
 }
 
 /// A fully-resolved plan: a strip of output rows per cube, a run of them per plane, a run per
-/// aligned lane group, and the group's lanes interleaving the contraction between them.
+/// aligned lane group, and the group's lanes taking turns at the contraction, a word of scales
+/// each.
 ///
 /// The lanes that split `K` hold partials of the same cell and fold inside the plane, which is
-/// what the two `Unit` cuts on `(KB, KI)` state. Their instance product with the row groups is
-/// exactly the plane width — the engine's geometry contract, satisfied by construction in
-/// [`QuantGemvRoutine::blueprint`].
+/// what the `Unit` cut on `KB` states. Their product with the row groups is exactly the plane
+/// width — the engine's contract, satisfied by construction in [`QuantGemvRoutine::blueprint`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct QuantGemvBlueprint {
     /// Output rows one cube covers.
@@ -72,17 +74,15 @@ pub struct QuantGemvBlueprint {
     /// wider read, and that is the point — the bytes are identical, the loads are in flight
     /// together.
     pub rows_per_lane: usize,
-    /// Lanes splitting the position *inside* a block: each takes one stored word.
-    pub inside_lanes: usize,
-    /// Lanes splitting the blocks themselves: each takes one block per step. A cut cuts `KB` or
-    /// cuts `KI` and cannot straddle two axes, so a group wider than one block is spelled here.
+    /// Lanes splitting the blocks between them: each takes a word of scales a turn and walks
+    /// every block that word covers. Nothing splits a block.
     pub block_lanes: usize,
 }
 
 impl QuantGemvBlueprint {
     /// Lanes that share one output row and fold their partials together.
     pub fn group_lanes(&self) -> usize {
-        self.inside_lanes * self.block_lanes
+        self.block_lanes
     }
 
     /// Aligned lane groups in a plane, each carrying its own rows.
@@ -119,19 +119,13 @@ impl QuantGemvBlueprint {
                 problem.d_out, self.rows_per_cube, self.rows_per_plane
             ));
         }
-        if !problem.blocks().is_multiple_of(self.block_lanes) {
+        let turn = self.block_lanes * problem.scales_a_word;
+        if !problem.blocks().is_multiple_of(turn) {
             return refuse(format!(
-                "QuantGemv: {} blocks of K do not deal out to {} lanes",
+                "QuantGemv: {} blocks of K are not whole turns of {} lanes at {} scales a word",
                 problem.blocks(),
-                self.block_lanes
-            ));
-        }
-        if self.inside_lanes * problem.factor() != problem.block {
-            return refuse(format!(
-                "QuantGemv: {} lanes of {}-value words do not cover a {}-value block",
-                self.inside_lanes,
-                problem.factor(),
-                problem.block
+                self.block_lanes,
+                problem.scales_a_word
             ));
         }
         Ok(())
@@ -169,9 +163,8 @@ const PLANE_STRIPS: [usize; 3] = [4, 2, 1];
 
 /// Lanes that share one output row and fold their partials together.
 ///
-/// A target rather than a constant: how many of them fit *inside* a block is the block's
-/// business, so a group reaching this width is spelled as lanes of `KI` and lanes of `KB`
-/// together. Eight is where the fold was measured to sit — past it the butterfly costs more
+/// A target rather than a constant: the blocks have to deal out to them in whole words of
+/// scales. Eight is where the fold was measured to sit — past it the butterfly costs more
 /// steps than the extra memory-level parallelism buys, and below it a lane's run of the
 /// contraction gets long enough that the row block goes cold.
 const GROUP_LANES: usize = 8;
@@ -184,7 +177,7 @@ impl QuantGemvRoutine {
         problem: &QuantGemvProblem,
         plane_dim: usize,
     ) -> Result<QuantGemvBlueprint, MatmulSetupError> {
-        Self::validate_problem(problem, plane_dim)?;
+        Self::validate_problem(problem)?;
         let blueprint = match strategy {
             crate::routine::BlueprintStrategy::Forced(blueprint) => *blueprint,
             crate::routine::BlueprintStrategy::Inferred(_) => Self::select(problem, plane_dim)?,
@@ -196,10 +189,7 @@ impl QuantGemvRoutine {
     /// What no plan can rescue: a word the device cannot serve as a line, or blocks that do not
     /// tile the contraction in whole words.
     #[allow(clippy::result_large_err)]
-    fn validate_problem(
-        problem: &QuantGemvProblem,
-        plane_dim: usize,
-    ) -> Result<(), MatmulSetupError> {
+    fn validate_problem(problem: &QuantGemvProblem) -> Result<(), MatmulSetupError> {
         let refuse = |what: String| Err(MatmulSetupError::InvalidConfig(Box::new(what)));
         let factor = problem.factor();
         if !problem.block.is_multiple_of(factor) {
@@ -214,35 +204,29 @@ impl QuantGemvRoutine {
                 problem.block, problem.d_in
             ));
         }
-        let inside_lanes = problem.block / factor;
-        if !plane_dim.is_multiple_of(inside_lanes) {
-            return refuse(format!(
-                "QuantGemv: a block takes {inside_lanes} lanes, which do not divide a {plane_dim}-lane plane"
-            ));
-        }
         Ok(())
     }
 
-    /// The plan: a block of `K` is covered by `block / factor` lanes, whatever is left of the
-    /// plane carries rows, and the row strip is the widest the output tiles.
+    /// The plan: the widest group up to [`GROUP_LANES`] the blocks deal out to in whole words
+    /// of scales, whatever is left of the plane carries rows, and the row strip is the widest
+    /// the output tiles.
     #[allow(clippy::result_large_err)]
     fn select(
         problem: &QuantGemvProblem,
         plane_dim: usize,
     ) -> Result<QuantGemvBlueprint, MatmulSetupError> {
-        // One block of `K` takes this many lanes; the rest of the plane is free to carry rows
-        // or to take further blocks.
-        let inside_lanes = (problem.block / problem.factor()).min(plane_dim);
-        let free = plane_dim / inside_lanes;
-        // Reach [`GROUP_LANES`] by taking whole blocks as well, as far as the blocks deal out
-        // evenly. Every lane past that carries rows instead: a wider fold is a longer drain
+        // Every lane past the group carries rows instead: a wider fold is a longer drain
         // against no more bytes in flight.
-        let wanted = GROUP_LANES.div_ceil(inside_lanes);
-        let block_lanes = (1..=free.min(wanted))
-            .filter(|lanes| free.is_multiple_of(*lanes) && problem.blocks().is_multiple_of(*lanes))
+        let block_lanes = (1..=plane_dim.min(GROUP_LANES))
+            .filter(|lanes| {
+                plane_dim.is_multiple_of(*lanes)
+                    && problem
+                        .blocks()
+                        .is_multiple_of(lanes * problem.scales_a_word)
+            })
             .max()
             .unwrap_or(1);
-        let groups = free / block_lanes;
+        let groups = plane_dim / block_lanes;
 
         // Widest row block first, then the widest strip of planes under it.
         let (rows_per_lane, planes) = ROW_BLOCKS
@@ -270,7 +254,6 @@ impl QuantGemvRoutine {
             rows_per_cube: planes * groups * rows_per_lane,
             rows_per_plane: groups * rows_per_lane,
             rows_per_lane,
-            inside_lanes,
             block_lanes,
         })
     }
@@ -297,6 +280,7 @@ mod tests {
             rows: 1,
             field: QuantValue::Q4S,
             block: 32,
+            scales_a_word: 2,
         }
     }
 
@@ -306,13 +290,13 @@ mod tests {
     }
 
     /// A group is eight lanes whatever the block costs to cover, and the rest of the plane
-    /// carries rows. q4's 32-value block takes four lanes of `KI`, so the group reaches eight
-    /// by taking two blocks; q8's word is half as wide, so eight lanes of `KI` cover the block
-    /// alone and nothing splits `KB`.
+    /// carries rows. A block is never split: q4's 32-value block is four words and its lane
+    /// walks all four, and q8's is eight; the group is eight lanes either way, each taking a
+    /// word of two `f16` scales a turn.
     #[test]
     fn a_lane_group_is_eight_lanes_however_the_block_divides() {
         let q4 = plan(&q4(4096, 4096), 32);
-        assert_eq!((q4.inside_lanes, q4.block_lanes), (4, 2));
+        assert_eq!(q4.block_lanes, 8);
         assert_eq!(q4.group_lanes(), 8);
         assert_eq!(q4.groups(), 4);
 
@@ -323,7 +307,7 @@ mod tests {
             },
             32,
         );
-        assert_eq!((q8.inside_lanes, q8.block_lanes), (8, 1));
+        assert_eq!(q8.block_lanes, 8);
         assert_eq!(q8.group_lanes(), 8);
     }
 
@@ -346,12 +330,12 @@ mod tests {
         }
     }
 
-    /// A plane too narrow for the block's own lanes still plans: the lanes that cover a block
-    /// are all of it, and the rows go one to a group.
+    /// A plane narrower than the group still plans: the whole of it is one group, and the rows
+    /// go one to a group.
     #[test]
-    fn a_narrow_plane_spends_itself_on_the_block() {
+    fn a_narrow_plane_spends_itself_on_the_group() {
         let blueprint = plan(&q4(4096, 4096), 4);
-        assert_eq!((blueprint.inside_lanes, blueprint.block_lanes), (4, 1));
+        assert_eq!(blueprint.block_lanes, 4);
         assert_eq!(blueprint.groups(), 1);
     }
 

@@ -26,14 +26,6 @@ pub enum Packing {
         /// The slot one value occupies: its width in bits and how those bits read back.
         field: Field,
     },
-    /// [`Packed`](Packing::Packed), served `width` values at a time out of one word rather than
-    /// the whole word: a reader stepping one value a step, as a scales operand read under a
-    /// runtime block index is. The line is one word, the slot picked at the read.
-    Subword {
-        field: Field,
-        /// Values one line serves, dividing the word's count.
-        width: usize,
-    },
 }
 
 /// The slot one packed value occupies.
@@ -149,33 +141,19 @@ impl Packing {
     pub fn factor(&self) -> usize {
         match self {
             Packing::Plain | Packing::Native => 1,
-            Packing::Packed { field } | Packing::Subword { field, .. } => field.per_word(),
+            Packing::Packed { field } => field.per_word(),
         }
     }
 
-    /// The physical line a `served`-wide logical line occupies: one word for a sub-word read.
+    /// The physical line a `served`-wide logical line occupies.
     pub fn physical(&self, served: usize) -> usize {
-        match self {
-            Packing::Subword { .. } => 1,
-            _ => served / self.factor(),
-        }
+        served / self.factor()
     }
 
     /// The width a binding `bound` wide serves: the bound line times the values a stored element
-    /// holds, or the stated width for a sub-word read, whose binding is one word.
+    /// holds. A packed line serves whole words — every field of every word it reads.
     pub fn served(&self, bound: usize) -> usize {
-        match self {
-            Packing::Subword { field, width } => {
-                assert!(
-                    bound == 1 && field.per_word().is_multiple_of(*width) && *width > 0,
-                    "Packing::Subword: a sub-word read binds one word and serves a width that \
-                     divides the {} values it holds; got a {bound}-word line serving {width}",
-                    field.per_word()
-                );
-                *width
-            }
-            _ => bound * self.factor(),
-        }
+        bound * self.factor()
     }
 }
 
@@ -228,18 +206,6 @@ mod tests {
             .factor(),
             4
         );
-    }
-
-    /// A sub-word read is one word wide however few values it serves.
-    #[test]
-    fn a_subword_read_binds_one_word() {
-        let packing = Packing::Subword {
-            field: Fp8Format::UE8M0.into(),
-            width: 1,
-        };
-        assert_eq!(packing.physical(1), 1);
-        assert_eq!(packing.served(1), 1);
-        assert_eq!(packing.factor(), 4);
     }
 
     /// An 8-bit code is a byte field however it is named; anything wider is its own bits.

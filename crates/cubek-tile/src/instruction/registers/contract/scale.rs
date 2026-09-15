@@ -8,9 +8,8 @@
 //! axes. Two accumulators need all of it, and a decision re-derived at each caller is one that
 //! has already drifted.
 //!
-//! What stays with each accumulator is its own geometry, which genuinely differs: the edges it can
-//! walk, the widths it serves them at, and whether it steps them under an ordinal it knows
-//! ([`ContractEdges`]).
+//! What stays with each accumulator is its own shape, which genuinely differs: the edges it can
+//! walk and the widths it serves them at ([`ContractEdges`]).
 
 use crate::*;
 
@@ -76,24 +75,6 @@ pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
     }
 }
 
-/// Whether the caller walks the edge a scales operand shares with its values under an ordinal it
-/// knows at comptime.
-///
-/// A scale line wider than one scale needs each value line's ordinal along that edge as a
-/// constant: a fold is a lane of the read it arrived in, and a lane index is not addressable at
-/// runtime. Whether the ordinal is a constant is a fact about how the caller steps, so the caller
-/// states it and the rule reads off it — once, here, rather than as an exception each caller
-/// spells for itself.
-#[derive(Clone)]
-pub(crate) enum EdgeOrdinal {
-    /// Each line's position along the shared edge is a constant, so the scales may be served
-    /// several at a time.
-    Constant,
-    /// The edge is stepped at runtime, so only a scalar read is addressable. Carries what about
-    /// this walk makes it so, for the refusal to quote.
-    Runtime(String),
-}
-
 /// How a scale level is applied to what it covers.
 ///
 /// Named rather than assumed. What the engine may do with several levels follows from this and from
@@ -132,8 +113,6 @@ pub(crate) struct ContractEdges {
     /// Contracted values one step consumes. Past one, the step's own edge *is* the contraction,
     /// whichever side the scales ride.
     pub contracted_per_step: usize,
-    /// How this caller steps the edge the scales share.
-    pub ordinal: EdgeOrdinal,
 }
 
 /// One level of a scale hierarchy, against the values it covers.
@@ -150,6 +129,10 @@ pub(crate) struct ScaleLevel {
     pub lines_per_scale: usize,
     /// Scales one read of them serves.
     pub lanes: usize,
+    /// Whether the edge they share is the contraction or the accumulator's columns.
+    pub along_contraction: bool,
+    /// Lines of the contraction one scale holds for.
+    pub steps: usize,
 }
 
 impl ScaleLevel {
@@ -177,28 +160,39 @@ impl ScaleLevel {
             (Side::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
             (Side::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
-        match &edges.ordinal {
-            EdgeOrdinal::Constant => {}
-            // One scale a read needs no ordinal at all: every line takes the same lane.
-            EdgeOrdinal::Runtime(_) if lanes == 1 => {}
-            EdgeOrdinal::Runtime(why) => panic!(
-                "mm_scaled: {lanes} scales are served as one line, which needs each value line's \
-                 ordinal along the edge they share as a constant. {why}; bind the scales scalar \
-                 here"
-            ),
-        }
+        let along_contraction = matches!((side, folded), (Side::Lhs, _) | (Side::Rhs, true));
         let cols = scales.extent_at(scales.rank() - 1);
-        let lines_per_scale = edge
+        let covered = edge
             .iter()
             .filter(|(axis, _)| invariant.contains(axis))
             .map(|(_, extent)| *extent)
-            .product::<usize>()
-            / value_width;
+            .product::<usize>();
+        // The one division this declares, and it is exact or the shape is refused: a scale covering
+        // part of a line is a line that straddles two of them.
+        assert!(
+            covered.is_multiple_of(value_width),
+            "mm_scaled: one scale covers {covered} values along the edge it shares, which is not \
+             whole lines of {value_width}"
+        );
+        let lines_per_scale = covered / value_width;
+        // Along the contraction one scale holds for its own lines; along the columns it holds
+        // for every step of the contraction it does not distinguish.
+        let steps = match along_contraction {
+            true => lines_per_scale,
+            false => edges
+                .reduce
+                .iter()
+                .filter(|(axis, _)| invariant.contains(axis))
+                .map(|(_, extent)| *extent)
+                .product::<usize>(),
+        };
         ScaleLevel {
             apply: Apply::Product,
             axes: MatrixAxes::of(scales, rows, cols),
             lines_per_scale,
             lanes,
+            along_contraction,
+            steps,
         }
     }
 }

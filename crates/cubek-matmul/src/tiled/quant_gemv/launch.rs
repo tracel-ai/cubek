@@ -37,7 +37,11 @@ use crate::{
 pub struct QuantGemvElems {
     pub served: ElemType,
     pub x: ElemType,
+    /// The block level's stored element.
     pub scales: ElemType,
+    /// The per-tensor level's stored element, where the scheme has one. One number, read as
+    /// the word it fills: a width that does not fill one is refused.
+    pub tensor_scale: ElemType,
     pub out: ElemType,
 }
 
@@ -120,16 +124,34 @@ pub fn launch_ref(
             scales.len()
         ))));
     }
-    let field = match dtypes.scales {
-        ElemType::Float(kind) => float_field(kind),
-        other => {
-            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-                "QuantGemv: a scale is a float, got {other:?}"
-            ))));
-        }
+    let field_of = |elem: ElemType| match elem {
+        ElemType::Float(kind) => Ok(float_field(kind)),
+        other => Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "QuantGemv: a scale is a float, got {other:?}"
+        )))),
     };
+    let block_field = field_of(dtypes.scales)?;
+    if block_field.per_word() != problem.scales_a_word {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "QuantGemv: the plan dealt {} scales a word and the scales are stored {} to one",
+            problem.scales_a_word,
+            block_field.per_word()
+        ))));
+    }
+    let tensor_field = field_of(dtypes.tensor_scale)?;
+    if scales.len() > 1 && tensor_field.per_word() != 1 {
+        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+            "QuantGemv: a per-tensor scale is one number read as the word it fills; it is \
+             stored {} to a word",
+            tensor_field.per_word()
+        ))));
+    }
     let mut levels = Vec::new();
-    for binding in scales {
+    for (level, binding) in scales.into_iter().enumerate() {
+        let field = match level {
+            0 => block_field,
+            _ => tensor_field,
+        };
         let dims: Vec<usize> = binding.shape.iter().copied().collect();
         let full = [(M, problem.d_out), (KB, blocks)];
         if dims.len() != full.len() {
@@ -155,12 +177,13 @@ pub fn launch_ref(
             }
         }
         let projection = Projection::new(&[M, KB], &maps);
-        // One scale a read, out of the word it lies in: which slot is the field's to say.
+        // Every scale a word holds, a read: the lane that reads the word owns the blocks of every
+        // field in it, which the plan dealt on the problem's own count of them.
         levels.push(
             launch
                 .arg(binding)
                 .gathered(projection)
-                .subword(field, 1)
+                .packed(field)
                 .build(),
         );
     }

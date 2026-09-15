@@ -15,7 +15,7 @@ use cubecl::{
     std::quant::unpack_fields,
     std::tensor::{
         AsView, AsViewExpand, AsViewMut, AsViewMutExpand, ErasedTensor, View, ViewMut, WriteOnly,
-        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn, Layout},
+        layout::{Coordinates, Coords1d, Coords2d, CoordsDyn},
     },
 };
 
@@ -225,10 +225,6 @@ impl<T: Numeric> MemData<T> {
                             let size!(WP) = comptime!(packing.physical(src.store.vector_size));
                             self.scan_transparent::<u32, WP, W>(src)
                         }
-                        Packing::Subword { .. } => panic!(
-                            "MemData::fill_from: a sub-word operand is read one value a step, \
-                             not staged"
-                        ),
                     }
                 }
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
@@ -500,21 +496,25 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(FlatLayout::new(src.window.extent.clone()));
                 let mut d = self.flat_mut::<W>();
-                let total = d.shape();
+                // A word and its scale are read once, and the lines under them are built: the
+                // `lpw` lines of word `word` start at `word · lpw`, each `w` fields further in.
+                let total = d.shape() / lpw;
                 let workers = CUBE_DIM as usize;
-                let mut i = UNIT_POS as usize;
-                while i < total {
-                    let word = words.read(i / lpw).extract(0usize);
-                    let scale = scales.read(i / lpw);
-                    let first = ((i % lpw) * w) as u32;
-                    let vals = unpack_fields::<T, W>(
-                        word,
-                        first,
-                        info.table.clone(),
-                        comptime!(info.scheme),
-                    );
-                    d.write(i, vals * Vector::new(T::cast_from(scale)));
-                    i += workers;
+                let mut word = UNIT_POS as usize;
+                while word < total {
+                    let bits = words.read(word).extract(0usize);
+                    let scale = Vector::new(T::cast_from(scales.read(word)));
+                    #[unroll]
+                    for l in 0..lpw {
+                        let vals = unpack_fields::<T, W>(
+                            bits,
+                            comptime!((l * w) as u32),
+                            info.table.clone(),
+                            comptime!(info.scheme),
+                        );
+                        d.write(word * lpw + l, vals * scale);
+                    }
+                    word += workers;
                 }
             }
             ComptimeOption::None => {
@@ -1055,40 +1055,7 @@ impl<T: Numeric> MemData<T> {
                     comptime!(guard.checks() && self.access.overhang.masks()),
                 )
             }
-            Packing::Subword { .. } => {
-                panic!("MemData::transparent: a sub-word operand is read through matrix_subword")
-            }
         }
-    }
-
-    /// [`matrix_transparent`](MemData::matrix_transparent) for a sub-word operand: `layout`
-    /// counts its columns in words, and the view serves `W` of a word's fields per read.
-    pub(crate) fn matrix_subword<
-        W: Size,
-        L: TileLayout<Coords2d> + Layout<SourceCoordinates = CoordsDyn> + Clone,
-    >(
-        &self,
-        layout: L,
-        #[comptime] field: Field,
-    ) -> MatrixView<'_, Vector<T, W>> {
-        comptime!(assert!(
-            self.access.storage == Storage::Strided,
-            "MemData::matrix_subword: a sub-word operand lies in global memory as bound"
-        ));
-        let served = comptime!(self.store.vector_size);
-        let per_line = comptime!(field.per_word() / served);
-        // The base and window layouts address served lines; the storage under them maps a line
-        // to its word.
-        let storage = self.lines_storage::<u32, Const<1>>();
-        let window = self.window().with_guard(comptime!(Guard::Checked));
-        let words = storage
-            .view(WordOfLine::new(storage.len(), per_line))
-            .view(self.base())
-            .view(window.clone())
-            .view(layout.clone());
-        let values =
-            SubwordView::<T, W, L>::new(words, layout, window, self.base(), comptime!(field));
-        MaskedView::new(values.view(), comptime!(self.access.overhang.masks()))
     }
 
     /// [`transparent`](MemData::transparent) over one batch matrix: what the 2-D matmul leaves
