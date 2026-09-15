@@ -19,6 +19,9 @@ pub(crate) struct StageMeta {
     pub units: usize,
 }
 
+/// The byte alignment a TMA-filled stage's shared buffer must have.
+const TMA_STAGE_ALIGNMENT: usize = 128;
+
 #[cube]
 impl<T: Numeric> MemData<T> {
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
@@ -94,8 +97,18 @@ impl<T: Numeric> MemData<T> {
                     }
                     None => source_width,
                 });
+                // A TMA-filled stage's shared buffer must be TMA-aligned (its
+                // bulk copy addresses shared memory directly); a copy-filled one
+                // needs only the element alignment `smem` gives. TMA operands
+                // are always direct (a descriptor addresses a row-major window),
+                // so the gathered arm never needs it.
+                let delivery = operand.delivery();
+                let alignment = comptime!(match delivery.is_tma() {
+                    true => TMA_STAGE_ALIGNMENT,
+                    false => 0usize,
+                });
                 if comptime!(projection.is_direct()) {
-                    MemData::smem(space, vector_size, storage, units)
+                    MemData::smem_aligned(space, vector_size, storage, units, alignment)
                 } else {
                     MemData::smem_gathered(
                         space,
@@ -187,6 +200,19 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
+        MemData::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
+    }
+
+    /// [`smem`](MemData::smem) with a minimum byte alignment on the shared
+    /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); `0`
+    /// leaves the buffer at its element alignment.
+    pub fn smem_aligned(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
+        #[comptime] alignment: usize,
+    ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
@@ -194,7 +220,7 @@ impl<T: Numeric> MemData<T> {
             vector_size,
             units,
         });
-        MemData::smem_with_form(meta, form, map, ComptimeOption::new_None())
+        MemData::smem_with_form(meta, form, map, ComptimeOption::new_None(), alignment)
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -243,18 +269,32 @@ impl<T: Numeric> MemData<T> {
             comptime!(signed),
             comptime!(boundaries),
         );
-        MemData::smem_with_form(meta, form, stage_map, ComptimeOption::new_Some(source))
+        // A gathered stage is never a TMA destination (TMA operands are
+        // direct), so it takes no extra alignment.
+        MemData::smem_with_form(
+            meta,
+            form,
+            stage_map,
+            ComptimeOption::new_Some(source),
+            comptime!(0usize),
+        )
     }
 
     /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
+    /// `alignment` is the shared buffer's minimum byte alignment (`0` = the element's own).
     fn smem_with_form(
         #[comptime] meta: StageMeta,
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
+        #[comptime] alignment: usize,
     ) -> Tile<T> {
         let size!(W) = meta.vector_size;
-        let smem = Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()));
+        let smem = if comptime!(alignment > 0) {
+            Shared::<[Vector<T, W>]>::new_aligned_slice(comptime!(form.cells()), alignment)
+        } else {
+            Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()))
+        };
         MemData::smem_over(
             meta,
             &smem,
