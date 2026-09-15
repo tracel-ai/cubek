@@ -6,7 +6,6 @@ use crate::{
         MatmulVectorSizes,
     },
     multi_level::{
-        TileSize,
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
         definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme},
         stage::SwizzleMode,
@@ -73,9 +72,7 @@ pub fn infer_blueprint_unit(
     // Per-cube shared-memory budget; the selectors cap the tiling so the chosen
     // blueprint never over-requests it (see `selection`).
     let max_smem = hardware.max_shared_memory_size;
-    let min_tile_size = usize::max(vector_sizes.lhs, vector_sizes.rhs);
-    let min_tile_size = usize::max(vector_sizes.out, min_tile_size) as u32;
-    let load_tile_size = u32::max(min_tile_size, 4);
+    let load_tile_size = load_tile_size(vector_sizes);
     let dtypes = MatmulElems::from_globals(global_elems);
 
     let stage_buffering = if double_buffering { 2 } else { 1 };
@@ -104,19 +101,18 @@ pub fn infer_blueprint_unit(
 
     // An accumulator row gains a chain per register, so the tile starts as wide as one row keeps in
     // registers, then narrows while its stage overflows shared memory or covers fewer cells than at
-    // the load width. A tile of several rows accumulates in memory, so its stage alone sizes it.
+    // the load width. A tile of several rows, or a single cell, is sized by its stage alone.
     let widest_tile_size = registers.widest_lanes(1 + TILE_OPERAND_VECTORS) as u32;
     let blueprint = std::iter::successors(Some(widest_tile_size), |tile_size| Some(tile_size / 2))
         .take_while(|tile_size| *tile_size > load_tile_size)
         .map(select)
         .find(|blueprint| {
-            has_lanes(blueprint.tiling_scheme.tile_size)
-                && unit_stage_smem_bytes(
-                    &blueprint.tiling_scheme,
-                    &dtypes,
-                    stage_buffering,
-                    problem.accumulator,
-                ) <= max_smem
+            unit_stage_smem_bytes(
+                &blueprint.tiling_scheme,
+                &dtypes,
+                stage_buffering,
+                problem.accumulator,
+            ) <= max_smem
                 && stage_cells(blueprint) >= stage_cells(&load_blueprint)
         })
         .unwrap_or(load_blueprint);
@@ -128,10 +124,10 @@ pub fn infer_blueprint_unit(
 /// fuses into the add.
 const TILE_OPERAND_VECTORS: usize = 2;
 
-/// Whether the accumulator runs lanes, along `n`, or along `m` when `n` is 1. A single cell is a
-/// scalar chain that a wider tile only lengthens.
-fn has_lanes(tile: TileSize) -> bool {
-    tile.m().max(tile.n()) > 1
+/// The narrowest tile every operand's loads and stores divide.
+fn load_tile_size(vector_sizes: &MatmulVectorSizes) -> u32 {
+    let widest = vector_sizes.lhs.max(vector_sizes.rhs).max(vector_sizes.out) as u32;
+    widest.max(4)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -326,7 +322,11 @@ fn matvec_unit_selector(
     vector_sizes: &MatmulVectorSizes,
 ) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
-        (MatrixLayout::RowMajor, _) => ((1, 1, tile_size), (1, 1, tile_size * 2)),
+        // Every partition along k is unrolled into the kernel, so their count follows the load
+        // tile and a wider tile lengthens the stage instead.
+        (MatrixLayout::RowMajor, _) => {
+            ((1, 1, tile_size), (1, 1, load_tile_size(vector_sizes) * 2))
+        }
         _ => ((tile_size, 1, tile_size), (1, 1, 1)),
     };
 
