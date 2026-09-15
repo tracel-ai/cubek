@@ -1,7 +1,9 @@
 //! The quantized decode gemv kernel: the space it runs over and the walk written out.
 
 use cubecl::prelude::*;
-use cubek_tile::{Cut, Level, Partitioning, RegisterBlock, Semiring, Space, TileArg, scale_tile};
+use cubek_tile::{
+    Level, Partitioning, RegisterBlock, Semiring, Space, TileArg, Tiling, scale_tile,
+};
 
 use crate::tiled::{
     M, N,
@@ -31,9 +33,32 @@ pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
     ])
 }
 
-/// The routine's three levels, outermost first, each a method on the blueprint.
+/// The routine's levels, stated **from the leaf up, in counts**: one lane's rows against one
+/// stored word of one block; the lanes of a plane taking a block's words and the blocks in
+/// turns; the walk over what they take — the blocks past the plane's, and a block's words
+/// past the plane's where its lanes do not span one; the planes of a cube; a cube per strip.
+///
+/// The walk is the level the old statement did not have: its lanes level both dealt the
+/// contraction to the lanes *and* was the walk each lane made over its share. Leaf up a level
+/// says only how many of the thing below, so the walk is its own level, above the lanes.
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
-    vec![bp.cubes(), bp.planes(), bp.lanes(problem)]
+    let factor = problem.factor();
+    let walked: Vec<_> = [KB]
+        .into_iter()
+        .chain((bp.inside_lanes * factor < problem.block).then_some(KI))
+        .collect();
+    Tiling::leaf(&[(M, bp.rows_per_lane), (KB, 1), (KI, factor)])
+        .lanes(&[
+            (M, bp.groups()),
+            (KB, bp.block_lanes),
+            (KI, bp.inside_lanes),
+        ])
+        .interleaved(KB)
+        .interleaved(KI)
+        .walk_every(&walked)
+        .planes(&[(M, bp.rows_per_cube / bp.rows_per_plane)])
+        .cubes(&[M])
+        .levels()
 }
 
 impl QuantGemvBlueprint {
@@ -54,28 +79,11 @@ impl QuantGemvBlueprint {
         )
     }
 
-    /// A strip of output rows per cube, `K` whole.
-    pub fn cubes(&self) -> Level {
-        Level::cubes(&[(M, self.rows_per_cube)])
-    }
-
-    /// One plane per group of rows, `K` whole.
-    pub fn planes(&self) -> Level {
-        Level::planes(&[(M, self.rows_per_plane)])
-    }
-
-    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
-    /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
-    /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
-    /// plane width: their product with the row groups is exactly it.
+    /// The fold's level: `rows_per_lane` rows per aligned lane group, the group's lanes taking
+    /// the contraction in turns. What the zeroing and the drain name beside their loops, read
+    /// off the list rather than stated twice.
     pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
-        Level::lanes(&[
-            Cut::new(M, self.rows_per_lane).across(self.groups()),
-            Cut::new(KB, 1).across(self.block_lanes).interleaved(),
-            Cut::new(KI, problem.factor())
-                .across(self.inside_lanes)
-                .interleaved(),
-        ])
+        quant_gemv_levels(self, problem)[3].clone()
     }
 }
 
@@ -129,11 +137,13 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
+    // The output spans no contraction, so the lanes level is named rather than descended to.
+    let lanes = comptime!(bp.lanes(&problem));
     for cube in &out {
         let out_cube = out.at(&cube);
         for plane in cube {
             let out_plane = out_cube.at(&plane);
-            for lane in plane {
+            for lane in out_plane.over(&comptime!(lanes.clone())) {
                 let mut out_lane = out_plane.at(&lane);
                 out_lane.zero();
             }
@@ -148,15 +158,18 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
             let out_plane = out_cube.at(&plane);
             let w_plane = w_cube.at(&plane);
             let x_plane = x_cube.at(&plane);
-            // The lane's share of the blocks, one stored word a step.
-            for lane in plane {
-                let mut out_lane = out_plane.at(&lane);
-                out_lane.mma_scaled_with(
-                    &w_plane.at(&lane),
-                    &x_plane.at(&lane).plain(),
-                    config,
-                    Semiring::SUM_PROD,
-                );
+            // The plane's walk over the chunks the lanes take in turns, then each lane's
+            // stored word of the chunk.
+            for chunk in plane {
+                for lane in chunk {
+                    let mut out_lane = out_plane.at(&lane);
+                    out_lane.mma_scaled_with(
+                        &w_plane.at(&lane),
+                        &x_plane.at(&lane).plain(),
+                        config,
+                        Semiring::SUM_PROD,
+                    );
+                }
             }
         }
     }

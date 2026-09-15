@@ -14,7 +14,9 @@ use cubecl::{
     std::tensor::{TensorHandle, layout::CoordsDyn},
     zspace::{Shape, Tiling},
 };
-use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Level, Partitioning, Space, TileArg};
+use cubek_tile::{
+    Axis, Geometry, KernelForm, Launcher, Level, Partitioning, Space, TileArg, Tiling as Levels,
+};
 
 use crate::{
     definition::MatmulSetupError,
@@ -179,7 +181,12 @@ fn relayout_launch(
         .chain([(M, rows), (N, cols)])
         .collect();
     let space = Space::new(&extents);
-    let level = Level::cubes(&[(M, tr), (N, tc)]).batches(&batch_axes);
+    // One level, leaf up: the tile is the leaf and there is a cube for every one of them.
+    let level = Levels::leaf(&[(M, tr), (N, tc)])
+        .cubes(&[M, N])
+        .batches(&batch_axes)
+        .levels()
+        .remove(0);
     let partitioning = Partitioning::new(space, vec![level.clone()]);
     let cube_count = partitioning.cube_count();
     let cube_dim = CubeDim::new_1d(client.properties().hardware.plane_size_max);

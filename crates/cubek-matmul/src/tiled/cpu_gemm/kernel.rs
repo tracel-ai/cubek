@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Cut, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+    Axis, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg, Tiling,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -12,12 +12,18 @@ use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
 /// fan out over. Stated here because the kernel is what runs it.
 pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 
-/// The routine's three levels, outermost first: the cube grid (a serial loop on CPU), the plane
-/// split (the parallel worker threads), and the plane's block stepped through `K` in the
-/// instruction's depth. The kernel's loops state them one by one; the blueprint reads its leaf
-/// and its overhangs off the same list.
+/// The routine's three levels, stated **from the leaf up, in counts**: the register block,
+/// every step of `K` in its depth, the planes a cube holds (the parallel worker threads), and a
+/// cube per box of the output (a serial loop on CPU). The kernel's loops state them one by one
+/// and read their leaf and overhangs off the same list.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
-    vec![bp.cubes(batch), bp.planes(), bp.k_steps()]
+    let (leaf, p) = (bp.instruction, bp.planes);
+    Tiling::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
+        .walk_every(&[K])
+        .planes(&[(M, p.m), (N, p.n)])
+        .cubes(&[M, N])
+        .batches(batch)
+        .levels()
 }
 
 impl CpuGemmBlueprint {
@@ -40,28 +46,6 @@ impl CpuGemmBlueprint {
             ),
             CubeDim::new_2d(plane_size, (self.planes.m * self.planes.n) as u32),
         )
-    }
-
-    /// The cube grid: a box of the output per cube, one of every batch axis.
-    pub fn cubes(&self, batch: &[Axis]) -> Level {
-        let leaf = self.instruction;
-        let cube_m = self.planes.m * leaf.m;
-        let cube_n = self.planes.n * leaf.n;
-        Level::cubes(&[(M, cube_m), (N, cube_n)]).batches(batch)
-    }
-
-    /// The cube's box across the blueprint's planes, one register block each.
-    pub fn planes(&self) -> Level {
-        let (leaf, p) = (self.instruction, self.planes);
-        Level::planes(&[
-            Cut::new(M, leaf.m).across(p.m),
-            Cut::new(N, leaf.n).across(p.n),
-        ])
-    }
-
-    /// The plane's block stepped through `K` in the instruction's depth.
-    pub fn k_steps(&self) -> Level {
-        Level::walk(&[(K, self.instruction.k)])
     }
 }
 
