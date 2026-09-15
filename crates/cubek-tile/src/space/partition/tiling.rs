@@ -56,6 +56,8 @@ struct Stated {
     fillers: usize,
     /// Batch axes this cube level hands out one of ([`Tiling::batches`]).
     batches: Vec<Axis>,
+    /// Axes whose tiles the workers take in turns rather than in runs ([`Tiling::interleaved`]).
+    interleaved: Vec<Axis>,
 }
 
 /// A partitioning stated from the leaf up. See the module docs.
@@ -138,6 +140,15 @@ impl Tiling {
         self
     }
 
+    /// The workers of the level just stated take `axis`'s tiles in turns — worker 0 the first,
+    /// worker 1 the next — rather than each a contiguous run. Neighbouring lanes then read
+    /// neighbouring memory at the same instant, which is what a lane split of a contiguous
+    /// contraction wants.
+    pub fn interleaved(mut self, axis: Axis) -> Self {
+        self.last("interleaved").interleaved.push(axis);
+        self
+    }
+
     /// The levels, **outermost first**: what a kernel's loops walk and a launch reads its grid
     /// off. The one place the two directions meet.
     pub fn levels(self) -> Vec<Level> {
@@ -193,6 +204,14 @@ impl Tiling {
 }
 
 impl Stated {
+    /// `cut` dealt in turns where its axis was said to be.
+    fn spread(&self, cut: Cut, axis: Axis) -> Cut {
+        match self.interleaved.contains(&axis) {
+            true => cut.interleaved(),
+            false => cut,
+        }
+    }
+
     fn new(takers: Takers, tiles: Vec<(Axis, usize, usize)>) -> Self {
         Stated {
             takers,
@@ -201,6 +220,7 @@ impl Stated {
             shared_by: None,
             fillers: 0,
             batches: Vec::new(),
+            interleaved: Vec::new(),
         }
     }
 
@@ -216,7 +236,9 @@ impl Stated {
                 let cuts: Vec<Cut> = self
                     .tiles
                     .iter()
-                    .map(|&(axis, tile, lanes)| Cut::new(axis, tile).across(lanes))
+                    .map(|&(axis, tile, lanes)| {
+                        self.spread(Cut::new(axis, tile).across(lanes), axis)
+                    })
                     .collect();
                 Level::lanes(&cuts)
             }
@@ -226,7 +248,7 @@ impl Stated {
                     .map(|&(axis, tile)| Cut::new(axis, tile))
                     .collect();
                 if let Some((axis, tile, cubes)) = self.across {
-                    cuts.push(Cut::new(axis, tile).across(cubes));
+                    cuts.push(self.spread(Cut::new(axis, tile).across(cubes), axis));
                 }
                 Level::cubes(&cuts)
             }
