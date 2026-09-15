@@ -472,7 +472,11 @@ impl<T: Numeric> PlanePartition<T> {
         // free axis, the whole contraction along the other.
         let rows_along_free = comptime!(if ident == MatrixIdent::A { m } else { n });
         let k = comptime!(window.extent(contracted));
-        let (e0, e1) = comptime!(if free == a0 { (rows_along_free, k) } else { (k, rows_along_free) });
+        let (e0, e1) = comptime!(if free == a0 {
+            (rows_along_free, k)
+        } else {
+            (k, rows_along_free)
+        });
         // The role's rows: `A` is `m×k` and `B` is `k×n`, so an operand whose window lists the
         // axes in that order is row-major, and one listing them the other way — a weight
         // stored `{n, k}`, read in lines along its contraction — is the same fragment loaded
