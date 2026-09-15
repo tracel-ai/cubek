@@ -6,6 +6,7 @@ use crate::{
         MatmulVectorSizes,
     },
     multi_level::{
+        TileSize,
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
         definition::{BatchMatmulBlueprint, SwizzleModes, TilingScheme},
         stage::SwizzleMode,
@@ -14,7 +15,7 @@ use crate::{
 
 use cubecl::{
     client::Client,
-    ir::{ElemType, VectorSize},
+    ir::{ElemType, VectorRegisters, VectorSize},
 };
 use cubek_std::{
     MatrixLayout,
@@ -71,18 +72,19 @@ pub fn infer_blueprint_unit(
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
 ) -> (BatchMatmulBlueprint, MatmulElems) {
-    let kind: MatmulKind = problem.into();
-    let num_sms = client.properties().hardware.num_streaming_multiprocessors;
+    let hardware = &client.properties().hardware;
+    let num_sms = hardware.num_streaming_multiprocessors;
     // Per-cube shared-memory budget; the selectors cap the tiling so the chosen
     // blueprint never over-requests it (see `selection`).
-    let max_smem = client.properties().hardware.max_shared_memory_size;
+    let max_smem = hardware.max_shared_memory_size;
     let min_tile_size = usize::max(vector_sizes.lhs, vector_sizes.rhs);
     let min_tile_size = usize::max(vector_sizes.out, min_tile_size) as u32;
-    let tile_size = u32::max(min_tile_size, 4);
+    let load_tile_size = u32::max(min_tile_size, 4);
     let dtypes = MatmulElems::from_globals(global_elems);
 
-    let blueprint = match kind {
-        MatmulKind::General => general_unit_selector(
+    let stage_buffering = if double_buffering { 2 } else { 1 };
+    let select = |tile_size| {
+        unit_selector(
             problem,
             plane_dim,
             double_buffering,
@@ -91,6 +93,78 @@ pub fn infer_blueprint_unit(
             max_smem,
             options,
             &dtypes,
+            vector_sizes,
+        )
+    };
+
+    let load_blueprint = select(load_tile_size);
+    let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
+        return (load_blueprint, dtypes);
+    };
+    let stage_cells = |blueprint: &BatchMatmulBlueprint| {
+        blueprint.tiling_scheme.elements_per_stage_along_m()
+            * blueprint.tiling_scheme.elements_per_stage_along_n()
+    };
+
+    // Lanes past one register run as independent chains, so the tile widens while its accumulator
+    // stays in registers. It narrows back while its stage overflows shared memory or covers fewer
+    // output cells than at the load width, since each cube pays a stage reload and its barriers.
+    let widest_tile_size = registers.widest_lanes(1 + TILE_OPERAND_VECTORS) as u32;
+    let blueprint = std::iter::successors(Some(widest_tile_size), |tile_size| Some(tile_size / 2))
+        .take_while(|tile_size| *tile_size > load_tile_size)
+        .map(select)
+        .find(|blueprint| {
+            accumulator_in_registers(blueprint.tiling_scheme.tile_size, &registers)
+                && unit_stage_smem_bytes(
+                    &blueprint.tiling_scheme,
+                    &dtypes,
+                    stage_buffering,
+                    problem.accumulator,
+                ) <= max_smem
+                && stage_cells(blueprint) >= stage_cells(&load_blueprint)
+        })
+        .unwrap_or(load_blueprint);
+
+    (blueprint, dtypes)
+}
+
+/// The lhs and rhs lines the register product holds beside its accumulator; the product itself
+/// fuses into the add.
+const TILE_OPERAND_VECTORS: usize = 2;
+
+/// Whether the accumulator, `m` rows of `n` lanes or one column when `n` is 1, stays in registers.
+/// A single cell is a scalar chain with no lanes to gain.
+fn accumulator_in_registers(tile: TileSize, registers: &VectorRegisters) -> bool {
+    let (rows, lanes) = match tile.n() {
+        1 => (1, tile.m()),
+        n => (tile.m(), n),
+    };
+    lanes > 1 && registers.widest_lanes(rows as usize + TILE_OPERAND_VECTORS) >= lanes as usize
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unit_selector(
+    problem: &MatmulProblem,
+    plane_dim: u32,
+    double_buffering: bool,
+    tile_size: u32,
+    num_sms: Option<u32>,
+    max_smem: usize,
+    options: UnitTilingBlueprintOptions,
+    dtypes: &MatmulElems,
+    vector_sizes: &MatmulVectorSizes,
+) -> BatchMatmulBlueprint {
+    let kind: MatmulKind = problem.into();
+    match kind {
+        MatmulKind::General => general_unit_selector(
+            problem,
+            plane_dim,
+            double_buffering,
+            tile_size,
+            num_sms,
+            max_smem,
+            options,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::MatVec => matvec_unit_selector(
@@ -101,7 +175,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::VecMat => vecmat_unit_selector(
@@ -112,7 +186,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::ScalarVec => scalarvec_unit_selector(
@@ -123,7 +197,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::VecScalar => vecscalar_unit_selector(
@@ -134,7 +208,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::InnerProduct => inner_product_unit_selector(
@@ -145,7 +219,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::OuterProduct => outer_product_unit_selector(
@@ -156,7 +230,7 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
         MatmulKind::ScalarProduct => scalar_product_unit_selector(
@@ -167,12 +241,10 @@ pub fn infer_blueprint_unit(
             num_sms,
             max_smem,
             options,
-            &dtypes,
+            dtypes,
             vector_sizes,
         ),
-    };
-
-    (blueprint, dtypes)
+    }
 }
 
 /// (M, K) @ (K, N) → (M, N), with M, K, N > 1
