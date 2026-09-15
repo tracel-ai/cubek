@@ -2,7 +2,8 @@ use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{
-    Axis, Compaction, Cut, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Axis, Compaction, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
+    Tiling,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -50,13 +51,37 @@ impl InterpolateSpace {
     /// Four levels, outermost first: the cube grid, the channel blocks a cube walks (one region
     /// below `lanes * 4` channels), this plane's rows, then this lane's columns and channel
     /// lines.
+    /// The levels, stated **from the leaf up, in counts**: one lane's columns by its channel
+    /// block by a plane's rows, the lanes of a plane across columns and channels, the planes of
+    /// a cube across rows, every channel block the cube's box holds, and a cube per box. The
+    /// geometry was already a product — `rows_per_cube` is planes by rows, `cols_per_cube` lanes
+    /// by columns — so this states the counts it holds rather than the sizes it multiplied them
+    /// into. A lane split of one along an axis is no split, and the axis is handed down whole.
     pub fn levels(&self) -> Vec<Level> {
-        vec![
-            self.cubes(),
-            self.channel_blocks(),
-            self.planes(),
-            self.lanes(),
+        let (geometry, plane_size) = (self.geometry, self.plane_size);
+        assert!(
+            geometry.lane_cols * geometry.lane_channels == plane_size,
+            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
+            geometry.lane_cols * geometry.lane_channels
+        );
+        let lanes: Vec<(Axis, usize)> = [
+            (OUTPUT_W, geometry.lane_cols),
+            (CHANNEL, geometry.lane_channels),
         ]
+        .into_iter()
+        .filter(|&(_, lanes)| lanes > 1)
+        .collect();
+        Tiling::leaf(&[
+            (OUTPUT_W, geometry.cols_per_lane),
+            (CHANNEL, geometry.channel_block),
+            (OUTPUT_H, geometry.rows_per_plane),
+        ])
+        .lanes(&lanes)
+        .planes(&[(OUTPUT_H, geometry.planes_per_cube)])
+        .walk_every(&[CHANNEL])
+        .cubes(&[OUTPUT_W, OUTPUT_H])
+        .batches(&[BATCH])
+        .levels()
     }
 
     pub fn space(&self) -> Space {
@@ -80,50 +105,6 @@ impl InterpolateSpace {
             ),
             CubeDim::new_2d(self.plane_size as u32, geometry.planes_per_cube as u32),
         )
-    }
-
-    /// This cube's box of the output, the taps whole.
-    pub fn cubes(&self) -> Level {
-        let geometry = self.geometry;
-        Level::cubes(&[
-            (OUTPUT_W, geometry.cols_per_cube()),
-            (OUTPUT_H, geometry.rows_per_cube()),
-        ])
-        .batches(&[BATCH])
-    }
-
-    /// The cube's box walked one channel block at a time.
-    pub fn channel_blocks(&self) -> Level {
-        Level::walk(&[(CHANNEL, self.geometry.channels_per_cube())])
-    }
-
-    /// The cube's rows across its planes.
-    pub fn planes(&self) -> Level {
-        let geometry = self.geometry;
-        Level::planes(&[
-            Cut::new(OUTPUT_H, geometry.rows_per_plane).across(geometry.planes_per_cube)
-        ])
-    }
-
-    /// This lane's columns and channel lines. The interpolation splits the plane across two
-    /// axes, so the counts are stated outright; one lane along an axis is no split at all, and
-    /// the axis is handed down whole.
-    pub fn lanes(&self) -> Level {
-        let (geometry, plane_size) = (self.geometry, self.plane_size);
-        assert!(
-            geometry.lane_cols * geometry.lane_channels == plane_size,
-            "InterpolateSpace: the lane split covers {} of the plane's {plane_size} lanes",
-            geometry.lane_cols * geometry.lane_channels
-        );
-        let cuts: Vec<Cut> = [
-            (OUTPUT_W, geometry.lane_cols, geometry.cols_per_lane),
-            (CHANNEL, geometry.lane_channels, geometry.channel_block),
-        ]
-        .into_iter()
-        .filter(|&(_, instances, _)| instances > 1)
-        .map(|(axis, instances, edge)| Cut::new(axis, edge).across(instances))
-        .collect();
-        Level::lanes(&cuts)
     }
 }
 
