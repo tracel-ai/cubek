@@ -48,8 +48,9 @@ struct Stated {
     /// and the count stated. Only a lanes level reads the count: a plane is carved between its
     /// entries, so each says how many lanes take it.
     tiles: Vec<(Axis, usize, usize)>,
-    /// A cube level dealing one axis across several cubes ([`Tiling::across`]).
-    across: Option<(Axis, usize, usize)>,
+    /// A cube level dealing one of its axes across several cubes ([`Tiling::across`]): the axis
+    /// and how many.
+    across: Option<(Axis, usize)>,
     /// A cube level dealing its tiles as one index ([`Tiling::shared_by`]).
     shared_by: Option<usize>,
     /// Planes that only fill this walk's stages ([`Tiling::filled_by`]).
@@ -113,11 +114,16 @@ impl Tiling {
         self.every(Takers::Cubes, axes)
     }
 
-    /// Deal `axis` across `cubes` of them, each taking a run of its tiles. Split-K, where the
-    /// axis is the contraction.
+    /// Deal `axis` — one the cube level just stated — across `cubes` of them, each taking a run
+    /// of its tiles. Split-K, where the axis is the contraction. The axis keeps its place among
+    /// the level's entries, and so its grid dimension.
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
-        let tile = self.size(axis);
-        self.last("across").across = Some((axis, tile, cubes));
+        let stated = self.last("across");
+        assert!(
+            stated.tiles.iter().any(|&(a, _, _)| a == axis),
+            "Tiling::across: {axis:?} is not an axis of the cube level just stated; name it there"
+        );
+        stated.across = Some((axis, cubes));
         self
     }
 
@@ -243,13 +249,18 @@ impl Stated {
                 Level::lanes(&cuts)
             }
             Takers::Cubes => {
-                let mut cuts: Vec<Cut> = edges
+                let cuts: Vec<Cut> = edges
                     .iter()
-                    .map(|&(axis, tile)| Cut::new(axis, tile))
+                    .map(|&(axis, tile)| {
+                        let cut = Cut::new(axis, tile);
+                        match self.across {
+                            Some((across, cubes)) if across == axis => {
+                                self.spread(cut.across(cubes), axis)
+                            }
+                            _ => cut,
+                        }
+                    })
                     .collect();
-                if let Some((axis, tile, cubes)) = self.across {
-                    cuts.push(self.spread(Cut::new(axis, tile).across(cubes), axis));
-                }
                 Level::cubes(&cuts)
             }
         };
