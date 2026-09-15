@@ -377,36 +377,46 @@ pub fn launch_direct<const N: usize>(
     let channels_per_group = out_channels / groups;
     let check_spatial_bounds = should_check_spatial_bounds(in_shape, kernel_shape, out_size, &args);
 
-    // Need custom vector size calculation here to account for the groups division. Need to vectorize
-    // over `channels_per_group` instead.
-    let mut grouped_out_shape = out.shape.clone();
-    grouped_out_shape[dim_c] = channels_per_group;
-    let vector_size_out = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
-        &grouped_out_shape,
-        &out.strides,
-        dim_c,
-    );
+    let hardware = &client.properties().hardware;
+    let io_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
+
     // Use channels_per_group instead of in_channels to avoid issues here
     let vector_size_in = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        io_vector_sizes.clone(),
         &weight.shape,
         &weight.strides,
         weight.shape.len() - 1,
     );
 
-    let hardware = &client.properties().hardware;
-    let registers = hardware.vector_registers(lane_size(dtype));
     // Only a single-unit plane pays the dependency chain in full; a wide plane hides it and is
     // left with the extra input read per output channel. One lane is exactly as serial as `sum`,
     // and a channel loop of one step has nothing to amortize the fold over.
-    let accumulate_lanes = hardware.plane_size_max == 1
-        && registers.is_some()
-        && vector_size_in > 1
-        && weight.shape[dim_c] > vector_size_in as usize;
-    let channel_block = registers.map_or(1, |registers| {
-        channel_block(registers, vector_size_in, vector_size_out)
-    });
+    let blocks = hardware
+        .vector_registers(lane_size(dtype))
+        .filter(|_| {
+            hardware.plane_size_max == 1
+                && vector_size_in > 1
+                && weight.shape[dim_c] > vector_size_in as usize
+        })
+        .map(|registers| ChannelBlocks::new(registers, vector_size_in));
+
+    // Need custom vector size calculation here to account for the groups division. Need to vectorize
+    // over `channels_per_group` instead.
+    let mut grouped_out_shape = out.shape.clone();
+    grouped_out_shape[dim_c] = channels_per_group;
+    let widest_out = blocks.map_or_else(
+        || io_vector_sizes.max().unwrap_or(1),
+        |blocks| blocks.output_lanes,
+    );
+    let vector_size_out = tensor_vector_size_parallel(
+        (0..=widest_out.ilog2()).map(|power| 1 << power),
+        &grouped_out_shape,
+        &out.strides,
+        dim_c,
+    );
+
+    let accumulate_lanes = blocks.is_some();
+    let channel_block = blocks.map_or(1, |blocks| blocks.block.min(vector_size_out));
 
     let shape_out = out.shape[1..dim_c].iter().map(|s| *s as u32).collect();
     let shape_out_c = out_channels as u32;
@@ -455,20 +465,31 @@ pub fn launch_direct<const N: usize>(
     Ok(())
 }
 
-/// How many output channels share one input read. A power of two, so it divides the output vector.
-///
-/// The block takes half the registers, so the input read, the weight loads and the products keep
-/// the rest. An accumulator that does not fit spills, and every add becomes a load and a store.
-fn channel_block(
-    registers: VectorRegisters,
-    vector_size_in: usize,
-    vector_size_out: usize,
-) -> usize {
-    let block = registers
-        .vectors_fitting(vector_size_in, registers.count() / 2)
-        .max(1);
+/// How many output channels share one input read, and how many a unit spans.
+#[derive(Debug, Clone, Copy)]
+struct ChannelBlocks {
+    /// A power of two, so it divides any output vector at least as wide.
+    block: usize,
+    output_lanes: usize,
+}
 
-    (1 << block.ilog2()).min(vector_size_out)
+impl ChannelBlocks {
+    /// The block takes half the registers, so the input read, the weight loads and the products
+    /// keep the rest. An accumulator that does not fit spills, and every add becomes a load and a
+    /// store.
+    fn new(registers: VectorRegisters, vector_size_in: usize) -> Self {
+        let block = registers
+            .vectors_fitting(vector_size_in, registers.count() / 2)
+            .max(1);
+        let block = 1 << block.ilog2();
+
+        // The output vector outlives every block, so it gets one accumulator's share of the
+        // registers, and a unit pays its dispatch, position and bias once for several blocks.
+        Self {
+            block,
+            output_lanes: registers.widest_lanes(block),
+        }
+    }
 }
 
 /// A host without half arithmetic evaluates a half float in f32 registers.
@@ -528,35 +549,41 @@ mod tests {
         registers(256, 16, elem_size)
     }
 
+    fn blocks(registers: VectorRegisters, vector_size_in: usize) -> (usize, usize) {
+        let blocks = ChannelBlocks::new(registers, vector_size_in);
+        (blocks.block, blocks.output_lanes)
+    }
+
     #[test]
     fn a_two_register_accumulator_halves_the_block() {
-        assert_eq!(channel_block(avx2(4), 16, 16), 4);
+        assert_eq!(blocks(avx2(4), 16).0, 4);
     }
 
     #[test]
     fn a_half_float_accumulator_spends_f32_registers() {
         let f16 = avx2(lane_size(ElemType::Float(FloatKind::F16)));
-        assert_eq!(channel_block(f16, 16, 16), 4);
+        assert_eq!(blocks(f16, 16), (4, 32));
     }
 
     #[test]
     fn a_register_wide_accumulator_spends_one() {
-        assert_eq!(channel_block(avx2(4), 8, 16), 8);
-        assert_eq!(channel_block(registers(512, 32, 4), 16, 32), 16);
+        assert_eq!(blocks(avx2(4), 8).0, 8);
+        assert_eq!(blocks(registers(512, 32, 4), 16).0, 16);
     }
 
     #[test]
     fn a_narrow_accumulator_still_spends_a_whole_register() {
-        assert_eq!(channel_block(avx2(4), 2, 16), 8);
-    }
-
-    #[test]
-    fn the_block_never_outgrows_the_output_vector() {
-        assert_eq!(channel_block(avx2(4), 8, 2), 2);
+        assert_eq!(blocks(avx2(4), 2).0, 8);
     }
 
     #[test]
     fn an_accumulator_wider_than_the_budget_still_gets_a_block_of_one() {
-        assert_eq!(channel_block(avx2(8), 64, 16), 1);
+        assert_eq!(blocks(avx2(8), 64).0, 1);
+    }
+
+    #[test]
+    fn a_unit_spans_two_blocks_of_register_wide_accumulators() {
+        assert_eq!(blocks(avx2(4), 8), (8, 16));
+        assert_eq!(blocks(registers(512, 32, 4), 16), (16, 32));
     }
 }
