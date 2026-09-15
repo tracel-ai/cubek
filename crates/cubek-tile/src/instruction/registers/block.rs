@@ -9,13 +9,13 @@
 use cubecl::prelude::*;
 
 use crate::instruction::registers::horizontal;
-use crate::instruction::registers::lines::{Along, Folds, Lines, LinesExpand};
+use crate::instruction::registers::lines::{Along, Lines, LinesExpand, RunScales};
 use crate::*;
 
 /// `c += lhs · rhs` over the block, walked as the runs its scales cover.
 ///
 /// A run is the lines of the contraction one scale holds for ([`Span::run`]). At the top of a
-/// run every scale line it needs is read, once, and held ([`Lines::folds`]); the walk then steps
+/// run every scale line it needs is read, once, and held ([`Lines::run_scales`]); the walk then steps
 /// the fields of a line along the contraction, then the lines of a field, and builds every index
 /// out of them — `line = (run · fields + field) · lines + l`. The field a line works under is
 /// therefore a constant because the walk stepped it, not because anything resolved it, and an
@@ -85,8 +85,8 @@ pub(crate) fn contract<
     let fixed = comptime!(folded || (lane_fanout && lw > 1) || lw == 1);
 
     for r in 0..comptime!(lines / run) {
-        let lhs_folds = lhs.folds(lhs_count, r as u32);
-        let rhs_folds = rhs.folds(rhs_count, r as u32);
+        let lhs_scales = lhs.run_scales(lhs_count, r as u32);
+        let rhs_scales = rhs.run_scales(rhs_count, r as u32);
         #[unroll]
         for field in 0..fields {
             for l in 0..per_field {
@@ -95,8 +95,8 @@ pub(crate) fn contract<
                     rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                         lhs,
                         rhs,
-                        &lhs_folds,
-                        &rhs_folds,
+                        &lhs_scales,
+                        &rhs_scales,
                         c,
                         &mut b,
                         0usize,
@@ -116,8 +116,8 @@ pub(crate) fn contract<
                         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                             lhs,
                             rhs,
-                            &lhs_folds,
-                            &rhs_folds,
+                            &lhs_scales,
+                            &rhs_scales,
                             c,
                             &mut b,
                             line * lw + lane,
@@ -137,8 +137,8 @@ pub(crate) fn contract<
                         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
                             lhs,
                             rhs,
-                            &lhs_folds,
-                            &rhs_folds,
+                            &lhs_scales,
+                            &rhs_scales,
                             c,
                             &mut b,
                             line * lw + lane,
@@ -161,8 +161,8 @@ pub(crate) fn contract<
     // A line width that does not divide `kc` leaves a partial last line, which the assert above
     // holds to factors with no scales. Its lane count is comptime too, so the tail is
     // straight-line code rather than a second, dynamic walk.
-    let no_lhs = lhs.folds(lhs_count, 0u32);
-    let no_rhs = rhs.folds(rhs_count, 0u32);
+    let no_lhs = lhs.run_scales(lhs_count, 0u32);
+    let no_rhs = rhs.run_scales(rhs_count, 0u32);
     #[unroll]
     for lane in 0..tail {
         rank1_update::<E, EL, L, ER, V, Lhs, Rhs>(
@@ -210,8 +210,8 @@ fn rank1_update<
 >(
     lhs: &Lhs,
     rhs: &Rhs,
-    lhs_folds: &Folds<Lhs::S, Lhs::W>,
-    rhs_folds: &Folds<Rhs::S, Rhs::W>,
+    lhs_scales: &RunScales<Lhs::S, Lhs::W>,
+    rhs_scales: &RunScales<Rhs::S, Rhs::W>,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     k: usize,
@@ -231,7 +231,7 @@ fn rank1_update<
         #[unroll(unroll)]
         for n in 0..nr {
             let line = rhs.line((n as u32, k_line));
-            b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(line, n, field));
+            b[n] = Vector::<E, V>::cast_from(rhs_scales.apply::<ER, V>(line, n, field));
         }
     } else {
         // The rhs lines along the accumulator, so its scale lines run along the columns: a
@@ -242,7 +242,7 @@ fn rank1_update<
             #[unroll(unroll)]
             for n in 0..nr {
                 let line = rhs.line((k as u32, n as u32));
-                b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(line, n, 0usize));
+                b[n] = Vector::<E, V>::cast_from(rhs_scales.apply::<ER, V>(line, n, 0usize));
             }
         } else {
             #[unroll]
@@ -254,7 +254,7 @@ fn rank1_update<
                         let n =
                             comptime!((column_run * span.fields + column_field) * span.lines + l);
                         let line = rhs.line((k as u32, comptime!(n as u32).runtime()));
-                        b[n] = Vector::<E, V>::cast_from(rhs_folds.apply::<ER, V>(
+                        b[n] = Vector::<E, V>::cast_from(rhs_scales.apply::<ER, V>(
                             line,
                             column_run,
                             column_field,
@@ -266,7 +266,7 @@ fn rank1_update<
     }
     #[unroll(unroll)]
     for i in 0..mr {
-        let line = lhs_folds.apply::<EL, L>(lhs.line((i as u32, k_line)), i, field);
+        let line = lhs_scales.apply::<EL, L>(lhs.line((i as u32, k_line)), i, field);
         let a = if comptime!(contracted_per_step > 1) {
             Vector::<E, V>::cast_from(line)
         } else if comptime!(fixed.is_some()) {

@@ -105,21 +105,21 @@ impl Span {
     }
 }
 
-/// Every scale line one run needs, held by the walk that reads them: one per row or column of
-/// the block, read once at the top of the run.
+/// Every scale line one run holds, read once at the top of the run: one per row or column of
+/// the block.
 ///
 /// Absent is a factor with no scales, and it emits nothing: its values go through as they lie.
 #[derive(CubeType)]
-pub struct Folds<S: Numeric, W: Size> {
+pub struct RunScales<S: Numeric, W: Size> {
     /// The scale lines of this run, where the factor carries any.
     lines: ComptimeOption<Array<Vector<S, W>>>,
 }
 
 #[cube]
-impl<S: Numeric, W: Size> Folds<S, W> {
+impl<S: Numeric, W: Size> RunScales<S, W> {
     /// A factor with no scales.
     pub fn none() -> Self {
-        Folds::<S, W> {
+        RunScales::<S, W> {
             lines: ComptimeOption::new_None(),
         }
     }
@@ -160,9 +160,9 @@ pub trait Lines: CubeType {
     /// This operand's values at `pos`.
     fn line(&self, pos: Coords2d) -> Vector<Self::E, Self::V>;
 
-    /// The scale lines run `run` needs — `count` of them, one per row or column of the block
+    /// The scale lines run `run` holds — `count` of them, one per row or column of the block
     /// ([`Span::count`]) — or nothing where this operand carries none.
-    fn folds(&self, #[comptime] count: usize, run: u32) -> Folds<Self::S, Self::W>;
+    fn run_scales(&self, #[comptime] count: usize, run: u32) -> RunScales<Self::S, Self::W>;
 
     /// How this operand's lines are grouped under its scales.
     fn span(&self) -> comptime_type!(Span);
@@ -179,8 +179,8 @@ impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
         self.read(pos)
     }
 
-    fn folds(&self, #[comptime] _count: usize, _run: u32) -> Folds<E, Const<1>> {
-        Folds::<E, Const<1>>::none()
+    fn run_scales(&self, #[comptime] _count: usize, _run: u32) -> RunScales<E, Const<1>> {
+        RunScales::<E, Const<1>>::none()
     }
 
     fn span(&self) -> comptime_type!(Span) {
@@ -234,7 +234,7 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
 
     /// A line along the contraction sits at `(major, run)`; one along the columns at
     /// `(run · steps, major)` — any row of the block the run covers names its scale.
-    fn folds(&self, #[comptime] count: usize, run: u32) -> Folds<S::E, S::V> {
+    fn run_scales(&self, #[comptime] count: usize, run: u32) -> RunScales<S::E, S::V> {
         #[comptime]
         match &self.scales {
             ComptimeOption::Some(scales) => {
@@ -248,11 +248,11 @@ impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
                     };
                     lines[major] = scales.line(pos);
                 }
-                Folds::<S::E, S::V> {
+                RunScales::<S::E, S::V> {
                     lines: ComptimeOption::new_Some(lines),
                 }
             }
-            ComptimeOption::None => Folds::<S::E, S::V>::none(),
+            ComptimeOption::None => RunScales::<S::E, S::V>::none(),
         }
     }
 
@@ -304,8 +304,8 @@ impl<'a, S: Numeric, W: Size> Lines for CombinedScales<'a, S, W> {
 
     /// A scales operand carries its own coarser levels in the line it hands back, so it folds
     /// nothing further.
-    fn folds(&self, #[comptime] _count: usize, _run: u32) -> Folds<S, Const<1>> {
-        Folds::<S, Const<1>>::none()
+    fn run_scales(&self, #[comptime] _count: usize, _run: u32) -> RunScales<S, Const<1>> {
+        RunScales::<S, Const<1>>::none()
     }
 
     /// How a scale line is spent belongs to whoever reads it: this is the line, not the grouping.
