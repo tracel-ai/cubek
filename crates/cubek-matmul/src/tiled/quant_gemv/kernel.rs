@@ -64,16 +64,15 @@ impl QuantGemvBlueprint {
         Level::planes(&[(M, self.rows_per_plane)])
     }
 
-    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes interleaving the
-    /// contraction between them. Interleaved on `(KB, KI)`, so the lanes of a group read
-    /// neighbouring words. The lane counts are the blueprint's, derived on the host from the
-    /// plane width: their product with the row groups is exactly it.
+    /// The fold: `rows_per_lane` rows per aligned lane group, the group's lanes taking turns at
+    /// the contraction, a word of scales each — every block that word covers, whole. The lane
+    /// count is the blueprint's, derived on the host from the plane width: its product with the
+    /// row groups is exactly it.
     pub fn lanes(&self, problem: &QuantGemvProblem) -> Level {
         Level::lanes(&[
             Cut::new(M, self.rows_per_lane).across(self.groups()),
-            Cut::new(KB, 1).across(self.block_lanes).interleaved(),
-            Cut::new(KI, problem.factor())
-                .across(self.inside_lanes)
+            Cut::new(KB, problem.scales_a_word)
+                .across(self.block_lanes)
                 .interleaved(),
         ])
     }

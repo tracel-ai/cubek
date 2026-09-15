@@ -126,9 +126,15 @@ pub(crate) fn combined_scales<'a, ES: Numeric, S: Size>(
         ));
         // Read once, here, which is once per region. A coarser level covers this whole region, so
         // it has no position of its own inside it; that it does is what the assert above says.
-        let one = level_above
-            .matrix_packed::<Const<1>>(comptime!(level.axes), mat)
-            .read(origin);
+        // Read as the word it lies in, and its own scale is the word's first field.
+        let above_width = level_above.vector_size();
+        let size!(AW) = above_width;
+        let one = Vector::<ES, Const<1>>::cast_from(
+            level_above
+                .matrix_packed::<AW>(comptime!(level.axes), mat)
+                .read(origin)
+                .extract(0usize),
+        );
         match comptime!(level.apply) {
             Apply::Product => coarser *= one,
         }

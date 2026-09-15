@@ -99,15 +99,6 @@ impl TileSpec {
         })
     }
 
-    /// [`packed`](Self::packed) served `width` values a line out of one bound word, for a reader
-    /// stepping one value at a time: a scales operand stored as bytes is read this way.
-    pub fn subword(self, field: impl Into<Field>, width: usize) -> Self {
-        self.packing(Packing::Subword {
-            field: field.into(),
-            width,
-        })
-    }
-
     /// [`packed`](Self::packed) for a caller holding the [`Packing`] itself, which the launch
     /// derivation does.
     pub fn packing(mut self, packing: Packing) -> Self {

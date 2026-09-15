@@ -2180,19 +2180,12 @@ fn e4m3_fields_unpack_on_read() {
 
 /// **Scales stored as `ue8m0` bytes are read in their own width.** Four codes to a word, the
 /// scales operand bound one word wide and served one scale at a time
-/// ([`TileSpec::subword`]), on the lhs of the memory-backed leaf, which steps the block index at
+/// ([`TileSpec::packed`]), on the lhs of the memory-backed leaf, which steps the block index at
 /// runtime. A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is
 /// exact.
 #[test]
 fn ue8m0_scales_are_read_as_bytes() {
     check_ue8m0_scales(8, 4);
-}
-
-/// The same with two blocks a row: a row of scales is half a word, so a word straddles two
-/// rows and the slot is the line's index through the whole layout, not its column.
-#[test]
-fn byte_scale_rows_need_no_word_alignment() {
-    check_ue8m0_scales(16, 2);
 }
 
 fn check_ue8m0_scales(block: usize, blocks: usize) {
@@ -2255,7 +2248,8 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            // Four scales a word, so a region is the four blocks one read of them covers.
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 4), (KI, factor)])],
         ),
         KernelForm::Static,
     );
@@ -2287,7 +2281,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            TileSpec::new(w_projection.scales_per(KB)).subword(Fp8Format::UE8M0, 1),
+            TileSpec::new(w_projection.scales_per(KB)).packed(Fp8Format::UE8M0),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -2400,7 +2394,13 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            // A region is the blocks one word of scales covers.
+            vec![Level::walk(&[
+                (M, rows),
+                (N, cols),
+                (KB, float_field(kind).per_word()),
+                (KI, factor),
+            ])],
         ),
         KernelForm::Static,
     );
@@ -2432,7 +2432,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
-            TileSpec::new(w_projection.scales_per(KB)).subword(kind, 1),
+            TileSpec::new(w_projection.scales_per(KB)).packed(kind),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -2477,7 +2477,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         .enforce();
         return;
     }
-    // Four cubes of one packed line each, so a row of the scales is one word of four codes.
+    // Four packed lines of columns, so a row of the scales is one word of four codes.
     let (cols, bn) = (factor * 4, factor);
     let blocks_n = cols / bn;
 
@@ -2530,7 +2530,8 @@ fn e4m3_scales_reach_the_promoted_block() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            // One read of the scales is four column blocks, so one cube owns all four.
+            vec![Level::cubes(&[(NB, 4)]), Level::walk(&[(KB, 1)])],
         ),
         KernelForm::Static,
     );
@@ -2567,7 +2568,7 @@ fn e4m3_scales_reach_the_promoted_block() {
                 &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
-            .subword(QuantValue::E4M3, 1),
+            .packed(QuantValue::E4M3),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),
@@ -2641,7 +2642,8 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
     let s: Vec<f32> = (0..blocks_k * blocks_n)
         .map(|i| (i as f32 + 1.0) / 2.0)
         .collect();
-    let codes: Vec<u8> = s.iter().map(|&v| e4m3::from_f32(v).to_bits()).collect();
+    // The landing reads one scale a line, so its scales fill their word: `f32`, as its bits.
+    let scale_words: Vec<u32> = s.iter().map(|v| v.to_bits()).collect();
 
     let dtype = f32::elem_type_native();
     let (x_tensor, _) = TestInput::builder(client.clone(), shape![rows, depth])
@@ -2655,7 +2657,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
     );
     let s_tensor = TensorHandle::new_contiguous(
         vec![blocks_k, blocks_n],
-        client.create(Bytes::from_elems(words_of_bytes(&codes))),
+        client.create(Bytes::from_elems(scale_words)),
         u32::elem_type_native(),
     );
     let c = TestInput::builder(client.clone(), shape![rows, cols])
@@ -2715,7 +2717,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 &[KB, KI, NB],
                 &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(NB)],
             ))
-            .subword(QuantValue::E4M3, 1),
+            .packed(FloatKind::F32),
         ),
         TileArgLaunch::new(
             c.clone().binding().into_tensor_arg(),

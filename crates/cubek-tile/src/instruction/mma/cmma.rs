@@ -254,12 +254,13 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             comptime!(read.side),
         );
         // The landing reads one scale per line: several at a time would need each value line's
-        // ordinal along the shared edge, and the landing walks its lines at runtime.
+        // ordinal along the shared edge, and the landing still walks its lines at runtime. Until
+        // it builds them, a scale it takes fills its word.
         let level = comptime!(level.expect("mma: a scaled factor carries a level"));
         comptime!(assert!(
             level.lanes == 1,
-            "mma: the landing reads one scale a line; bind the scales one wide for the fragment \
-             leaf"
+            "mma: the landing reads one scale a line, so its scales fill their word; store them \
+             at a width that does, or take the register instruction"
         ));
 
         let vw = values.vector_size();
