@@ -10,6 +10,14 @@ use cubecl::{
 
 use crate::{components::ConvSetupError, launch::ConvolutionArgs};
 
+/// Half of AVX2's sixteen vector registers, so the input read, the weight loads and the products
+/// keep the rest. An accumulator that does not fit spills, and every add becomes a load and a store.
+const ACCUMULATOR_REGISTERS: usize = 8;
+
+/// Not `load_width`, which cubecl-cpu reports as 512 on every CPU; on AVX2 that is two registers.
+/// Read the hardware instead once it reports the register width.
+const REGISTER_BITS: usize = 256;
+
 #[cube]
 fn decompose_linear<I: FastDivmodInt>(pos: I, shape: &Sequence<FastDivmod<I>>) -> (I, Sequence<I>) {
     let rank = comptime![shape.len()];
@@ -52,6 +60,7 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
     shape_out_c: FastDivmod<u32>,
     #[comptime] has_padding: bool,
     #[comptime] accumulate_lanes: bool,
+    #[comptime] channel_block: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     if !output.is_in_bounds(ABSOLUTE_POS) {
@@ -105,18 +114,60 @@ fn direct_conv2d_kernel<E: Numeric, NIn: Size, NOut: Size>(
         stride_oc,
     };
 
-    kernel_loop(
-        input,
-        weight,
-        &mut sum,
-        in_offs,
-        true,
-        weight_offs,
-        &loop_params,
-        0usize,
-        has_padding,
-        accumulate_lanes,
-    );
+    let vector_size_in = input.vector_size();
+
+    if accumulate_lanes {
+        #[unroll]
+        for bi in 0..comptime![vector_size_out / channel_block] {
+            let base_v = bi * channel_block;
+            let mut lanes = Array::<Vector<E, NIn>>::new(channel_block);
+
+            kernel_loop(
+                input,
+                weight,
+                &mut sum,
+                &mut lanes,
+                in_offs,
+                true,
+                weight_offs,
+                &loop_params,
+                0usize,
+                has_padding,
+                accumulate_lanes,
+                base_v,
+            );
+
+            #[unroll]
+            for j in 0..channel_block {
+                let mut channel = sum.extract(base_v + j);
+
+                #[unroll]
+                for i in 0..vector_size_in {
+                    channel += lanes[j].extract(i);
+                }
+
+                sum.insert(base_v + j, channel);
+            }
+        }
+    } else {
+        // Unread: `accumulate_per_step` sums into `sum`, and the loop still takes an accumulator.
+        let mut lanes = Array::<Vector<E, NIn>>::new(1usize);
+
+        kernel_loop(
+            input,
+            weight,
+            &mut sum,
+            &mut lanes,
+            in_offs,
+            true,
+            weight_offs,
+            &loop_params,
+            0usize,
+            has_padding,
+            accumulate_lanes,
+            0usize,
+        );
+    }
 
     output.write(ABSOLUTE_POS, sum);
 }
@@ -139,6 +190,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
     sum: &mut Vector<E, NOut>,
+    lanes: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
@@ -146,6 +198,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
     #[comptime] kernel_dim: usize,
     #[comptime] has_padding: bool,
     #[comptime] accumulate_lanes: bool,
+    #[comptime] base_v: usize,
 ) {
     if comptime![kernel_dim < params.kernel_shape.len()] {
         let out_idx = *params.out_pos.index(kernel_dim);
@@ -168,6 +221,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
                 input,
                 weight,
                 sum,
+                lanes,
                 in_offs,
                 in_bounds,
                 weight_offs,
@@ -175,6 +229,7 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
                 comptime![kernel_dim + 1],
                 has_padding,
                 accumulate_lanes,
+                base_v,
             );
         }
     } else {
@@ -182,12 +237,14 @@ fn kernel_loop<E: Numeric, NIn: Size, NOut: Size>(
             input,
             weight,
             sum,
+            lanes,
             in_offs,
             in_bounds,
             weight_offs,
             params.in_c_per_group,
             params.stride_oc,
             accumulate_lanes,
+            base_v,
         );
     }
 }
@@ -197,23 +254,26 @@ fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
     sum: &mut Vector<E, NOut>,
+    lanes: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     in_bounds: bool,
     weight_offs: usize,
     in_c_per_group: u32,
     stride_oc: usize,
     #[comptime] accumulate_lanes: bool,
+    #[comptime] base_v: usize,
 ) {
     if in_bounds {
         if accumulate_lanes {
             accumulate_in_lanes(
                 input,
                 weight,
-                sum,
+                lanes,
                 in_offs,
                 weight_offs,
                 in_c_per_group,
                 stride_oc,
+                base_v,
             );
         } else {
             accumulate_per_step(
@@ -229,39 +289,31 @@ fn kernel_loop_inner<E: Numeric, NIn: Size, NOut: Size>(
     }
 }
 
-/// One input read per output channel buys a channel loop with no dependency chain.
+/// One input read serves a whole block of output channels, and the block's accumulator outlives
+/// the kernel window, so a channel step costs one input load per block and never a fold.
 #[cube]
-fn accumulate_in_lanes<E: Numeric, NIn: Size, NOut: Size>(
+fn accumulate_in_lanes<E: Numeric, NIn: Size>(
     input: &Tensor<Vector<E, NIn>>,
     weight: &Tensor<Vector<E, NIn>>,
-    sum: &mut Vector<E, NOut>,
+    lanes: &mut Array<Vector<E, NIn>>,
     in_offs: usize,
     weight_offs: usize,
     in_c_per_group: u32,
     stride_oc: usize,
+    #[comptime] base_v: usize,
 ) {
     let vector_size_in = input.vector_size();
-    let vector_size_out = sum.vector_size();
+    let block = lanes.len();
 
-    #[unroll]
-    for v in 0..vector_size_out {
-        let mut lanes = Vector::<E, NIn>::zero();
-        let weight_offs = weight_offs + v * stride_oc;
-
-        for in_c in range_stepped(0, in_c_per_group, vector_size_in as u32) {
-            let val = input[(in_offs + in_c as usize) / vector_size_in];
-
-            lanes += val * weight[(weight_offs + in_c as usize) / vector_size_in];
-        }
-
-        let mut channel = sum.extract(v);
+    for in_c in range_stepped(0, in_c_per_group, vector_size_in as u32) {
+        let val = input[(in_offs + in_c as usize) / vector_size_in];
 
         #[unroll]
-        for i in 0..vector_size_in {
-            channel += lanes.extract(i);
-        }
+        for j in 0..block {
+            let weight_offs = weight_offs + (base_v + j) * stride_oc + in_c as usize;
 
-        sum.insert(v, channel);
+            lanes[j] += val * weight[weight_offs / vector_size_in];
+        }
     }
 }
 
@@ -356,6 +408,7 @@ pub fn launch_direct<const N: usize>(
     let accumulate_lanes = client.properties().hardware.plane_size_max == 1
         && vector_size_in > 1
         && weight.shape[dim_c] > vector_size_in as usize;
+    let channel_block = channel_block(vector_size_in, vector_size_out, dtype.size() * 8);
 
     let shape_out = out.shape[1..dim_c].iter().map(|s| *s as u32).collect();
     let shape_out_c = out_channels as u32;
@@ -396,11 +449,20 @@ pub fn launch_direct<const N: usize>(
             shape_out_c,
             check_spatial_bounds,
             accumulate_lanes,
+            channel_block,
             dtype,
         )
     };
 
     Ok(())
+}
+
+/// How many output channels share one input read. A power of two, so it divides the output vector.
+fn channel_block(vector_size_in: usize, vector_size_out: usize, elem_bits: usize) -> usize {
+    let registers_per_accumulator = (vector_size_in * elem_bits).div_ceil(REGISTER_BITS);
+    let block = (ACCUMULATOR_REGISTERS / registers_per_accumulator).max(1);
+
+    (1 << block.ilog2()).min(vector_size_out)
 }
 
 fn should_check_spatial_bounds<const N: usize>(
@@ -417,4 +479,35 @@ fn should_check_spatial_bounds<const N: usize>(
             - begin;
         first < 0 || last >= in_shape[dim] as i64
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_512_bit_accumulator_spends_two_registers() {
+        assert_eq!(channel_block(16, 16, 32), 4);
+        assert_eq!(channel_block(32, 32, 16), 4);
+    }
+
+    #[test]
+    fn a_register_wide_accumulator_spends_one() {
+        assert_eq!(channel_block(8, 16, 32), 8);
+    }
+
+    #[test]
+    fn a_narrow_accumulator_still_spends_a_whole_register() {
+        assert_eq!(channel_block(2, 16, 32), 8);
+    }
+
+    #[test]
+    fn the_block_never_outgrows_the_output_vector() {
+        assert_eq!(channel_block(8, 2, 32), 2);
+    }
+
+    #[test]
+    fn an_accumulator_wider_than_the_budget_still_gets_a_block_of_one() {
+        assert_eq!(channel_block(64, 16, 64), 1);
+    }
 }
