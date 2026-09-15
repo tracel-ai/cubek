@@ -496,21 +496,25 @@ impl<T: Numeric> MemData<T> {
                     ))
                     .view(FlatLayout::new(src.window.extent.clone()));
                 let mut d = self.flat_mut::<W>();
-                let total = d.shape();
+                // A word and its scale are read once, and the lines under them are built: the
+                // `lpw` lines of word `word` start at `word · lpw`, each `w` fields further in.
+                let total = d.shape() / lpw;
                 let workers = CUBE_DIM as usize;
-                let mut i = UNIT_POS as usize;
-                while i < total {
-                    let word = words.read(i / lpw).extract(0usize);
-                    let scale = scales.read(i / lpw);
-                    let first = ((i % lpw) * w) as u32;
-                    let vals = unpack_fields::<T, W>(
-                        word,
-                        first,
-                        info.table.clone(),
-                        comptime!(info.scheme),
-                    );
-                    d.write(i, vals * Vector::new(T::cast_from(scale)));
-                    i += workers;
+                let mut word = UNIT_POS as usize;
+                while word < total {
+                    let bits = words.read(word).extract(0usize);
+                    let scale = Vector::new(T::cast_from(scales.read(word)));
+                    #[unroll]
+                    for l in 0..lpw {
+                        let vals = unpack_fields::<T, W>(
+                            bits,
+                            comptime!((l * w) as u32),
+                            info.table.clone(),
+                            comptime!(info.scheme),
+                        );
+                        d.write(word * lpw + l, vals * scale);
+                    }
+                    word += workers;
                 }
             }
             ComptimeOption::None => {
