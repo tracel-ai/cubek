@@ -15,11 +15,25 @@ use crate::{
     },
 };
 use cubecl::{prelude::*, std::tensor::r#virtual::VirtualTensor};
+use cubek_std::launch::Accumulation;
 
 /// How many candidate slots a top-k thread may keep across its vector lanes
-/// before the reduce reads its input scalar instead: `k * vector_size` values
-/// and as many coordinates live per thread.
+/// before the reduce reads its input scalar instead, on a device with no fixed
+/// register set: `k * vector_size` values and as many coordinates live per thread.
 const TOPK_VECTOR_SLOTS: usize = 32;
+
+/// Whether a vectorized top-k keeps more candidates live than the device holds without spilling.
+fn topk_candidates_spill(client: &Client, problem: &ReduceProblem, vector_size: usize) -> bool {
+    let (ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k)) = problem.instruction
+    else {
+        return false;
+    };
+
+    match client.properties().hardware.vector_register_count {
+        Some(registers) => problem.instruction.live_vectors() > registers as usize,
+        None => k * vector_size > TOPK_VECTOR_SLOTS,
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReduceDtypes {
@@ -96,7 +110,11 @@ fn prepare_reduce_launch(
         input,
         output,
         reduce_axis,
-        problem.dtypes.input,
+        Accumulation {
+            load: problem.dtypes.input,
+            live_elems: &problem.live_elems(),
+            live_vectors: problem.instruction.live_vectors(),
+        },
         vectorization_mode,
         &strategy.vectorization,
     );
@@ -121,7 +139,7 @@ fn prepare_reduce_launch(
     // 2.4x faster on GP100 (4.4 ms -> 1.8 ms).
     let (vector_size_input, vector_size_output) = match &problem.instruction {
         ReduceOperationConfig::TopK(k) | ReduceOperationConfig::ArgTopK(k)
-            if *k * vector_size_input > TOPK_VECTOR_SLOTS
+            if topk_candidates_spill(client, &problem, vector_size_input)
                 || *k * *k > crate::components::instructions::TOPK_UNROLL_BUDGET =>
         {
             (1, 1)

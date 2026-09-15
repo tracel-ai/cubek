@@ -79,6 +79,37 @@ impl ReduceOperationConfig {
         (value_slices * acc_elem_size + index_slices * index_elem_size) * vector_size
     }
 
+    /// Vectors one fold step keeps live at its peak.
+    pub fn live_vectors(&self) -> usize {
+        match self {
+            ReduceOperationConfig::Sum
+            | ReduceOperationConfig::Prod
+            | ReduceOperationConfig::Mean => 2,
+            // The accumulator and the item, a NaN mask and a comparison mask.
+            ReduceOperationConfig::MaxAbs
+            | ReduceOperationConfig::Max
+            | ReduceOperationConfig::Min
+            | ReduceOperationConfig::Any
+            | ReduceOperationConfig::All => 4,
+            // Both values and both coordinates, and the keep, untouched and tie masks.
+            ReduceOperationConfig::ArgMax | ReduceOperationConfig::ArgMin => 7,
+            // The slots, the candidate, the value it displaces and a comparison mask.
+            ReduceOperationConfig::TopK(k) => k + 3,
+            // As top-k with a coordinate beside each value, and the tie and coordinate masks.
+            ReduceOperationConfig::ArgTopK(k) => 2 * k + 5,
+        }
+    }
+
+    /// Whether the fold carries a `u32` coordinate beside every value.
+    pub fn tracks_coordinates(&self) -> bool {
+        matches!(
+            self,
+            ReduceOperationConfig::ArgMax
+                | ReduceOperationConfig::ArgMin
+                | ReduceOperationConfig::ArgTopK(_)
+        )
+    }
+
     /// Computes the best case precision for the given config.
     pub fn precision(&self, input: ElemType, output: Option<ElemType>) -> ReduceDtypes {
         match self {
