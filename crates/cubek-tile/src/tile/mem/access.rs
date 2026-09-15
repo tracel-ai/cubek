@@ -823,6 +823,15 @@ impl<T: Numeric> MemData<T> {
         self.store.buffer_mut().slice_mut(offset, end)
     }
 
+    /// Whether this store was opened with a landing ([`Tile::with_landing`]).
+    pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
+        #[comptime]
+        match &self.landing {
+            ComptimeOption::Some(_) => true,
+            ComptimeOption::None => false,
+        }
+    }
+
     /// This plane's landing window, opened by [`Tile::with_landing`].
     pub(crate) fn landing(&self) -> Shared<[T]> {
         #[comptime]
