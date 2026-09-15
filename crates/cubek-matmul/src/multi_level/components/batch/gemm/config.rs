@@ -92,6 +92,34 @@ impl Variant {
         }
     }
 
+    /// Vectors a K step holds in registers beside the accumulators. `Dot` holds the
+    /// line its block shares and the line of the cell it adds into; an outer product
+    /// holds its K-vector, one broadcast scalar of it, and the accumulator's line.
+    pub fn operand_vectors(self) -> usize {
+        match self {
+            Variant::Dot => 2,
+            Variant::OuterN | Variant::OuterM => 3,
+        }
+    }
+
+    /// The output axis a plane's block of accumulators runs along: the outer
+    /// products' vector axis, and for `Dot` the axis its planes split.
+    pub fn block_axis(self, planes_split: PlanesSplit) -> PlanesSplit {
+        match self {
+            Variant::Dot => planes_split,
+            Variant::OuterN => PlanesSplit::N,
+            Variant::OuterM => PlanesSplit::M,
+        }
+    }
+
+    /// Output cells one accumulator covers along the block axis.
+    pub fn cells_per_accumulator(self, vector_size: usize) -> usize {
+        match self {
+            Variant::Dot => 1,
+            Variant::OuterN | Variant::OuterM => vector_size,
+        }
+    }
+
     /// The layout the kernel reads lhs in. A vector operand is contiguous
     /// either way, so it rides its variant's matrix layout.
     pub fn lhs_layout(self) -> MatrixLayout {
@@ -136,6 +164,7 @@ pub struct GemmConfig {
     pub(crate) num_planes: u32,
     pub(crate) variant: Variant,
     pub(crate) planes_split: PlanesSplit,
+    pub(crate) accumulators: u32,
     pub(crate) check_bounds: CheckBounds,
 }
 

@@ -5,7 +5,11 @@ use std::{
     fmt::Display,
 };
 
-use cubecl::{CubeCount, CubeDim, client::Client, ir::AddressType};
+use cubecl::{
+    CubeCount, CubeDim,
+    client::Client,
+    ir::{AddressType, HardwareProperties},
+};
 use cubek_std::cube_count::{CubeCountPlan, CubeCountStrategy, GlobalOrder, HypercubeBlueprint};
 
 use crate::{
@@ -41,14 +45,50 @@ impl Display for GemmStrategy {
 }
 
 /// Returns `(m_units, n_units)`: count of per-plane blocks along each
-/// output axis for the chosen variant. Outer-product variants pack
-/// `vector_size` cells per block along their natural-vector axis.
-fn output_units(problem: &MatmulProblem, variant: Variant, vector_size: usize) -> (usize, usize) {
-    match variant {
-        Variant::Dot => (problem.m, problem.n),
-        Variant::OuterN => (problem.m, problem.n / vector_size),
-        Variant::OuterM => (problem.m / vector_size, problem.n),
+/// output axis for the chosen variant. A block is `accumulators` of the
+/// variant's accumulators along its block axis and one cell along the other.
+fn output_units(
+    problem: &MatmulProblem,
+    variant: Variant,
+    planes_split: PlanesSplit,
+    vector_size: usize,
+    accumulators: usize,
+) -> (usize, usize) {
+    let block = variant.cells_per_accumulator(vector_size) * accumulators;
+    match variant.block_axis(planes_split) {
+        PlanesSplit::M => (problem.m / block, problem.n),
+        PlanesSplit::N => (problem.m, problem.n / block),
     }
+}
+
+/// How many accumulators a plane keeps: as many as fit the registers beside the
+/// operands, as a power of two whose block tiles its axis. Each is an independent
+/// latency chain, so throughput grows with the count until they spill.
+fn accumulators_per_plane(
+    problem: &MatmulProblem,
+    hardware: &HardwareProperties,
+    dtypes: &MatmulElems,
+    variant: Variant,
+    planes_split: PlanesSplit,
+    vector_size: usize,
+) -> usize {
+    let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
+        return 1;
+    };
+    let reserved = variant.operand_vectors() * registers.registers_for(vector_size);
+    let fitting = registers.vectors_fitting(vector_size, reserved).max(1);
+
+    let extent = match variant.block_axis(planes_split) {
+        PlanesSplit::M => problem.m,
+        PlanesSplit::N => problem.n,
+    };
+    let cells = variant.cells_per_accumulator(vector_size);
+
+    let mut accumulators = 1 << fitting.ilog2();
+    while accumulators > 1 && !extent.is_multiple_of(accumulators * cells) {
+        accumulators /= 2;
+    }
+    accumulators
 }
 
 impl Routine<()> for GemmRoutine {
@@ -128,8 +168,17 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                 let variant = MatmulOperandLayouts::from_problem(problem)?.variant()?;
                 let planes_split = variant.planes_split();
                 let vector_size = device_settings.vector_sizes.lhs;
+                let accumulators = accumulators_per_plane(
+                    problem,
+                    &properties.hardware,
+                    &dtypes,
+                    variant,
+                    planes_split,
+                    vector_size,
+                );
 
-                let (m_units, n_units) = output_units(problem, variant, vector_size);
+                let (m_units, n_units) =
+                    output_units(problem, variant, planes_split, vector_size, accumulators);
                 let split_units = match planes_split {
                     PlanesSplit::M => m_units,
                     PlanesSplit::N => n_units,
@@ -151,6 +200,7 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                         .build(),
                     variant,
                     planes_split,
+                    accumulators,
                     check_bounds,
                 };
 
@@ -180,7 +230,13 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
 
         let variant = blueprint.variant;
         let vector_size = device_settings.vector_sizes.lhs;
-        let (m_units, n_units) = output_units(problem, variant, vector_size);
+        let (m_units, n_units) = output_units(
+            problem,
+            variant,
+            blueprint.planes_split,
+            vector_size,
+            blueprint.accumulators,
+        );
         let (m_cubes, n_cubes) = match blueprint.planes_split {
             PlanesSplit::M => (
                 m_units.div_ceil(blueprint.num_planes) as u32,
@@ -206,5 +262,84 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
             address_type: problem.address_type,
             vector_sizes: device_settings.vector_sizes,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cubecl::{
+        frontend::Scalar,
+        ir::{AddressType, VectorSize},
+        zspace::shape,
+    };
+    use cubek_std::MatrixLayout;
+
+    fn hardware(load_width: u32, vector_register_count: Option<u32>) -> HardwareProperties {
+        HardwareProperties {
+            load_width,
+            vector_register_count,
+            plane_size_min: 1,
+            plane_size_max: 1,
+            max_bindings: u32::MAX,
+            max_shared_memory_size: 32 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 16,
+            max_cube_dim: (16, 16, 16),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: Some(16),
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: VectorSize::MAX,
+            cube_mma_reserved_shared_memory: 0,
+        }
+    }
+
+    fn vecmat(n: usize) -> (MatmulProblem, MatmulElems) {
+        let dtypes = MatmulElems::from_single_dtype(f32::elem_type_native());
+        let problem = MatmulProblem::from_parameters(
+            1,
+            n,
+            4096,
+            shape![1],
+            shape![1],
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            dtypes.as_global_elems(),
+            AddressType::U32,
+        );
+        (problem, dtypes)
+    }
+
+    fn accumulators(hardware: &HardwareProperties, n: usize, variant: Variant) -> usize {
+        let (problem, dtypes) = vecmat(n);
+        accumulators_per_plane(&problem, hardware, &dtypes, variant, PlanesSplit::N, 8)
+    }
+
+    /// Thirteen of AVX2's sixteen registers are left beside an outer product's operands, and a
+    /// block of eight is the widest power of two in them.
+    #[test]
+    fn an_avx2_plane_keeps_eight_f32_accumulators() {
+        let avx2 = hardware(256, Some(16));
+        assert_eq!(accumulators(&avx2, 4096, Variant::OuterN), 8);
+        assert_eq!(accumulators(&avx2, 4096, Variant::Dot), 8);
+    }
+
+    /// A block overhanging its axis would write past the output.
+    #[test]
+    fn a_block_narrows_until_it_tiles_the_axis() {
+        let avx2 = hardware(256, Some(16));
+        assert_eq!(accumulators(&avx2, 48, Variant::OuterN), 2);
+        assert_eq!(accumulators(&avx2, 12, Variant::Dot), 4);
+        assert_eq!(accumulators(&avx2, 8, Variant::OuterN), 1);
+    }
+
+    #[test]
+    fn a_device_without_a_register_budget_keeps_one_accumulator() {
+        assert_eq!(accumulators(&hardware(128, None), 4096, Variant::OuterN), 1);
     }
 }
