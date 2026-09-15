@@ -318,6 +318,8 @@ impl<Acc: Numeric> Tile<Acc> {
                         frags,
                         m_tiles: comptime!(p.m_tiles),
                         n_tiles: comptime!(p.n_tiles),
+                        rows: comptime!(p.rows),
+                        cols: comptime!(p.cols),
                         scratch: ComptimeOption::new_Some(
                             shared.clone().map(|s| &s[plane..plane + cells]),
                         ),
