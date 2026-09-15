@@ -12,9 +12,7 @@ use cubecl::{
     prelude::*,
 };
 
-use crate::instruction::registers::contract::{
-    ContractEdges, EdgeOrdinal, Side, combined_scales, level_of,
-};
+use crate::instruction::registers::contract::{ContractEdges, Side, combined_scales, level_of};
 use crate::instruction::registers::lines::{Lines, LinesExpand};
 use crate::*;
 
@@ -145,7 +143,6 @@ impl FragmentRead {
         let k = operands.contracted_extent(out);
         let layout = rhs_layout(rhs, lhs.axis_at(lhs.rank() - 1));
         let transposed = layout == MatrixLayout::ColMajor;
-        // The landing reads one scale a line, each line under its own constant ordinal.
         let edges = ContractEdges {
             mr: m,
             kc: k,
@@ -164,7 +161,6 @@ impl FragmentRead {
                 false => rw,
             },
             contracted_per_step: 1,
-            ordinal: EdgeOrdinal::Constant,
         };
         // The lhs window is `m × k` in the order it lies; the rhs is `k × n`, or its transpose
         // where the contraction is its trailing axis.
@@ -283,9 +279,9 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             let line = matrix.read((r, c));
             // A transposed window's line sits at the scales' column, and its row is the block.
             let scale = if comptime!(read.transposed) {
-                scale_lines.line((c * width, r / lps), 0usize)
+                scale_lines.line((c * width, r / lps))
             } else {
-                scale_lines.line((r, c / lps), 0usize)
+                scale_lines.line((r, c / lps))
             };
             let scaled = line * Vector::<E, VW>::cast_from(scale.extract(0usize));
             let base = (r * row_cells + c * width) as usize;

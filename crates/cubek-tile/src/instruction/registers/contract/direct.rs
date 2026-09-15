@@ -2,8 +2,8 @@
 
 use cubecl::prelude::*;
 
-use super::factor::{level_of, scale_width, scales_of, spread};
-use super::scale::{ContractEdges, EdgeOrdinal, Side};
+use super::factor::{level_of, scale_width, scales_of, span};
+use super::scale::{ContractEdges, Side};
 use super::shape::ContractShape;
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, Lines, ScaledLines};
@@ -134,14 +134,6 @@ fn nest<
         lw,
         aw,
         contracted_per_step,
-        // A step folding several contracted values takes them from one line at a runtime index;
-        // an unfolded one walks its lines under a constant ordinal.
-        ordinal: match contracted_per_step {
-            1 => EdgeOrdinal::Constant,
-            folded => EdgeOrdinal::Runtime(format!(
-                "a step folding {folded} contracted values walks no such edge"
-            )),
-        },
     });
     let lhs_level = level_of(
         lhs_levels,
@@ -159,8 +151,8 @@ fn nest<
         comptime!(edges),
         comptime!(Side::Rhs),
     );
-    let lhs_spread = comptime!(spread(lhs_level));
-    let rhs_spread = comptime!(spread(rhs_level));
+    let lhs_span = comptime!(span(lhs_level));
+    let rhs_span = comptime!(span(rhs_level));
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
@@ -219,14 +211,12 @@ fn nest<
         let lhs_f = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>::new(
             lhs_mat,
             scales_of::<LS, LSW>(lhs_levels, comptime!(lhs_level), mat),
-            comptime!(lhs_spread.0),
-            comptime!(lhs_spread.1),
+            comptime!(lhs_span),
         );
         let rhs_f = ScaledLines::<MatrixView<Vector<ER, V>>, CombinedScales<RS, RSW>>::new(
             rhs_mat,
             scales_of::<RS, RSW>(rhs_levels, comptime!(rhs_level), mat),
-            comptime!(rhs_spread.0),
-            comptime!(rhs_spread.1),
+            comptime!(rhs_span),
         );
 
         if comptime!(split_edge) {

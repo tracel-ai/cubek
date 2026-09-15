@@ -10,7 +10,7 @@ use cubecl::prelude::*;
 use super::scale::{
     Apply, ContractEdges, ScaleLevel, Side, check_scales_omit_rather_than_divide, check_scales_ride,
 };
-use crate::instruction::registers::lines::CombinedScales;
+use crate::instruction::registers::lines::{CombinedScales, Span};
 use crate::*;
 
 /// The width a factor's scales are read at: their own, or one where it carries none.
@@ -75,12 +75,14 @@ pub(crate) fn scales_of<'a, S: Numeric, SW: Size>(
     }
 }
 
-/// The value lines one scale covers and the scales one read serves, or one apiece where a factor
-/// carries no scales and its lines are its values'.
-pub(crate) fn spread(level: Option<ScaleLevel>) -> (usize, usize) {
+/// How a factor's lines group under its scales, or one line a run where it carries none.
+pub(crate) fn span(level: Option<ScaleLevel>) -> Span {
     match level {
-        Some(level) => (level.lines_per_scale, level.lanes),
-        None => (1, 1),
+        Some(level) => Span {
+            fields: level.lanes,
+            lines: level.lines_per_scale,
+        },
+        None => Span::PLAIN,
     }
 }
 

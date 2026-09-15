@@ -52,10 +52,10 @@ fn packed_copy<O: Numeric, V: Size>(
 /// `c = (w ⊗ s) · x` with `w` packed: the q4 kernel in this spelling. Three tensors, three
 /// operands, one verb.
 #[cube(launch)]
-fn packed_matmul<E: Numeric>(
+fn packed_matmul<E: Numeric, SW: Size>(
     w: &TileArg<'_, u32, Const<1>>,
     x: &TileArg<'_, E, Const<1>>,
-    scale: &TileArg<'_, E, Const<1>>,
+    scale: &TileArg<'_, E, SW>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
@@ -838,6 +838,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
+        1,
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -957,6 +958,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
+        1,
         TileArgLaunch::new(
             w_tensor.binding().into_tensor_arg(),
             TileSpec::new(Projection::new(
@@ -980,6 +982,131 @@ fn eight_bit_fields_contract_against_their_scales() {
         ),
         TileArgLaunch::new(
             s_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB],
+                &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
+            )),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        dtype,
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| w[m * depth + k] as f32 * s[m * blocks + k / block] * x[k * cols + n])
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+/// **The folded walk takes its scales several at a time.** A packed line folds a whole word
+/// per step, so nothing walks the contraction one value at a time — which used to mean the
+/// scales had to be read one at a time. They are read two to a line here, and each field of
+/// that line covers a block of the walk: the walk builds which, so no scalar read is needed.
+#[test]
+fn a_folded_walk_takes_its_scales_several_at_a_time() {
+    let (field, rows, cols, block, blocks) = (QuantValue::Q4S, 4, 4, 8, 4);
+    let depth = block * blocks;
+    let bits = field.size_bits();
+    let factor = 32 / bits;
+
+    let client = cubecl::test_device().client();
+    let max = client.properties().hardware.max_vector_size;
+    if factor > max {
+        TestOutcome::Validated(ValidationResult::Skipped(format!(
+            "device vectors cap at {max}, below the {factor}-value word"
+        )))
+        .enforce();
+        return;
+    }
+
+    let span = 1i32 << bits;
+    let w: Vec<i32> = (0..rows * depth)
+        .map(|i| -(span / 2) + (i as i32 % span))
+        .collect();
+    let mask = (1u32 << bits) - 1;
+    let words: Vec<u32> = w
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &v)| acc | ((v as u32 & mask) << (j * bits)))
+        })
+        .collect();
+    let x: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
+    // Halves, so an f16 scale would be exact too.
+    let s: Vec<f32> = (0..rows * blocks).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let dtype = f32::elem_type_native();
+    let w_tensor = TensorHandle::new_contiguous(
+        vec![rows, depth],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (x_tensor, _) = TestInput::builder(client.clone(), shape![depth, cols])
+        .dtype(dtype)
+        .custom(x.clone())
+        .generate_with_f32_host_data();
+    let (s_tensor, _) = TestInput::builder(client.clone(), shape![rows, blocks])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // A region sits inside one block, and the packed line is one word of it.
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            vec![Level::walk(&[(M, rows), (N, cols), (KB, 2), (KI, factor)])],
+        ),
+        KernelForm::Static,
+    );
+
+    packed_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        2,
+        TileArgLaunch::new(
+            w_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[
+                    PhysicalAxisMap::of(M),
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                ],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            x_tensor.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[
+                    PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]),
+                    PhysicalAxisMap::of(N),
+                ],
+            )),
+        ),
+        TileArgLaunch::new(
+            s_tensor.binding().into_tensor_arg(),
+            // One scale per `(row, block)`, two blocks a read: the width lands on `KB`.
             TileSpec::new(Projection::new(
                 &[M, KB],
                 &[PhysicalAxisMap::of(M), PhysicalAxisMap::of(KB)],
