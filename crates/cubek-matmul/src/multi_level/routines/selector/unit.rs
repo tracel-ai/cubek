@@ -13,10 +13,7 @@ use crate::{
     },
 };
 
-use cubecl::{
-    client::Client,
-    ir::{ElemType, VectorRegisters, VectorSize},
-};
+use cubecl::ir::{ElemType, HardwareProperties, VectorSize};
 use cubek_std::{
     MatrixLayout,
     cube_count::{CubeCountStrategy, GlobalOrder, HypercubeBlueprint, SmAllocation},
@@ -64,7 +61,7 @@ pub struct UnitTilingBlueprintOptions {
 
 /// Computes a [BatchMatmulBlueprint] depending on the problem kind
 pub fn infer_blueprint_unit(
-    client: &Client,
+    hardware: &HardwareProperties,
     problem: &MatmulProblem,
     plane_dim: u32,
     double_buffering: bool,
@@ -72,7 +69,6 @@ pub fn infer_blueprint_unit(
     options: UnitTilingBlueprintOptions,
     global_elems: &MatmulGlobalElems,
 ) -> (BatchMatmulBlueprint, MatmulElems) {
-    let hardware = &client.properties().hardware;
     let num_sms = hardware.num_streaming_multiprocessors;
     // Per-cube shared-memory budget; the selectors cap the tiling so the chosen
     // blueprint never over-requests it (see `selection`).
@@ -106,15 +102,15 @@ pub fn infer_blueprint_unit(
             * blueprint.tiling_scheme.elements_per_stage_along_n()
     };
 
-    // Lanes past one register run as independent chains, so the tile widens while its accumulator
-    // stays in registers. It narrows back while its stage overflows shared memory or covers fewer
-    // output cells than at the load width, since each cube pays a stage reload and its barriers.
+    // An accumulator row gains a chain per register, so the tile starts as wide as one row keeps in
+    // registers, then narrows while its stage overflows shared memory or covers fewer cells than at
+    // the load width. A tile of several rows accumulates in memory, so its stage alone sizes it.
     let widest_tile_size = registers.widest_lanes(1 + TILE_OPERAND_VECTORS) as u32;
     let blueprint = std::iter::successors(Some(widest_tile_size), |tile_size| Some(tile_size / 2))
         .take_while(|tile_size| *tile_size > load_tile_size)
         .map(select)
         .find(|blueprint| {
-            accumulator_in_registers(blueprint.tiling_scheme.tile_size, &registers)
+            has_lanes(blueprint.tiling_scheme.tile_size)
                 && unit_stage_smem_bytes(
                     &blueprint.tiling_scheme,
                     &dtypes,
@@ -128,18 +124,14 @@ pub fn infer_blueprint_unit(
     (blueprint, dtypes)
 }
 
-/// The lhs and rhs lines the register product holds beside its accumulator; the product itself
+/// The lhs and rhs lines the register product holds beside an accumulator row; the product itself
 /// fuses into the add.
 const TILE_OPERAND_VECTORS: usize = 2;
 
-/// Whether the accumulator, `m` rows of `n` lanes or one column when `n` is 1, stays in registers.
-/// A single cell is a scalar chain with no lanes to gain.
-fn accumulator_in_registers(tile: TileSize, registers: &VectorRegisters) -> bool {
-    let (rows, lanes) = match tile.n() {
-        1 => (1, tile.m()),
-        n => (tile.m(), n),
-    };
-    lanes > 1 && registers.widest_lanes(rows as usize + TILE_OPERAND_VECTORS) >= lanes as usize
+/// Whether the accumulator runs lanes, along `n`, or along `m` when `n` is 1. A single cell is a
+/// scalar chain that a wider tile only lengthens.
+fn has_lanes(tile: TileSize) -> bool {
+    tile.m().max(tile.n()) > 1
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -832,5 +824,72 @@ mod tests {
             unit_stage_smem_bytes(&scheme, &dtypes, 1, AccumulatorOperand::Present),
             absent + 64 * 64 * 4
         );
+    }
+
+    fn zen3(load_width: u32, vector_register_count: Option<u32>) -> HardwareProperties {
+        HardwareProperties {
+            load_width,
+            vector_register_count,
+            plane_size_min: 1,
+            plane_size_max: 1,
+            max_bindings: u32::MAX,
+            max_shared_memory_size: 32 * 1024,
+            max_cube_count: (u32::MAX, u32::MAX, u32::MAX),
+            max_units_per_cube: 16,
+            max_cube_dim: (16, 16, 16),
+            num_streaming_multiprocessors: None,
+            num_cpu_cores: Some(16),
+            last_level_cache_size: None,
+            num_tensor_cores: None,
+            min_tensor_cores_dim: None,
+            max_vector_size: VectorSize::MAX,
+            cube_mma_reserved_shared_memory: 0,
+        }
+    }
+
+    fn square_tiling(hardware: &HardwareProperties, vector_size: usize) -> TilingScheme {
+        use cubecl::{frontend::Scalar, ir::AddressType, zspace::shape};
+
+        let elems = MatmulElems::from_single_dtype(f32::elem_type_native()).as_global_elems();
+        let problem = MatmulProblem::from_parameters(
+            1024,
+            1024,
+            1024,
+            shape![2],
+            shape![2],
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            MatrixLayout::RowMajor,
+            None,
+            None,
+            elems.clone(),
+            AddressType::U32,
+        );
+        let vector_sizes = MatmulVectorSizes {
+            lhs: vector_size,
+            rhs: vector_size,
+            out: vector_size,
+        };
+        let (blueprint, _) = infer_blueprint_unit(
+            hardware,
+            &problem,
+            1,
+            false,
+            &vector_sizes,
+            UnitTilingBlueprintOptions::default(),
+            &elems,
+        );
+        blueprint.tiling_scheme
+    }
+
+    /// A general tile accumulates in memory, so its stage, and the cubes that reload it, must not
+    /// shrink with the load width: AVX2 gets the tiling a 512-bit load width gets.
+    #[test]
+    fn a_general_stage_does_not_follow_the_load_width() {
+        let wide = square_tiling(&zen3(512, None), 16);
+        let avx2 = square_tiling(&zen3(256, Some(16)), 8);
+        assert_eq!(avx2.tile_size, wide.tile_size);
+        assert_eq!(avx2.partition_size, wide.partition_size);
+        assert_eq!(avx2.stage_size, wide.stage_size);
     }
 }
