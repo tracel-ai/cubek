@@ -61,6 +61,10 @@ fn output_units(
     }
 }
 
+/// The K-vector, its broadcast scalar and the accumulator's line an outer product holds in
+/// registers beside its accumulators.
+const OUTER_OPERAND_VECTORS: usize = 3;
+
 /// How many accumulators a plane keeps: as many as fit the registers beside the
 /// operands, as a power of two whose block tiles its axis. Each is an independent
 /// latency chain, so throughput grows with the count until they spill.
@@ -72,10 +76,15 @@ fn accumulators_per_plane(
     planes_split: PlanesSplit,
     vector_size: usize,
 ) -> usize {
+    // Each of Dot's accumulators reads its own K-contiguous line, so a block would split one
+    // coalesced stream into as many streams as accumulators.
+    if variant == Variant::Dot {
+        return 1;
+    }
     let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
         return 1;
     };
-    let reserved = variant.operand_vectors() * registers.registers_for(vector_size);
+    let reserved = OUTER_OPERAND_VECTORS * registers.registers_for(vector_size);
     let fitting = registers.vectors_fitting(vector_size, reserved).max(1);
 
     let extent = match variant.block_axis(planes_split) {
@@ -339,7 +348,16 @@ mod tests {
     fn an_avx2_plane_keeps_eight_f32_accumulators() {
         let avx2 = hardware(256, Some(16));
         assert_eq!(accumulators(&avx2, 4096, Variant::OuterN), 8);
-        assert_eq!(accumulators(&avx2, 4096, Variant::Dot), 8);
+    }
+
+    /// A block of dot products reads one line per accumulator, which breaks the stream the
+    /// single accumulator walks.
+    #[test]
+    fn a_dot_plane_keeps_one_accumulator() {
+        assert_eq!(
+            accumulators(&hardware(256, Some(16)), 4096, Variant::Dot),
+            1
+        );
     }
 
     /// A block overhanging its axis would write past the output.
@@ -347,7 +365,6 @@ mod tests {
     fn a_block_narrows_until_it_tiles_the_axis() {
         let avx2 = hardware(256, Some(16));
         assert_eq!(accumulators(&avx2, 48, Variant::OuterN), 2);
-        assert_eq!(accumulators(&avx2, 12, Variant::Dot), 4);
         assert_eq!(accumulators(&avx2, 8, Variant::OuterN), 1);
     }
 

@@ -94,18 +94,8 @@ impl Variant {
         }
     }
 
-    /// Vectors a K step holds in registers beside the accumulators. `Dot` holds the
-    /// line its block shares and the line of the cell it adds into; an outer product
-    /// holds its K-vector, one broadcast scalar of it, and the accumulator's line.
-    pub fn operand_vectors(self) -> usize {
-        match self {
-            Variant::Dot => 2,
-            Variant::OuterN | Variant::OuterM => 3,
-        }
-    }
-
     /// The output axis a plane's block of accumulators runs along: the outer
-    /// products' vector axis, and for `Dot` the axis its planes split.
+    /// products' vector axis, and for `Dot`, which keeps one, the axis its planes split.
     pub fn block_axis(self, planes_split: PlanesSplit) -> PlanesSplit {
         match self {
             Variant::Dot => planes_split,

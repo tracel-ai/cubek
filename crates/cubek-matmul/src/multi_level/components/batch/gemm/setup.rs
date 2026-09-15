@@ -178,6 +178,11 @@ impl BatchMatmulFamily<()> for GemmFamily {
                 "Gemm needs at least one accumulator per plane".to_string(),
             )));
         }
+        if blueprint.variant == Variant::Dot && accumulators != 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Dot variant keeps one accumulator per plane, got {accumulators}"
+            ))));
+        }
 
         // Per-variant constraints. Dot supports plane-cooperative K reduction;
         // OuterM/OuterN are CPU-only because they don't reduce across units.

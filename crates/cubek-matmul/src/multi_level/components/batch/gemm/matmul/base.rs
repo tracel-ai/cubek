@@ -171,8 +171,6 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                     k,
                     config.plane_dim,
                     vector_size as u32,
-                    accumulators,
-                    config.planes_split,
                     check_bounds,
                 );
             }
