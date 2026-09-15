@@ -52,16 +52,22 @@ fn divisor_at_most(k: usize, cap: usize) -> usize {
     best
 }
 
-/// The divisor of `g` nearest `target`, ties going to the larger
-fn nearest_divisor(g: usize, target: usize) -> usize {
-    let target = target.clamp(1, g.max(1));
-    let mut best: usize = 1;
-    for d in 1..=g {
-        if g.is_multiple_of(d)
-            && (d.abs_diff(target) < best.abs_diff(target)
-                || (d.abs_diff(target) == best.abs_diff(target) && d > best))
-        {
-            best = d;
+/// The plane grid that puts the most worker threads, at most `cores`, on the leaf grid while
+/// dividing it, the nearest to its aspect ratio among those. A grid of fewer threads than the
+/// device has leaves the rest idle for the whole launch.
+fn plane_grid(grid_m: usize, grid_n: usize, cores: usize) -> PlaneGrid {
+    let target_m = (cores as f64 * grid_m as f64 / grid_n as f64).sqrt();
+    let mut best = PlaneGrid { m: 1, n: 1 };
+    for plane_m in (1..=cores.min(grid_m)).filter(|d| grid_m.is_multiple_of(*d)) {
+        let plane_n = divisor_at_most(grid_n, cores / plane_m);
+        let distance = |p: usize| (p as f64 - target_m).abs();
+        let more = plane_m * plane_n > best.m * best.n;
+        let nearer = plane_m * plane_n == best.m * best.n && distance(plane_m) < distance(best.m);
+        if more || nearer {
+            best = PlaneGrid {
+                m: plane_m,
+                n: plane_n,
+            };
         }
     }
     best
@@ -200,14 +206,10 @@ impl CpuGemmRoutine {
         // Plane grid: split the leaf grid among ~`cores` worker threads by aspect ratio.
         // Each plane is a thread and the cube loop is *serial*, so the factors must divide
         // the grid: an indivisible split inflates the cube count (serial depth) and idles
-        // planes on the overhang. Snap the aspect-ratio target to grid divisors.
+        // planes on the overhang.
         let grid_m = m.div_ceil(tile_m).max(1);
         let grid_n = n.div_ceil(tile_n).max(1);
-        let target_m = (cores as f64 * grid_m as f64 / grid_n as f64)
-            .sqrt()
-            .round() as usize;
-        let plane_m = nearest_divisor(grid_m, target_m);
-        let plane_n = nearest_divisor(grid_n, (cores / plane_m).max(1));
+        let planes = plane_grid(grid_m, grid_n, cores);
 
         // Tiles already divide their axes; the clamp is a defensive [1, axis] floor.
         let instruction = InstructionShape {
@@ -216,14 +218,22 @@ impl CpuGemmRoutine {
             k: tile_k.clamp(1, k.max(1)),
         };
 
-        let planes = PlaneGrid {
-            m: plane_m,
-            n: plane_n,
-        };
-
         CpuGemmBlueprint {
             instruction,
             planes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_plane_grid_puts_a_thread_on_every_core() {
+        let grid = plane_grid(384, 64, 16);
+        assert_eq!(grid.m * grid.n, 16);
+        let grid = plane_grid(512, 64, 16);
+        assert_eq!(grid.m * grid.n, 16);
     }
 }
