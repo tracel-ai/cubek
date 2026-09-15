@@ -145,6 +145,32 @@ impl Resident {
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
+    /// What one plane sums into, in the form `instruction` names.
+    ///
+    /// **The one opener a kernel whose instruction is data wants.** A derivation that elects a
+    /// form from what the device offers hands it here, and the kernel above never matches on it:
+    /// the register block reads both operands to line its cells, the fragment forms read the lhs
+    /// alone to size the contraction, and that difference is this call's rather than a caller's.
+    ///
+    /// The named constructors below are this one with the form written out, for a kernel that
+    /// knows its form statically.
+    pub fn accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
+        &self,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
+        #[comptime] fragments: Fragments,
+        #[comptime] instruction: Instruction,
+        #[comptime] monoid: Monoid,
+    ) -> Tile<EA> {
+        match comptime!(instruction) {
+            Instruction::Registers { config } => {
+                self.block_accumulator::<EA, EL, ER>(lhs, rhs, fragments, config, monoid)
+            }
+            Instruction::Cmma => self.cmma_accumulator::<EA, EL>(lhs, fragments, monoid),
+            Instruction::Mma { io } => self.mma_accumulator::<EA, EL>(lhs, fragments, io, monoid),
+        }
+    }
+
     /// The plane-resident accumulator this output contracts in through the tensor-core
     /// instruction: a partition of cmma fragments mirroring this tile's grid, uninitialized. The
     /// kernel opens it before the walk it spans and stores it after, one fragment per cell
@@ -159,7 +185,7 @@ impl<Acc: Numeric> Tile<Acc> {
         self.accumulator_in::<EA, EL>(
             lhs,
             fragments,
-            comptime!(PlaneForm::Cmma),
+            comptime!(Instruction::Cmma),
             vector_size,
             1usize,
             monoid,
@@ -179,7 +205,7 @@ impl<Acc: Numeric> Tile<Acc> {
         self.accumulator_in::<EA, EL>(
             lhs,
             fragments,
-            comptime!(PlaneForm::Mma { io }),
+            comptime!(Instruction::Mma { io }),
             vector_size,
             1usize,
             monoid,
@@ -225,7 +251,7 @@ impl<Acc: Numeric> Tile<Acc> {
         self.accumulator_in::<EA, EL>(
             lhs,
             fragments,
-            comptime!(PlaneForm::Registers { config }),
+            comptime!(Instruction::Registers { config }),
             rw,
             fold,
             monoid,
@@ -245,7 +271,7 @@ impl<Acc: Numeric> Tile<Acc> {
         self.accumulator_in::<EA, In>(
             input,
             fragments,
-            comptime!(PlaneForm::Registers { config }),
+            comptime!(Instruction::Registers { config }),
             vector_size,
             1usize,
             monoid,
@@ -355,7 +381,7 @@ impl<Acc: Numeric> Tile<Acc> {
         &self,
         lhs: &Tile<EL>,
         #[comptime] fragments: Fragments,
-        #[comptime] form: PlaneForm,
+        #[comptime] form: Instruction,
         #[comptime] vector_size: usize,
         #[comptime] fold: usize,
         #[comptime] monoid: Monoid,

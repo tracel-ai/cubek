@@ -8,6 +8,10 @@
 //! backward's row ops join here later. No self-lowering: if a standalone
 //! softmax verb ever needs to walk levels and normalize, its schedules land
 //! then, on a real client.
+//!
+//! Nothing but the step. The row plumbing a caller wraps it in is
+//! [`rows`](super::rows) and the split ending is attention's; either one
+//! landing here is the module drifting back into a dumping ground.
 
 mod leaf;
 mod planewise;

@@ -7,6 +7,7 @@
 mod benchmark;
 mod correctness;
 pub mod depthwise;
+pub mod direct;
 mod problem;
 mod strategy;
 

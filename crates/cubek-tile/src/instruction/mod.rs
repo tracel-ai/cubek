@@ -16,5 +16,5 @@ pub mod plane;
 pub mod registers;
 
 pub use algebra::*;
-pub(crate) use base::*;
+pub use base::*;
 pub use config::*;

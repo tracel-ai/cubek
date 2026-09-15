@@ -271,6 +271,20 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Whether this tile is backed by shared memory, which is what a `sync_cube()` between two
+    /// units' accesses actually orders: the barrier covers the workgroup address space, so a
+    /// tile a cube communicates *through* has to live there and not in a global buffer.
+    pub(crate) fn is_shared(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Smem(_) => comptime!(true),
+            TileKind::Gmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_) => comptime!(false),
+        }
+    }
+
     /// The factorization this tile's values state, if any: `Some(n)` for a recipe presenting `n`
     /// separable factors, `None` for a tile read from a buffer or a recipe that only answers as a
     /// whole. A rank-one factorization is `Some(1)`, which a consumer can still exploit, and so is
@@ -832,6 +846,37 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// Add a resident block `src` into this one, casting up to `T`: the **promotion** a leaf
+    /// accumulating in a narrower element drains through, register to register, without
+    /// touching memory.
+    ///
+    /// The counterpart of [`copy_cast_from`](Self::copy_cast_from), which drains a block *out*
+    /// to its sink. This one keeps it resident, and it exists so a leaf can contract in the
+    /// operands' own element while the sum across leaf calls stays wide. On a target with no
+    /// matrix units that is the whole difference between reaching the device's packed
+    /// instruction and not: an `f16` block reaches `hfma2`, twice the arithmetic of an `f32`
+    /// one, but `f16` counts integers exactly only to 2048, so a contraction accumulated in it
+    /// end to end stops advancing part way through. Promoting per leaf call bounds the error by
+    /// the leaf's own depth instead.
+    ///
+    /// Both sides are register blocks over one sink, so the add is line for line
+    /// ([`RegisterData::add_cast_from`]). A partition promotes cell by cell.
+    pub fn add_cast_from<S: Numeric>(&mut self, src: &Tile<S>) {
+        match (&mut self.tile_kind, &src.tile_kind) {
+            (TileKind::PlaneTile(d), TileKind::PlaneTile(s)) => d.add_cast_from(s),
+            (TileKind::PlanePartition(d), TileKind::PlanePartition(s)) => {
+                // The handle is the storage: a partition's fragment clones the block's array
+                // reference, so promoting through the clone promotes the block itself.
+                let mut fragment = d.fragment();
+                fragment.add_cast_from(&s.fragment())
+            }
+            _ => panic!(
+                "Tile::add_cast_from: a resident block promotes into a resident block; memory \
+                 is reached through `copy_cast_from`"
+            ),
+        }
+    }
+
     /// [`copy_from`](Self::copy_from) with a cast: a resident fragment `src`, wider than this
     /// memory window, stored down to `T`. How an accumulator's cells reach an output of the
     /// output's own type, one fragment per call, from the loop the kernel writes over its cells.
@@ -898,11 +943,7 @@ impl<T: Numeric> Tile<T> {
     /// share a slot, so every spill happens, then one barrier, then every add: two barriers for the
     /// drain however many tiles it has. That is the whole reason the size is a setting
     /// ([`Resident`]).
-    pub fn drained_into<Out: Numeric>(
-        &self,
-        dest: &Tile<Out>,
-        #[comptime] cells: Option<Level>,
-    ) {
+    pub fn drained_into<Out: Numeric>(&self, dest: &Tile<Out>, #[comptime] cells: Option<Level>) {
         match cells {
             // A grid below the drain: one region of `cells` per tile of it.
             Some(cells) => self.drain_grid(dest, cells),
