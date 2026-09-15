@@ -10,6 +10,7 @@ use cubecl::{
     std::{FastDivmod, tensor::ViewMut},
     tensor_vector_size_parallel,
 };
+use cubek_std::launch::Accumulation;
 
 #[derive(CubeLaunch, CubeType)]
 pub(crate) struct PoolBackwardArgs {
@@ -132,7 +133,13 @@ pub(crate) fn avg_pool2d_backward_launch(
     let dilation = 1;
 
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype],
+            // The gradient sum, the tap and its divisor.
+            live_vectors: 3,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
