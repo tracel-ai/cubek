@@ -9,6 +9,7 @@ use crate::multi_level::components::{
 pub struct VecMatUnitPerpendicularConfig {
     pub(crate) plane_dim: u32,
     pub(crate) num_planes: u32,
+    pub(crate) accumulators: u32,
     pub(crate) check_bounds: CheckBounds,
 }
 

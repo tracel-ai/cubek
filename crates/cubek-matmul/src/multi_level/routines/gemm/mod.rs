@@ -26,7 +26,7 @@ use crate::{
             stage::NumStages,
         },
         definition::CubeMappingLaunch,
-        num_concurrent_planes,
+        num_concurrent_planes, outer_product_accumulators,
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
@@ -61,13 +61,6 @@ fn output_units(
     }
 }
 
-/// The K-vector, its broadcast scalar and the accumulator's line an outer product holds in
-/// registers beside its accumulators.
-const OUTER_OPERAND_VECTORS: usize = 3;
-
-/// How many accumulators a plane keeps: as many as fit the registers beside the
-/// operands, as a power of two whose block tiles its axis. Each is an independent
-/// latency chain, so throughput grows with the count until they spill.
 fn accumulators_per_plane(
     problem: &MatmulProblem,
     hardware: &HardwareProperties,
@@ -81,23 +74,11 @@ fn accumulators_per_plane(
     if variant == Variant::Dot {
         return 1;
     }
-    let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
-        return 1;
-    };
-    let reserved = OUTER_OPERAND_VECTORS * registers.registers_for(vector_size);
-    let fitting = registers.vectors_fitting(vector_size, reserved).max(1);
-
     let extent = match variant.block_axis(planes_split) {
         PlanesSplit::M => problem.m,
         PlanesSplit::N => problem.n,
     };
-    let cells = variant.cells_per_accumulator(vector_size);
-
-    let mut accumulators = 1 << fitting.ilog2();
-    while accumulators > 1 && !extent.is_multiple_of(accumulators * cells) {
-        accumulators /= 2;
-    }
-    accumulators
+    outer_product_accumulators(hardware, dtypes, vector_size, extent)
 }
 
 impl Routine<()> for GemmRoutine {
