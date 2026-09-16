@@ -432,6 +432,15 @@ mod tests {
         assert_eq!(one.count(K), Some(Count::Of(1)));
     }
 
+    /// The one-liner every walk over a region takes is the chain it stands for.
+    #[test]
+    fn a_region_walk_is_stated_once() {
+        assert_eq!(
+            Level::every(&[(M, 8), (K, 16)]),
+            Tiling::leaf(&[(M, 8), (K, 16)]).walk_every(&[M, K]).level()
+        );
+    }
+
     #[test]
     #[should_panic(
         expected = "taken whole by a level below, so nothing above it may state a count"

@@ -7,10 +7,11 @@
 //! A level is built only by [`Tiling`](crate::Tiling), from the leaf up: its tile on an axis is
 //! the product of what was stated below it, and its [`Count`] is what it stated. Nothing here
 //! divides one level by another. A level names only the axes it touches; every other axis is
-//! handed down whole.
+//! handed down whole. [`Level::every`] is the one-liner for a walk over a region, and it goes
+//! through the builder like everything else.
 
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
-use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
+use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare, Tiling};
 
 /// How many tiles a level takes along one of its axes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -65,6 +66,17 @@ pub struct Level {
 }
 
 impl Level {
+    /// The one level that walks a region in tiles of `tile`, taking every one of them — what
+    /// [`Region::over`](crate::Region::over) asks for, and the shape a stated count never has.
+    ///
+    /// The leaf-up spelling of the same thing, stated once instead of twice:
+    /// `Tiling::leaf(tile).walk_every(its axes).level()`. It goes through
+    /// [`Tiling`](crate::Tiling) like every other level, so there is still one builder.
+    pub fn every(tile: &[(Axis, usize)]) -> Level {
+        let axes: Vec<Axis> = tile.iter().map(|&(axis, _)| axis).collect();
+        Tiling::leaf(tile).walk_every(&axes).level()
+    }
+
     /// A level of `scope` over `entries`, each `(axis, tile, count, who takes it)`. The
     /// builder's constructor: [`Tiling`](crate::Tiling) is the only caller, and it states the
     /// tile as the product of the levels below.
