@@ -156,6 +156,19 @@ impl<T: Numeric> MemData<T> {
                 ),
             }
             self.stage_scales(src);
+        } else if comptime!(self.store.packing != Packing::Plain) {
+            // Packed → packed: the words verbatim, the same straight-line fill a quantized stage
+            // takes, with nothing beside them — the scales are an operand of their own.
+            comptime!(assert!(
+                self.access.whole
+                    && !self.access.overhang.masks()
+                    && src.store.packing == self.store.packing
+                    && self.store.vector_size == src.store.vector_size,
+                "MemData::fill_from: a packed stage is a fresh whole buffer filled from the \
+                 window it was shaped over, at the same packing and width"
+            ));
+            let size!(WP) = comptime!(self.store.packing.physical(self.store.vector_size));
+            self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
         } else if comptime!(
             self.access.whole
                 && !self.access.overhang.masks()
@@ -523,15 +536,20 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// How far this store's quantized form travels ([`DequantAt`]). A plain store answers
+    /// How far this store's stored form travels ([`DequantAt`]). A plain store answers
     /// [`DequantAt::Load`]: served and stored are the same element, so nothing is left to decode.
+    /// A [`packed`](Packing::Packed) store with no scheme answers [`DequantAt::Read`]: its words
+    /// are what a stage copies and what a read unpacks, and nothing in between serves a value.
     // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
     #[allow(clippy::let_and_return)]
     pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
         let dequant_at = #[comptime]
         match &self.store.quant {
             ComptimeOption::Some(info) => comptime!(info.dequant_at),
-            ComptimeOption::None => DequantAt::Load,
+            ComptimeOption::None => comptime!(match self.store.packing {
+                Packing::Plain => DequantAt::Load,
+                _ => DequantAt::Read,
+            }),
         };
         dequant_at
     }

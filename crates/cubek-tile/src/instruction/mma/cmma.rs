@@ -202,6 +202,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let values = self.values();
         let count = self.levels().len();
         let landed = values.has_landing();
+        let packing = values.packing();
         if comptime!(count > 0 || landed) {
             let landing = self.land(comptime!(read.clone()));
             cmma::load(frag, &landing, comptime!(read.cols as u32));
@@ -209,7 +210,16 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             sync_plane();
         } else {
             match &values.tile_kind {
-                TileKind::Smem(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
+                TileKind::Smem(m) => {
+                    // A packed stage holds words, and a fragment loads a window as it lies: it
+                    // lands first, or it is not read at all.
+                    comptime!(assert!(
+                        packing == Packing::Plain,
+                        "mma: a packed stage reaches a fragment through a landing; open the \
+                         operand with `with_landing`"
+                    ));
+                    cmma::load(frag, m.window_slice(), m.row_stride())
+                }
                 TileKind::Gmem(_) => panic!(
                     "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
                      open the operand with `with_landing(planes, lanes)`, or stage it"

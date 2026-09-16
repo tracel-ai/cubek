@@ -15,7 +15,11 @@
 //! The scales resolve at their own granularity through their own projection: a plain `KB` for a
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
 
-use cubecl::{prelude::*, zspace::shape};
+use cubecl::{
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
+    zspace::shape,
+};
+use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
@@ -1684,4 +1688,173 @@ fn a_cmma_accumulator_takes_rhs_scales() {
 #[test]
 fn a_cmma_accumulator_takes_rhs_scales_col_major() {
     check_scaled_cmma(CmmaCase::RhsColMajor);
+}
+
+/// [`scaled_matmul_cmma`] with the rhs **staged as its words** before it lands: the packed
+/// window is copied into shared memory verbatim, the stage keeps the packing, and the landing
+/// unpacks and scales out of the stage exactly as it would out of the global window.
+#[cube(launch)]
+fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
+    a: &TileArg<'_, E, Const<1>>,
+    b: &TileArg<'_, u32, Const<1>>,
+    scale: &TileArg<'_, S, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] level: Level,
+    #[comptime] planes: usize,
+    #[comptime] lanes: usize,
+    #[define(E, S)] _dtypes: [ElemType; 2],
+) {
+    let a = a.tile(comptime!(space.clone())).with_landing(planes, lanes);
+    let b = b.tile_as::<E>(comptime!(space.clone()));
+    let scale = scale.tile(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    let mut stage = MemData::<E>::stage(
+        &b,
+        comptime!(level.clone()),
+        StageStorage::Strided,
+        comptime!(None),
+    )
+    .with_landing(planes, lanes);
+    let mut acc = c.cmma_accumulator::<E, E>(
+        &a,
+        comptime!(Fragments::new(
+            &c.space,
+            &a.space,
+            std::slice::from_ref(&level)
+        )),
+        Monoid::Sum,
+    );
+    acc.zero();
+    for region in space.over(&level) {
+        stage.copy_from(&b.at(&region));
+        sync_cube();
+        let mut acc_r = acc.at(&region);
+        acc_r.mma_scaled(
+            &a.at(&region).plain(),
+            &stage.scaled(&ComptimeOption::new_Some(scale.at(&region))),
+            Semiring::SUM_PROD,
+        );
+        // The stage is refilled next region, once every plane has landed from it.
+        sync_cube();
+    }
+    for r0 in c.over(&level).unrolled() {
+        let mut c_w = c.at(&r0);
+        c_w.copy_cast_from(&acc.at(&r0));
+    }
+}
+
+/// **A packed stage lands on the tensor cores.** `e2m1` values eight to a word, stored `{N, K}`
+/// with the contraction innermost as a weight lies, staged one scale block at a time as the
+/// words they are, then unpacked and scaled into the landing the fragment loads. The stage is a
+/// quarter the size a served one would be, and the answer is the same.
+#[test]
+fn a_packed_stage_lands_on_the_tensor_cores() {
+    let (rows, cols, block, blocks) = (8, 8, 8, 4);
+    let depth = block * blocks;
+    let field = QuantValue::E2M1;
+    let factor = 32 / field.size_bits();
+
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    let lanes = client.properties().hardware.plane_size_min as usize;
+    let dtype = f32::elem_type_native();
+    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    // The rhs as stored, `{N, K}`: every `e2m1` code, cycled, eight to a word down `k`.
+    let codes: Vec<u32> = (0..cols * depth).map(|i| (i % 16) as u32).collect();
+    let words: Vec<u32> = codes
+        .chunks(factor)
+        .map(|word| {
+            word.iter()
+                .enumerate()
+                .fold(0u32, |acc, (j, &c)| acc | (c << (j * field.size_bits())))
+        })
+        .collect();
+    let s: Vec<f32> = (0..blocks * cols).map(|i| (i as f32 + 1.0) / 2.0).collect();
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let b_t = TensorHandle::new_contiguous(
+        vec![cols, depth / factor],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let (s_t, _) = TestInput::builder(client.clone(), shape![blocks, cols])
+        .dtype(dtype)
+        .custom(s.clone())
+        .generate_with_f32_host_data();
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
+        ),
+        KernelForm::Static,
+    );
+    let split = PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
+
+    scaled_matmul_cmma_staged::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(
+            a_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[M, KB, KI],
+                &[PhysicalAxisMap::of(M), split.clone()],
+            )),
+        ),
+        TileArgLaunch::new(
+            b_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[N, KB, KI],
+                &[PhysicalAxisMap::of(N), split],
+            ))
+            .packed(field),
+        ),
+        TileArgLaunch::new(
+            s_t.binding().into_tensor_arg(),
+            TileSpec::new(Projection::new(
+                &[KB, KI, N],
+                &[PhysicalAxisMap::of(KB), PhysicalAxisMap::of(N)],
+            )),
+        ),
+        TileArgLaunch::new(
+            c.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        1,
+        lanes,
+        [dtype, dtype],
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let want: f32 = (0..depth)
+                .map(|k| {
+                    let b = e2m1::from_bits(codes[n * depth + k] as u8).to_f32();
+                    a[m * depth + k] * s[(k / block) * cols + n] * b
+                })
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-3,
+                "at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
 }

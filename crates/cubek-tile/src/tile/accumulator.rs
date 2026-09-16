@@ -357,6 +357,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// operand's `values ⊗ scales` in before loading them as a fragment
     /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator). Stated where the operand is
     /// opened, since the landing is part of its residence, like [`with_scratch`](Tile::with_scratch).
+    ///
+    /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
+    /// lands them the way a packed global window does, which is what keeps a deep stage the
+    /// size of the words rather than of the values they unpack to.
     pub fn with_landing(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
         let cells = comptime!({
             let leaf = self.space.leaf(&self.levels);
@@ -378,12 +382,17 @@ impl<Acc: Numeric> Tile<Acc> {
                 depth,
                 levels,
             },
-            TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
+            TileKind::Smem(g) => Tile::<Acc> {
+                tile_kind: TileKind::new_Smem(g.with_landing(landing)),
+                space,
+                depth,
+                levels,
+            },
+            TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                panic!("Tile::with_landing: a landing takes a global-memory operand to a fragment")
+                panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
             }
         }
     }

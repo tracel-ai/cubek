@@ -144,8 +144,12 @@ impl<T: Numeric> MemData<T> {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
                 match &g.store.quant {
-                    // Served == stored, so this is a plain stage.
-                    ComptimeOption::None => MemData::smem(space, vector_size, storage, units),
+                    // No scheme: the words as they lie where the operand is packed, which is
+                    // the only stored form a scheme-less operand has, else a plain stage.
+                    ComptimeOption::None => match comptime!(g.store.packing) {
+                        Packing::Plain => MemData::smem(space, vector_size, storage, units),
+                        packing => MemData::smem_packed(space, vector_size, storage, units, packing),
+                    },
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
                             QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
@@ -303,6 +307,37 @@ impl<T: Numeric> MemData<T> {
             form,
             map,
             source,
+        )
+    }
+
+    /// [`smem`](MemData::smem) over the words a [`packed`](Packing::Packed) operand is stored in:
+    /// the line narrows by the packing's factor and the buffer keeps `packing`, so every read
+    /// through it unpacks as a read of the global window does. No scales ride along — a packed
+    /// operand's scales are an operand of their own, staged on their own.
+    pub(crate) fn smem_packed(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
+        #[comptime] packing: Packing,
+    ) -> Tile<T> {
+        let form = comptime!(StageForm::dense(&space, vector_size, storage));
+        let size!(WP) = comptime!(packing.physical(vector_size));
+        let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            vector_size,
+            units,
+        });
+        MemData::smem_over(
+            meta,
+            &smem,
+            ComptimeOption::new_None(),
+            comptime!(packing),
+            form,
+            map,
+            ComptimeOption::new_None(),
         )
     }
 
