@@ -133,7 +133,7 @@ impl<RC: RuntimeConfig> BatchMatmulRoutine<RC> for DoubleUnitAlgorithm {
         let (blueprint, dtypes) = match strategy {
             BlueprintStrategy::Forced(blueprint) => (blueprint.clone(), dtypes),
             BlueprintStrategy::Inferred(strategy) => infer_blueprint_unit(
-                &device_settings.client,
+                &device_settings.client.properties().hardware,
                 problem,
                 device_settings.plane_dim,
                 true,

@@ -31,6 +31,7 @@ impl ProductType {
         lhs_layout: MatrixLayout,
         rhs_layout: MatrixLayout,
         tile_size: TileSize,
+        registers_hold_lanes: bool,
     ) -> Self {
         let lhs_preferred = match lhs_layout {
             MatrixLayout::RowMajor => ProductType::Inner,
@@ -41,7 +42,14 @@ impl ProductType {
             MatrixLayout::ColMajor => ProductType::Inner,
         };
 
-        if lhs_preferred == rhs_preferred {
+        let single_line_of_cells =
+            tile_size.m() * tile_size.n() > 1 && (tile_size.m() == 1 || tile_size.n() == 1);
+
+        // An inner product runs each cell as a scalar chain, and an outer product runs a row of
+        // cells as lanes. The load transposes along the stored vectors, so it stays coalesced.
+        if registers_hold_lanes && single_line_of_cells {
+            ProductType::Outer
+        } else if lhs_preferred == rhs_preferred {
             lhs_preferred
         } else if tile_size.m() == 1 {
             rhs_preferred
