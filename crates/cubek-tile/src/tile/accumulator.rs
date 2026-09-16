@@ -143,7 +143,6 @@ impl Resident {
     }
 }
 
-
 /// The planes `levels` deal `space` across: the product, over every level dealt on the cube's
 /// planes, of the instances its plane-dealt axes take. One where no level rides the planes.
 ///

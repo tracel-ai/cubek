@@ -16,8 +16,7 @@
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
 
 use cubecl::{
-    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle,
-    zspace::shape,
+    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
 use cubecl_common::e2m1;
 use cubek_test_utils::{HostData, HostDataType, TestInput};

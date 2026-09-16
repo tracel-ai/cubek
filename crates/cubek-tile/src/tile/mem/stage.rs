@@ -148,7 +148,9 @@ impl<T: Numeric> MemData<T> {
                     // the only stored form a scheme-less operand has, else a plain stage.
                     ComptimeOption::None => match comptime!(g.store.packing) {
                         Packing::Plain => MemData::smem(space, vector_size, storage, units),
-                        packing => MemData::smem_packed(space, vector_size, storage, units, packing),
+                        packing => {
+                            MemData::smem_packed(space, vector_size, storage, units, packing)
+                        }
                     },
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
