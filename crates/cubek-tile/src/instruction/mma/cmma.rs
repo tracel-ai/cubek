@@ -268,7 +268,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
 
         let vw = values.vector_size();
         let size!(VW) = vw;
-        let size!(SW) = comptime!(level.lanes);
+        let size!(SW) = comptime!(level.span.fields);
         let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
         let matrix = values.matrix_packed::<VW>(axes, 0usize);
         let scale_lines = combined_scales::<S, SW>(&levels, level, 0usize);
@@ -277,8 +277,8 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         // of a transposed window — and a lane steps the scale lines of its share, building under
         // each the `fields · lines` value lines it covers. One read of the scales serves all of
         // them, every field of the word used.
-        let fields = comptime!(level.lanes);
-        let lps = comptime!(level.lines_per_scale);
+        let fields = comptime!(level.span.fields);
+        let lps = comptime!(level.span.lines);
         let per_scale_line = comptime!(fields * lps);
         let per_row = comptime!(read.cols / vw);
         let width = comptime!(vw as u32);

@@ -11,6 +11,7 @@
 //! What stays with each accumulator is its own shape, which genuinely differs: the edges it can
 //! walk and the widths it serves them at ([`ContractEdges`]).
 
+use crate::instruction::registers::lines::{Along, Span};
 use crate::*;
 
 /// Which factor of a contraction's terms an operand is: the argument position, which the caller
@@ -125,14 +126,9 @@ pub(crate) struct ScaleLevel {
     pub apply: Apply,
     /// The scales' own matrix, as the level below reads it.
     pub axes: MatrixAxes,
-    /// Lines of the level below that one scale covers, along the edge they share.
-    pub lines_per_scale: usize,
-    /// Scales one read of them serves.
-    pub lanes: usize,
-    /// Whether the edge they share is the contraction or the accumulator's columns.
-    pub along_contraction: bool,
-    /// Lines of the contraction one scale holds for.
-    pub steps: usize,
+    /// How the level below's lines group under these scales: the edge they share, the scales
+    /// one read brings, the lines one scale covers and the steps it holds for.
+    pub span: Span,
 }
 
 impl ScaleLevel {
@@ -152,7 +148,7 @@ impl ScaleLevel {
         edges: &ContractEdges,
         side: Side,
         invariant: &[Axis],
-        lanes: usize,
+        fields: usize,
     ) -> Self {
         let folded = edges.contracted_per_step > 1;
         let (rows, edge, value_width) = match (side, folded) {
@@ -160,7 +156,10 @@ impl ScaleLevel {
             (Side::Rhs, true) => (edges.cols, &edges.reduce, edges.contracted_per_step),
             (Side::Rhs, false) => (edges.kc, &edges.columns, edges.aw),
         };
-        let along_contraction = matches!((side, folded), (Side::Lhs, _) | (Side::Rhs, true));
+        let along = match matches!((side, folded), (Side::Lhs, _) | (Side::Rhs, true)) {
+            true => Along::Contraction,
+            false => Along::Columns,
+        };
         let cols = scales.extent_at(scales.rank() - 1);
         let covered = edge
             .iter()
@@ -174,12 +173,12 @@ impl ScaleLevel {
             "mm_scaled: one scale covers {covered} values along the edge it shares, which is not \
              whole lines of {value_width}"
         );
-        let lines_per_scale = covered / value_width;
+        let lines = covered / value_width;
         // Along the contraction one scale holds for its own lines; along the columns it holds
         // for every step of the contraction it does not distinguish.
-        let steps = match along_contraction {
-            true => lines_per_scale,
-            false => edges
+        let steps = match along {
+            Along::Contraction => lines,
+            Along::Columns => edges
                 .reduce
                 .iter()
                 .filter(|(axis, _)| invariant.contains(axis))
@@ -189,10 +188,12 @@ impl ScaleLevel {
         ScaleLevel {
             apply: Apply::Product,
             axes: MatrixAxes::of(scales, rows, cols),
-            lines_per_scale,
-            lanes,
-            along_contraction,
-            steps,
+            span: Span {
+                along,
+                fields,
+                lines,
+                steps,
+            },
         }
     }
 }
