@@ -267,6 +267,12 @@ pub struct PlanePartition<T: Numeric> {
     pub m_tiles: usize,
     #[cube(comptime)]
     pub n_tiles: usize,
+    /// One tile's edges along the window's trailing two axes: the leaf the grid is
+    /// `m_tiles × n_tiles` of, which is what a fill cuts the window by.
+    #[cube(comptime)]
+    pub rows: usize,
+    #[cube(comptime)]
+    pub cols: usize,
     /// This plane's window of shared memory, one tile wide, that a row-wise op bounces a tile
     /// through: a tile's cells are not addressable in registers. Opened by
     /// [`with_scratch`](Tile::with_scratch); a partition without one contracts and drains only.
@@ -319,6 +325,8 @@ impl<T: Numeric> PlanePartition<T> {
             frags,
             m_tiles,
             n_tiles,
+            rows: comptime!(self.rows),
+            cols: comptime!(self.cols),
             scratch: self.scratch.clone(),
             resident: comptime!(self.resident),
         }
@@ -417,6 +425,8 @@ impl<T: Numeric> PlanePartition<T> {
                 frags,
                 m_tiles,
                 n_tiles,
+                rows: m,
+                cols: n,
                 scratch: ComptimeOption::new_None(),
                 resident: Resident::None,
             }),
@@ -471,6 +481,15 @@ impl<T: Numeric> PlanePartition<T> {
             (MatrixIdent::B, grid.1)
         });
         let (t0, t1) = comptime!(if free == a0 { (tiles, 1) } else { (1, tiles) });
+        // One fragment's edges along the window's trailing two axes: the role's rows along the
+        // free axis, the whole contraction along the other.
+        let rows_along_free = comptime!(if ident == MatrixIdent::A { m } else { n });
+        let k = comptime!(window.extent(contracted));
+        let (e0, e1) = comptime!(if free == a0 {
+            (rows_along_free, k)
+        } else {
+            (k, rows_along_free)
+        });
         // The role's rows: `A` is `m×k` and `B` is `k×n`, so an operand whose window lists the
         // axes in that order is row-major, and one listing them the other way — a weight
         // stored `{n, k}`, read in lines along its contraction — is the same fragment loaded
@@ -480,7 +499,6 @@ impl<T: Numeric> PlanePartition<T> {
         } else {
             MatrixLayout::ColMajor
         });
-        let k = comptime!(window.extent(contracted));
 
         let mut frags = Sequence::<PlaneTile<T>>::new();
         #[unroll]
@@ -495,6 +513,8 @@ impl<T: Numeric> PlanePartition<T> {
                 frags,
                 m_tiles: t0,
                 n_tiles: t1,
+                rows: e0,
+                cols: e1,
                 scratch: ComptimeOption::new_None(),
                 resident: Resident::None,
             }),
@@ -570,7 +590,11 @@ impl<T: Numeric> PlanePartition<T> {
     /// that turns the source's window into fragments is this partition's grid, one level the
     /// kernel never walks.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
-        let level = comptime!(fragment_level(&src.space, self.m_tiles, self.n_tiles));
+        let level = comptime!(fragment_level(
+            &src.space,
+            (self.rows, self.cols),
+            (self.m_tiles, self.n_tiles)
+        ));
         #[unroll]
         for mi in 0..comptime!(self.m_tiles) {
             #[unroll]
@@ -642,28 +666,37 @@ pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize)
     shape
 }
 
-/// The one level that cuts an operand's window into a `m_tiles × n_tiles` grid of fragments on
-/// its trailing two axes, every other axis whole: what a partition fills from, and the kernel
-/// never walks.
-fn fragment_level(window: &Space, m_tiles: usize, n_tiles: usize) -> Level {
+/// The one level that cuts an operand's window into the partition's grid of fragments on its
+/// trailing two axes, every other axis whole: what a partition fills from, and the kernel never
+/// walks. Stated from the leaf up — one fragment's edges, then how many of them — and held to
+/// the window it fills from.
+fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
     let rank = window.rank();
     let axes: Vec<Axis> = window.axes().collect();
-    let cuts: Vec<(Axis, usize)> = axes
+    let leaf: Vec<(Axis, usize)> = axes
         .iter()
         .enumerate()
-        .map(|(p, &axis)| {
-            let extent = window.extent(axis);
-            let tiles = match p {
-                p if p == rank - 2 => m_tiles,
-                p if p == rank - 1 => n_tiles,
-                _ => 1,
-            };
-            assert!(
-                extent.is_multiple_of(tiles),
-                "PlanePartition::fill_from: {tiles} fragments do not divide the {extent} of {axis:?}"
-            );
-            (axis, extent / tiles)
+        .map(|(p, &axis)| match p {
+            p if p == rank - 2 => (axis, frag.0),
+            p if p == rank - 1 => (axis, frag.1),
+            _ => (axis, window.extent(axis)),
         })
         .collect();
-    Level::walk(&cuts)
+    let counts: Vec<(Axis, usize)> = axes
+        .iter()
+        .enumerate()
+        .map(|(p, &axis)| match p {
+            p if p == rank - 2 => (axis, tiles.0),
+            p if p == rank - 1 => (axis, tiles.1),
+            _ => (axis, 1),
+        })
+        .collect();
+    for (&(axis, edge), &(_, count)) in leaf.iter().zip(&counts) {
+        assert!(
+            edge * count == window.extent(axis),
+            "PlanePartition::fill_from: {count} fragments of {edge} do not cover the {} of {axis:?}",
+            window.extent(axis)
+        );
+    }
+    Tiling::leaf(&leaf).walk(&counts).levels().remove(0)
 }

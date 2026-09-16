@@ -10,7 +10,7 @@ use cubecl::prelude::*;
 use super::scale::{
     Apply, ContractEdges, ScaleLevel, Side, check_scales_omit_rather_than_divide, check_scales_ride,
 };
-use crate::instruction::registers::lines::CombinedScales;
+use crate::instruction::registers::lines::{Along, CombinedScales, Span};
 use crate::*;
 
 /// The width a factor's scales are read at: their own, or one where it carries none.
@@ -75,12 +75,19 @@ pub(crate) fn scales_of<'a, S: Numeric, SW: Size>(
     }
 }
 
-/// The value lines one scale covers and the scales one read serves, or one apiece where a factor
-/// carries no scales and its lines are its values'.
-pub(crate) fn spread(level: Option<ScaleLevel>) -> (usize, usize) {
+/// How a factor's lines group under its scales, or one line a run where it carries none.
+pub(crate) fn span(level: Option<ScaleLevel>) -> Span {
     match level {
-        Some(level) => (level.lines_per_scale, level.lanes),
-        None => (1, 1),
+        Some(level) => Span {
+            along: match level.along_contraction {
+                true => Along::Contraction,
+                false => Along::Columns,
+            },
+            fields: level.lanes,
+            lines: level.lines_per_scale,
+            steps: level.steps,
+        },
+        None => Span::PLAIN,
     }
 }
 
@@ -124,9 +131,15 @@ pub(crate) fn combined_scales<'a, ES: Numeric, S: Size>(
         ));
         // Read once, here, which is once per region. A coarser level covers this whole region, so
         // it has no position of its own inside it; that it does is what the assert above says.
-        let one = level_above
-            .matrix_packed::<Const<1>>(comptime!(level.axes), mat)
-            .read(origin);
+        // Read as the word it lies in, and its own scale is the word's first field.
+        let above_width = level_above.vector_size();
+        let size!(AW) = above_width;
+        let one = Vector::<ES, Const<1>>::cast_from(
+            level_above
+                .matrix_packed::<AW>(comptime!(level.axes), mat)
+                .read(origin)
+                .extract(0usize),
+        );
         match comptime!(level.apply) {
             Apply::Product => coarser *= one,
         }

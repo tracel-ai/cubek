@@ -10,24 +10,33 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Cut, DeliveryFamily, Fragments, Level, Monoid, Partitioning, PlanePartition, Ring,
-    Semiring, Space, StageStorage, TileArg, pipelined,
+    Axis, DeliveryFamily, Fragments, Level, Monoid, Partitioning, PlanePartition, Ring, Semiring,
+    Space, StageStorage, TileArg, Tiling, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 
-/// The routine's five levels, each a method on the blueprint, outermost first: the cube grid,
-/// the stages of `K` a cube walks, one partition per plane, the instruction's `K` steps through
-/// the partition, and the fragment grid each step contracts. The kernel's loops state them one
-/// by one; the blueprint reads its leaf and its overhangs off the same list.
+/// The routine's five levels, stated **from the leaf up, in counts**, outermost first once
+/// built: the instruction's shape, the fragments a partition holds, the instruction steps in one
+/// stage, the planes a cube holds, every stage `K` holds, and a cube per box of the output. The
+/// kernel's loops state them one by one, and the two level methods it names beside its loops
+/// ([`planes`](CmmaBlueprint::planes), [`fragments`](CmmaBlueprint::fragments)) read this same
+/// list, so the two cannot drift.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
-    vec![
-        bp.cubes(batch),
-        bp.k_stages(),
-        bp.planes(),
-        bp.k_steps(),
-        bp.fragments(),
-    ]
+    let (c, i, p) = (bp.partition, bp.instruction, bp.planes);
+    Tiling::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
+        // The partition's grid of fragments, one instruction each.
+        .walk(&[(M, c.m), (N, c.n)])
+        // The instruction's `K` steps through the stage.
+        .walk(&[(K, bp.stage_k / i.k)])
+        // The stage split across the planes, one partition each.
+        .planes(&[(M, p.m), (N, p.n)])
+        // The cube's box walked through `K` one stage at a time.
+        .walk_every(&[K])
+        // A box of the output per cube, one of every batch axis.
+        .cubes(&[M, N])
+        .batches(batch)
+        .levels()
 }
 
 impl CmmaBlueprint {
@@ -51,35 +60,15 @@ impl CmmaBlueprint {
         )
     }
 
-    /// The cube grid: a box of the output per cube, one of every batch axis.
-    pub fn cubes(&self, batch: &[Axis]) -> Level {
-        let (stage_m, stage_n) = self.stage();
-        Level::cubes(&[(M, stage_m), (N, stage_n)]).batches(batch)
-    }
-
-    /// The cube's box walked through `K` one stage at a time.
-    pub fn k_stages(&self) -> Level {
-        Level::walk(&[(K, self.stage_k)])
-    }
-
-    /// The stage split across the blueprint's planes, one partition each.
+    /// The stage split across the planes, one partition each: the level the drain names
+    /// beside its loop, read off the list rather than stated twice.
     pub fn planes(&self) -> Level {
-        let (c, i, p) = (self.partition, self.instruction, self.planes);
-        Level::planes(&[
-            Cut::new(M, c.m * i.m).across(p.m),
-            Cut::new(N, c.n * i.n).across(p.n),
-        ])
+        cmma_levels(self, &[])[2].clone()
     }
 
-    /// The partition stepped through the stage's `K` in the instruction's depth.
-    pub fn k_steps(&self) -> Level {
-        Level::walk(&[(K, self.instruction.k)])
-    }
-
-    /// The partition's grid of fragments, one instruction each.
+    /// The partition's grid of fragments, one instruction each: likewise.
     pub fn fragments(&self) -> Level {
-        let i = self.instruction;
-        Level::walk(&[(M, i.m), (N, i.n)])
+        cmma_levels(self, &[])[4].clone()
     }
 }
 
@@ -184,6 +173,44 @@ pub fn cmma_kernel<
                 let mut c_cell = c.at(&cell);
                 c_cell.copy_cast_from(&acc.at(&cell));
             }
+        }
+    }
+}
+
+/// COUNTS_PLAN.md phase 2's gate for this kernel: the grid the leaf-up levels state is the grid
+/// the blueprint counts on its own. The two were written independently, which is what makes
+/// the agreement worth pinning — the old level methods stated sizes, `grid` still divides the
+/// space by them, and the leaf-up levels have to land on the same cubes and planes.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tiled::cmma::{CmmaDelivery, Partition};
+    use crate::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+
+    #[test]
+    fn the_leaf_up_levels_state_the_grid_the_blueprint_counts() {
+        let space = Space::new(&[(M, 256), (N, 192), (K, 480)]);
+        for (partition, planes, stage_k) in [
+            (Partition { m: 1, n: 1 }, PlaneGrid { m: 2, n: 1 }, 48),
+            (Partition { m: 2, n: 4 }, PlaneGrid { m: 2, n: 2 }, 32),
+            (Partition { m: 4, n: 2 }, PlaneGrid { m: 1, n: 4 }, 16),
+        ] {
+            let bp = CmmaBlueprint {
+                instruction: InstructionShape { m: 8, n: 8, k: 8 },
+                partition,
+                planes,
+                stage_k,
+                buffering: 2,
+                delivery: CmmaDelivery::Copy,
+            };
+            let partitioning = bp.partitioning(&space, &[]);
+            let (count, dim) = bp.grid(&space, &[], 32);
+            assert_eq!(
+                format!("{:?}", partitioning.cube_count()),
+                format!("{count:?}"),
+                "{bp:?}"
+            );
+            assert_eq!(partitioning.planes_per_cube(), dim.y, "{bp:?}");
         }
     }
 }

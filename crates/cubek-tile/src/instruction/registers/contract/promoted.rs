@@ -9,8 +9,8 @@
 
 use cubecl::prelude::*;
 
-use super::factor::{level_of, scale_width, scales_of, spread};
-use super::scale::{ContractEdges, EdgeOrdinal, Side};
+use super::factor::{level_of, scale_width, scales_of, span};
+use super::scale::{ContractEdges, Side};
 use crate::instruction::registers::block;
 use crate::instruction::registers::lines::{CombinedScales, ScaledLines};
 use crate::*;
@@ -112,9 +112,7 @@ impl<T: Numeric> RegisterData<T> {
 
         // This block's own edges, which is all a scale level needs of it. It walks one contracted
         // value a step, so its accumulator width is the width whichever edge a factor's scales
-        // share is served at. Its columns are walked under a constant ordinal and its rows are
-        // the contraction, whose step is a runtime index, so the two factors differ in that
-        // alone.
+        // share is served at.
         let reduce = comptime!(
             operands
                 .contracting(&out)
@@ -141,9 +139,6 @@ impl<T: Numeric> RegisterData<T> {
                 lw,
                 aw: vw,
                 contracted_per_step: fold,
-                ordinal: EdgeOrdinal::Runtime(
-                    "this block walks the contraction at runtime".to_string()
-                ),
             }),
             comptime!(Side::Lhs),
         );
@@ -161,19 +156,11 @@ impl<T: Numeric> RegisterData<T> {
                 lw,
                 aw: vw,
                 contracted_per_step: fold,
-                // A step folding several contracted values takes them from one line at a runtime
-                // index; an unfolded one walks neighbouring cells under a constant ordinal.
-                ordinal: match fold {
-                    1 => EdgeOrdinal::Constant,
-                    folded => EdgeOrdinal::Runtime(format!(
-                        "a step folding {folded} contracted values walks no such edge"
-                    )),
-                },
             }),
             comptime!(Side::Rhs),
         );
-        let lhs_spread = comptime!(spread(lhs_level));
-        let rhs_spread = comptime!(spread(rhs_level));
+        let lhs_span = comptime!(span(lhs_level));
+        let rhs_span = comptime!(span(rhs_level));
 
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
@@ -183,15 +170,13 @@ impl<T: Numeric> RegisterData<T> {
         let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>::new(
             lhs_values.matrix_packed::<L>(lhs_axes, 0usize),
             scales_of::<LS, LSW>(&lhs_levels, comptime!(lhs_level), 0usize),
-            comptime!(lhs_spread.0),
-            comptime!(lhs_spread.1),
+            comptime!(lhs_span),
         );
         // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
         let rhs_mat = ScaledLines::<MatrixView<Vector<ER, RA>>, CombinedScales<RS, RSW>>::new(
             rhs_values.matrix_packed::<RA>(rhs_axes, 0usize),
             scales_of::<RS, RSW>(&rhs_levels, comptime!(rhs_level), 0usize),
-            comptime!(rhs_spread.0),
-            comptime!(rhs_spread.1),
+            comptime!(rhs_span),
         );
 
         block::contract::<

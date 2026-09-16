@@ -22,6 +22,7 @@
 //! kernel's loops state, listed by the blueprint, and binds the tensors to the same extents.
 #![allow(dead_code)]
 
+mod arrival;
 mod axis;
 mod fold;
 pub mod instruction;
@@ -31,6 +32,7 @@ mod space;
 mod staging;
 mod tile;
 
+pub use arrival::*;
 pub use axis::*;
 pub use fold::*;
 pub use instruction::*;

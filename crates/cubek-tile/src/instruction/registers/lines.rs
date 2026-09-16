@@ -1,18 +1,146 @@
-//! What the register block reads: one line of an operand, at a position.
+//! What the register block reads: an operand's line at a position, and the scale line covering a
+//! run of them.
 //!
-//! A plain operand hands its line back. A scaled one multiplies its scales in first, and does it
-//! here rather than under a view because a scale line covers several value lines: which lane of it
-//! a line takes has to be a constant, and only a caller walking a comptime run knows that. `run`
-//! is that position, and an operand with nothing to index by it ignores it.
+//! **A scale is never found from a value's position.** The walk holds the coarser coordinate and
+//! builds the finer one out of it: a run names one scale line, a field of that line names the tile
+//! it covers, and the value lines of that tile follow by multiplication. Nothing here divides a
+//! coordinate, and no operand can be asked which scale covers a line — it is handed every scale
+//! line a run needs, once, at the top of the run.
 //!
-//! **The scales are read through this same trait**, so a scaled operand's scales may themselves be
-//! scaled: one scale for a tile of values, a tile of scales for a tile of tiles of values. Depth is
-//! whatever the type says, and every level reads the level above it the same way, so nothing here
-//! counts levels or knows how many there are.
+//! **The scales are read through this same trait**, so a scaled operand's scales are themselves an
+//! operand: one scale for a tile of values, and every level coarser than that already folded into
+//! the line it hands back ([`CombinedScales`]).
 
 use cubecl::{prelude::*, std::tensor::layout::Coords2d};
 
 use crate::*;
+
+/// Which edge of the contraction a factor's scale line runs along.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Along {
+    /// The line's fields are consecutive blocks of the contraction: the lhs, and a rhs whose
+    /// step folds a whole line.
+    Contraction,
+    /// The line's fields are consecutive blocks of the accumulator's columns: a rhs lining along
+    /// them.
+    Columns,
+}
+
+/// How an operand's value lines are grouped under its scale lines.
+///
+/// One read of the scales brings `fields` of them along [`along`](Span::along), each covering
+/// `lines` value lines there; along the contraction, one scale holds for `steps` lines. A run of
+/// the walk is `steps` lines of the contraction, and the walk multiplies every index out of the run
+/// it is in. An operand carrying no scales is [`PLAIN`](Span::PLAIN) and groups nothing.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Span {
+    /// The edge the scale line runs along.
+    pub along: Along,
+    /// Scales one read of them serves.
+    pub fields: usize,
+    /// Value lines one scale covers along [`along`](Span::along).
+    pub lines: usize,
+    /// Lines of the contraction one scale holds for. Along the contraction this is
+    /// `lines`; along the columns it is the block the scale covers there.
+    pub steps: usize,
+}
+
+impl Span {
+    /// An operand with no scales: every line stands alone.
+    pub const PLAIN: Span = Span {
+        along: Along::Contraction,
+        fields: 1,
+        lines: 1,
+        steps: 1,
+    };
+
+    /// Whether this operand groups nothing.
+    pub fn is_plain(&self) -> bool {
+        self.fields == 1 && self.lines == 1 && self.steps == 1
+    }
+
+    /// Lines of the contraction one run covers: one scale line's worth where the line runs
+    /// along it, one scale's worth where it runs along the columns.
+    pub fn run(&self) -> usize {
+        match self.along {
+            Along::Contraction => self.fields * self.lines,
+            Along::Columns => self.steps,
+        }
+    }
+
+    /// Scale lines a factor needs for `majors` rows or columns of the block: one each where its
+    /// line runs along the contraction, one per `fields · lines` columns where it runs along them.
+    pub fn count(&self, majors: usize) -> usize {
+        match self.along {
+            Along::Contraction => majors,
+            Along::Columns => {
+                let covered = self.fields * self.lines;
+                assert!(
+                    majors.is_multiple_of(covered),
+                    "block::contract: {majors} columns of a block do not divide into runs of \
+                     {covered}, so one run would work under a scale that is not there"
+                );
+                majors / covered
+            }
+        }
+    }
+
+    /// The run two factors walk together along the contraction.
+    ///
+    /// One walk steps both, so either they group its lines the same way or one of them groups
+    /// nothing. Two different groupings would need a position resolved per side, which is the
+    /// division this module exists not to do.
+    pub fn join_run(self, other: Span) -> usize {
+        match (self.run(), other.run()) {
+            (1, run) | (run, 1) => run,
+            (a, b) => {
+                assert!(
+                    a == b,
+                    "block::contract: one factor holds a scale for {a} lines of the contraction \
+                     and the other for {b}. A walk steps both, so a run is one grouping or none"
+                );
+                a
+            }
+        }
+    }
+}
+
+/// Every scale line one run holds, read once at the top of the run: one per row or column of
+/// the block.
+///
+/// Absent is a factor with no scales, and it emits nothing: its values go through as they lie.
+#[derive(CubeType)]
+pub struct RunScales<S: Numeric, W: Size> {
+    /// The scale lines of this run, where the factor carries any.
+    lines: ComptimeOption<Array<Vector<S, W>>>,
+}
+
+#[cube]
+impl<S: Numeric, W: Size> RunScales<S, W> {
+    /// A factor with no scales.
+    pub fn none() -> Self {
+        RunScales::<S, W> {
+            lines: ComptimeOption::new_None(),
+        }
+    }
+
+    /// `value` under field `field` of the scale line `major` holds, which is the scale covering
+    /// the tile the walk is in. The field is a constant because the walk built it.
+    pub fn apply<E: Numeric, V: Size>(
+        &self,
+        value: Vector<E, V>,
+        major: usize,
+        #[comptime] field: usize,
+    ) -> Vector<E, V> {
+        #[comptime]
+        match &self.lines {
+            ComptimeOption::Some(lines) => {
+                value * Vector::<E, V>::cast_from(lines[major].extract(field))
+            }
+            ComptimeOption::None => value,
+        }
+    }
+}
 
 /// One operand's lines as the contraction reads them.
 ///
@@ -24,150 +152,71 @@ pub trait Lines: CubeType {
     type E: Numeric;
     /// Values per line.
     type V: Size;
+    /// The element one scale holds.
+    type S: Numeric;
+    /// Scales per scale line.
+    type W: Size;
 
-    /// The line at `pos`, folded with whatever this operand carries beside its values. `run` names
-    /// this line's ordinal along the edge the fold is indexed by, so the lane it selects is a
-    /// constant.
-    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<Self::E, Self::V>;
+    /// This operand's values at `pos`.
+    fn line(&self, pos: Coords2d) -> Vector<Self::E, Self::V>;
 
-    /// How this operand's fold repeats across its lines ([`Reuse`]).
-    fn reuse(&self) -> comptime_type!(Reuse);
+    /// The scale lines run `run` holds — `count` of them, one per row or column of the block
+    /// ([`Span::count`]) — or nothing where this operand carries none.
+    fn run_scales(&self, #[comptime] count: usize, run: u32) -> RunScales<Self::S, Self::W>;
+
+    /// How this operand's lines are grouped under its scales.
+    fn span(&self) -> comptime_type!(Span);
 }
-
-/// How a loaded value is reused across the walk.
-///
-/// The two travel together because a caller needs both to walk correctly: it may roll a run of
-/// `steps`, since every step in one takes the same value, but it must walk the values themselves
-/// under a *constant* ordinal, because each is a lane of the read it arrived in and a lane index is
-/// not addressable at runtime.
-///
-/// [`PER_STEP`](Reuse::PER_STEP) is an operand with nothing to reuse: it reads what it needs, every
-/// step, so a caller walking it needs no constant at all.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Reuse {
-    /// Values one read brings back, which is the operand's line width where it has one.
-    pub per_load: usize,
-    /// Steps one value serves before the next is wanted.
-    pub steps: usize,
-}
-
-impl Reuse {
-    /// An operand with nothing to reuse: it reads what it needs, every step.
-    pub const PER_STEP: Reuse = Reuse {
-        per_load: 1,
-        steps: 1,
-    };
-
-    /// Steps walked before the pattern repeats.
-    pub fn span(&self) -> usize {
-        self.per_load * self.steps
-    }
-
-    /// This level's run against the one its own scales carry, in value lines.
-    ///
-    /// A level whose read serves a single value constrains no walk: every step takes the same lane
-    /// whatever its ordinal, so it drops out here rather than widening the run its caller has to
-    /// unroll. That is what keeps a coarse outer level free, and a per-tensor scale, which is one
-    /// value covering everything, entirely invisible to the walk.
-    ///
-    /// `per_line` is how many value lines one line of *these* scales covers, which is what carries
-    /// the level above into value-line units.
-    pub fn compose(self, above: Reuse, per_line: usize) -> Reuse {
-        let here = (self.per_load > 1).then_some(self);
-        let above = (above.per_load > 1).then_some(Reuse {
-            per_load: above.per_load,
-            steps: above.steps * per_line,
-        });
-        match (here, above) {
-            (None, None) => Reuse::PER_STEP,
-            (Some(only), None) | (None, Some(only)) => only,
-            // The finer run is the one a caller must hold constant, and the coarser is a multiple
-            // of it, so they repeat together at the wider span.
-            (Some(here), Some(above)) => {
-                let steps = here.steps.min(above.steps);
-                let span = lcm(here.span(), above.span());
-                Reuse {
-                    per_load: span / steps,
-                    steps,
-                }
-            }
-        }
-    }
-}
-
-fn lcm(a: usize, b: usize) -> usize {
-    a / gcd(a, b) * b
-}
-
-fn gcd(a: usize, b: usize) -> usize {
-    match b {
-        0 => a,
-        _ => gcd(b, a % b),
-    }
-}
-
-// `per_load` alone decides how a caller must walk: at one, every step takes the same lane
-// whatever its ordinal, so `steps` is the caller's own business. Only past one does the ordinal have
-// to be a constant, which is what the walks below branch on.
 
 #[cube]
 impl<'a, E: Numeric, V: Size> Lines for MaskedView<'a, Vector<E, V>, Coords2d> {
     type E = E;
     type V = V;
+    type S = E;
+    type W = Const<1>;
 
-    fn line(&self, pos: Coords2d, #[comptime] _run: usize) -> Vector<E, V> {
+    fn line(&self, pos: Coords2d) -> Vector<E, V> {
         self.read(pos)
     }
 
-    fn reuse(&self) -> comptime_type!(Reuse) {
-        Reuse::PER_STEP
+    fn run_scales(&self, #[comptime] _count: usize, _run: u32) -> RunScales<E, Const<1>> {
+        RunScales::<E, Const<1>>::none()
+    }
+
+    fn span(&self) -> comptime_type!(Span) {
+        Span::PLAIN
     }
 }
 
-/// An operand read against its scales: the values' line, times the scale covering it.
+/// An operand and the scales it is contracted under.
 ///
-/// The scales are read through their own matrix, whose columns count blocks where the values'
-/// count lines. Which *lane* of a scale line a value line takes is a constant the caller knows and
-/// the view could not: `run` is the value line's ordinal along the shared edge, and the lane falls
-/// out of it. Which scale *line* to read is only an address, so it stays runtime.
-///
-/// **Both sides are a [`Lines`]**, so this one type serves every level: the values are an operand's
-/// own lines at the level nearest them, and the level below's scales at any level above. The scales
-/// likewise carry scales of their own. A second level is then this same type wrapping this same
-/// type, which is why nothing here says how deep the chain goes.
+/// The values and the scales are each a [`Lines`], read at positions the walk builds: the values at
+/// theirs, the scales at the run's. Which field of a scale line a value line takes is the walk's
+/// too — it stepped the fields — so nothing here resolves one.
 #[derive(CubeType)]
 pub struct ScaledLines<V: Lines, S: Lines> {
     values: V,
-    /// The scales, where this factor carries any. Absent is a plain operand, and every line of
-    /// it reads exactly as the values' own.
+    /// The scales, where this factor carries any. Absent is a plain operand, and every line of it
+    /// reads exactly as the values' own.
     scales: ComptimeOption<S>,
-    /// Value lines one scale covers along the shared edge.
+    /// How the values' lines group under those scales.
     #[cube(comptime)]
-    lines_per_scale: usize,
-    /// Scales one line of them serves, which is the width the scales are read at.
-    #[cube(comptime)]
-    lanes: usize,
+    span: Span,
 }
 
 #[cube]
 impl<V: Lines, S: Lines> ScaledLines<V, S> {
     /// This factor's values under `scales`, or the values alone where it carries none.
-    pub fn new(
-        values: V,
-        scales: ComptimeOption<S>,
-        #[comptime] lines_per_scale: usize,
-        #[comptime] lanes: usize,
-    ) -> Self {
+    pub fn new(values: V, scales: ComptimeOption<S>, #[comptime] span: Span) -> Self {
         comptime!(assert!(
-            lines_per_scale > 0,
+            span.lines > 0,
             "ScaledLines: one scale covers less than a whole line of values, so a line straddles \
              two scales"
         ));
         ScaledLines::<V, S> {
             values,
             scales,
-            lines_per_scale,
-            lanes,
+            span,
         }
     }
 }
@@ -176,43 +225,39 @@ impl<V: Lines, S: Lines> ScaledLines<V, S> {
 impl<V: Lines, S: Lines> Lines for ScaledLines<V, S> {
     type E = V::E;
     type V = V::V;
+    type S = S::E;
+    type W = S::V;
 
-    fn line(&self, pos: Coords2d, #[comptime] run: usize) -> Vector<V::E, V::V> {
-        let value = self.values.line(pos, run);
+    fn line(&self, pos: Coords2d) -> Vector<V::E, V::V> {
+        self.values.line(pos)
+    }
+
+    /// A line along the contraction sits at `(major, run)`; one along the columns at
+    /// `(run · steps, major)` — any row of the block the run covers names its scale.
+    fn run_scales(&self, #[comptime] count: usize, run: u32) -> RunScales<S::E, S::V> {
         #[comptime]
         match &self.scales {
             ComptimeOption::Some(scales) => {
-                let (row, col) = pos;
-                let per_line = comptime!(self.lines_per_scale * self.lanes);
-                // One line of these scales covers `per_line` value lines, so that is both the column
-                // it sits at and the ordinal it is read under: the level above indexes scale lines,
-                // not value lines, and folds its own scale in on the way back.
-                let scale = scales.line(
-                    (row, col / comptime!(per_line as u32)),
-                    comptime!(run / per_line),
-                );
-                let lane = comptime!((run / self.lines_per_scale) % self.lanes);
-                value * Vector::<V::E, V::V>::cast_from(scale.extract(lane))
+                let mut lines = Array::<Vector<S::E, S::V>>::new(count);
+                #[unroll]
+                for major in 0..count {
+                    let at = comptime!(major as u32).runtime();
+                    let pos = match comptime!(self.span.along) {
+                        Along::Contraction => (at, run),
+                        Along::Columns => (run * comptime!(self.span.steps as u32), at),
+                    };
+                    lines[major] = scales.line(pos);
+                }
+                RunScales::<S::E, S::V> {
+                    lines: ComptimeOption::new_Some(lines),
+                }
             }
-            ComptimeOption::None => value,
+            ComptimeOption::None => RunScales::<S::E, S::V>::none(),
         }
     }
 
-    fn reuse(&self) -> comptime_type!(Reuse) {
-        #[comptime]
-        match &self.scales {
-            ComptimeOption::Some(scales) => {
-                let above = scales.reuse();
-                comptime!(
-                    Reuse {
-                        per_load: self.lanes,
-                        steps: self.lines_per_scale,
-                    }
-                    .compose(above, self.lines_per_scale * self.lanes)
-                )
-            }
-            ComptimeOption::None => self.values.reuse(),
-        }
+    fn span(&self) -> comptime_type!(Span) {
+        self.span
     }
 }
 
@@ -250,15 +295,21 @@ impl<'a, S: Numeric, W: Size> CombinedScales<'a, S, W> {
 impl<'a, S: Numeric, W: Size> Lines for CombinedScales<'a, S, W> {
     type E = S;
     type V = W;
+    type S = S;
+    type W = Const<1>;
 
-    fn line(&self, pos: Coords2d, #[comptime] _run: usize) -> Vector<S, W> {
+    fn line(&self, pos: Coords2d) -> Vector<S, W> {
         self.inner.read(pos) * Vector::<S, W>::cast_from(self.coarser.extract(0usize))
     }
 
-    fn reuse(&self) -> comptime_type!(Reuse) {
-        // How a scale line is spent belongs to whoever reads it: this is the line, not the pattern.
-        // The coarser levels add nothing either, being one value each over a span at least this
-        // wide.
-        Reuse::PER_STEP
+    /// A scales operand carries its own coarser levels in the line it hands back, so it folds
+    /// nothing further.
+    fn run_scales(&self, #[comptime] _count: usize, _run: u32) -> RunScales<S, Const<1>> {
+        RunScales::<S, Const<1>>::none()
+    }
+
+    /// How a scale line is spent belongs to whoever reads it: this is the line, not the grouping.
+    fn span(&self) -> comptime_type!(Span) {
+        Span::PLAIN
     }
 }

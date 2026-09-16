@@ -4,11 +4,13 @@
 mod distribution;
 mod level;
 mod partitioning;
+mod tiling;
 mod walk;
 mod walk_order;
 
 pub use distribution::*;
 pub use level::*;
 pub use partitioning::*;
+pub use tiling::*;
 pub use walk::*;
 pub use walk_order::*;

@@ -199,16 +199,6 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
         self
     }
 
-    /// [`packed`](Self::packed) served `width` values a line out of one bound word
-    /// ([`Packing::Subword`]). Bind the operand one word wide.
-    pub fn subword(mut self, field: impl Into<Field>, width: usize) -> Self {
-        self.data.packing = Packing::Subword {
-            field: field.into(),
-            width,
-        };
-        self
-    }
-
     /// The concrete (real-extent) space the bounds-check derives from; set by
     /// [`Launcher::arg`](crate::Launcher::arg).
     pub(crate) fn concrete(mut self, space: &'a Space, overhangs: &'a [Axis]) -> Self {
