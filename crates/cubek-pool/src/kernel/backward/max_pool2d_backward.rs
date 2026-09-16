@@ -7,6 +7,7 @@ use cubecl::{
     CubeDim, calculate_cube_count_elemwise, num_traits::Zero, prelude::TensorBinding, prelude::*,
     std::FastDivmod, tensor_vector_size_parallel,
 };
+use cubek_std::launch::Accumulation;
 
 #[cube(launch_unchecked, address_type = "dynamic")]
 fn max_pool2d_with_indices_backward_kernel<E: Numeric, I: Int, N: Size>(
@@ -104,7 +105,13 @@ pub(crate) fn max_pool2d_with_indices_backward_launch(
     indices_dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype, indices_dtype, u32::elem_type_native()],
+            // The gradient sum, the tap and its index, the current index and the match mask.
+            live_vectors: 5,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
