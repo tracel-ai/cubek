@@ -179,7 +179,9 @@ fn nvfp4_shaped_decode() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -829,7 +831,9 @@ fn a_packed_operand_contracts_against_its_scales() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -949,7 +953,9 @@ fn eight_bit_fields_contract_against_their_scales() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1073,7 +1079,9 @@ fn a_folded_walk_takes_its_scales_several_at_a_time() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 2), (KI, factor)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 2), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1205,13 +1213,9 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1351,13 +1355,9 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1502,13 +1502,9 @@ fn several_lines_may_share_one_scale() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks_n),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks_n), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1625,7 +1621,9 @@ fn an_i8_operand_contracts_against_its_scales() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1756,7 +1754,10 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            Tiling::leaf(&[(NB, 1), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1891,7 +1892,10 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::cubes(&[(NB, 1)]), Level::walk(&[(KB, 1)])],
+            Tiling::leaf(&[(NB, 1), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2055,7 +2059,10 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
-            vec![Level::cubes(&[(N, bn)]), Level::walk(&[(KB, 1)])],
+            Tiling::leaf(&[(N, bn), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[N])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2249,7 +2256,9 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
             // Four scales a word, so a region is the four blocks one read of them covers.
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 4), (KI, factor)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 4), (KI, factor)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2395,12 +2404,14 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
             // A region is the blocks one word of scales covers.
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (M, rows),
                 (N, cols),
                 (KB, float_field(kind).per_word()),
                 (KI, factor),
-            ])],
+            ])
+            .walk_every(&[M, N, KB, KI])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -2531,7 +2542,10 @@ fn e4m3_scales_reach_the_promoted_block() {
                 (KI, block_k),
             ]),
             // One read of the scales is four column blocks, so one cube owns all four.
-            vec![Level::cubes(&[(NB, 4)]), Level::walk(&[(KB, 1)])],
+            Tiling::leaf(&[(NB, 4), (KB, 1)])
+                .walk_every(&[KB])
+                .cubes(&[NB])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2682,13 +2696,9 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 (KB, blocks_k),
                 (KI, block_k),
             ]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, 8 / bn),
-                (NI, bn),
-                (KB, 1),
-                (KI, block_k),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, 8 / bn), (NI, bn), (KB, 1), (KI, block_k)])
+                .walk_every(&[M, NB, NI, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );

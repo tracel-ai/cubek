@@ -122,7 +122,9 @@ fn one_contracted_axis_is_the_reference() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (K, depth)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (K, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (K, block)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -184,7 +186,9 @@ fn a_partitioned_axis_contracts_the_same() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -271,7 +275,9 @@ fn scales_omit_the_axis_inside_the_block() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -370,12 +376,9 @@ fn a_split_output_axis_contracts_the_same() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -463,12 +466,9 @@ fn scales_omit_the_axis_inside_the_column_block() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -574,12 +574,9 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -693,12 +690,9 @@ fn scales_are_served_several_at_a_time() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -819,12 +813,9 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -949,12 +940,9 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1074,12 +1062,9 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (NB, blocks),
-                (NI, inside),
-                (K, depth),
-            ])],
+            Tiling::leaf(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)])
+                .walk_every(&[M, NB, NI, K])
+                .levels(),
         ),
         KernelForm::Static,
     );

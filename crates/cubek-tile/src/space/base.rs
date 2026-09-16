@@ -567,7 +567,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::cubes(&[(K, 4)]);
+        let level = Tiling::leaf(&[(K, 4)]).cubes(&[K]).level();
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -585,7 +585,7 @@ mod contraction_tests {
     #[test]
     fn a_plane_cut_contraction_is_partial_to_the_output() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::planes(&[(K, 4)]);
+        let level = Tiling::leaf(&[(K, 4)]).planes(&[(K, 2)]).level();
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -598,7 +598,10 @@ mod contraction_tests {
     #[test]
     fn distributed_work_is_partial_to_the_output() {
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-        let level = Level::cubes(&[(M, 4), (N, 4), (K, 8)]).shared_by(3);
+        let level = Tiling::leaf(&[(M, 4), (N, 4), (K, 8)])
+            .cubes(&[M, N, K])
+            .shared_by(3)
+            .level();
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Partial
@@ -615,7 +618,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);
-        let level = Level::cubes(&[(N, 1), (K, 8)]);
+        let level = Tiling::leaf(&[(N, 1), (K, 8)]).cubes(&[N, K]).level();
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Whole
@@ -627,7 +630,7 @@ mod contraction_tests {
     #[test]
     fn a_cube_cut_output_axis_stays_whole() {
         let space = Space::new(&[(M, 4), (N, 8), (K, 4)]);
-        let level = Level::cubes(&[(N, 4)]);
+        let level = Tiling::leaf(&[(N, 4)]).cubes(&[N]).level();
         assert_eq!(
             level.split_share_of(&space, &space.project(&[M, N])),
             SplitShare::Whole

@@ -409,12 +409,9 @@ impl Conv1d {
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .levels(),
             ),
             KernelForm::Static,
         );
@@ -559,7 +556,9 @@ fn conv1d_padded_underflow_masks_to_zero() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -638,7 +637,9 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -713,7 +714,9 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -885,12 +888,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .levels(),
             ),
             KernelForm::Static,
         );
@@ -1153,12 +1153,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .levels(),
             ),
             KernelForm::Static,
         );
@@ -1432,12 +1429,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                vec![Level::walk(&[
-                    (OH, tile_oh),
-                    (CO, tile_co),
-                    (RH, self.rh),
-                    (CI, self.ci),
-                ])],
+                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                    .walk_every(&[OH, CO, RH, CI])
+                    .levels(),
             ),
             KernelForm::Static,
         );
@@ -1684,14 +1678,16 @@ impl Conv2d {
                     (RW, self.rw),
                     (CI, self.ci),
                 ]),
-                vec![Level::walk(&[
+                Tiling::leaf(&[
                     (OH, tile_oh),
                     (OW, tile_ow),
                     (CO, tile_co),
                     (RH, self.rh),
                     (RW, self.rw),
                     (CI, self.ci),
-                ])],
+                ])
+                .walk_every(&[OH, OW, CO, RH, RW, CI])
+                .levels(),
             ),
             KernelForm::Static,
         );
@@ -2199,13 +2195,9 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-            vec![Level::walk(&[
-                (OH, oh),
-                (OW, ow),
-                (RH, rh),
-                (RW, rw),
-                (CI, ci),
-            ])],
+            Tiling::leaf(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+                .walk_every(&[OH, OW, RH, RW, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2454,7 +2446,9 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         &client,
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2565,32 +2559,33 @@ impl Resize1d {
         out
     }
 
-    /// One level per entry, each cutting `OH` at that edge and keeping the other axes whole: two
-    /// entries nest a second descent, which is where a rational window's leftover phase has to
-    /// accumulate rather than restart.
-    fn space(&self, oh_edges: &[usize]) -> Launcher {
-        let levels = oh_edges
-            .iter()
-            .map(|&edge| Level::walk(&[(OH, edge), (CO, self.co), (RH, self.rh), (CI, self.ci)]))
-            .collect();
+    /// `OH` cut at `oh` under the leaf and the other axes whole, then one walk per count above
+    /// it: a count nests a second descent, which is where a rational window's leftover phase has
+    /// to accumulate rather than restart.
+    fn space(&self, oh: usize, oh_counts: &[usize]) -> Launcher {
+        let leaf = Tiling::leaf(&[(OH, oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        let tiling = oh_counts.iter().fold(leaf, |tiling, &count| {
+            tiling.walk(&[(OH, count), (CO, 1), (RH, 1), (CI, 1)])
+        });
         Launcher::implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                levels,
+                tiling.walk_every(&[OH, CO, RH, CI]).levels(),
             ),
             KernelForm::Static,
         )
     }
 
-    fn check(&self, oh_edges: &[usize]) {
-        self.check_with(oh_edges, 1, Stage::InPlace);
+    fn check(&self, oh: usize, oh_counts: &[usize]) {
+        self.check_with(oh, oh_counts, 1, Stage::InPlace);
     }
 
     /// The scalar operand staged into `width`-wide padded shared-memory lines.
-    fn check_padded(&self, oh_edges: &[usize], width: usize) {
+    fn check_padded(&self, oh: usize, oh_counts: &[usize], width: usize) {
         self.check_with(
-            oh_edges,
+            oh,
+            oh_counts,
             1,
             Stage::Smem {
                 depth: 1,
@@ -2599,7 +2594,7 @@ impl Resize1d {
         );
     }
 
-    fn check_with(&self, oh_edges: &[usize], vector_size: usize, stage: Stage) {
+    fn check_with(&self, oh: usize, oh_counts: &[usize], vector_size: usize, stage: Stage) {
         let in_spec = TileSpec::new(Projection::new(
             &[OH, RH, CI],
             &[
@@ -2620,7 +2615,7 @@ impl Resize1d {
             in_spec,
             &[RH, CI, CO],
             TileSpec::direct(&[OH, CO]).checked(true),
-            self.space(oh_edges),
+            self.space(oh, oh_counts),
             vector_size,
             RegisterBlock::new(16),
             stage,
@@ -2632,7 +2627,7 @@ impl Resize1d {
                 assert_eq!(
                     got.get_f32(&[o, c]),
                     want[o * self.co + c],
-                    "resize1d {}/{} offset {} edges {oh_edges:?} v {vector_size} {stage:?}: \
+                    "resize1d {}/{} offset {} oh {oh} x {oh_counts:?} v {vector_size} {stage:?}: \
                      wrong at ({o}, {c})",
                     self.scale,
                     self.divisor,
@@ -2657,7 +2652,7 @@ fn resize1d_staged_padded_stage_width() {
         offset: -2,
         divisor: 6,
     }
-    .check_padded(&[2], 4);
+    .check_padded(2, &[], 4);
 }
 
 /// The tap axis carries the divisor as its coefficient, so it survives the division whole: the
@@ -2676,7 +2671,7 @@ fn resize1d_rational_static() {
         offset: -2,
         divisor: 6,
     }
-    .check(&[2]);
+    .check(2, &[]);
 }
 
 /// The same resample staged: the input tile stages uncompacted into shared
@@ -2695,7 +2690,8 @@ fn resize1d_staged_static() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         1,
         Stage::Smem {
             depth: 1,
@@ -2719,7 +2715,8 @@ fn resize1d_staged_double_buffered() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         1,
         Stage::Smem {
             depth: 2,
@@ -2744,8 +2741,8 @@ fn resize1d_rational_fractional_taps() {
         offset: -2,
         divisor: 3,
     };
-    resize.check(&[3]);
-    resize.check(&[3, 1]);
+    resize.check(3, &[]);
+    resize.check(1, &[3]);
 }
 
 /// Staged rational gather with fractional taps.
@@ -2763,7 +2760,8 @@ fn resize1d_staged_fractional_taps() {
         divisor: 3,
     };
     resize.check_with(
-        &[3],
+        3,
+        &[],
         1,
         Stage::Smem {
             depth: 1,
@@ -2771,7 +2769,8 @@ fn resize1d_staged_fractional_taps() {
         },
     );
     resize.check_with(
-        &[3, 1],
+        1,
+        &[3],
         1,
         Stage::Smem {
             depth: 1,
@@ -2795,7 +2794,8 @@ fn resize1d_staged_vectorized() {
         divisor: 6,
     }
     .check_with(
-        &[2],
+        2,
+        &[],
         2,
         Stage::Smem {
             depth: 1,
@@ -2853,7 +2853,7 @@ fn resize1d_rational_dynamic() {
         offset: -2,
         divisor: 6,
     };
-    let launcher = resize.space(&[2]);
+    let launcher = resize.space(2, &[]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -2961,7 +2961,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         offset: -2,
         divisor: 6,
     };
-    let launcher = resize.space(&[2]);
+    let launcher = resize.space(2, &[]);
 
     let in_spec = TileSpec::new(Projection::new(
         &[OH, RH, CI],
@@ -3014,7 +3014,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -3091,7 +3093,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            vec![Level::walk(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])],
+            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+                .walk_every(&[OH, CO, RH, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );

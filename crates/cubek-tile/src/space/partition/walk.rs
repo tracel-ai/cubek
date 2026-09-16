@@ -22,10 +22,11 @@
 use cubecl::prelude::*;
 
 use crate::{
-    Axis, Coords, Edge, Fold, FoldExpand, Level, Region, RegionExpand, Space, const_coords,
-    instance_count, instance_tiles, run_length,
+    Axis, Coords, Count, Fold, FoldExpand, Level, Region, RegionExpand, Space, const_coords,
+    instance_tiles,
 };
 
+use super::level::Grid;
 use super::walk_order::walk_index;
 use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
@@ -105,9 +106,11 @@ impl Walk {
         let mut counts = Coords::<usize>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
-            match comptime!(level.edge_kind(space.axis_at(p))) {
-                Edge::Cut(edge) => counts.push(space.extents.count(p, edge)),
-                Edge::Whole => counts.push(1usize),
+            // A stated count is the constant it states; an every-level's is the extent handed
+            // down in its tile, the one division of a launch (folded where the extent is static).
+            match comptime!(level.grid(space.axis_at(p))) {
+                Grid::Const(n) => counts.push(n.runtime()),
+                Grid::Extent(tile) => counts.push(space.extents.count(p, tile)),
             }
         }
         Walk::from_counts(comptime!(space.clone()), level, counts, parent)
@@ -126,14 +129,20 @@ impl Walk {
         let mut positions = Coords::<usize>::new();
         let mut scales = Coords::<usize>::new();
 
-        // Per-axis instance counts, `1` for `Sequential`. Folded, so a constant grid's
-        // decode below folds too (`/1` and `%1` vanish, `%` gets a constant divisor).
+        // Per-axis instance counts, `1` for `Sequential`: the grid itself where every worker
+        // takes one tile, the stated worker count where the grid is dealt across them in runs.
+        // Folded, so a constant grid's decode below folds too (`/1` and `%1` vanish, `%` gets a
+        // constant divisor).
         let mut instances = Coords::<usize>::new();
         #[unroll]
         for p in 0..rank {
-            let dist = comptime!(level.distribution(space.axis_at(p)));
+            let axis = comptime!(space.axis_at(p));
+            let dist = comptime!(level.distribution(axis));
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-                instances.push(instance_count(grid.at(p), comptime!(dist.coverage())));
+                match comptime!(level.count(axis).unwrap()) {
+                    Count::Across(workers) => instances.push(workers.runtime()),
+                    Count::Of(_) | Count::Every => instances.push(grid.at(p)),
+                }
             } else {
                 instances.push(1usize);
             }
@@ -164,8 +173,15 @@ impl Walk {
                 let position = hardware_pos(comptime!(dist.scope_unchecked()))
                     .fdiv(inner_weight)
                     .frem(instances.at(p));
-                // This instance's run of the grid, cut short where the grid does not divide.
-                let run = run_length(grid.at(p), comptime!(dist.coverage()));
+                // One tile a worker, or this worker's run of a grid dealt across them, cut short
+                // where the grid does not divide.
+                let run = match comptime!(level.count(axis).unwrap()) {
+                    Count::Across(workers) => grid
+                        .at(p)
+                        .fadd(comptime!(workers - 1).runtime())
+                        .fdiv(workers.runtime()),
+                    Count::Of(_) | Count::Every => 1usize.runtime(),
+                };
                 counts.push(instance_tiles(
                     grid.at(p),
                     position,
@@ -240,7 +256,7 @@ impl Walk {
             if comptime!(p == at) {
                 // The axis's own tiles, not `counts`, which on a distributed axis is this
                 // instance's share of them and would clamp every lane to its first.
-                let last = comptime!(self.level.count(&self.space, axis) - 1).runtime();
+                let last = comptime!(self.level.tiles(&self.space, axis) - 1).runtime();
                 counts.push(1usize);
                 route.push(coord.fmin(last).fcast::<u32>());
             } else {
@@ -387,8 +403,7 @@ impl Walk {
         let count = self.counts.at(p);
         let one = count.constant();
         if comptime!(
-            one != Some(1)
-                && (0..p).all(|e| self.level.single_tile(&self.space, self.space.axis_at(e)))
+            one != Some(1) && (0..p).all(|e| self.level.one_tile_each(self.space.axis_at(e)))
         ) {
             quot
         } else {

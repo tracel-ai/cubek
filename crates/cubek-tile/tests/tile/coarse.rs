@@ -74,7 +74,9 @@ fn space(cut: usize) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
-            vec![Level::walk(&[(M, ROWS), (N, COLS), (K, cut)])],
+            Tiling::leaf(&[(M, ROWS), (N, COLS), (K, cut)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     )

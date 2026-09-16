@@ -710,10 +710,10 @@ mod tests {
     fn space() -> (Space, Vec<Level>) {
         (
             Space::new(&[(M, 16), (N, 16)]),
-            vec![
-                Level::walk(&[(M, 8), (N, 8)]),
-                Level::walk(&[(M, 4), (N, 4)]),
-            ],
+            Tiling::leaf(&[(M, 4), (N, 4)])
+                .walk(&[(M, 2), (N, 2)])
+                .walk_every(&[M, N])
+                .levels(),
         )
     }
 

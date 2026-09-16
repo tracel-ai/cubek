@@ -71,7 +71,9 @@ fn a_packed_tensor_decodes_against_its_scales() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
-            vec![Level::walk(&[(ROW, rows), (CB, blocks), (CI, inside)])],
+            Tiling::leaf(&[(ROW, rows), (CB, blocks), (CI, inside)])
+                .walk_every(&[ROW, CB, CI])
+                .levels(),
         ),
         KernelForm::Static,
     );

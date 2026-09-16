@@ -1,8 +1,8 @@
 //! The axis-agnostic tile DSL engine.
 //!
 //! A [`Space`] is the axes and their extents. A [`Level`] is one decomposition of it, naming
-//! the axes a loop cuts and who takes the tiles ([`Level::cubes`], [`Level::planes`],
-//! [`Level::lanes`], [`Level::walk`]). A [`Partitioning`] is the space with its levels, outermost
+//! the axes a loop steps, in what tile, how many and who takes them; levels are stated from the
+//! leaf up, in counts ([`Tiling`]). A [`Partitioning`] is the space with its levels, outermost
 //! first, and is what a kernel is handed: `for cube in space` deals the first level, `for plane
 //! in cube` the next, and the [`Region`] each loop hands out carries the path down to `at`. So
 //! the launch is the one source of the partitioning: the kernel walks the levels it was handed,

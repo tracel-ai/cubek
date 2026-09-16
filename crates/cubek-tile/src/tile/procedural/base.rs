@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, DivGuard, Edge, Fold, FoldExpand, Space, Step, TapMask};
+use crate::{Axis, Coords, DivGuard, Fold, FoldExpand, Space, Step, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -77,12 +77,12 @@ impl<T: Numeric> ProceduralData<T> {
         #[unroll]
         for p in 0..comptime!(space.rank()) {
             let axis = comptime!(space.axis_at(p));
-            match comptime!(step.level.edge_kind(axis)) {
-                Edge::Cut(edge) => {
-                    let edge = comptime!(edge as u32);
-                    origin.push(self.origin.at(p) + step.coord(axis).fcast::<u32>() * edge);
+            match comptime!(step.level.tile(axis)) {
+                Some(tile) => {
+                    let tile = comptime!(tile as u32);
+                    origin.push(self.origin.at(p) + step.coord(axis).fcast::<u32>() * tile);
                 }
-                Edge::Whole => origin.push(self.origin.at(p)),
+                None => origin.push(self.origin.at(p)),
             }
         }
         // An axis this level cuts unevenly leaves a partial tile below; from here down every

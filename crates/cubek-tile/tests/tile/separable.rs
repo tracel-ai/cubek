@@ -178,13 +178,15 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (ROW, ROWS),
                 (COL, COLS),
                 (TAP[0], TAPS[0]),
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
-            ])],
+            ])
+            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -268,13 +270,15 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (ROW, ROWS),
                 (COL, COLS),
                 (TAP[0], TAPS[0]),
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
-            ])],
+            ])
+            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -397,13 +401,15 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (ROW, ROWS),
                 (COL, QCOLS),
                 (TAP[0], TAPS[0]),
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
-            ])],
+            ])
+            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -492,13 +498,15 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (ROW, ROWS),
                 (COL, pack),
                 (TAP[0], TAPS[0]),
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
-            ])],
+            ])
+            .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -656,7 +664,9 @@ fn check_resampling(normalized: bool) {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -752,7 +762,9 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
-            vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2)])],
+            Tiling::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -857,7 +869,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -937,7 +951,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1049,7 +1065,9 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1143,7 +1161,9 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            vec![Level::walk(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])],
+            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+                .walk_every(&[ROW, COL, TAP[0]])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1254,7 +1274,9 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
-            vec![Level::walk(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])],
+            Tiling::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+                .walk_every(&[ROW, COL, TAP[0], TAP[1]])
+                .levels(),
         ),
         KernelForm::Static,
     );

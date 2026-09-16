@@ -272,7 +272,9 @@ fn two_levels_fold_in_order() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -373,12 +375,9 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -472,12 +471,9 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -577,7 +573,9 @@ fn a_scale_over_no_axis_covers_everything() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -671,12 +669,9 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -775,12 +770,9 @@ fn f16_scales_are_read_as_f16() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -876,12 +868,9 @@ fn scales_over_the_columns_scale_the_rhs() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -977,12 +966,9 @@ fn an_rhs_scale_survives_a_finer_cut() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1077,12 +1063,9 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1179,12 +1162,9 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1339,12 +1319,9 @@ fn rhs_scales_are_served_several_at_a_time() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[
-                (M, rows),
-                (N, cols),
-                (KB, per_region),
-                (KI, inside),
-            ])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, per_region), (KI, inside)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1487,7 +1464,9 @@ fn lhs_scales_are_served_several_at_a_time() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])],
+            Tiling::leaf(&[(M, 1), (N, cols), (KB, blocks), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1609,7 +1588,9 @@ fn check_scaled_cmma(case: CmmaCase) {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
-            vec![Level::walk(&[(M, rows), (N, cols), (KB, 1), (KI, block)])],
+            Tiling::leaf(&[(M, rows), (N, cols), (KB, 1), (KI, block)])
+                .walk_every(&[M, N, KB, KI])
+                .levels(),
         ),
         KernelForm::Static,
     );

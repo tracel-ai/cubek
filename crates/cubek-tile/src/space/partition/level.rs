@@ -1,88 +1,62 @@
-//! One decomposition [`Level`]: which axes of a space a loop cuts, to what tile edge, and who
-//! takes the tiles. One entry of a [`Partitioning`](crate::Partitioning), which is what a
-//! kernel's loops iterate in turn, the value a [`Region`](crate::Region) carries down to `at`,
-//! and the value a launch sizes its grid from ([`Launcher`](crate::Launcher)). The launch hands
-//! the same value to both, so the grid and the loops cannot disagree.
+//! One decomposition [`Level`]: which axes of a space a loop steps, in tiles of what size, how
+//! many of them, and who takes them. One entry of a [`Partitioning`](crate::Partitioning), which
+//! is what a kernel's loops iterate in turn, the value a [`Region`](crate::Region) carries down
+//! to `at`, and the value a launch sizes its grid from ([`Launcher`](crate::Launcher)). The
+//! launch hands the same value to both, so the grid and the loops cannot disagree.
 //!
-//! One constructor per verb: [`Level::cubes`], [`Level::planes`], [`Level::lanes`] deal tiles
-//! to a hardware scope's workers, [`Level::walk`] steps through them. A level names only the
-//! axes it touches; every other axis is handed down whole.
+//! A level is built only by [`Tiling`](crate::Tiling), from the leaf up: its tile on an axis is
+//! the product of what was stated below it, and its [`Count`] is what it stated. Nothing here
+//! divides one level by another. A level names only the axes it touches; every other axis is
+//! handed down whole.
 
-use super::{ComputeScope, Coverage, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, Distribution, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare};
 
-/// What a level does to one axis: cuts it into tiles of `edge`, or leaves it whole. Whole is
-/// what a level says of an axis it does not name, which is the only way to leave a
-/// [`Dynamic`](Extent::Dynamic) axis alone, since its extent is no number a cut could name.
+/// How many tiles a level takes along one of its axes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Edge {
-    Cut(usize),
-    Whole,
+pub enum Count {
+    /// This many, stated: a walk's steps, or a scope's workers with one tile each. A count
+    /// cannot fail to divide, and a tile under it cannot overhang.
+    Of(usize),
+    /// Every tile the level above hands down, one per step or per worker: the count only the
+    /// launch knows, and the one place a tile can reach past the extent.
+    Every,
+    /// Every tile, dealt across this many workers in runs: a closed axis returning to the cube
+    /// level to be split, and the one run whose length the kernel computes.
+    Across(usize),
 }
 
-/// One axis cut into tiles for a scope's workers: the tile edge, how many workers take the tiles
-/// and which ones each takes. The entry of [`Level::cubes`], [`Level::planes`] and
-/// [`Level::lanes`]; a plain `(axis, edge)` converts to one tile per worker, in runs.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Cut {
-    axis: Axis,
-    edge: usize,
-    spread: Spread,
-    coverage: Coverage,
+/// What a walk counts along one axis of a level: a constant, or the extent handed down in
+/// this tile ([`Level::grid`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Grid {
+    Const(usize),
+    Extent(usize),
 }
 
-impl Cut {
-    /// `axis` cut to `edge`, one tile per worker.
-    pub fn new(axis: Axis, edge: usize) -> Self {
-        Cut {
-            axis,
-            edge,
-            spread: Spread::Contiguous,
-            coverage: Coverage::TilesEach(1),
-        }
-    }
-
-    /// `n` workers take the tiles, each a run of `grid / n`. Replaces whatever count stood:
-    /// `workers · tiles_each = grid`, so stating either states the other.
-    pub fn across(mut self, n: usize) -> Self {
-        self.coverage = Coverage::Instances(n);
-        self
-    }
-
-    /// Each worker takes `t` tiles; `grid / t` workers run. The twin of [`across`](Self::across).
-    pub fn each(mut self, t: usize) -> Self {
-        self.coverage = Coverage::TilesEach(t);
-        self
-    }
-
-    /// Workers take turns rather than each taking a run, so neighbouring workers touch
-    /// neighbouring tiles. What a read wants whenever those tiles are neighbouring words.
-    pub fn interleaved(mut self) -> Self {
-        self.spread = Spread::Interleaved;
-        self
-    }
-
-    fn distribution(&self, scope: ComputeScope) -> Distribution {
-        Distribution::Spatial {
-            scope,
-            spread: self.spread,
-            coverage: self.coverage,
+impl Count {
+    /// The count where it is a stated number: `Of` and `Across` are, `Every` is the launch's.
+    pub(crate) fn stated(self) -> Option<usize> {
+        match self {
+            Count::Of(n) | Count::Across(n) => Some(n),
+            Count::Every => None,
         }
     }
 }
 
-impl From<(Axis, usize)> for Cut {
-    fn from((axis, edge): (Axis, usize)) -> Cut {
-        Cut::new(axis, edge)
-    }
+/// One axis of a level: the tile it steps in, how many, and who takes them.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct Entry {
+    tile: usize,
+    count: Count,
+    dist: Distribution,
 }
 
-/// One decomposition level of a space: the axes it names, each with its tile edge and who takes
-/// the tiles, plus the axes it cuts as one. An axis it does not name is handed down whole.
+/// One decomposition level of a space: the axes it names, each with its tile, its count and who
+/// takes the tiles, plus the axes it deals as one. An axis it does not name is handed down whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
-    edges: ByAxis<Edge>,
-    dists: ByAxis<Distribution>,
+    entries: ByAxis<Entry>,
     scope: LevelScope,
     work: Option<Work>,
     /// Planes that fill this walk's stages and take no tile of any level
@@ -91,54 +65,66 @@ pub struct Level {
 }
 
 impl Level {
-    /// Every worker steps through `steps`' tiles, one at a time; `(axis, edge)` each. The
-    /// contraction of a matmul is the everyday one.
-    pub fn walk(steps: &[(Axis, usize)]) -> Level {
-        let dists: Vec<_> = steps
-            .iter()
-            .map(|&(axis, _)| (axis, Distribution::Sequential))
-            .collect();
-        Level::build(steps, &dists, LevelScope::Sequential, None)
-    }
-
-    /// The tiles of each entry ride a cube dimension of the launch grid, in order: the first
-    /// entry's cubes are `X`, the second's `Y`, the third's `Z`. One tile per cube unless the
-    /// entry says otherwise ([`Cut`]). Batch axes go on `Z` too ([`batches`](Self::batches)).
-    /// Every entry is one box of the grid.
-    pub fn cubes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
-        assert!(
-            cuts.len() <= 3,
-            "Level::cubes: {} entries, but a launch grid has three dimensions",
-            cuts.len()
-        );
-        let scopes = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
-        Level::cut_to(cuts, |i| ComputeScope::Cube(scopes[i]), LevelScope::Cubes)
-    }
-
-    /// The tiles of each entry ride the cube's planes, one tile per plane unless the entry says
-    /// otherwise ([`Cut`]). Several entries make a box per plane.
-    pub fn planes<D: Into<Cut> + Clone>(cuts: &[D]) -> Level {
-        Level::cut_to(cuts, |_| ComputeScope::Plane, LevelScope::Planes)
-    }
-
-    /// The tiles of each entry ride some of the plane's lanes; every entry states how many
-    /// ([`Cut::across`]), since the plane is carved between the entries and their counts must
-    /// multiply to its width.
-    pub fn lanes(cuts: &[Cut]) -> Level {
-        for cut in cuts {
+    /// A level of `scope` over `entries`, each `(axis, tile, count, who takes it)`. The
+    /// builder's constructor: [`Tiling`](crate::Tiling) is the only caller, and it states the
+    /// tile as the product of the levels below.
+    pub(crate) fn new(scope: LevelScope, entries: &[(Axis, usize, Count, Distribution)]) -> Level {
+        for (i, &(axis, ..)) in entries.iter().enumerate() {
             assert!(
-                matches!(cut.coverage, Coverage::Instances(_)),
-                "Level::lanes: {:?} states no lane count; say how many lanes take it \
-                 (`Cut::new(axis, edge).across(n)`)",
-                cut.axis
+                !entries[..i].iter().any(|&(a, ..)| a == axis),
+                "Level: {axis:?} is named twice; a level states each of its axes once"
             );
         }
-        Level::cut_to(cuts, |_| ComputeScope::Unit, LevelScope::Lanes)
+        for &(axis, tile, count, dist) in entries {
+            assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
+            match (count, dist) {
+                (
+                    Count::Across(_),
+                    Distribution::Spatial {
+                        scope: ComputeScope::Cube(_),
+                        ..
+                    },
+                ) => {}
+                (Count::Across(_), _) => {
+                    panic!("Level: {axis:?} is dealt across workers in runs, which only cubes take")
+                }
+                (
+                    Count::Every,
+                    Distribution::Spatial {
+                        scope: ComputeScope::Unit,
+                        ..
+                    },
+                )
+                | (
+                    Count::Every,
+                    Distribution::Spatial {
+                        scope: ComputeScope::Plane,
+                        ..
+                    },
+                ) => {
+                    panic!(
+                        "Level: {axis:?} takes every tile on a plane's workers, whose count is \
+                         the device's; state how many"
+                    )
+                }
+                _ => {}
+            }
+        }
+        let entries: Vec<_> = entries
+            .iter()
+            .map(|&(axis, tile, count, dist)| (axis, Entry { tile, count, dist }))
+            .collect();
+        Level {
+            entries: ByAxis::new(&entries),
+            scope,
+            work: None,
+            fillers: 0,
+        }
     }
 
     /// One tile of each of `axes` per cube, on the grid's `Z` dimension: the batch axes of a
-    /// [`cubes`](Self::cubes) level.
-    pub fn batches(mut self, axes: &[Axis]) -> Level {
+    /// cube level.
+    pub(crate) fn batches(mut self, axes: &[Axis]) -> Level {
         assert!(
             self.scope == LevelScope::Cubes,
             "Level::batches: batches ride cubes; this level cuts to {:?}",
@@ -147,8 +133,14 @@ impl Level {
         for &axis in axes {
             self.push(
                 axis,
-                Edge::Cut(1),
-                Cut::new(axis, 1).distribution(ComputeScope::Cube(CubeAxis::Z)),
+                Entry {
+                    tile: 1,
+                    count: Count::Every,
+                    dist: Distribution::Spatial {
+                        scope: ComputeScope::Cube(CubeAxis::Z),
+                        spread: Spread::Contiguous,
+                    },
+                },
             );
         }
         self
@@ -163,7 +155,7 @@ impl Level {
     /// The plain entries' boxes go: the workers ride the scope as one, on its first dimension.
     /// Not for lanes: they combine in registers, which needs them in lockstep, and lanes holding
     /// different shares never are.
-    pub fn shared_by(mut self, n: usize) -> Level {
+    pub(crate) fn shared_by(mut self, n: usize) -> Level {
         let scope = match self.scope {
             LevelScope::Cubes => ComputeScope::Cube(CubeAxis::X),
             LevelScope::Planes => ComputeScope::Plane,
@@ -181,21 +173,25 @@ impl Level {
         );
         let axes = self.axes();
         for &axis in &axes {
-            let plain = matches!(
-                self.dists.get(axis),
-                Distribution::Spatial {
-                    spread: Spread::Contiguous,
-                    coverage: Coverage::TilesEach(1),
-                    ..
-                }
-            );
+            let entry = self.entries.get(axis);
+            let plain = entry.count == Count::Every
+                && matches!(
+                    entry.dist,
+                    Distribution::Spatial {
+                        spread: Spread::Contiguous,
+                        ..
+                    }
+                );
             assert!(
                 plain,
                 "Level::shared_by: {axis:?} states a count or a spread of its own, which a share \
                  of the whole has no use for"
             );
         }
-        self.dists = self.dists.map(|_, _| Distribution::Sequential);
+        self.entries = self.entries.map(|_, entry| Entry {
+            dist: Distribution::Sequential,
+            ..entry
+        });
         self.work = Some(Work::new(axes, scope, n));
         self
     }
@@ -209,7 +205,7 @@ impl Level {
     /// roles their own halves of each slot.
     ///
     /// Only a walk's regions are staged, so only a walk takes this.
-    pub fn filled_by(mut self, n: usize) -> Level {
+    pub(crate) fn filled_by(mut self, n: usize) -> Level {
         assert!(
             self.scope == LevelScope::Sequential,
             "Level::filled_by: only a walk's regions are staged, and this level deals its tiles \
@@ -220,102 +216,49 @@ impl Level {
         self
     }
 
-    fn cut_to<D: Into<Cut> + Clone>(
-        cuts: &[D],
-        scope_of: impl Fn(usize) -> ComputeScope,
-        kind: LevelScope,
-    ) -> Level {
-        let cuts: Vec<Cut> = cuts.iter().cloned().map(Into::into).collect();
-        let edges: Vec<_> = cuts.iter().map(|c| (c.axis, c.edge)).collect();
-        let dists: Vec<_> = cuts
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.axis, c.distribution(scope_of(i))))
-            .collect();
-        Level::build(&edges, &dists, kind, None)
-    }
-
-    fn build(
-        cuts: &[(Axis, usize)],
-        dists: &[(Axis, Distribution)],
-        scope: LevelScope,
-        work: Option<Work>,
-    ) -> Level {
-        for (i, &(axis, _)) in cuts.iter().enumerate() {
-            assert!(
-                !cuts[..i].iter().any(|&(a, _)| a == axis),
-                "Level: {axis:?} is named twice; a level states each of its axes once"
-            );
-        }
-        let edges: Vec<_> = cuts
-            .iter()
-            .map(|&(axis, edge)| (axis, Edge::Cut(edge)))
-            .collect();
-        Level {
-            edges: ByAxis::new(&edges),
-            dists: ByAxis::new(dists),
-            scope,
-            work,
-            fillers: 0,
-        }
-    }
-
-    fn push(&mut self, axis: Axis, edge: Edge, dist: Distribution) {
+    fn push(&mut self, axis: Axis, entry: Entry) {
         assert!(
-            !self.edges.contains(axis),
+            !self.entries.contains(axis),
             "Level: {axis:?} is named twice; a level states each of its axes once"
         );
-        let mut edges: Vec<_> = self
+        let mut entries: Vec<_> = self
             .axes()
             .into_iter()
-            .map(|a| (a, self.edges.get(a)))
+            .map(|a| (a, self.entries.get(a)))
             .collect();
-        let mut dists: Vec<_> = self
-            .axes()
-            .into_iter()
-            .map(|a| (a, self.dists.get(a)))
-            .collect();
-        edges.push((axis, edge));
-        dists.push((axis, dist));
-        self.edges = ByAxis::new(&edges);
-        self.dists = ByAxis::new(&dists);
+        entries.push((axis, entry));
+        self.entries = ByAxis::new(&entries);
     }
 
-    /// The tile edge this level cuts `axis` to. An axis the level does not name has no edge of
-    /// its own; its extent is the space's.
-    pub fn edge(&self, axis: Axis) -> usize {
-        match self.edge_kind(axis) {
-            Edge::Cut(edge) => edge,
-            Edge::Whole => panic!(
-                "Level::edge: {axis:?} is not named at this level, so it is handed down whole; \
-                 its extent is the space's"
-            ),
-        }
+    /// The tile this level steps `axis` in, where it names it. An axis the level does not name
+    /// has no tile of its own; its extent is the space's.
+    pub fn tile(&self, axis: Axis) -> Option<usize> {
+        self.entries
+            .contains(axis)
+            .then(|| self.entries.get(axis).tile)
     }
 
-    /// The cut of `axis`: its edge where the level names it, [`Whole`](Edge::Whole) where not.
-    pub fn edge_kind(&self, axis: Axis) -> Edge {
-        if self.edges.contains(axis) {
-            self.edges.get(axis)
-        } else {
-            Edge::Whole
-        }
+    /// How many tiles this level takes along `axis`, where it names it.
+    pub fn count(&self, axis: Axis) -> Option<Count> {
+        self.entries
+            .contains(axis)
+            .then(|| self.entries.get(axis).count)
     }
 
-    /// The extent one region of this level covers along `axis` of `space`: the cut edge, or the
+    /// The extent one region of this level covers along `axis` of `space`: its tile, or the
     /// space's own extent (static or not) where the axis is handed down whole.
-    pub(crate) fn edge_in(&self, space: &Space, axis: Axis) -> Extent {
-        match self.edge_kind(axis) {
-            Edge::Cut(edge) => Extent::Static(edge),
-            Edge::Whole => space.extent_raw(axis),
+    pub(crate) fn extent_in(&self, space: &Space, axis: Axis) -> Extent {
+        match self.tile(axis) {
+            Some(tile) => Extent::Static(tile),
+            None => space.extent_raw(axis),
         }
     }
 
     /// Who takes `axis`'s tiles: [`Sequential`](Distribution::Sequential) where the level walks
     /// it or does not name it.
     pub fn distribution(&self, axis: Axis) -> Distribution {
-        if self.dists.contains(axis) {
-            self.dists.get(axis)
+        if self.entries.contains(axis) {
+            self.entries.get(axis).dist
         } else {
             Distribution::Sequential
         }
@@ -331,8 +274,8 @@ impl Level {
 
     /// The axes this level names, in the order it named them.
     pub(crate) fn axes(&self) -> Vec<Axis> {
-        (0..self.dists.len())
-            .map(|i| self.dists.axis_at(i))
+        (0..self.entries.len())
+            .map(|i| self.entries.axis_at(i))
             .collect()
     }
 
@@ -347,114 +290,109 @@ impl Level {
         self.fillers
     }
 
-    /// The space one region of this level covers: every axis of `space` cut to its edge (static,
-    /// an edge is comptime) or handed down whole. Position-free; the positions are the walk.
+    /// The space one region of this level covers: every axis of `space` cut to its tile (static,
+    /// a tile is comptime) or handed down whole. Position-free; the positions are the walk.
     pub fn child(&self, space: &Space) -> Space {
         Space::from_extents(
             &space
                 .axes()
-                .map(|axis| (axis, self.edge_in(space, axis)))
+                .map(|axis| (axis, self.extent_in(space, axis)))
                 .collect::<Vec<_>>(),
         )
     }
 
-    /// Whether this level's edge on `axis` fails to divide the extent `space` hands it, leaving a
-    /// partial tile that needs masking. Host-side, static extents.
+    /// Whether this level's tile on `axis` fails to divide the extent `space` hands it, leaving
+    /// a partial tile that needs masking. Only an [`Every`](Count::Every) or an
+    /// [`Across`](Count::Across) can: a stated count built the extent below it. Host-side,
+    /// static extents.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
-        match self.edge_kind(axis) {
-            Edge::Cut(edge) => !space.extent(axis).is_multiple_of(edge),
-            Edge::Whole => false,
+        match self.tile(axis) {
+            Some(tile) => !space.extent(axis).is_multiple_of(tile),
+            None => false,
         }
     }
 
-    /// Tiles along `axis` of `space`: `ceil(extent / edge)`, so an indivisible axis gets a
-    /// trailing partial tile (its overhang is masked at read/write). Host-side, static extents.
-    pub(crate) fn count(&self, space: &Space, axis: Axis) -> usize {
-        match self.edge_kind(axis) {
-            Edge::Cut(edge) => space.extent(axis).div_ceil(edge),
-            Edge::Whole => 1,
-        }
-    }
-
-    /// Whether every instance's run along `axis` of `space` is the full one: the grid divides
-    /// the stated count or run, which the host can only prove of a static extent, except for one
-    /// tile each, which any grid divides. What lets the kernel skip clamping a run.
-    pub(crate) fn divides(&self, space: &Space, axis: Axis) -> bool {
-        let (edge, coverage) = match (self.edge_kind(axis), self.distribution(axis)) {
-            (Edge::Cut(edge), Distribution::Spatial { coverage, .. }) => (edge, coverage),
-            _ => return true,
-        };
-        if coverage == Coverage::TilesEach(1) {
-            return true;
-        }
-        match space.extent_raw(axis) {
-            Extent::Static(extent) => {
-                let grid = extent.div_ceil(edge);
-                match coverage {
-                    Coverage::Instances(n) => grid.is_multiple_of(n),
-                    Coverage::TilesEach(t) => grid.is_multiple_of(t),
-                }
+    /// Tiles along `axis` of `space` at this level: the stated count, or `ceil(extent / tile)`
+    /// where the level takes every tile, so an indivisible axis gets a trailing partial tile
+    /// (its overhang is masked at read/write). Host-side, static extents.
+    pub(crate) fn tiles(&self, space: &Space, axis: Axis) -> usize {
+        match self.count(axis) {
+            None => 1,
+            Some(Count::Of(n)) => n,
+            Some(Count::Every) | Some(Count::Across(_)) => {
+                space.extent(axis).div_ceil(self.tile_of(axis))
             }
-            Extent::Dynamic => false,
         }
     }
 
-    /// Whether each worker's run along a dealt `axis` of `space` is comptime one tile, however
-    /// it was said (one tile each, or as many workers as the static grid holds), so a step
-    /// decode can skip it.
-    pub(crate) fn single_tile(&self, space: &Space, axis: Axis) -> bool {
-        let (edge, coverage) = match (self.edge_kind(axis), self.distribution(axis)) {
-            (Edge::Cut(edge), Distribution::Spatial { coverage, .. }) => (edge, coverage),
-            _ => return false,
-        };
-        match coverage {
-            Coverage::TilesEach(t) => t == 1,
-            Coverage::Instances(n) => match space.extent_raw(axis) {
-                Extent::Static(extent) => extent.div_ceil(edge) == n,
-                Extent::Dynamic => false,
+    /// Tiles along `axis` where the count is comptime: a stated count, or an every-level's
+    /// over a static extent. `None` on a dynamic every-axis.
+    pub(crate) fn tiles_const(&self, space: &Space, axis: Axis) -> Option<usize> {
+        match self.count(axis) {
+            None => Some(1),
+            Some(Count::Of(n)) => Some(n),
+            Some(Count::Every) | Some(Count::Across(_)) => match space.extent_raw(axis) {
+                Extent::Static(extent) => Some(extent.div_ceil(self.tile_of(axis))),
+                Extent::Dynamic => None,
             },
         }
+    }
+
+    /// What a walk counts along `axis`: the stated count, `1` where the level does not name the
+    /// axis, or the extent in this level's tile where it takes every tile.
+    pub(crate) fn grid(&self, axis: Axis) -> Grid {
+        match self.count(axis) {
+            None => Grid::Const(1),
+            Some(Count::Of(n)) => Grid::Const(n),
+            Some(Count::Every) | Some(Count::Across(_)) => Grid::Extent(self.tile_of(axis)),
+        }
+    }
+
+    fn tile_of(&self, axis: Axis) -> usize {
+        self.entries.get(axis).tile
+    }
+
+    /// Whether every worker's run along an `axis` dealt across workers is the full one: the grid
+    /// divides the worker count, which the host can only prove of a static extent. Any other
+    /// count deals one tile a worker, which every grid divides. What lets the kernel skip
+    /// clamping a run.
+    pub(crate) fn divides(&self, space: &Space, axis: Axis) -> bool {
+        match self.count(axis) {
+            Some(Count::Across(workers)) => match space.extent_raw(axis) {
+                Extent::Static(extent) => {
+                    extent.div_ceil(self.tile_of(axis)).is_multiple_of(workers)
+                }
+                Extent::Dynamic => false,
+            },
+            _ => true,
+        }
+    }
+
+    /// Whether each worker along a dealt `axis` takes comptime one tile, so a step decode can
+    /// skip it: every dealt count but a run across workers.
+    pub(crate) fn one_tile_each(&self, axis: Axis) -> bool {
+        matches!(self.distribution(axis), Distribution::Spatial { .. })
+            && !matches!(self.count(axis), Some(Count::Across(_)))
     }
 
     /// Whether this level cuts `axis` of `space` into a single, statically-known tile, so its
     /// walk coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis has no comptime
     /// count and is never statically single.
     pub(crate) fn single_static_tile(&self, space: &Space, axis: Axis) -> bool {
-        match self.edge_kind(axis) {
-            Edge::Cut(_) => !space.is_dynamic(axis) && self.count(space, axis) == 1,
-            Edge::Whole => true,
+        match self.tile(axis) {
+            Some(_) => self.tiles_const(space, axis) == Some(1),
+            None => true,
         }
     }
 
-    /// The per-instance tile count of `axis`, `None` when it is runtime.
-    pub(crate) fn per_instance_tiles(&self, space: &Space, axis: Axis) -> Option<usize> {
-        let edge = match self.edge_kind(axis) {
-            Edge::Cut(edge) => edge,
-            Edge::Whole => return Some(1),
-        };
-        match self.distribution(axis) {
-            Distribution::Sequential => match space.extent_raw(axis) {
-                Extent::Static(e) => Some(e.div_ceil(edge)),
-                Extent::Dynamic => None,
-            },
-            Distribution::Spatial { coverage, .. } => match coverage {
-                Coverage::TilesEach(t) => Some(t),
-                Coverage::Instances(n) => match space.extent_raw(axis) {
-                    Extent::Static(e) => Some(e.div_ceil(edge).div_ceil(n)),
-                    Extent::Dynamic => None,
-                },
-            },
-        }
-    }
-
-    /// The `m × n` grid a partition level cuts, read off `space`'s trailing two axes; leading
+    /// The `m × n` grid a partition level walks, read off `space`'s trailing two axes; leading
     /// (batch) axes must hand out one tile. Valid only on a [`Partition`](LevelRole::Partition)
     /// level; the role says whether it applies, this only reads the counts.
     pub(crate) fn partition_grid(&self, space: &Space) -> (usize, usize) {
         let rank = space.rank();
         for (p, axis) in space.axes().enumerate() {
             let tiles = self
-                .per_instance_tiles(space, axis)
+                .tiles_const(space, axis)
                 .expect("plane partition level: tile counts must be comptime");
             assert!(
                 p >= rank - 2 || tiles == 1,
@@ -462,10 +400,8 @@ impl Level {
             );
         }
         (
-            self.per_instance_tiles(space, space.axis_at(rank - 2))
-                .unwrap(),
-            self.per_instance_tiles(space, space.axis_at(rank - 1))
-                .unwrap(),
+            self.tiles_const(space, space.axis_at(rank - 2)).unwrap(),
+            self.tiles_const(space, space.axis_at(rank - 1)).unwrap(),
         )
     }
 
@@ -486,21 +422,20 @@ impl Level {
     pub(crate) fn walk_invariant(&self, space: &Space, operand: &Space) -> bool {
         space
             .axes()
-            .all(|axis| self.count(space, axis) == 1 || !operand.contains(axis))
+            .all(|axis| self.tiles(space, axis) == 1 || !operand.contains(axis))
     }
 
-    /// How many instances `axis` is dealt out to at this level, where that is comptime: the
-    /// pinned count, or the tile grid divided by each instance's share. `None` where the grid is
+    /// How many workers `axis` is dealt out to at this level, where that is comptime: the stated
+    /// count, or the tiles an every-level takes over a static extent. `None` where the grid is
     /// not known here: the extent is [`Dynamic`](Extent::Dynamic), or `space` is a projection
     /// that dropped the axis (a drain descending an output through its own space).
     pub(crate) fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
-        let coverage = self.distribution(axis).coverage();
-        match coverage.instances_const() {
-            Some(instances) => Some(instances),
-            None if !space.contains(axis) => None,
-            None => match space.extent_raw(axis) {
-                Extent::Static(_) => Some(coverage.instances(self.count(space, axis))),
-                Extent::Dynamic => None,
+        match self.count(axis) {
+            None => Some(1),
+            Some(count) => match count.stated() {
+                Some(n) => Some(n),
+                None if !space.contains(axis) => None,
+                None => self.tiles_const(space, axis),
             },
         }
     }
@@ -519,17 +454,14 @@ impl Level {
             .skip(1)
             .filter(|&&a| !spanned.contains(a) && self.distribution(a).scope() == scope)
             .map(|&a| {
-                self.distribution(a)
-                    .coverage()
-                    .instances_const()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Level::inner_weight_unspanned: {a:?} is distributed inside {axis:?} \
-                             at the same scope but this operand does not span it, and its \
-                             instance count is not comptime, so {axis:?}'s digit of the \
-                             instance index cannot be decoded"
-                        )
-                    })
+                self.entries.get(a).count.stated().unwrap_or_else(|| {
+                    panic!(
+                        "Level::inner_weight_unspanned: {a:?} is distributed inside {axis:?} at \
+                         the same scope but this operand does not span it, and its instance \
+                         count is not comptime, so {axis:?}'s digit of the instance index \
+                         cannot be decoded"
+                    )
+                })
             })
             .product()
     }
@@ -543,18 +475,20 @@ impl Level {
         for axis in self.axes().into_iter().rev() {
             let Distribution::Spatial {
                 scope: ComputeScope::Unit,
-                coverage,
                 ..
             } = self.distribution(axis)
             else {
                 continue;
             };
-            // Asserted, not skipped: a `Unit` axis always carries an `Instances` count, and
-            // passing over one whose count we could not read would shift every inner axis's
-            // bits by its width.
-            let lanes = coverage
-                .instances_const()
-                .expect("Level::lane_share: a Unit axis must carry a const instance count");
+            // Asserted, not skipped: a `Unit` axis always carries a stated count, and passing
+            // over one whose count we could not read would shift every inner axis's bits by
+            // its width.
+            let lanes = self
+                .entries
+                .get(axis)
+                .count
+                .stated()
+                .expect("Level::lane_share: a Unit axis must carry a stated count");
             if lanes == 1 {
                 continue;
             }
@@ -614,15 +548,13 @@ impl Level {
     /// Whether anything rides this level's lanes.
     pub(crate) fn rides_lanes(&self) -> bool {
         self.axes().into_iter().any(|axis| {
-            let Distribution::Spatial {
-                scope: ComputeScope::Unit,
-                coverage,
-                ..
-            } = self.distribution(axis)
-            else {
-                return false;
-            };
-            coverage.instances_const() != Some(1)
+            matches!(
+                self.distribution(axis),
+                Distribution::Spatial {
+                    scope: ComputeScope::Unit,
+                    ..
+                }
+            ) && self.entries.get(axis).count != Count::Of(1)
         })
     }
 }
@@ -666,7 +598,7 @@ impl Work {
 }
 
 /// Who takes a level's tiles: the verb it was built under, and the loop verb that must state
-/// it. Set once, by the constructor, so no consumer re-folds the per-axis distributions.
+/// it. Set once, by the builder, so no consumer re-folds the per-axis distributions.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub(crate) enum LevelScope {
     /// Every axis `Sequential`: one instance walks the whole grid.

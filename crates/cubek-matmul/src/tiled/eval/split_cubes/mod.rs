@@ -35,9 +35,9 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Cut, Fragments, KernelForm, Launcher, Level, Monoid,
+    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, KernelForm, Launcher, Monoid,
     Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, TileSpec,
+    TileArgLaunch, TileSpec, Tiling,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -217,7 +217,9 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![Level::cubes(&[(N, COLS), (K, k / splits)])],
+                    Tiling::leaf(&[(N, COLS), (K, k / splits)])
+                        .cubes(&[N, K])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -225,7 +227,10 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
-                    vec![Level::cubes(&[(N, COLS)]).batches(&[KB])],
+                    Tiling::leaf(&[(N, COLS)])
+                        .cubes(&[N])
+                        .batches(&[KB])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -236,10 +241,10 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![
-                        Level::cubes(&[(N, COLS), (K, k / splits)]),
-                        Level::lanes(&[Cut::new(K, k / splits / plane_size).across(plane_size)]),
-                    ],
+                    Tiling::leaf(&[(N, COLS), (K, k / splits / plane_size)])
+                        .lanes(&[(K, plane_size)])
+                        .cubes(&[N, K])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -253,7 +258,9 @@ impl Mapping {
             client,
             Partitioning::new(
                 Space::new(&[(M, m), (N, n), (KB, self.splits())]),
-                vec![Level::cubes(&[(M, 1), (N, FOLD_COLS)])],
+                Tiling::leaf(&[(M, 1), (N, FOLD_COLS)])
+                    .cubes(&[M, N])
+                    .levels(),
             ),
             KernelForm::Static,
         )

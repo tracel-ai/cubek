@@ -10,7 +10,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, Validatio
 use cubek_tile::{
     Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, Partitioning,
     RegisterBlock, Resident, RowState, Semiring, Space, StageStorage, StreamFold, TileArg,
-    TileArgLaunch, TileSpec,
+    TileArgLaunch, TileSpec, Tiling,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -200,7 +200,7 @@ fn run(
                 (R, 1),
                 (C, 1),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (G, g),
                 (QP, qp),
                 (S, block),
@@ -208,7 +208,9 @@ fn run(
                 (V, val_dim),
                 (R, 1),
                 (C, 1),
-            ])],
+            ])
+            .walk_every(&[G, QP, S, D, V, R, C])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -391,7 +393,11 @@ fn attention_fold_cmma_kernel<E: Float>(
     let bound_s = bound as usize;
     sync_cube();
 
-    for plane in space.over(&comptime!(Level::planes(&[(QP, rows_p)]))) {
+    for plane in space.over(&comptime!(
+        Tiling::leaf(&[(QP, rows_p)])
+            .planes(&[(QP, planes)])
+            .level()
+    )) {
         let q_w = q_s.at(&plane);
         let mut score_w = score.at(&plane);
         let out_w = out.at(&plane);
@@ -418,11 +424,31 @@ fn attention_fold_cmma_kernel<E: Float>(
             .with_scratch(Resident::OneTile, planes, lanes);
         acc.zero();
         // The fragment grids of every operand, cells in row-major order.
-        let acc_cells = out_w.over(&comptime!(Level::walk(&[(QP, frag), (V, frag)])));
-        let p_cells = score_w.over(&comptime!(Level::walk(&[(QP, frag), (S, frag)])));
-        let q_cells = q_w.over(&comptime!(Level::walk(&[(QP, frag), (D, frag)])));
-        let k_cells = k_w.over(&comptime!(Level::walk(&[(S, frag), (D, frag)])));
-        let v_cells = v_w.over(&comptime!(Level::walk(&[(S, frag), (V, frag)])));
+        let acc_cells = out_w.over(&comptime!(
+            Tiling::leaf(&[(QP, frag), (V, frag)])
+                .walk_every(&[QP, V])
+                .level()
+        ));
+        let p_cells = score_w.over(&comptime!(
+            Tiling::leaf(&[(QP, frag), (S, frag)])
+                .walk_every(&[QP, S])
+                .level()
+        ));
+        let q_cells = q_w.over(&comptime!(
+            Tiling::leaf(&[(QP, frag), (D, frag)])
+                .walk_every(&[QP, D])
+                .level()
+        ));
+        let k_cells = k_w.over(&comptime!(
+            Tiling::leaf(&[(S, frag), (D, frag)])
+                .walk_every(&[S, D])
+                .level()
+        ));
+        let v_cells = v_w.over(&comptime!(
+            Tiling::leaf(&[(S, frag), (V, frag)])
+                .walk_every(&[S, V])
+                .level()
+        ));
 
         // The probe states the masking once, and the walk takes it as its bound: a block every
         // row masks throughout is one the walk never steps to, rather than two contractions
@@ -626,7 +652,7 @@ fn run_cmma<E: Float + CubeElement>(
                 (R, 1),
                 (C, 1),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (G, 1),
                 (QP, rows),
                 (S, block),
@@ -634,7 +660,9 @@ fn run_cmma<E: Float + CubeElement>(
                 (V, val_dim),
                 (R, 1),
                 (C, 1),
-            ])],
+            ])
+            .walk_every(&[G, QP, S, D, V, R, C])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -848,15 +876,27 @@ fn attention_fold_split_kernel<W: Size>(
     // This team's windows: one slice of rows per team, the levels stated here on the
     // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
-    let team_scores = comptime!(Level::walk(&[(R, rows), (C, block)]));
+    let team_scores = comptime!(
+        Tiling::leaf(&[(R, rows), (C, block)])
+            .walk_every(&[R, C])
+            .level()
+    );
     let tw = score_all.over(&team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
-    let team_rows = comptime!(Level::walk(&[(T, 1), (R, rows)]));
+    let team_rows = comptime!(
+        Tiling::leaf(&[(T, 1), (R, rows)])
+            .walk_every(&[T, R])
+            .level()
+    );
     let rw = factors_all.over(&team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let team_acc = comptime!(Level::walk(&[(R, rows), (V, val_dim)]));
+    let team_acc = comptime!(
+        Tiling::leaf(&[(R, rows), (V, val_dim)])
+            .walk_every(&[R, V])
+            .level()
+    );
     let aw = acc_all.over(&team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 
@@ -1026,7 +1066,7 @@ fn run_split_at(
                 (R, 1),
                 (C, 1),
             ]),
-            vec![Level::walk(&[
+            Tiling::leaf(&[
                 (G, g),
                 (QP, qp),
                 (S, block),
@@ -1034,7 +1074,9 @@ fn run_split_at(
                 (V, val_dim),
                 (R, 1),
                 (C, 1),
-            ])],
+            ])
+            .walk_every(&[G, QP, S, D, V, R, C])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -1234,13 +1276,9 @@ fn run_stream(
         &client,
         Partitioning::new(
             Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
-            vec![Level::walk(&[
-                (G, g),
-                (QP, 1),
-                (S, block),
-                (D, d),
-                (V, val_dim),
-            ])],
+            Tiling::leaf(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)])
+                .walk_every(&[G, QP, S, D, V])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1373,7 +1411,7 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
         &client,
         Partitioning::new(
             Space::new(&[(S, VISIT_S), (D, VISIT_D)]),
-            vec![Level::walk(&[(S, VISIT_BLOCK)])],
+            Tiling::leaf(&[(S, VISIT_BLOCK)]).walk_every(&[S]).levels(),
         ),
         KernelForm::Static,
     );

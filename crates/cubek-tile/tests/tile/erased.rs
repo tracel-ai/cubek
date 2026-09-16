@@ -95,7 +95,9 @@ fn space(form: KernelForm) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
-            vec![Level::walk(&[(ROW, 2), (COL, 3)])],
+            Tiling::leaf(&[(ROW, 2), (COL, 3)])
+                .walk_every(&[ROW, COL])
+                .levels(),
         ),
         form,
     )
@@ -409,7 +411,9 @@ fn matmul_space() -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     )
@@ -545,7 +549,9 @@ fn masked_space(form: KernelForm) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
-            vec![Level::walk(&[(ROW, 2), (COL, 2)])],
+            Tiling::leaf(&[(ROW, 2), (COL, 2)])
+                .walk_every(&[ROW, COL])
+                .levels(),
         ),
         form,
     )

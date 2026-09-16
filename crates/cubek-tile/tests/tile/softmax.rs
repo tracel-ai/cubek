@@ -12,8 +12,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Level, MaskProbe, MemData, Partitioning, RowState, Space, StageStorage, TileArg,
-    TileArgLaunch, TileSpec,
+    Axis, MaskProbe, MemData, Partitioning, RowState, Space, StageStorage, TileArg, TileArgLaunch,
+    TileSpec, Tiling,
 };
 
 const Q: Axis = Axis(0);
@@ -57,7 +57,11 @@ fn softmax_walk_kernel(
     };
     let lane = UNIT_POS_X as usize % lanes;
     let worker = UNIT_POS_X as usize / lanes;
-    let rows_level = comptime!(Level::walk(&[(Q, rpu), (S, cols)]));
+    let rows_level = comptime!(
+        Tiling::leaf(&[(Q, rpu), (S, cols)])
+            .walk_every(&[Q, S])
+            .level()
+    );
     let mut acc = Array::<f32>::new(rpu);
     for ri in 0..rpu {
         acc[ri] = 0.0;

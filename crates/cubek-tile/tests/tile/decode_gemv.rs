@@ -219,19 +219,18 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
         &client,
         Partitioning::new(
             Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
-            vec![
-                Level::cubes(&[(M, rows_per_cube)]),
-                Level::planes(&[(M, rows_per_plane)]),
-                if lanes_cut {
-                    Level::lanes(&[
-                        Cut::new(M, rows_per_lane).across(groups),
-                        Cut::new(KI, factor).across(group_lanes).interleaved(),
-                    ])
-                } else {
-                    Level::lanes(&[])
-                },
-                Level::walk(&[(KB, 1)]),
-            ],
+            match lanes_cut {
+                true => Tiling::leaf(&[(M, rows_per_lane), (KI, factor), (KB, 1)])
+                    .walk_every(&[KB])
+                    .lanes(&[(M, groups), (KI, group_lanes)])
+                    .interleaved(KI),
+                false => Tiling::leaf(&[(M, rows_per_plane), (KB, 1)])
+                    .walk_every(&[KB])
+                    .lanes(&[]),
+            }
+            .planes(&[(M, num_planes)])
+            .cubes(&[M])
+            .levels(),
         ),
         KernelForm::Static,
     );

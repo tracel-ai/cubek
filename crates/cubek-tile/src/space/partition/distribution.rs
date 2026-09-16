@@ -1,29 +1,16 @@
-//! The split vocabulary: how a single axis is distributed, sized, and dealt out. What a
-//! [`Cut`](crate::Cut) entry of a level states, read back per axis.
+//! The split vocabulary: how a single axis is dealt out. What an entry of a
+//! [`Level`](crate::Level) states beside its tile and its [`Count`](crate::Count), read back
+//! per axis.
 
 use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;
 
-/// `Sequential` is one instance walking the whole axis. `Spatial` splits it across
-/// hardware instances ([`Coverage`]) dealt out by a [`Spread`].
+/// `Sequential` is one instance walking the whole axis. `Spatial` deals it to hardware
+/// instances by a [`Spread`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Distribution {
     Sequential,
-    Spatial {
-        scope: ComputeScope,
-        spread: Spread,
-        coverage: Coverage,
-    },
-}
-
-/// How a `Spatial` axis is sized across its instances, where
-/// `instances · tiles_per_instance = grid`. Pin one, derive the other.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Coverage {
-    /// Pin the instance count; each walks `grid / n` tiles.
-    Instances(usize),
-    /// Pin each instance's share to `t` tiles; use `grid / t` instances.
-    TilesEach(usize),
+    Spatial { scope: ComputeScope, spread: Spread },
 }
 
 /// How a `Spatial` axis's tiles are dealt to its instances. Disjoint either way,
@@ -48,49 +35,6 @@ pub enum ComputeScope {
     Cube(CubeAxis),
     Plane,
     Unit,
-}
-
-impl Coverage {
-    /// How many instances take a `grid` of tiles: the pinned count, or as many runs of
-    /// `tiles` as the grid holds, the last one short where it does not divide.
-    pub fn instances(self, grid: usize) -> usize {
-        match self {
-            Coverage::Instances(instances) => instances,
-            Coverage::TilesEach(tiles) => grid.div_ceil(tiles),
-        }
-    }
-
-    pub(crate) fn instances_const(self) -> Option<usize> {
-        match self {
-            Coverage::Instances(n) => Some(n),
-            Coverage::TilesEach(_) => None,
-        }
-    }
-}
-
-/// The run of tiles each instance is dealt: `TilesEach` pins it, `Instances` splits the `grid`,
-/// rounded up so a grid that does not divide leaves its tail in the last runs rather than
-/// nowhere (folded, so a constant grid keeps its constant).
-#[cube]
-pub(crate) fn run_length(grid: usize, #[comptime] cov: Coverage) -> usize {
-    match cov {
-        Coverage::Instances(instances) => grid
-            .fadd(comptime!(instances - 1).runtime())
-            .fdiv(instances.runtime()),
-        Coverage::TilesEach(tiles) => tiles.runtime(),
-    }
-}
-
-/// How many instances take the `grid`: `Instances` pins it, `TilesEach` derives it, rounded up
-/// (folded, so a constant grid keeps its constant).
-#[cube]
-pub(crate) fn instance_count(grid: usize, #[comptime] cov: Coverage) -> usize {
-    match cov {
-        Coverage::Instances(instances) => instances.runtime(),
-        Coverage::TilesEach(tiles) => grid
-            .fadd(comptime!(tiles - 1).runtime())
-            .fdiv(tiles.runtime()),
-    }
 }
 
 /// The tiles instance `pos` of `instances` takes of a `grid` dealt in runs of `run`: the whole
@@ -124,13 +68,6 @@ pub(crate) fn instance_tiles(
 }
 
 impl Distribution {
-    pub(crate) fn coverage(self) -> Coverage {
-        match self {
-            Distribution::Spatial { coverage, .. } => coverage,
-            Distribution::Sequential => panic!("coverage: not a Spatial axis"),
-        }
-    }
-
     /// The hardware scope of a `Spatial` axis (panics on `Sequential`); the non-optional
     /// [`scope`](Self::scope) for sites that already know the axis is split.
     pub(crate) fn scope_unchecked(self) -> ComputeScope {

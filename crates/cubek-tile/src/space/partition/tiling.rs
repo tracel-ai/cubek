@@ -1,6 +1,6 @@
 //! Stating a partitioning from the leaf up, in counts.
 //!
-//! A [`Level`] carries the *size* of one of its tiles, and a caller almost always knows that size
+//! A [`Level`] steps an axis in tiles of some size, and a caller almost always knows that size
 //! as a product: the instruction is `16x8x16`, a plane holds `2x4` of them, a cube holds `2x4`
 //! planes. Written as sizes, those three facts read as `16x8`, `32x32` and `64x128`, and whether
 //! two of them are the same kind of number is something the reader divides to find out. Written
@@ -19,11 +19,11 @@
 //! **The leaf is not a level.** It is the size the first level above it states as its tile, which
 //! is why the instruction disappears from the list and becomes the first line instead.
 //!
-//! **Counts, and "all of it".** Every level says how many of the thing below it. The one
-//! exception is a level that takes *every* tile of an axis — a reduction's whole `K`, the boxes
-//! of the output, the batch — a count nobody knows until launch. That is
-//! [`walk_every`](Tiling::walk_every), [`cubes`](Tiling::cubes) and [`batches`](Tiling::batches),
-//! which name axes and no number, and what they settle is this:
+//! **Counts, and "all of it".** Every level says how many of the thing below it
+//! ([`Count::Of`]). The one exception is a level that takes *every* tile of an axis — a
+//! reduction's whole `K`, the boxes of the output, the batch — a count nobody knows until launch
+//! ([`Count::Every`]). That is [`walk_every`](Tiling::walk_every), [`cubes`](Tiling::cubes) and
+//! [`batches`](Tiling::batches), which name axes and no number, and what they settle is this:
 //!
 //! * "every" means every tile **the level above hands down** — the whole axis only at the
 //!   outermost level that names it. Under a cube level that deals the axis across cubes, it is
@@ -31,18 +31,21 @@
 //! * It closes the axis. Nothing above may count its tiles, because nothing above knows how
 //!   many there are; a walk above it would have nothing to step through.
 //! * It returns exactly once, on the cube level, and only to be dealt across cubes
-//!   ([`across`](Tiling::across)): the split of a contraction is the walk below taking every
-//!   stage of the run the grid hands its cube.
+//!   ([`across`](Tiling::across), [`Count::Across`]): the split of a contraction is the walk
+//!   below taking every stage of the run the grid hands its cube.
 //! * An axis a level does not name is not "all of it"; it is not that level's. The region is
-//!   handed down whole, unstepped, and the [`Level`] says so with `Edge::Whole`.
+//!   handed down whole, unstepped, and the [`Level`] has no tile for it.
 //!
-//! So the only division left in a launch is the outermost level's tile against the problem's
-//! extent, taken once, ragged at the end; between two stated levels there is nothing to divide.
+//! So the only division left in a launch is an every-level's tile against the extent it is
+//! handed, taken once, ragged at the end; between two stated levels there is nothing to divide,
+//! and a shape that does not divide cannot be written.
 //!
 //! **One reversal, named.** Levels are stated innermost first and a kernel's loops run outermost
 //! first, so [`levels`](Tiling::levels) reverses. That is the only place the two directions meet.
 
-use crate::{Axis, Cut, Level};
+use super::level::LevelScope;
+use super::{ComputeScope, CubeAxis, Distribution, Spread};
+use crate::{Axis, Count, Level};
 
 /// Who takes the tiles of one level.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -59,9 +62,10 @@ enum Takers {
 struct Stated {
     takers: Takers,
     /// `(axis, the size one tile of this level covers, how many)` — the running size below it,
-    /// and the count stated. Only a lanes level reads the count: a plane is carved between its
-    /// entries, so each says how many lanes take it.
+    /// and the count stated. An every-level states no count and `every` says so.
     tiles: Vec<(Axis, usize, usize)>,
+    /// Whether this level takes every tile the level above hands down rather than a count.
+    every: bool,
     /// A cube level dealing one of its axes across several cubes ([`Tiling::across`]): the axis
     /// and how many.
     across: Option<(Axis, usize)>,
@@ -122,12 +126,18 @@ impl Tiling {
     }
 
     /// One cube for every box these axes hold. The outermost level of a launch, and the one whose
-    /// count is the problem's rather than the plan's.
+    /// count is the problem's rather than the plan's. The entries ride the grid's dimensions in
+    /// order: the first `X`, the second `Y`, the third `Z`.
     ///
     /// The two ways several cubes share a box are stated after it:
     /// [`across`](Self::across) cuts one axis among them, [`shared_by`](Self::shared_by) deals
     /// this level's tiles to them as one index.
     pub fn cubes(self, axes: &[Axis]) -> Self {
+        assert!(
+            axes.len() <= 3,
+            "Tiling::cubes: {} axes, but a launch grid has three dimensions",
+            axes.len()
+        );
         self.every(Takers::Cubes, axes)
     }
 
@@ -136,6 +146,11 @@ impl Tiling {
     /// the level's entries, and so its grid dimension.
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
         let stated = self.last("across");
+        assert!(
+            stated.takers == Takers::Cubes,
+            "Tiling::across: only cubes take an axis in runs; the level just stated is a {}",
+            stated.takers.verb()
+        );
         assert!(
             stated.tiles.iter().any(|&(a, _, _)| a == axis),
             "Tiling::across: {axis:?} is not an axis of the cube level just stated; name it there"
@@ -157,9 +172,9 @@ impl Tiling {
         self
     }
 
-    /// Batch axes this cube level hands out one of.
+    /// Batch axes this cube level hands out one of, however they are listed: one call or several.
     pub fn batches(mut self, axes: &[Axis]) -> Self {
-        self.last("batches").batches = axes.to_vec();
+        self.last("batches").batches.extend_from_slice(axes);
         self
     }
 
@@ -187,12 +202,25 @@ impl Tiling {
         self.stated.iter().rev().map(Stated::level).collect()
     }
 
+    /// The one level of a tiling that states one: what a kernel walks a region with
+    /// ([`Region::over`](crate::Region::over)), stated as the leaf it walks in and whether it takes
+    /// every tile of it. A tiling of several levels has no one level to answer with.
+    pub fn level(self) -> Level {
+        assert!(
+            self.stated.len() == 1,
+            "Tiling::level: {} levels are stated; a walk over a region takes exactly one",
+            self.stated.len()
+        );
+        self.levels().remove(0)
+    }
+
     /// State a level of `counts` of the thing below, then grow each axis by its count.
     fn state(mut self, takers: Takers, counts: &[(Axis, usize)]) -> Self {
         let tiles = counts
             .iter()
             .map(|&(axis, count)| (axis, self.size(axis), count));
-        self.stated.push(Stated::new(takers, tiles.collect()));
+        self.stated
+            .push(Stated::new(takers, tiles.collect(), false));
         for &(axis, count) in counts {
             self.grow(axis, count);
         }
@@ -214,7 +242,7 @@ impl Tiling {
             );
         }
         let tiles = axes.iter().map(|&axis| (axis, self.size(axis), 1));
-        let mut stated = Stated::new(takers, tiles.collect());
+        let mut stated = Stated::new(takers, tiles.collect(), true);
         stated.reopened = reopened;
         self.stated.push(stated);
         self.closed.extend_from_slice(axes);
@@ -248,19 +276,27 @@ impl Tiling {
     }
 }
 
-impl Stated {
-    /// `cut` dealt in turns where its axis was said to be.
-    fn spread(&self, cut: Cut, axis: Axis) -> Cut {
-        match self.interleaved.contains(&axis) {
-            true => cut.interleaved(),
-            false => cut,
-        }
+impl Takers {
+    fn verb(self) -> &'static str {
+        self.scope().verb()
     }
 
-    fn new(takers: Takers, tiles: Vec<(Axis, usize, usize)>) -> Self {
+    fn scope(self) -> LevelScope {
+        match self {
+            Takers::Walk => LevelScope::Sequential,
+            Takers::Lanes => LevelScope::Lanes,
+            Takers::Planes => LevelScope::Planes,
+            Takers::Cubes => LevelScope::Cubes,
+        }
+    }
+}
+
+impl Stated {
+    fn new(takers: Takers, tiles: Vec<(Axis, usize, usize)>, every: bool) -> Self {
         Stated {
             takers,
             tiles,
+            every,
             across: None,
             shared_by: None,
             fillers: 0,
@@ -270,40 +306,47 @@ impl Stated {
         }
     }
 
-    /// The [`Level`] this states: the tiles as edges, and the modifiers applied in the order the
-    /// level's own builders take them.
+    /// How the level's workers take `axis`'s tiles: in turns where it was said to be.
+    fn spread(&self, axis: Axis) -> Spread {
+        match self.interleaved.contains(&axis) {
+            true => Spread::Interleaved,
+            false => Spread::Contiguous,
+        }
+    }
+
+    /// The [`Level`] this states: every entry with its built tile, its count and its takers, and
+    /// the modifiers applied in the order the level's own builders take them.
     fn level(&self) -> Level {
-        let edges: Vec<(Axis, usize)> = self.tiles.iter().map(|&(a, tile, _)| (a, tile)).collect();
-        let level = match self.takers {
-            Takers::Walk => Level::walk(&edges),
-            Takers::Planes => Level::planes(&edges),
-            // The plane is carved between the entries, so each says how many lanes take it.
-            Takers::Lanes => {
-                let cuts: Vec<Cut> = self
-                    .tiles
-                    .iter()
-                    .map(|&(axis, tile, lanes)| {
-                        self.spread(Cut::new(axis, tile).across(lanes), axis)
-                    })
-                    .collect();
-                Level::lanes(&cuts)
-            }
-            Takers::Cubes => {
-                let cuts: Vec<Cut> = edges
-                    .iter()
-                    .map(|&(axis, tile)| {
-                        let cut = Cut::new(axis, tile);
-                        match self.across {
-                            Some((across, cubes)) if across == axis => {
-                                self.spread(cut.across(cubes), axis)
-                            }
-                            _ => cut,
-                        }
-                    })
-                    .collect();
-                Level::cubes(&cuts)
-            }
-        };
+        let grid = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
+        let entries: Vec<(Axis, usize, Count, Distribution)> = self
+            .tiles
+            .iter()
+            .enumerate()
+            .map(|(i, &(axis, tile, count))| {
+                let count = match (self.every, self.across) {
+                    (true, Some((across, cubes))) if across == axis => Count::Across(cubes),
+                    (true, _) => Count::Every,
+                    (false, _) => Count::Of(count),
+                };
+                let dist = match self.takers {
+                    Takers::Walk => Distribution::Sequential,
+                    Takers::Lanes => Distribution::Spatial {
+                        scope: ComputeScope::Unit,
+                        spread: self.spread(axis),
+                    },
+                    Takers::Planes => Distribution::Spatial {
+                        scope: ComputeScope::Plane,
+                        spread: self.spread(axis),
+                    },
+                    Takers::Cubes => Distribution::Spatial {
+                        scope: ComputeScope::Cube(grid[i]),
+                        spread: self.spread(axis),
+                    },
+                };
+                (axis, tile, count, dist)
+            })
+            .collect();
+        let level = Level::new(self.takers.scope(), &entries);
         let level = match self.batches.is_empty() {
             true => level,
             false => level.batches(&self.batches),
@@ -322,13 +365,15 @@ impl Stated {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Space;
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
     const K: Axis = Axis(2);
     const B: Axis = Axis(3);
 
-    /// The gemm's stack, leaf up: every level's tile is the product of what was stated below it.
+    /// The gemm's stack, leaf up: every level's tile is the product of what was stated below it,
+    /// and its count is what it stated.
     #[test]
     fn every_level_is_a_count_of_the_level_before() {
         let levels = Tiling::leaf(&[(M, 16), (N, 8), (K, 16)])
@@ -339,16 +384,24 @@ mod tests {
             .cubes(&[M, N])
             .batches(&[B])
             .levels();
+        assert_eq!(levels.len(), 5);
+        let tiles = |i: usize, axis| levels[i].tile(axis);
+        let counts = |i: usize, axis| levels[i].count(axis);
+
+        assert_eq!((tiles(0, M), tiles(0, N)), (Some(64), Some(128)));
         assert_eq!(
-            levels,
-            vec![
-                Level::cubes(&[(M, 64), (N, 128)]).batches(&[B]),
-                Level::walk(&[(K, 32)]),
-                Level::planes(&[(M, 32), (N, 32)]),
-                Level::walk(&[(K, 16)]),
-                Level::walk(&[(M, 16), (N, 8)]),
-            ]
+            (counts(0, M), counts(0, N)),
+            (Some(Count::Every), Some(Count::Every))
         );
+        assert_eq!((tiles(0, B), counts(0, B)), (Some(1), Some(Count::Every)));
+        assert_eq!(tiles(0, K), None);
+
+        assert_eq!((tiles(1, K), counts(1, K)), (Some(32), Some(Count::Every)));
+        assert_eq!((tiles(2, M), counts(2, M)), (Some(32), Some(Count::Of(2))));
+        assert_eq!((tiles(2, N), counts(2, N)), (Some(32), Some(Count::Of(4))));
+        assert_eq!((tiles(3, K), counts(3, K)), (Some(16), Some(Count::Of(2))));
+        assert_eq!((tiles(4, M), counts(4, M)), (Some(16), Some(Count::Of(2))));
+        assert_eq!((tiles(4, N), counts(4, N)), (Some(8), Some(Count::Of(4))));
     }
 
     /// The split of a contraction: the cube level names the closed axis again to deal it across
@@ -360,13 +413,46 @@ mod tests {
             .cubes(&[M, N, K])
             .across(K, 4)
             .levels();
+        assert_eq!(levels[0].count(K), Some(Count::Across(4)));
+        assert_eq!(levels[0].tile(K), Some(16));
         assert_eq!(
-            levels,
-            vec![
-                Level::cubes(&[Cut::new(M, 16), Cut::new(N, 8), Cut::new(K, 16).across(4)]),
-                Level::walk(&[(K, 16)]),
-            ]
+            levels[0].distribution(K).scope(),
+            Some(ComputeScope::Cube(CubeAxis::Z))
         );
+        assert_eq!(levels[1].count(K), Some(Count::Every));
+    }
+
+    /// A count cannot fail to divide: three planes of a tile build a tile three times the size,
+    /// and there is nothing left for a refusal to check. What the old spelling refused as "the
+    /// planes do not deal into whole tiles" cannot be written.
+    #[test]
+    fn a_count_builds_its_tile_and_nothing_refuses() {
+        let levels = Tiling::leaf(&[(M, 5)])
+            .planes(&[(M, 3)])
+            .walk(&[(M, 7)])
+            .cubes(&[M])
+            .levels();
+        assert_eq!(levels[0].tile(M), Some(105));
+        assert_eq!(levels[1].tile(M), Some(15));
+        assert_eq!(levels[1].count(M), Some(Count::Of(7)));
+        assert_eq!(levels[2].count(M), Some(Count::Of(3)));
+        // Only the every-level at the top can overhang, and only against the problem's extent.
+        let space = Space::new(&[(M, 100)]);
+        assert!(levels[0].overhangs(&space, M));
+        let cube = levels[0].child(&space);
+        assert!(!levels[1].overhangs(&cube, M));
+        assert!(!levels[2].overhangs(&levels[1].child(&cube), M));
+    }
+
+    /// A level that walks every tile and one that walks one of them are different levels: the
+    /// first's count is the launch's, the second's is one.
+    #[test]
+    fn every_is_not_one() {
+        let every = Tiling::leaf(&[(K, 16)]).walk_every(&[K]).level();
+        let one = Tiling::leaf(&[(K, 16)]).walk(&[(K, 1)]).level();
+        assert_ne!(every, one);
+        assert_eq!(every.count(K), Some(Count::Every));
+        assert_eq!(one.count(K), Some(Count::Of(1)));
     }
 
     #[test]
@@ -390,5 +476,20 @@ mod tests {
             .walk_every(&[K])
             .cubes(&[M, K])
             .levels();
+    }
+
+    #[test]
+    #[should_panic(expected = "only cubes take an axis in runs")]
+    fn only_cubes_take_an_axis_in_runs() {
+        let _ = Tiling::leaf(&[(K, 16)]).planes(&[(K, 4)]).across(K, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "a walk over a region takes exactly one")]
+    fn a_walk_over_a_region_takes_one_level() {
+        let _ = Tiling::leaf(&[(K, 16)])
+            .walk(&[(K, 2)])
+            .walk_every(&[K])
+            .level();
     }
 }

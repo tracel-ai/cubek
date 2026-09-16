@@ -559,8 +559,8 @@ impl<T: Numeric> Tile<T> {
                     Some((c0, c1)) => {
                         let (sub_m, sub_n) = comptime!({
                             let (cm, cn) = (
-                                step.level.count(&self.space, a0),
-                                step.level.count(&self.space, a1),
+                                step.level.tiles(&self.space, a0),
+                                step.level.tiles(&self.space, a1),
                             );
                             assert!(
                                 p.m_tiles.is_multiple_of(cm) && p.n_tiles.is_multiple_of(cn),

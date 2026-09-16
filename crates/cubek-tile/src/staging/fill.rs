@@ -533,7 +533,9 @@ mod tests {
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]);
+        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+            .walk_every(&[M, N, K])
+            .level();
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
@@ -549,7 +551,9 @@ mod tests {
     #[test]
     fn a_fixed_operand_reuses_the_first_slots_buffer() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::walk(&[(M, 8), (N, 4), (K, 8)]);
+        let level = Tiling::leaf(&[(M, 8), (N, 4), (K, 8)])
+            .walk_every(&[M, N, K])
+            .level();
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
@@ -565,7 +569,10 @@ mod tests {
     #[test]
     fn a_slot_of_a_filled_walk_carries_the_count() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(2);
+        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+            .walk_every(&[M, N, K])
+            .filled_by(2)
+            .level();
         let plan = SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
@@ -580,7 +587,10 @@ mod tests {
     #[should_panic(expected = "cannot be filled by a subset of the cube")]
     fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::walk(&[(M, 8), (N, 8), (K, 4)]).filled_by(1);
+        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+            .walk_every(&[M, N, K])
+            .filled_by(1)
+            .level();
         SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
@@ -592,7 +602,9 @@ mod tests {
     #[test]
     fn a_tma_operand_is_never_fixed() {
         let (space, lhs, rhs) = spaces();
-        let level = Level::walk(&[(M, 8), (N, 4), (K, 8)]);
+        let level = Tiling::leaf(&[(M, 8), (N, 4), (K, 8)])
+            .walk_every(&[M, N, K])
+            .level();
         let plan = SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,

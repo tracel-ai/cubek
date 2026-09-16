@@ -233,7 +233,9 @@ fn plain(m: usize, n: usize, k: usize, tm: usize, tn: usize) -> HostData {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, tm), (N, tn), (K, k)])],
+            Tiling::leaf(&[(M, tm), (N, tn), (K, k)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -254,7 +256,9 @@ fn plain_batched(b: usize, m: usize, n: usize, k: usize, tm: usize, tn: usize) -
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K, k)])],
+            Tiling::leaf(&[(B, 1), (M, tm), (N, tn), (K, k)])
+                .walk_every(&[B, M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -296,7 +300,9 @@ fn split_k_whole_reduce_at_leaf() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
-            vec![Level::walk(&[(M, tm), (N, tn), (K1, k1), (K2, k2)])],
+            Tiling::leaf(&[(M, tm), (N, tn), (K1, k1), (K2, k2)])
+                .walk_every(&[M, N, K1, K2])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -324,7 +330,9 @@ fn split_k_major_half_walked() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K1, k1), (K2, k2)]),
-            vec![Level::walk(&[(M, tm), (N, tn), (K1, 1), (K2, k2)])],
+            Tiling::leaf(&[(M, tm), (N, tn), (K1, 1), (K2, k2)])
+                .walk_every(&[M, N, K1, K2])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -352,7 +360,9 @@ fn split_k_with_a_batch_axis() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B, b), (M, m), (N, n), (K1, k1), (K2, k2)]),
-            vec![Level::walk(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)])],
+            Tiling::leaf(&[(B, 1), (M, tm), (N, tn), (K1, k1), (K2, k2)])
+                .walk_every(&[B, M, N, K1, K2])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -419,7 +429,9 @@ fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoi
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -519,7 +531,9 @@ fn test_reduce_axis_sum_2d_to_1d() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -546,7 +560,9 @@ fn test_reduce_axis_sum_walked_levels() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -573,7 +589,9 @@ fn test_reduce_axis_max_2d_to_1d() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -602,7 +620,9 @@ fn test_reduce_axis_min_2d_to_1d() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -631,7 +651,9 @@ fn test_reduce_axis_multi_axis_3d_to_1d() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B, b), (M, m), (K, k)]),
-            vec![Level::walk(&[(B, 1), (M, 2), (K, 4)])],
+            Tiling::leaf(&[(B, 1), (M, 2), (K, 4)])
+                .walk_every(&[B, M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -695,7 +717,9 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -726,7 +750,9 @@ fn test_reduce_axis_sum_outer_axis_retained_innermost_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -761,7 +787,9 @@ fn test_reduce_axis_max_inner_axis_reduced_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -842,7 +870,9 @@ fn nondivisible_k_space(m: usize, k: usize, tk: usize) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, m), (K, tk)])],
+            Tiling::leaf(&[(M, m), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     )
@@ -1047,7 +1077,9 @@ fn test_reduce_axis_max_outer_axis_retained_innermost_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1082,7 +1114,9 @@ fn test_reduce_axis_min_outer_axis_retained_innermost_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1119,7 +1153,9 @@ fn test_reduce_axis_sum_inner_axis_reduced_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::walk(&[(M, tm), (K, tk)])],
+            Tiling::leaf(&[(M, tm), (K, tk)])
+                .walk_every(&[M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1153,7 +1189,9 @@ fn test_reduce_axis_multi_axis_3d_middle_axis_retained_innermost_v4() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B, b), (M, m), (K, k)]),
-            vec![Level::walk(&[(B, 1), (M, 2), (K, 8)])],
+            Tiling::leaf(&[(B, 1), (M, 2), (K, 8)])
+                .walk_every(&[B, M, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1198,7 +1236,7 @@ fn test_reduce_axis_sum_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+            Tiling::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).levels(),
         ),
         KernelForm::Static,
     );
@@ -1233,7 +1271,7 @@ fn test_reduce_axis_max_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+            Tiling::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).levels(),
         ),
         KernelForm::Static,
     );
@@ -1270,7 +1308,7 @@ fn test_reduce_axis_min_spatial_unit_lanes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (K, k)]),
-            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+            Tiling::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).levels(),
         ),
         KernelForm::Static,
     );
@@ -1349,7 +1387,7 @@ fn resident_max_over_lane_split_k() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::lanes(&[Cut::new(K, kr).across(plane_size)])],
+            Tiling::leaf(&[(K, kr)]).lanes(&[(K, plane_size)]).levels(),
         ),
         KernelForm::Static,
     );
@@ -1421,10 +1459,10 @@ fn resident_max_over_lane_group_k() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::lanes(&[
-                Cut::new(M, 1).across(groups),
-                Cut::new(K, kr).across(group_lanes).interleaved(),
-            ])],
+            Tiling::leaf(&[(M, 1), (K, kr)])
+                .lanes(&[(M, groups), (K, group_lanes)])
+                .interleaved(K)
+                .levels(),
         ),
         KernelForm::Static,
     );

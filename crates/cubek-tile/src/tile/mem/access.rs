@@ -1223,14 +1223,17 @@ impl<T: Numeric> MemData<T> {
                 let axis = space.axis_at(p);
                 // An axis left whole over a dynamic extent has no edge to cut by: the window
                 // carries through unmoved and uncropped.
-                if comptime!(matches!(step.level.edge_in(&space, axis), Extent::Dynamic)) {
+                if comptime!(matches!(
+                    step.level.extent_in(&space, axis),
+                    Extent::Dynamic
+                )) {
                     origin.push(self.window.origin.at(p));
                     extent.push(self.window.extent.at(p));
                     advances.push(0u32);
                 } else {
                     // The innermost (vectorized) axis's edge is a line count, so `/ width`.
                     let edge = comptime!(if p == last {
-                        let e = step.level.edge_in(&space, axis).get();
+                        let e = step.level.extent_in(&space, axis).get();
                         // A padded stage's innermost extent need not fill whole lines, but then its
                         // partial tail line has no sibling to start after it: the axis has to be cut
                         // whole, or the next region would begin mid-line. `extent_raw` because a
@@ -1245,7 +1248,7 @@ impl<T: Numeric> MemData<T> {
                         );
                         e.div_ceil(w)
                     } else {
-                        step.level.edge_in(&space, axis).get()
+                        step.level.extent_in(&space, axis).get()
                     });
                     let index = step.coord(axis);
 
@@ -1317,7 +1320,7 @@ impl<T: Numeric> MemData<T> {
                     comptime!(self.store.vector_size),
                     comptime!(
                         (0..rank)
-                            .map(|p| match step.level.edge_in(&space, space.axis_at(p)) {
+                            .map(|p| match step.level.extent_in(&space, space.axis_at(p)) {
                                 Extent::Static(edge) => edge,
                                 Extent::Dynamic => info.extent[p],
                             })
@@ -1482,7 +1485,7 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
             }
             for axis in space.axes() {
                 assert!(
-                    matches!(level.edge_in(space, axis), Extent::Static(_)),
+                    matches!(level.extent_in(space, axis), Extent::Static(_)),
                     "MemData::at: level {tiled_at} hands {axis:?} down dynamic, so its tile is \
                      no storage tile"
                 );
@@ -1526,7 +1529,7 @@ fn gathered_descent(
     #[unroll]
     for t in 0..n {
         let term = comptime!(axis_map.terms()[t]);
-        let edge = comptime!(cut.level.edge_in(&cut.space, term.axis).get());
+        let edge = comptime!(cut.level.extent_in(&cut.space, term.axis).get());
         match comptime!(term.scale) {
             Scale::Static(s) => {
                 let step = comptime!(if lined {
@@ -1561,7 +1564,7 @@ fn gathered_descent(
         // for the mapping that is.
         let span = if comptime!(!axis_map.has_dynamic_scale()) {
             comptime!({
-                let s = projection.span(pa, |a| cut.level.edge_in(&cut.space, a).get());
+                let s = projection.span(pa, |a| cut.level.extent_in(&cut.space, a).get());
                 (if lined { s / vector_size } else { s }) as u32
             })
             .runtime()

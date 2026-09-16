@@ -107,8 +107,28 @@ enum Serve {
     Direct,
 }
 
-fn sequential(edges: &[(Axis, usize)]) -> Level {
-    Level::walk(edges)
+/// The kernel-side level of one cube naming nothing: the whole space is its box.
+fn one_cube() -> Level {
+    Tiling::leaf(&[]).cubes(&[]).level()
+}
+
+/// The edge of the innermost level naming `axis`: the tile the inputs are laid out in.
+fn leaf_edge(levels: &[Level], axis: Axis) -> usize {
+    levels
+        .iter()
+        .rev()
+        .find_map(|level| level.tile(axis))
+        .unwrap_or_else(|| panic!("leaf_edge: no level names {axis:?}"))
+}
+
+/// The walk between a worker level and the steps under it, where a tiling states one: the
+/// worker's run of boxes. Two levels have none; three have it in the middle.
+fn runs_and_steps(launcher: &Launcher) -> (Option<Level>, Level) {
+    match launcher.levels().len() {
+        2 => (None, launcher.level(1)),
+        3 => (Some(launcher.level(1)), launcher.level(2)),
+        depth => panic!("runs_and_steps: no kernel walks {depth} levels"),
+    }
 }
 
 /// `A·B` off row-major `arange` operands: `lhs(i, p) = i·k + p`, `rhs(p, j) = p·n + j`.
@@ -134,9 +154,10 @@ fn assert_matmul_arange(client: &Client, handle: TensorHandle, m: usize, n: usiz
 
 // ---- the kernels ------------------------------------------------------------------
 
-/// `c = a · b` with every operand read where it lies: one level, the leaf running the software
-/// instruction under `config` on each region, folding under `semiring`. `c` owns its init: the
-/// semiring's identity, whatever the buffer held.
+/// `c = a · b` with every operand read where it lies: `outer`'s workers each take their box of
+/// it, through `runs` of boxes where the tiling states that level, and the leaf runs the
+/// software instruction under `config` on each region of `inner`, folding under `semiring`. `c`
+/// owns its init: the semiring's identity, whatever the buffer held.
 #[cube(launch)]
 fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     a: &TileArg<'_, E, AV>,
@@ -144,6 +165,7 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     c: &TileArg<'_, E, CV>,
     space: Partitioning,
     #[comptime] outer: Level,
+    #[comptime] runs: Option<Level>,
     #[comptime] inner: Level,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
@@ -153,22 +175,61 @@ fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for outer in space.over(&outer) {
-        // This instance's windows of `c`, each initialized once: the level projected onto `c`'s
-        // own axes walks nothing it does not span.
-        let c_o = c.at(&outer);
-        for region in c_o.over(&inner) {
-            let mut c_w = c_o.at(&region);
-            c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
-        }
-        for region in outer.over(&inner) {
-            let mut c_r = c.at(&region);
-            c_r.mma_with(&a.at(&region), &b.at(&region), config, semiring);
+        match comptime!(runs.clone()) {
+            Some(runs) => {
+                for run in outer.over(&runs) {
+                    contract_in_place::<E>(
+                        &a,
+                        &b,
+                        &c,
+                        &run,
+                        comptime!(inner.clone()),
+                        config,
+                        semiring,
+                    );
+                }
+            }
+            None => contract_in_place::<E>(
+                &a,
+                &b,
+                &c,
+                &outer,
+                comptime!(inner.clone()),
+                config,
+                semiring,
+            ),
         }
     }
 }
 
-/// `c = a · b`, each cube's box of it: both operands staged in shared memory per region of the
-/// walk under the cube, `depth` regions in flight through the ring.
+/// One worker's box of `c = a · b`: every window of `c` initialized once, then each region of
+/// `inner` contracted where the operands lie.
+#[cube]
+fn contract_in_place<E: Numeric>(
+    a: &Tile<E>,
+    b: &Tile<E>,
+    c: &Tile<E>,
+    owned: &Region,
+    #[comptime] inner: Level,
+    #[comptime] config: RegisterBlock,
+    #[comptime] semiring: Semiring,
+) {
+    // This instance's windows of `c`, each initialized once: the level projected onto `c`'s
+    // own axes walks nothing it does not span.
+    let c_o = c.at(owned);
+    for region in c_o.over(&inner) {
+        let mut c_w = c_o.at(&region);
+        c_w.init(Monoid::identity::<E>(comptime!(semiring.add())));
+    }
+    for region in owned.over(&inner) {
+        let mut c_r = c.at(&region);
+        c_r.mma_with(&a.at(&region), &b.at(&region), config, semiring);
+    }
+}
+
+/// `c = a · b`, each cube's box of it, through `runs` of boxes where the tiling states that
+/// level: both operands staged in shared memory per region of the walk under the cube, `depth`
+/// regions in flight through the ring.
 #[cube(launch)]
 fn matmul_smem_ring<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -176,6 +237,7 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     c: &TileArg<'_, E, V>,
     space: Partitioning,
     #[comptime] cubes: Level,
+    #[comptime] runs: Option<Level>,
     #[comptime] steps: Level,
     #[comptime] depth: usize,
     #[define(E)] _dtype: ElemType,
@@ -184,23 +246,43 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space.over(&cubes) {
-        let a = a.at(&cube);
-        let b = b.at(&cube);
-        let c = c.at(&cube);
-        // This cube's box of `c`, zeroed once.
-        for region in c.over(&steps) {
-            let mut c_w = c.at(&region);
-            c_w.zero();
+        match comptime!(runs.clone()) {
+            Some(runs) => {
+                for run in cube.over(&runs) {
+                    contract_staged::<E>(&a, &b, &c, &run, comptime!(steps.clone()), depth);
+                }
+            }
+            None => contract_staged::<E>(&a, &b, &c, &cube, comptime!(steps.clone()), depth),
         }
-        let walk = cube.over(&steps);
-        let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
-        pipelined(walk, &mut ring, |slot, region| {
-            let mut c_r = c.at(region);
-            slot.consume(|a_s, b_s| {
-                c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
-            });
-        });
     }
+}
+
+/// One cube's box of `c = a · b`, zeroed once, then contracted through a ring staging each
+/// region of `steps`.
+#[cube]
+fn contract_staged<E: Numeric>(
+    a: &Tile<E>,
+    b: &Tile<E>,
+    c: &Tile<E>,
+    owned: &Region,
+    #[comptime] steps: Level,
+    #[comptime] depth: usize,
+) {
+    let a = a.at(owned);
+    let b = b.at(owned);
+    let c = c.at(owned);
+    for region in c.over(&steps) {
+        let mut c_w = c.at(&region);
+        c_w.zero();
+    }
+    let walk = owned.over(&steps);
+    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    pipelined(walk, &mut ring, |slot, region| {
+        let mut c_r = c.at(region);
+        slot.consume(|a_s, b_s| {
+            c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+        });
+    });
 }
 
 /// [`matmul_smem_ring`] walking its regions last to first.
@@ -1430,8 +1512,9 @@ fn matmul_sequential_single_cube() {
         8,
         8,
         8,
-        Level::cubes::<Cut>(&[]),
-        sequential(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[]),
         1,
     );
 }
@@ -1442,8 +1525,9 @@ fn matmul_one_tile_per_cube() {
         8,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).across(2), Cut::new(N, 4).across(2)]),
-        Level::walk(&[(K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[K])
+            .cubes(&[M, N]),
         1,
     );
 }
@@ -1458,8 +1542,9 @@ fn matmul_whole_k_at_the_leaf() {
         8,
         8,
         4,
-        Level::cubes::<Cut>(&[]),
-        sequential(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[]),
         1,
     );
 }
@@ -1472,7 +1557,9 @@ fn matmul_reversed_walk_single_cube() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, 4), (N, 4), (K, 4)])],
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1507,8 +1594,10 @@ fn matmul_contiguous_m_across_cubes() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).each(2)]),
-        Level::walk(&[(N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .walk(&[(M, 2)])
+            .cubes(&[M]),
         1,
     );
 }
@@ -1519,8 +1608,11 @@ fn matmul_interleaved_m_across_cubes() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).across(2).interleaved()]),
-        Level::walk(&[(N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .cubes(&[M])
+            .across(M, 2)
+            .interleaved(M),
         1,
     );
 }
@@ -1534,8 +1626,10 @@ fn matmul_m_across_cubes_that_do_not_divide() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).across(3)]),
-        Level::walk(&[(N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .cubes(&[M])
+            .across(M, 3),
         1,
     );
 }
@@ -1546,8 +1640,10 @@ fn matmul_m_three_each_across_cubes_leaves_a_short_run() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).each(3)]),
-        Level::walk(&[(N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .walk(&[(M, 3)])
+            .cubes(&[M]),
         1,
     );
 }
@@ -1558,8 +1654,11 @@ fn matmul_m_in_turns_across_cubes_that_do_not_divide() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).across(3).interleaved()]),
-        Level::walk(&[(N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .cubes(&[M])
+            .across(M, 3)
+            .interleaved(M),
         1,
     );
 }
@@ -1570,8 +1669,9 @@ fn matmul_double_buffered() {
         8,
         8,
         8,
-        Level::cubes::<Cut>(&[]),
-        sequential(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[]),
         2,
     );
 }
@@ -1598,19 +1698,18 @@ fn assert_tiled_matmul(
         .enforce()
 }
 
-/// Drives [`matmul_smem_ring`] for `C = A @ B`: one level, both inputs staged, `depth` regions
-/// in flight.
-fn check_matmul(m: usize, n: usize, k: usize, cubes: Level, steps: Level, depth: usize) {
+/// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through
+/// a run of boxes where `tiling` states one, both inputs staged, `depth` regions in flight.
+fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
     let client = cubecl::test_device().client();
-    let tile_edge = match cubes.edge_kind(M) {
-        Edge::Cut(edge) => edge,
-        Edge::Whole => steps.edge(M),
-    };
+    let levels = tiling.levels();
+    let tile_edge = leaf_edge(&levels, M);
     let launcher = Launcher::implied(
         &client,
-        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![cubes, steps]),
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), levels),
         KernelForm::Static,
     );
+    let (runs, steps) = runs_and_steps(&launcher);
 
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
@@ -1634,7 +1733,8 @@ fn check_matmul(m: usize, n: usize, k: usize, cubes: Level, steps: Level, depth:
         c.arg(),
         launcher.partitioning_arg(),
         launcher.level(0),
-        launcher.level(1),
+        runs,
+        steps,
         depth,
         f32::elem_type_native(),
     );
@@ -1652,7 +1752,9 @@ fn mma_folds_onto_what_c_holds() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, tile_edge), (N, tile_edge), (K, k)])],
+            Tiling::leaf(&[(M, tile_edge), (N, tile_edge), (K, k)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -1729,12 +1831,14 @@ fn check_matmul_batched(
         &client,
         Partitioning::new(
             Space::new(&[(B, b), (M, m), (N, n), (K, k)]),
-            vec![sequential(&[
+            Tiling::leaf(&[
                 (B, batch_edge),
                 (M, tile_edge),
                 (N, tile_edge),
                 (K, tile_edge),
-            ])],
+            ])
+            .walk_every(&[B, M, N, K])
+            .levels(),
         ),
         KernelForm::Static,
     );
@@ -1757,7 +1861,8 @@ fn check_matmul_batched(
         rhs.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         1,
         f32::elem_type_native(),
@@ -1793,7 +1898,9 @@ fn matmul_broadcast_two_batch_axes() {
         4,
         3,
         4,
-        &[sequential(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)])],
+        &Tiling::leaf(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)])
+            .walk_every(&[B0, B1, M, N, K])
+            .levels(),
     );
 }
 
@@ -1804,7 +1911,9 @@ fn matmul_broadcast_lhs_only() {
         1,
         5,
         4,
-        &[sequential(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)])],
+        &Tiling::leaf(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)])
+            .walk_every(&[B0, B1, M, N, K])
+            .levels(),
     );
 }
 
@@ -1818,10 +1927,10 @@ fn matmul_broadcast_two_batch_axes_on_z() {
         4,
         3,
         4,
-        &[
-            Level::cubes(&[(B0, 1), (B1, 1)]),
-            Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-        ],
+        &Tiling::leaf(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[B0, B1])
+            .levels(),
     );
 }
 
@@ -1835,10 +1944,10 @@ fn matmul_broadcast_multilevel() {
         4,
         3,
         4,
-        &[
-            sequential(&[(B0, 1), (B1, 1), (M, 4), (N, 4), (K, 4)]),
-            sequential(&[(B0, 1), (B1, 1), (M, 2), (N, 2), (K, 2)]),
-        ],
+        &Tiling::leaf(&[(B0, 1), (B1, 1), (M, 2), (N, 2), (K, 2)])
+            .walk(&[(B0, 1), (B1, 1), (M, 2), (N, 2), (K, 2)])
+            .walk_every(&[B0, B1, M, N, K])
+            .levels(),
     );
 }
 
@@ -1883,7 +1992,8 @@ fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
             rhs.arg(),
             acc.arg(),
             launcher.partitioning_arg(),
-            Level::cubes::<Cut>(&[]),
+            one_cube(),
+            None,
             launcher.level(0),
             1,
             dtype,
@@ -1924,8 +2034,10 @@ fn matmul_cpu_sequential() {
         8,
         8,
         8,
-        Level::cubes::<Cut>(&[]),
-        sequential(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[])
+            .levels(),
     );
 }
 
@@ -1935,8 +2047,10 @@ fn matmul_cpu_big_k() {
         8,
         8,
         16,
-        Level::cubes::<Cut>(&[]),
-        sequential(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[])
+            .levels(),
     );
 }
 
@@ -1946,67 +2060,47 @@ fn matmul_cpu_cores_split_m() {
         16,
         8,
         8,
-        Level::cubes(&[Cut::new(M, 4).each(2)]),
-        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .walk(&[(M, 2)])
+            .cubes(&[M])
+            .levels(),
     );
 }
 
+/// Each plane walks a run of two tiles: the planes are as many as `m` holds such runs.
 #[test]
 fn matmul_cpu_cores_split_m_planes() {
+    let (m, tiles_each) = (16usize, 2usize);
     check_matmul_cpu(
-        16,
+        m,
         8,
         8,
-        Level::planes(&[Cut::new(M, 4).each(2)]),
-        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[N, K])
+            .walk(&[(M, tiles_each)])
+            .planes(&[(M, m / (4 * tiles_each))])
+            .levels(),
     );
 }
 
-/// The same short runs across a cube's planes: four tiles over three planes, three each, and
-/// in turns.
-#[test]
-fn matmul_cpu_m_across_planes_that_do_not_divide() {
-    check_matmul_cpu(
-        16,
-        8,
-        8,
-        Level::planes(&[Cut::new(M, 4).across(3)]),
-        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-    );
-}
-
-#[test]
-fn matmul_cpu_m_three_each_across_planes_leaves_a_short_run() {
-    check_matmul_cpu(
-        16,
-        8,
-        8,
-        Level::planes(&[Cut::new(M, 4).each(3)]),
-        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-    );
-}
-
-#[test]
-fn matmul_cpu_m_in_turns_across_planes_that_do_not_divide() {
-    check_matmul_cpu(
-        16,
-        8,
-        8,
-        Level::planes(&[Cut::new(M, 4).across(3).interleaved()]),
-        Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-    );
-}
+// Short runs across a cube's planes (four tiles over three planes, three each, in turns) cannot
+// be stated any more: a plane level says how many planes take one tile each, and a run of tiles
+// is a walk below it, which every plane takes whole. Only a cube level deals an axis in runs
+// (`Tiling::across`), and the short-run cases above cover it there.
 
 /// The register leaf reads both operands where they lie: nothing is materialized and the walk is
-/// the plain loop.
-fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
+/// the plain loop. `levels` is the worker level over the walk, with a run of boxes between them
+/// where the tiling states one.
+fn check_matmul_cpu(m: usize, n: usize, k: usize, levels: Vec<Level>) {
     let client = cubecl::test_device().client();
-    let tile_edge = inner.edge(M);
+    let tile_edge = leaf_edge(&levels, M);
     let launcher = Launcher::implied(
         &client,
-        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![outer, inner]),
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), levels),
         KernelForm::Static,
     );
+    let (runs, inner) = runs_and_steps(&launcher);
 
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile_edge, tile_edge])
@@ -2031,7 +2125,8 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, outer: Level, inner: Level) {
         c.arg(),
         launcher.partitioning_arg(),
         launcher.level(0),
-        launcher.level(1),
+        runs,
+        inner,
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
         f32::elem_type_native(),
@@ -2051,7 +2146,9 @@ fn matmul_cpu_dynamic_k() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2082,7 +2179,8 @@ fn matmul_cpu_dynamic_k() {
             .clone()
             .with_dynamic(&[K])
             .launch_arg(launcher.space()),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2109,7 +2207,7 @@ fn register_matmul_unit_spread_n() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::lanes(&[Cut::new(N, nr).across(plane_size)])],
+            Tiling::leaf(&[(N, nr)]).lanes(&[(N, plane_size)]).levels(),
         ),
         KernelForm::Static,
     );
@@ -2135,7 +2233,8 @@ fn register_matmul_unit_spread_n() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2177,7 +2276,9 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, m), (N, n), (K, k)])],
+            Tiling::leaf(&[(M, m), (N, n), (K, k)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2233,10 +2334,10 @@ fn matmul_padded_lhs_stage_direct_tail() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, k)]),
-                Level::walk(&[(M, m), (N, n), (K, k)]),
-            ],
+            Tiling::leaf(&[(M, m), (N, n), (K, k)])
+                .walk(&[(M, 1), (N, 1), (K, 1)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2293,10 +2394,10 @@ fn matmul_multilevel_staged_then_direct() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                sequential(&[(M, 4), (N, 4), (K, 4)]),
-                sequential(&[(M, 2), (N, 2), (K, 2)]),
-            ],
+            Tiling::leaf(&[(M, 2), (N, 2), (K, 2)])
+                .walk(&[(M, 2), (N, 2), (K, 2)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2393,10 +2494,10 @@ fn check_matmul_multilevel(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                sequential(&[(M, 4), (N, 4), (K, 4)]),
-                sequential(&[(M, 2), (N, 2), (K, 2)]),
-            ],
+            Tiling::leaf(&[(M, 2), (N, 2), (K, 2)])
+                .walk(&[(M, 2), (N, 2), (K, 2)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2456,10 +2557,10 @@ fn matmul_staged_invariant_lhs() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-                Level::walk(&[(M, 4), (N, 2), (K, 4)]),
-            ],
+            Tiling::leaf(&[(M, 4), (N, 2), (K, 4)])
+                .walk(&[(M, 1), (N, 2), (K, 1)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2503,7 +2604,9 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2512,10 +2615,10 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-            ],
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk(&[(M, 1), (N, 1), (K, 1)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2571,7 +2674,9 @@ fn matmul_direct_vectorized() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2595,7 +2700,8 @@ fn matmul_direct_vectorized() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -2665,11 +2771,9 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[
-                (M, tile_edge),
-                (N, tile_edge),
-                (K, tile_edge),
-            ])],
+            Tiling::leaf(&[(M, tile_edge), (N, tile_edge), (K, tile_edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2715,7 +2819,9 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2741,7 +2847,8 @@ fn check_matmul_vectorized((m, n, k): (usize, usize, usize), staged: Staged, dep
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            Level::cubes::<Cut>(&[]),
+            one_cube(),
+            None,
             launcher.level(0),
             depth,
             dtype,
@@ -2778,7 +2885,9 @@ fn register_matmul_promoted_accumulator() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2826,7 +2935,9 @@ fn tropical_matmul_in_place() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2853,7 +2964,8 @@ fn tropical_matmul_in_place() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         REGISTER_BLOCK,
         Semiring::MIN_SUM,
@@ -2889,7 +3001,9 @@ fn tropical_matmul_promoted() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -2956,11 +3070,11 @@ fn register_matmul_promoted_cube_plane() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::cubes(&[(M, m), (N, n)]),
-                Level::planes(&[(M, leaf_m), (N, leaf_n)]),
-                Level::walk(&[(K, leaf_k)]),
-            ],
+            Tiling::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
+                .walk_every(&[K])
+                .planes(&[(M, m / leaf_m), (N, n / leaf_n)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -3055,11 +3169,11 @@ fn instruction_stated_once_runs_in_registers() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::cubes(&[(M, m), (N, n)]),
-                Level::planes(&[(M, leaf_m), (N, leaf_n)]),
-                Level::walk(&[(K, leaf_k)]),
-            ],
+            Tiling::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
+                .walk_every(&[K])
+                .planes(&[(M, m / leaf_m), (N, n / leaf_n)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -3109,10 +3223,10 @@ fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, 4), (N, 4), (K, 4)]),
-                Level::walk(&[(M, 2), (N, 2), (K, 2)]),
-            ],
+            Tiling::leaf(&[(M, 2), (N, 2), (K, 2)])
+                .walk(&[(M, 2), (N, 2), (K, 2)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -3152,7 +3266,9 @@ fn lined_lhs_space(m: usize, n: usize, k: usize) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, m), (N, n), (K, k)])],
+            Tiling::leaf(&[(M, m), (N, n), (K, k)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     )
@@ -3188,7 +3304,8 @@ fn register_matmul_lined_lhs() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         REGISTER_BLOCK,
         Semiring::SUM_PROD,
@@ -3278,7 +3395,8 @@ fn check_folded_step(launcher: Launcher, (m, n, k): (usize, usize, usize), budge
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         RegisterBlock::new(budget),
         Semiring::SUM_PROD,
@@ -3422,7 +3540,9 @@ fn register_matmul_folded_step_two_contracted_axes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k1), (K2, k2)]),
-            vec![Level::walk(&[(M, m), (N, n), (K, k1), (K2, k2)])],
+            Tiling::leaf(&[(M, m), (N, n), (K, k1), (K2, k2)])
+                .walk_every(&[M, N, K, K2])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -3448,7 +3568,8 @@ fn register_matmul_folded_step_two_contracted_axes() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         RegisterBlock::new(64),
         Semiring::SUM_PROD,
@@ -3572,10 +3693,10 @@ fn lane_group_fold_space(plane_size: usize, group_lanes: usize, edge: usize, n: 
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, groups), (N, n), (K, group_lanes * edge)]),
-            vec![Level::lanes(&[
-                Cut::new(M, 1).across(groups),
-                Cut::new(K, edge).across(group_lanes).interleaved(),
-            ])],
+            Tiling::leaf(&[(M, 1), (K, edge)])
+                .lanes(&[(M, groups), (K, group_lanes)])
+                .interleaved(K)
+                .levels(),
         ),
         KernelForm::Static,
     )
@@ -3614,7 +3735,8 @@ fn register_matmul_lane_group_fold() {
         b.arg(),
         c.arg(),
         launcher.partitioning_arg(),
-        Level::cubes::<Cut>(&[]),
+        one_cube(),
+        None,
         launcher.level(0),
         RegisterBlock::new(edge * n),
         Semiring::SUM_PROD,
@@ -3751,7 +3873,9 @@ fn register_matmul_promoted_accumulator_quant() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![sequential(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4107,7 +4231,9 @@ fn check_cmma_matmul_k_walk_with(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4229,7 +4355,9 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4279,7 +4407,9 @@ fn mma_matmul_8x8x8() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4326,10 +4456,10 @@ fn cmma_matmul_plane_partitioned_stage() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, edge)]),
-                Level::planes(&[(M, edge), (N, edge)]),
-            ],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .planes(&[(M, m / edge), (N, n / edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4378,11 +4508,11 @@ fn cmma_matmul_multi_fragment_partition() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, stage_k)]),
-                Level::planes(&[(M, part), (N, part)]),
-                Level::walk(&[(M, i), (N, i), (K, i)]),
-            ],
+            Tiling::leaf(&[(M, i), (N, i), (K, i)])
+                .walk(&[(M, part / i), (N, part / i), (K, stage_k / i)])
+                .planes(&[(M, m / part), (N, n / part)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4432,13 +4562,13 @@ fn cmma_matmul_staged_n_walk_partition() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, stage_k)]),
-                Level::planes(&[(M, part), (N, part)]),
-                Level::walk(&[(M, part), (N, part), (K, i)]),
-                Level::walk(&[(M, part), (N, i), (K, i)]),
-                Level::walk(&[(M, i), (N, i), (K, i)]),
-            ],
+            Tiling::leaf(&[(M, i), (N, i), (K, i)])
+                .walk(&[(M, part / i), (N, 1), (K, 1)])
+                .walk(&[(M, 1), (N, part / i), (K, 1)])
+                .walk(&[(M, 1), (N, 1), (K, stage_k / i)])
+                .planes(&[(M, m / part), (N, n / part)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4561,7 +4691,9 @@ fn check_cmma_matmul_quant_walk(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4646,7 +4778,9 @@ fn mma_matmul_quant_until_read() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![Level::walk(&[(M, edge), (N, edge), (K, edge)])],
+            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4721,12 +4855,6 @@ fn mma_matmul_quant_until_read() {
 // dequantizes each read out of smem: no f32 inflation of the stage, no promotion, no cmma, no
 // i8 needed for the packed cases (the binding is a `u32`).
 
-/// One level cutting `tm×tn×tk` register-leaf tiles: the shape `check_matmul` drives, minus the
-/// storage tiling (operands stay plain strided).
-fn register_partitioner(tm: usize, tn: usize, tk: usize) -> Level {
-    sequential(&[(M, tm), (N, tn), (K, tk)])
-}
-
 /// Native i8 `A`, one scale per `bm`-row block, through the register leaf.
 #[test]
 fn register_matmul_quant_native_block_m() {
@@ -4772,7 +4900,7 @@ fn run_register_matmul_quant_native(serve: Serve) {
     run_register_matmul_quant(
         client,
         (m, n, k),
-        register_partitioner(4, 4, 4),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)]).walk_every(&[M, N, K]),
         serve,
         a_input.binding().into_tensor_arg(),
         a_dtype,
@@ -4832,7 +4960,7 @@ fn run_register_matmul_quant_packed(
     run_register_matmul_quant(
         client,
         (m, n, k),
-        register_partitioner(4, 4, tk),
+        Tiling::leaf(&[(M, 4), (N, 4), (K, tk)]).walk_every(&[M, N, K]),
         Serve::Staged,
         a.tile.tensor_arg(1),
         a_dtype,
@@ -4852,7 +4980,7 @@ fn run_register_matmul_quant_packed(
 fn run_register_matmul_quant(
     client: Client,
     (m, n, k): (usize, usize, usize),
-    plan: Level,
+    plan: Tiling,
     serve: Serve,
     a_arg: TensorArg,
     a_dtype: ElemType,
@@ -4864,7 +4992,7 @@ fn run_register_matmul_quant(
 ) {
     let launcher = Launcher::implied(
         &client,
-        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), vec![plan]),
+        Partitioning::new(Space::new(&[(M, m), (N, n), (K, k)]), plan.levels()),
         KernelForm::Static,
     );
 
@@ -4955,7 +5083,9 @@ fn register_matmul_quant_rhs_packed_q8() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 8), (N, 8), (K, 8)]),
-            vec![register_partitioner(4, 4, 4)],
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -4978,7 +5108,9 @@ fn register_matmul_quant_rhs_packed_q4() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 8), (N, 16), (K, 8)]),
-            vec![register_partitioner(4, 8, 4)],
+            Tiling::leaf(&[(M, 4), (N, 8), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -5002,7 +5134,9 @@ fn register_matmul_quant_rhs_gemv_row() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, 8), (K, 8)]),
-            vec![register_partitioner(1, 4, 4)],
+            Tiling::leaf(&[(M, 1), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -5026,7 +5160,10 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, 16), (K, 8)]),
-            vec![Level::cubes(&[(N, 4)]), Level::walk(&[(M, 1), (K, 4)])],
+            Tiling::leaf(&[(M, 1), (N, 4), (K, 4)])
+                .walk_every(&[M, K])
+                .cubes(&[N])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -5053,7 +5190,9 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, 8), (K, 8)]),
-            vec![Level::walk(&[(M, 1), (N, 4), (K, 4)])],
+            Tiling::leaf(&[(M, 1), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -5151,7 +5290,9 @@ fn four_region_k_walk() -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 4), (N, 8), (K, 16)]),
-            vec![Level::walk(&[(M, 4), (N, 4), (K, 4)])],
+            Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     )
@@ -5238,7 +5379,7 @@ fn run_register_matmul_quant_rhs(
         .build();
     // One level cuts `N` across cubes where the test says so; the walk is always stated.
     let (outer, inner) = match launch.levels().len() {
-        1 => (Level::cubes::<Cut>(&[]), launch.level(0)),
+        1 => (one_cube(), launch.level(0)),
         _ => (launch.level(0), launch.level(1)),
     };
     match serve {

@@ -92,11 +92,11 @@ fn run(table: &[u32]) -> HostData {
                 (OFFSET, PAGE_SIZE),
                 (D, FEATURES),
             ]),
-            vec![
-                Level::walk(&[(B, 1)]),
-                Level::walk(&[(LP, 1)]),
-                Level::walk(&[(PAGE, 1)]),
-            ],
+            Tiling::leaf(&[(B, 1), (LP, 1), (PAGE, 1)])
+                .walk_every(&[PAGE])
+                .walk_every(&[LP])
+                .walk_every(&[B])
+                .levels(),
         ),
         KernelForm::Static,
     );

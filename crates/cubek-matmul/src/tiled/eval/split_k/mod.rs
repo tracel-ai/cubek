@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, Cut, KernelForm, Launcher, Level, Partitioning, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch,
+    Axis, KernelForm, Launcher, Partitioning, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch, Tiling,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -169,7 +169,7 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![Level::cubes(&[(N, 1)])],
+                    Tiling::leaf(&[(N, 1)]).cubes(&[N]).levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -178,10 +178,10 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![
-                        Level::cubes(&[(N, plane_size * cols)]),
-                        Level::lanes(&[Cut::new(N, cols).across(plane_size)]),
-                    ],
+                    Tiling::leaf(&[(N, cols)])
+                        .lanes(&[(N, plane_size)])
+                        .cubes(&[N])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -191,10 +191,10 @@ impl Mapping {
                 client,
                 Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    vec![
-                        Level::cubes(&[(N, cols)]),
-                        Level::lanes(&[Cut::new(K, k / plane_size).across(plane_size)]),
-                    ],
+                    Tiling::leaf(&[(N, cols), (K, k / plane_size)])
+                        .lanes(&[(K, plane_size)])
+                        .cubes(&[N])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),

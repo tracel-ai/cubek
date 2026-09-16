@@ -8,8 +8,8 @@ use cubek_test_utils::{
     ValidationResult, assert_equals_approx,
 };
 use cubek_tile::{
-    Axis, DequantAt, KernelForm, Launcher, Level, Partitioning, QuantTileArg, QuantTileArgLaunch,
-    Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, DequantAt, KernelForm, Launcher, Partitioning, QuantTileArg, QuantTileArgLaunch, Space,
+    TileArg, TileArgLaunch, TileSpec, Tiling,
 };
 
 const M: Axis = Axis(0);
@@ -56,7 +56,10 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            vec![Level::cubes(&[(N, 128), (M, 1)]), Level::planes(&[(N, 32)])],
+            Tiling::leaf(&[(N, 32), (M, 1)])
+                .planes(&[(N, 4)])
+                .cubes(&[N, M])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -734,7 +737,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            vec![Level::walk(&[(M, bm), (N, bn)])],
+            Tiling::leaf(&[(M, bm), (N, bn)])
+                .walk_every(&[M, N])
+                .levels(),
         ),
         KernelForm::Static,
     );

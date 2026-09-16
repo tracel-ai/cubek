@@ -89,7 +89,10 @@ fn run(routes: &[u32]) -> HostData {
             // EXPERT at its true extent: the walk visits one of the three, the space still holds
             // three. Nothing here says a token uses one expert; the walk does.
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
-            vec![Level::walk(&[(M, 1)]), Level::walk(&[(EXPERT, 1)])],
+            Tiling::leaf(&[(M, 1), (EXPERT, 1)])
+                .walk_every(&[EXPERT])
+                .walk_every(&[M])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -203,7 +206,7 @@ fn launch_routed_on(axis: Axis) -> f32 {
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (EXPERT, EXPERTS)]),
-            vec![Level::walk(&[(EXPERT, 1)])],
+            Tiling::leaf(&[(EXPERT, 1)]).walk_every(&[EXPERT]).levels(),
         ),
         KernelForm::Static,
     );
@@ -292,7 +295,9 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         &client,
         Partitioning::new(
             Space::new(&[(EXPERT, lanes)]),
-            vec![Level::lanes(&[Cut::new(EXPERT, 1).across(lanes)])],
+            Tiling::leaf(&[(EXPERT, 1)])
+                .lanes(&[(EXPERT, lanes)])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -366,7 +371,10 @@ fn a_routed_operand_stages_the_expert_the_table_named() {
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
-            vec![Level::walk(&[(M, 1)]), Level::walk(&[(EXPERT, 1)])],
+            Tiling::leaf(&[(M, 1), (EXPERT, 1)])
+                .walk_every(&[EXPERT])
+                .walk_every(&[M])
+                .levels(),
         ),
         KernelForm::Static,
     );

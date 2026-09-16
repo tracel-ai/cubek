@@ -168,10 +168,10 @@ fn check_ring_matmul_with(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, block_k)]),
-                Level::walk(&[(M, tile), (N, tile), (K, tile)]),
-            ],
+            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+                .walk(&[(M, m / tile), (N, n / tile), (K, block_k / tile)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -232,10 +232,11 @@ fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, 4)]).filled_by(1),
-                Level::walk(&[(M, tile), (N, tile), (K, tile)]),
-            ],
+            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+                .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
+                .walk_every(&[M, N, K])
+                .filled_by(1)
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -251,10 +252,10 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            vec![
-                Level::walk(&[(M, m), (N, n), (K, 4)]),
-                Level::walk(&[(M, tile), (N, tile), (K, tile)]),
-            ],
+            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+                .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
+                .walk_every(&[M, N, K])
+                .levels(),
         ),
         KernelForm::Static,
     );

@@ -95,7 +95,9 @@ impl Harness {
                 &cubecl::test_device().client(),
                 Partitioning::new(
                     Space::new(&[(ROW, ROWS), (COL, COLS)]),
-                    vec![Level::walk(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])],
+                    Tiling::leaf(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])
+                        .walk_every(&[ROW, COL])
+                        .levels(),
                 ),
                 KernelForm::Static,
             ),
@@ -242,9 +244,19 @@ const KK: Axis = Axis(4);
 /// The leaf's register block, held fixed across every kernel here.
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
+/// One step of the contraction into `acc`'s cell at `region`.
+#[cube]
+fn contract<E: Numeric>(acc: &Tile<E>, a: &Tile<E>, b: &Tile<E>, region: &Region) {
+    let mut acc_cell = acc.at(region);
+    acc_cell.mma(&a.at(region), &b.at(region), Semiring::SUM_PROD);
+}
+
 /// The streamed contraction: each cube takes its run of the joint index over the output's tiles
 /// and their contraction, opens a register accumulator per output region it touches, folds that
 /// region's part of the run, and drains once through the atomic sink.
+///
+/// `inner` is the level the run is counted in; `leaf` a level below it, where the run's step is
+/// itself walked (a lane's run of `K`), or none where the step is the contraction's own.
 #[cube(launch)]
 fn stream_matmul<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -253,11 +265,17 @@ fn stream_matmul<E: Numeric>(
     space: Partitioning,
     #[comptime] outer: Level,
     #[comptime] inner: Level,
+    #[comptime] leaf: Option<Level>,
     #[define(E)] _dtype: ElemType,
 ) {
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
+    let below = comptime!({
+        let mut below = vec![inner.clone()];
+        below.extend(leaf.clone());
+        below
+    });
     let run = space.over(&outer).run(comptime!(inner.clone()));
     for i in 0..run.touched() {
         let region = run.region(i);
@@ -268,18 +286,20 @@ fn stream_matmul<E: Numeric>(
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            comptime!(Fragments::new(
-                &c_region.space,
-                &a_region.space,
-                std::slice::from_ref(&inner)
-            )),
+            comptime!(Fragments::new(&c_region.space, &a_region.space, &below)),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
         acc.zero();
         for cell in region.over(&inner).window(from, steps) {
-            let mut acc_cell = acc.at(&cell);
-            acc_cell.mma(&a_region.at(&cell), &b_region.at(&cell), Semiring::SUM_PROD);
+            match comptime!(leaf.clone()) {
+                Some(leaf) => {
+                    for step in cell.over(&leaf) {
+                        contract::<E>(&acc, &a_region, &b_region, &step);
+                    }
+                }
+                None => contract::<E>(&acc, &a_region, &b_region, &cell),
+            }
         }
         for r0 in c_region.over(&inner).unrolled() {
             let mut c_region_w = c_region.at(&r0);
@@ -377,10 +397,11 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         &client,
         Partitioning::new(
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
-            vec![
-                Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
-                Level::walk(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)]),
-            ],
+            Tiling::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
+                .walk(&[(MM, 1), (NN, 1), (KK, k / BLOCK_K)])
+                .cubes(&[MM, NN, KK])
+                .shared_by(runs)
+                .levels(),
         ),
         KernelForm::Static,
     );
@@ -405,6 +426,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
             launcher.partitioning_arg(),
             launcher.level(0),
             launcher.level(1),
+            None,
             dtype,
         ),
         RhsStage::Smem => stream_matmul_staged_rhs::launch(
@@ -557,11 +579,12 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
     }
     let dtype = f32::elem_type_native();
     let plane_size = client.properties().hardware.plane_size_max as usize;
-    // Two steps of `K` per lane, so a cube's share is counted in something longer than one.
+    // Two steps of `K` per lane, walked under the lanes, so a cube's share is counted in
+    // something longer than one step of the contraction.
     let (m, n, k) = (8usize, 8usize, 2 * plane_size);
     let want = reference(m, n, k);
 
-    // 4 output tiles of 2 steps each: 8 steps of work, and 3 shares of it straddle tiles.
+    // 4 output tiles of one lane tile each: 4 shares of work, over fewer cubes and more.
     for runs in [1usize, 3, 5] {
         let a: Vec<f32> = (0..m * k).map(|i| (i % 7) as f32 - 3.0).collect();
         let b: Vec<f32> = (0..k * n).map(|i| (i % 5) as f32 - 2.0).collect();
@@ -582,10 +605,12 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             &client,
             Partitioning::new(
                 Space::new(&[(MM, m), (NN, n), (KK, k)]),
-                vec![
-                    Level::cubes(&[(MM, TILE_M), (NN, TILE_N), (KK, k)]).shared_by(runs),
-                    Level::lanes(&[Cut::new(KK, 1).across(plane_size)]),
-                ],
+                Tiling::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, 1)])
+                    .walk(&[(KK, k / plane_size)])
+                    .lanes(&[(KK, plane_size)])
+                    .cubes(&[MM, NN, KK])
+                    .shared_by(runs)
+                    .levels(),
             ),
             KernelForm::Static,
         );
@@ -609,6 +634,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             launcher.partitioning_arg(),
             launcher.level(0),
             launcher.level(1),
+            Some(launcher.level(2)),
             dtype,
         );
 

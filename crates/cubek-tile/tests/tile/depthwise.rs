@@ -142,11 +142,12 @@ impl Depthwise {
                     (RH, self.rh),
                     (RW, self.rw),
                 ]),
-                vec![
-                    Level::cubes(&[(C, tile_c), (OW, tile_ow), (OH, tile_oh)]).batches(&[B]),
-                    Level::planes(&[(C, 1)]),
-                    Level::walk(&[(OW, 1), (OH, 1)]),
-                ],
+                Tiling::leaf(&[(C, 1), (OW, 1), (OH, 1)])
+                    .walk(&[(OW, tile_ow), (OH, tile_oh)])
+                    .planes(&[(C, tile_c)])
+                    .cubes(&[C, OW, OH])
+                    .batches(&[B])
+                    .levels(),
             ),
             KernelForm::Static,
         );

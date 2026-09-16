@@ -2,7 +2,7 @@
 
 use cubecl::{prelude::*, unexpanded};
 
-use crate::{Axis, ComputeScope, CubeAxis, Level, Region, RegionExpand, Space, Walk};
+use crate::{Axis, ComputeScope, Count, CubeAxis, Level, Region, RegionExpand, Space, Walk};
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
@@ -233,11 +233,13 @@ impl Partitioning {
                 total *= work.instances() as u32;
             }
             for axis in space.axes() {
-                let dist = level.distribution(axis);
-                if dist.scope() == Some(scope) {
-                    // `count` is `ceil`, so an indivisible axis adds the instance for its
-                    // partial tile.
-                    total *= dist.coverage().instances(level.count(&space, axis)) as u32;
+                if level.distribution(axis).scope() == Some(scope) {
+                    // The stated workers, or one per tile of an every-level: `tiles` is `ceil`,
+                    // so an indivisible axis adds the cube for its partial tile.
+                    total *= match level.count(axis) {
+                        Some(Count::Across(workers)) => workers,
+                        _ => level.tiles(&space, axis),
+                    } as u32;
                 }
             }
             space = level.child(&space);
@@ -286,6 +288,7 @@ impl Partitioning {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Tiling;
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -296,11 +299,12 @@ mod tests {
     fn staged(fillers: usize) -> Partitioning {
         Partitioning::new(
             Space::new(&[(M, 256), (N, 256), (K, 512)]),
-            vec![
-                Level::cubes(&[(M, 128), (N, 128)]),
-                Level::walk(&[(K, 64)]).filled_by(fillers),
-                Level::planes(&[(M, 64), (N, 64)]),
-            ],
+            Tiling::leaf(&[(M, 64), (N, 64), (K, 64)])
+                .planes(&[(M, 2), (N, 2)])
+                .walk_every(&[K])
+                .filled_by(fillers)
+                .cubes(&[M, N])
+                .levels(),
         )
     }
 
@@ -344,6 +348,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "only a walk's regions are staged")]
     fn a_level_that_deals_its_tiles_cannot_be_filled_by_anyone() {
-        Level::planes(&[(M, 64)]).filled_by(1);
+        Tiling::leaf(&[(M, 64)])
+            .planes(&[(M, 2)])
+            .filled_by(1)
+            .levels();
     }
 }

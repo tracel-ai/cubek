@@ -90,12 +90,12 @@ impl<T: Numeric> TmaData<T> {
         #[unroll]
         for p in 0..space.rank() {
             let axis = space.axis_at(p);
-            match comptime!(step.level.edge_kind(axis)) {
-                Edge::Cut(edge) => {
+            match comptime!(step.level.tile(axis)) {
+                Some(tile) => {
                     let index = step.coord(axis);
-                    pos.push(self.pos[p] + (index * edge) as u32);
+                    pos.push(self.pos[p] + (index * tile) as u32);
                 }
-                Edge::Whole => pos.push(self.pos[p]),
+                None => pos.push(self.pos[p]),
             }
         }
 

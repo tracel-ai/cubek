@@ -124,11 +124,12 @@ fn binding(client: &Client, shape: &[usize]) -> TensorBinding {
 fn batched_space(b0: usize, b1: usize, m: usize, n: usize, k: usize) -> (Space, Vec<Level>) {
     (
         Space::new(&[(B0, b0), (B1, b1), (M, m), (N, n), (K, k)]),
-        vec![
-            Level::cubes(&[(M, 16), (N, 32)]).batches(&[B0, B1]),
-            Level::planes(&[(M, 8), (N, 8)]),
-            Level::walk(&[(K, 4)]),
-        ],
+        cubek_tile::Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+            .walk_every(&[K])
+            .planes(&[(M, 2), (N, 4)])
+            .cubes(&[M, N])
+            .batches(&[B0, B1])
+            .levels(),
     )
 }
 
@@ -773,7 +774,9 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            vec![Level::cubes(&[(M, 16), (N, 32)])],
+            cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::DynamicAlong(&[N]),
     );
@@ -800,7 +803,9 @@ fn arg_gathered_rational_stages() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            vec![Level::cubes(&[(M, 16), (N, 32)])],
+            cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::DynamicAlong(&[N]),
     );
@@ -825,7 +830,9 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            vec![Level::cubes(&[(M, 16), (N, 32)])],
+            cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::DynamicAlong(&[N]),
     );
@@ -850,7 +857,9 @@ fn arg_gathered_cancelling_divisor_stages() {
         &client,
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            vec![Level::cubes(&[(M, 16), (N, 32)])],
+            cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
+                .cubes(&[M, N])
+                .levels(),
         ),
         KernelForm::DynamicAlong(&[N]),
     );

@@ -150,3 +150,27 @@ rows re-race. Nothing else in flight when this lands.
 * **Every tune key invalidates** at phase 6. A re-race of the whole table, not a bug.
 * **This is the DSL's core** plus every kernel in two repos — larger than any quest on the board.
   Phase 0 is the cheap way to find out whether it is worth it.
+
+## Phase 4 landed, cubek half (2026-09-16, branch `counts/phase4`)
+
+`Level` carries, per named axis, the built tile and a `Count::{Of(n), Every, Across(cubes)}`;
+`Tiling` is its only constructor. Deleted: `Coverage`, `Cut`, `Edge`, the four size-taking
+`Level::` constructors, `run_length`, `instance_count`, `single_tile`, `per_instance_tiles`,
+`Level::edge`/`edge_kind` (now `tile(axis) -> Option<usize>`, `count(axis) -> Option<Count>`).
+`Walk::of` reads `Of(n)` as a constant and divides only for `Every`/`Across`; the run clamp and
+`divides` survive for `Across` alone; `Partitioning::instances` reads the count. `overhangs`
+can only fire on an every-level. `Tiling::level()` is the one-level spelling `Region::over`
+takes; `Tiling::batches` accumulates across calls; `across` refuses a non-cube level.
+
+Ported: 276 sites (233 in cubek-tile's tests, 27 in its unit tests, 16 in cubek-matmul's
+harnesses). Two matmul test kernels and one stream-K test kernel gained a run level
+(`#[comptime] runs: Option<Level>`), the phase-2 rule applied to tests. The gate's
+unrepresentable shapes: three tests of short runs across a cube's *planes* deleted (only a cube
+level deals an axis in runs), plus `lanes_without_a_count_are_refused` and
+`overhangs_when_a_deeper_edge_misdivides_its_parent`; `a_count_builds_its_tile_and_nothing_refuses`
+in `tiling.rs` pins the rule. One measured change: the stream-K lanes test counts a cube's share
+in steps of the lanes level, now one tile a region instead of two.
+
+Verified on Metal: 428 + 184 green, the two `packed` tensor-core reds are main's own (same
+numbers at `385b68e7`). Not done here: the metabolic half (the five `edge` readers, the
+`legacy` modules, `realizes_storage`, `division.rs`), phases 5 and 6.
