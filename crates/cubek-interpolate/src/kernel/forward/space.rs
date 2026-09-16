@@ -13,6 +13,20 @@ pub const TAP_H: Axis = Axis(3);
 pub const TAP_W: Axis = Axis(4);
 pub const CHANNEL: Axis = Axis(5);
 
+/// What a partitioning over these axes prints as ([`Partitioning::labelled`]): an [`Axis`] is an
+/// index, and only the kernel that assigned it knows what it stands for.
+///
+/// Only tests print one today. It widens when a caller does.
+#[cfg(test)]
+const LABELS: [(Axis, &str); 6] = [
+    (BATCH, "b"),
+    (OUTPUT_H, "oh"),
+    (OUTPUT_W, "ow"),
+    (TAP_H, "th"),
+    (TAP_W, "tw"),
+    (CHANNEL, "c"),
+];
+
 /// The register block the leaf runs under, which the device decides.
 pub fn register_block(client: &Client) -> RegisterBlock {
     match client.properties().hardware.num_cpu_cores {
@@ -148,4 +162,74 @@ pub fn stage_window_bytes(
             .iter()
             .product();
     window_vectors * vector_size * elem_size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{InputStage, definition::InterpolateBlueprint};
+
+    /// A bicubic resize to a `128x128` map on a 32-lane plane, four planes of two rows each and
+    /// four output columns a lane. The channel count is what the caller varies: it is the axis
+    /// the lanes cover first, so it decides the whole split and the cube grid with it.
+    fn plan(channels: usize) -> InterpolateSpace {
+        InterpolateSpace {
+            batch: 2,
+            height: 128,
+            width: 128,
+            channels,
+            plane_size: 32,
+            taps: 4,
+            geometry: TileGeometry::from_blueprint(
+                InterpolateBlueprint::new(InputStage::InPlace, 4, 2, 4),
+                channels,
+                32,
+            ),
+        }
+    }
+
+    /// The four levels as a table, leaf up: each row's tile is the row below it times the count
+    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// as a row that no longer multiplies out. The taps never divide: they are the reduction,
+    /// and every tap of one output position accumulates into the same register.
+    #[test]
+    fn the_interpolate_routine_states_four_levels() {
+        assert_eq!(
+            plan(16).partitioning().labelled(&LABELS).to_string(),
+            [
+                "        b × oh × ow × th × tw × c    b ×  oh ×  ow × th × tw ×  c",
+                "",
+                "  ◦     · ×  · ×  · ×  · ×  · × ·    1 ×   2 ×   4 ×  4 ×  4 ×  4",
+                "  ▪     · ×  · ×  8 ×  · ×  · × 4    1 ×   2 ×  32 ×  4 ×  4 × 16",
+                "  ▤     · ×  4 ×  · ×  · ×  · × ·    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ↻     · ×  · ×  · ×  · ×  · × 1    1 ×   8 ×  32 ×  4 ×  4 × 16",
+                "  ▣     2 × 16 ×  4 ×  · ×  · × ·    2 × 128 × 128 ×  4 ×  4 × 16",
+                "",
+                "        └─ count ───────────────┘    └─ tile ───────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// A channel axis wider than one pass of the plane is what the walk above the planes is
+    /// for: every lane rides the channels, and the blocks past the first are the cube's steps.
+    /// The columns pay for it, so the same map takes eight times the cubes along `ow`.
+    #[test]
+    fn a_channel_axis_wider_than_a_plane_walks_its_blocks() {
+        assert_eq!(
+            plan(256).partitioning().labelled(&LABELS).to_string(),
+            [
+                "        b × oh × ow × th × tw ×  c    b ×  oh ×  ow × th × tw ×   c",
+                "",
+                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×   2 ×   4 ×  4 ×  4 ×   4",
+                "  ▪     · ×  · ×  · ×  · ×  · × 32    1 ×   2 ×   4 ×  4 ×  4 × 128",
+                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×   8 ×   4 ×  4 ×  4 × 128",
+                "  ↻     · ×  · ×  · ×  · ×  · ×  2    1 ×   8 ×   4 ×  4 ×  4 × 256",
+                "  ▣     2 × 16 × 32 ×  · ×  · ×  ·    2 × 128 × 128 ×  4 ×  4 × 256",
+                "",
+                "        └─ count ────────────────┘    └─ tile ────────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
 }

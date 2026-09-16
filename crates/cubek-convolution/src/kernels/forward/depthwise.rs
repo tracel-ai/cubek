@@ -46,6 +46,20 @@ const C: Axis = Axis(3);
 const RH: Axis = Axis(4);
 const RW: Axis = Axis(5);
 
+/// What a partitioning over these axes prints as ([`Partitioning::labelled`]): an [`Axis`] is an
+/// index, and only the kernel that assigned it knows what it stands for.
+///
+/// Only tests print one today. It widens when a caller does.
+#[cfg(test)]
+const LABELS: [(Axis, &str); 6] = [
+    (B, "b"),
+    (OH, "oh"),
+    (OW, "ow"),
+    (C, "c"),
+    (RH, "rh"),
+    (RW, "rw"),
+];
+
 /// The space one launch runs over, in the terms the kernel builds it from: the problem's
 /// extents and the tiling. The kernel's comptime argument, so the space the launch sizes its
 /// grid from is the space the kernel walks.
@@ -665,4 +679,73 @@ fn line_width(
         })
         .max()
         .unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `5x5` pass over a `56x56` map of 512 channels, four planes of one row, four output
+    /// columns a lane, on a 32-lane plane. The channel tile is what the caller varies: it is
+    /// `plane_size * width * chans`, and it alone decides whether a lane holds one channel line
+    /// or several.
+    fn plan(width: usize, chans: usize) -> DepthwiseSpace {
+        DepthwiseSpace {
+            b: 2,
+            oh: 56,
+            ow: 56,
+            c: 512,
+            rh: 5,
+            rw: 5,
+            rows: 4,
+            cols: 4,
+            tile_c: 32 * width * chans,
+            width,
+            plane_size: 32,
+        }
+    }
+
+    /// The three levels as a table, leaf up: each row's tile is the row below it times the count
+    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// as a row that no longer multiplies out. The taps never divide: they are the contraction,
+    /// and every one accumulates into the same register.
+    #[test]
+    fn the_depthwise_routine_states_three_levels() {
+        assert_eq!(
+            plan(1, 1).partitioning().labelled(&LABELS).to_string(),
+            [
+                "        b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
+                "",
+                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   1 ×  5 ×  5",
+                "  ▪     · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 ×  32 ×  5 ×  5",
+                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 ×  32 ×  5 ×  5",
+                "  ▣     2 × 14 × 14 × 16 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
+                "",
+                "        └─ count ────────────────┘    └─ tile ──────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// A channel tile wider than one pass of the plane's lines adds a fourth level, which is the
+    /// walk the kernel's `lines_below_the_lanes` branch runs: the lanes sit under it, and a lane
+    /// takes every 32nd line rather than a contiguous run.
+    #[test]
+    fn a_lane_holding_several_channel_lines_walks_them() {
+        assert_eq!(
+            plan(4, 2).partitioning().labelled(&LABELS).to_string(),
+            [
+                "        b × oh × ow ×  c × rh × rw    b × oh × ow ×   c × rh × rw",
+                "",
+                "  ◦     · ×  · ×  · ×  · ×  · ×  ·    1 ×  1 ×  4 ×   4 ×  5 ×  5",
+                "  ▪     · ×  · ×  · × 32 ×  · ×  ·    1 ×  1 ×  4 × 128 ×  5 ×  5",
+                "  ↻     · ×  · ×  · ×  2 ×  · ×  ·    1 ×  1 ×  4 × 256 ×  5 ×  5",
+                "  ▤     · ×  4 ×  · ×  · ×  · ×  ·    1 ×  4 ×  4 × 256 ×  5 ×  5",
+                "  ▣     2 × 14 × 14 ×  2 ×  · ×  ·    2 × 56 × 56 × 512 ×  5 ×  5",
+                "",
+                "        └─ count ────────────────┘    └─ tile ──────────────────┘",
+            ]
+            .join("\n")
+        );
+    }
 }
