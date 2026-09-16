@@ -454,7 +454,7 @@ impl Level {
     /// count, or the tiles an every-level takes over a static extent. `None` where the grid is
     /// not known here: the extent is [`Dynamic`](Extent::Dynamic), or `space` is a projection
     /// that dropped the axis (a drain descending an output through its own space).
-    pub(crate) fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
+    pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
             Some(count) => match count.stated() {
