@@ -37,8 +37,6 @@ use crate::{
 pub struct QuantGemvElems {
     pub served: ElemType,
     pub x: ElemType,
-    /// The block level's stored element.
-    pub scales: ElemType,
     /// The per-tensor level's stored element, where the scheme has one. One number, read as
     /// the word it fills: a width that does not fill one is refused.
     pub tensor_scale: ElemType,
@@ -130,14 +128,9 @@ pub fn launch_ref(
             "QuantGemv: a scale is a float, got {other:?}"
         )))),
     };
-    let block_field = field_of(dtypes.scales)?;
-    if block_field.per_word() != problem.scales_a_word {
-        return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
-            "QuantGemv: the plan dealt {} scales a word and the scales are stored {} to one",
-            problem.scales_a_word,
-            block_field.per_word()
-        ))));
-    }
+    // Stated once, by the problem: the plan dealt the blocks in words of this field, and the
+    // binding reads them in the same one.
+    let block_field = problem.scale_field();
     let tensor_field = field_of(dtypes.tensor_scale)?;
     if scales.len() > 1 && tensor_field.per_word() != 1 {
         return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
@@ -213,7 +206,7 @@ pub fn launch_ref(
         *problem,
         dtypes.served,
         dtypes.x,
-        dtypes.scales,
+        ElemType::from_scale_dtype(problem.scales),
         dtypes.out,
     );
     Ok(())
