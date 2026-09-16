@@ -108,8 +108,8 @@ pub(crate) fn max_pool2d_with_indices_backward_launch(
         Accumulation {
             load: dtype,
             live_elems: &[dtype, indices_dtype, u32::elem_type_native()],
-            // The gradient sum, the tap and its index, the current index and the match mask.
-            live_vectors: 5,
+            // The gradient sum and the match mask: taps are operands, the current index a splat.
+            live_vectors: 2,
         }
         .vector_sizes(client),
         &input.shape,

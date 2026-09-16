@@ -69,7 +69,8 @@ pub(crate) fn adaptive_avg_pool3d_launch(
     let vector_sizes = Accumulation {
         load: dtype,
         live_elems: &[dtype, acc_dtype],
-        live_vectors: 2,
+        // One over the sum and its tap: the read is memory bound, wider lanes measured slower.
+        live_vectors: 3,
     }
     .vector_sizes(client);
     let input_vector_size = tensor_vector_size_parallel(

@@ -84,8 +84,8 @@ pub(crate) fn adaptive_avg_pool3d_backward_launch(
     let vector_sizes = Accumulation {
         load: dtype,
         live_elems: &[dtype, acc_dtype],
-        // The gradient sum, the tap and its divisor.
-        live_vectors: 3,
+        // The gradient sum and the scaled tap: the divisor is one splat shared by every lane.
+        live_vectors: 2,
     }
     .vector_sizes(client);
     let grad_vector_size = tensor_vector_size_parallel(

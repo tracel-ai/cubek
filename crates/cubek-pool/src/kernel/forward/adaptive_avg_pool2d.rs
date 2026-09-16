@@ -74,7 +74,8 @@ pub(crate) fn adaptive_avg_pool2d_launch(
         Accumulation {
             load: dtype,
             live_elems: &[dtype, acc_dtype],
-            live_vectors: 2,
+            // One over the sum and its tap: the read is memory bound, wider lanes measured slower.
+            live_vectors: 3,
         }
         .vector_sizes(client),
         &input.shape,

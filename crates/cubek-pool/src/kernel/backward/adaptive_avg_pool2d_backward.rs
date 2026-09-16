@@ -79,8 +79,8 @@ pub(crate) fn adaptive_avg_pool2d_backward_launch(
         Accumulation {
             load: dtype,
             live_elems: &[dtype, acc_dtype],
-            // The gradient sum, the tap and its divisor.
-            live_vectors: 3,
+            // The gradient sum and the scaled tap: the divisor is one splat shared by every lane.
+            live_vectors: 2,
         }
         .vector_sizes(client),
         &input.shape,
