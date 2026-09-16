@@ -314,4 +314,3 @@ impl<
 fn calculate_lower_corner(padding: &[i32]) -> Vec<i32> {
     padding.iter().map(|padding| -*padding).collect()
 }
-
