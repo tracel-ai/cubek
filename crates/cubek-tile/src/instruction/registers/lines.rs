@@ -124,6 +124,16 @@ impl<S: Numeric, W: Size> RunScales<S, W> {
         }
     }
 
+    /// One scale line, for a run that needs a single one: the landing's, where the coordinate a
+    /// scale is constant along is the run itself.
+    pub fn of(line: Vector<S, W>) -> Self {
+        let mut lines = Array::<Vector<S, W>>::new(1usize);
+        lines[0usize] = line;
+        RunScales::<S, W> {
+            lines: ComptimeOption::new_Some(lines),
+        }
+    }
+
     /// `value` under field `field` of the scale line `major` holds, which is the scale covering
     /// the tile the walk is in. The field is a constant because the walk built it.
     pub fn apply<E: Numeric, V: Size>(

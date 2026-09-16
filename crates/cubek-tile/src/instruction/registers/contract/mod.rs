@@ -16,5 +16,5 @@ mod scale;
 mod shape;
 
 pub(crate) use base::{contracted_per_step, memory};
-pub(crate) use factor::{combined_scales, level_of};
+pub(crate) use factor::{level_of, scales_of, span};
 pub(crate) use scale::{ContractEdges, Side};

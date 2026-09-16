@@ -10,10 +10,11 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
+    std::tensor::layout::Coords2d,
 };
 
-use crate::instruction::registers::contract::{ContractEdges, Side, combined_scales, level_of};
-use crate::instruction::registers::lines::{Lines, LinesExpand};
+use crate::instruction::registers::contract::{ContractEdges, Side, level_of, scales_of, span};
+use crate::instruction::registers::lines::{CombinedScales, Lines, LinesExpand, RunScales};
 use crate::*;
 
 #[cube]
@@ -202,10 +203,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let count = self.levels().len();
         let landed = values.has_landing();
         if comptime!(count > 0 || landed) {
-            let landing = match comptime!(count > 0) {
-                true => self.land(comptime!(read.clone())),
-                false => self.land_plain(comptime!(read.clone())),
-            };
+            let landing = self.land(comptime!(read.clone()));
             cmma::load(frag, &landing, comptime!(read.cols as u32));
             // The landing is this region's until every lane's load has read it.
             sync_plane();
@@ -238,12 +236,19 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     }
 
     /// This factor in its plane's landing, row-major: each lane reads lines through the values'
-    /// packed view, multiplies each by the block scale covering it where the factor carries
-    /// one, and writes them; the plane then syncs past the writes.
+    /// packed view, multiplies each by the block scale covering it where the factor carries one,
+    /// and writes them; the plane then syncs past the writes.
     ///
-    /// A factor with no scales lands its values as they lie, which is what makes the landing an
-    /// operand's *residence* rather than a scale mechanism: it is the answer to a layout a
-    /// fragment cannot be told, and a packed or scaled factor needs it for its values as well.
+    /// A factor with no scales lands its values as they lie — the same walk, with nothing to
+    /// multiply by — which is what makes the landing an operand's *residence* rather than a
+    /// scale mechanism: it is the answer to a layout a fragment cannot be told, and a packed or
+    /// scaled factor needs it for its values as well.
+    ///
+    /// The walk is the scales': the plane takes the `(coordinate a scale is constant along,
+    /// scale line under it)` pairs between its lanes, and under each pair the `fields · lines`
+    /// value lines that scale covers are built. One read of the scales serves all of them, every
+    /// field of the word used. A factor carrying none has one line a pair, so the pairs are the
+    /// lines and the plane spreads them as it always did.
     fn land(&self, #[comptime] read: FragmentRead) -> Shared<[E]> {
         let values = self.values();
         let mut landing = match &values.tile_kind {
@@ -252,7 +257,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                panic!("mma: a scaled operand lands from its memory window")
+                panic!("mma: an operand lands from its memory window")
             }
         };
         let levels = self.levels();
@@ -264,73 +269,63 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             comptime!(read.edges.clone()),
             comptime!(read.side),
         );
-        let level = comptime!(level.expect("mma: a scaled factor carries a level"));
+        let span = comptime!(span(level));
 
         let vw = values.vector_size();
         let size!(VW) = vw;
-        let size!(SW) = comptime!(level.span.fields);
+        let size!(SW) = comptime!(span.fields);
         let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
         let matrix = values.matrix_packed::<VW>(axes, 0usize);
-        let scale_lines = combined_scales::<S, SW>(&levels, level, 0usize);
+        let scales = scales_of::<S, SW>(&levels, comptime!(level), 0usize);
 
-        // The plane deals the coordinate a scale is constant along — the row, or the line column
-        // of a transposed window — and a lane steps the scale lines of its share, building under
-        // each the `fields · lines` value lines it covers. One read of the scales serves all of
-        // them, every field of the word used.
-        let fields = comptime!(level.span.fields);
-        let lps = comptime!(level.span.lines);
-        let per_scale_line = comptime!(fields * lps);
+        let per_scale_line = comptime!(span.fields * span.lines);
         let per_row = comptime!(read.cols / vw);
         let width = comptime!(vw as u32);
         let row_cells = comptime!(read.cols as u32);
-        if comptime!(read.transposed) {
-            // A transposed window's line sits at the scales' column, and its row is the block.
-            comptime!(assert!(
-                read.rows.is_multiple_of(per_scale_line),
-                "mma: {} rows of a transposed landing are not whole scale lines of {per_scale_line}",
-                read.rows
-            ));
-            for c in range_stepped(UNIT_POS_PLANE, comptime!(per_row as u32), PLANE_DIM) {
-                for s in 0..comptime!(read.rows / per_scale_line) {
-                    let scale = scale_lines.line((c * width, s as u32));
+        // A transposed window's lines run down the scales' rows, so its line column is the
+        // coordinate a scale is constant along and its row is the block.
+        let (majors, runs) = comptime!(match read.transposed {
+            true => (per_row, read.rows / per_scale_line),
+            false => (read.rows, per_row / per_scale_line),
+        });
+        comptime!(assert!(
+            majors * runs * per_scale_line == read.rows * per_row,
+            "mma: a {}x{per_row} landing does not divide into scale lines of {per_scale_line}",
+            read.rows
+        ));
+        // Which of the two the landing's own column is — the walk takes its cells in the order
+        // they lie, so neighbouring lanes write neighbouring words. The decode is the plane's,
+        // by a comptime count.
+        for pair in range_stepped(UNIT_POS_PLANE, comptime!((majors * runs) as u32), PLANE_DIM) {
+            let (major, run) = match comptime!(read.transposed) {
+                true => (
+                    pair % comptime!(majors as u32),
+                    pair / comptime!(majors as u32),
+                ),
+                false => (pair / comptime!(runs as u32), pair % comptime!(runs as u32)),
+            };
+            let scale = run_scale::<S, SW>(
+                &scales,
+                match comptime!(read.transposed) {
+                    true => (major * width, run),
+                    false => (major, run),
+                },
+            );
+            #[unroll]
+            for field in 0..comptime!(span.fields) {
+                for l in 0..comptime!(span.lines as u32) {
+                    let at = run * comptime!(per_scale_line as u32)
+                        + comptime!((field * span.lines) as u32)
+                        + l;
+                    let (r, c) = match comptime!(read.transposed) {
+                        true => (at, major),
+                        false => (major, at),
+                    };
+                    let landed = scale.apply::<E, VW>(matrix.read((r, c)), 0usize, field);
+                    let base = (r * row_cells + c * width) as usize;
                     #[unroll]
-                    for field in 0..fields {
-                        for l in 0..lps {
-                            let r =
-                                (s * comptime!(per_scale_line) + comptime!(field * lps) + l) as u32;
-                            let scaled = matrix.read((r, c))
-                                * Vector::<E, VW>::cast_from(scale.extract(field));
-                            let base = (r * row_cells + c * width) as usize;
-                            #[unroll]
-                            for j in 0..vw {
-                                landing[base + j] = scaled.extract(j);
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            comptime!(assert!(
-                per_row.is_multiple_of(per_scale_line),
-                "mma: {per_row} lines of a landing's row are not whole scale lines of \
-                 {per_scale_line}"
-            ));
-            for r in range_stepped(UNIT_POS_PLANE, comptime!(read.rows as u32), PLANE_DIM) {
-                for s in 0..comptime!(per_row / per_scale_line) {
-                    let scale = scale_lines.line((r, s as u32));
-                    #[unroll]
-                    for field in 0..fields {
-                        for l in 0..lps {
-                            let c =
-                                (s * comptime!(per_scale_line) + comptime!(field * lps) + l) as u32;
-                            let scaled = matrix.read((r, c))
-                                * Vector::<E, VW>::cast_from(scale.extract(field));
-                            let base = (r * row_cells + c * width) as usize;
-                            #[unroll]
-                            for j in 0..vw {
-                                landing[base + j] = scaled.extract(j);
-                            }
-                        }
+                    for j in 0..vw {
+                        landing[base + j] = landed.extract(j);
                     }
                 }
             }
@@ -338,41 +333,18 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         sync_plane();
         landing
     }
+}
 
-    /// [`land`](Scaled::land) for a factor that carries no scales: the same walk, writing each
-    /// line as it lies. What the landing buys here is the layout alone — a window the fragment
-    /// load can be told the stride of.
-    fn land_plain(&self, #[comptime] read: FragmentRead) -> Shared<[E]> {
-        let values = self.values();
-        let mut landing = match &values.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.landing(),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("mma: an operand lands from its memory window")
-            }
-        };
-        let vw = values.vector_size();
-        let size!(VW) = vw;
-        let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
-        let matrix = values.matrix_packed::<VW>(axes, 0usize);
-
-        let per_row = comptime!((read.cols / vw) as u32);
-        let lines = comptime!((read.rows * read.cols / vw) as u32);
-        let width = comptime!(vw as u32);
-        let row_cells = comptime!(read.cols as u32);
-        for i in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-            let r = i / per_row;
-            let c = i % per_row;
-            let line = matrix.read((r, c));
-            let base = (r * row_cells + c * width) as usize;
-            #[unroll]
-            for j in 0..vw {
-                landing[base + j] = line.extract(j);
-            }
-        }
-        sync_plane();
-        landing
+/// The scale line covering one run of a landing, or nothing where the factor carries no scales —
+/// which is what makes one walk serve both ([`RunScales::apply`] passes the value through).
+#[cube]
+fn run_scale<'a, S: Numeric, W: Size>(
+    scales: &'a ComptimeOption<CombinedScales<'a, S, W>>,
+    pos: Coords2d,
+) -> RunScales<S, W> {
+    #[comptime]
+    match scales {
+        ComptimeOption::Some(source) => RunScales::of(source.line(pos)),
+        ComptimeOption::None => RunScales::none(),
     }
 }
