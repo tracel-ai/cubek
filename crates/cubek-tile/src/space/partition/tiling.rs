@@ -47,20 +47,12 @@ use super::level::LevelScope;
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
 use crate::{Axis, Count, Level};
 
-/// Who takes the tiles of one level.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Takers {
-    Walk,
-    Lanes,
-    Planes,
-    Cubes,
-}
-
 /// One level, as the builder holds it before it is a [`Level`]: the axes it names with the tile
 /// each is built of, and the modifiers stated after it.
 #[derive(Clone, Debug)]
 struct Stated {
-    takers: Takers,
+    /// Who takes this level's tiles, which is also the loop verb that states it.
+    takers: LevelScope,
     /// `(axis, the size one tile of this level covers, how many)` — the running size below it,
     /// and the count stated. An every-level states no count and `every` says so.
     tiles: Vec<(Axis, usize, usize)>,
@@ -106,23 +98,23 @@ impl Tiling {
 
     /// Every worker steps through this many of the thing below, one at a time.
     pub fn walk(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(Takers::Walk, counts)
+        self.state(LevelScope::Sequential, counts)
     }
 
     /// Every worker steps through as many of the thing below as the axis holds — the count the
     /// levels do not know, and the launch does.
     pub fn walk_every(self, axes: &[Axis]) -> Self {
-        self.every(Takers::Walk, axes)
+        self.every(LevelScope::Sequential, axes)
     }
 
     /// This many of the thing below, one per lane of the plane.
     pub fn lanes(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(Takers::Lanes, counts)
+        self.state(LevelScope::Lanes, counts)
     }
 
     /// This many of the thing below, one per plane of the cube.
     pub fn planes(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(Takers::Planes, counts)
+        self.state(LevelScope::Planes, counts)
     }
 
     /// One cube for every box these axes hold. The outermost level of a launch, and the one whose
@@ -138,7 +130,7 @@ impl Tiling {
             "Tiling::cubes: {} axes, but a launch grid has three dimensions",
             axes.len()
         );
-        self.every(Takers::Cubes, axes)
+        self.every(LevelScope::Cubes, axes)
     }
 
     /// Deal `axis` — one the cube level just stated — across `cubes` of them, each taking a run
@@ -147,7 +139,7 @@ impl Tiling {
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
         let stated = self.last("across");
         assert!(
-            stated.takers == Takers::Cubes,
+            stated.takers == LevelScope::Cubes,
             "Tiling::across: only cubes take an axis in runs; the level just stated is a {}",
             stated.takers.verb()
         );
@@ -215,7 +207,7 @@ impl Tiling {
     }
 
     /// State a level of `counts` of the thing below, then grow each axis by its count.
-    fn state(mut self, takers: Takers, counts: &[(Axis, usize)]) -> Self {
+    fn state(mut self, takers: LevelScope, counts: &[(Axis, usize)]) -> Self {
         let tiles = counts
             .iter()
             .map(|&(axis, count)| (axis, self.size(axis), count));
@@ -229,13 +221,13 @@ impl Tiling {
 
     /// State a level covering every tile these axes hold, and close them: a count nothing above
     /// can multiply, because nothing above knows it.
-    fn every(mut self, takers: Takers, axes: &[Axis]) -> Self {
+    fn every(mut self, takers: LevelScope, axes: &[Axis]) -> Self {
         let reopened: Vec<Axis> = axes
             .iter()
             .copied()
             .filter(|axis| self.closed.contains(axis))
             .collect();
-        if let (Takers::Walk, Some(axis)) = (takers, reopened.first()) {
+        if let (LevelScope::Sequential, Some(axis)) = (takers, reopened.first()) {
             panic!(
                 "Tiling::walk_every: {axis:?} was taken whole by a level below, so a walk above \
                  it has nothing to step through"
@@ -276,23 +268,8 @@ impl Tiling {
     }
 }
 
-impl Takers {
-    fn verb(self) -> &'static str {
-        self.scope().verb()
-    }
-
-    fn scope(self) -> LevelScope {
-        match self {
-            Takers::Walk => LevelScope::Sequential,
-            Takers::Lanes => LevelScope::Lanes,
-            Takers::Planes => LevelScope::Planes,
-            Takers::Cubes => LevelScope::Cubes,
-        }
-    }
-}
-
 impl Stated {
-    fn new(takers: Takers, tiles: Vec<(Axis, usize, usize)>, every: bool) -> Self {
+    fn new(takers: LevelScope, tiles: Vec<(Axis, usize, usize)>, every: bool) -> Self {
         Stated {
             takers,
             tiles,
@@ -329,16 +306,16 @@ impl Stated {
                     (false, _) => Count::Of(count),
                 };
                 let dist = match self.takers {
-                    Takers::Walk => Distribution::Sequential,
-                    Takers::Lanes => Distribution::Spatial {
+                    LevelScope::Sequential => Distribution::Sequential,
+                    LevelScope::Lanes => Distribution::Spatial {
                         scope: ComputeScope::Unit,
                         spread: self.spread(axis),
                     },
-                    Takers::Planes => Distribution::Spatial {
+                    LevelScope::Planes => Distribution::Spatial {
                         scope: ComputeScope::Plane,
                         spread: self.spread(axis),
                     },
-                    Takers::Cubes => Distribution::Spatial {
+                    LevelScope::Cubes => Distribution::Spatial {
                         scope: ComputeScope::Cube(grid[i]),
                         spread: self.spread(axis),
                     },
@@ -346,7 +323,7 @@ impl Stated {
                 (axis, tile, count, dist)
             })
             .collect();
-        let level = Level::new(self.takers.scope(), &entries);
+        let level = Level::new(self.takers, &entries);
         let level = match self.batches.is_empty() {
             true => level,
             false => level.batches(&self.batches),
