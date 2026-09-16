@@ -857,7 +857,7 @@ impl<T: Numeric> MemData<T> {
             ComptimeOption::Some(landing) => landing.clone(),
             ComptimeOption::None => panic!(
                 "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
-                 shared memory; open the operand with `with_landing(planes, lanes)`"
+                 shared memory; open the operand with `with_landing()`"
             ),
         }
     }

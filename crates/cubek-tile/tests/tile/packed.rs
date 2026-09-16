@@ -440,14 +440,12 @@ fn packed_cmma_rhs<E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] planes: usize,
-    #[comptime] lanes: usize,
     #[define(E)] _dtype: ElemType,
 ) {
     let x = x.tile(comptime!(space.clone()));
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
-        .with_landing(planes, lanes)
+        .with_landing()
         .scaled(&ComptimeOption::new_Some(
             scale.tile_as::<E>(comptime!(space.clone())),
         ));
@@ -2634,7 +2632,6 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         .enforce();
         return;
     }
-    let lanes = client.properties().hardware.plane_size_min as usize;
     // Four column blocks of one packed line each; a fragment covers two of them.
     let (cols, bn) = (factor * 4, factor);
     let blocks_n = cols / bn;
@@ -2748,8 +2745,6 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        1,
-        lanes,
         dtype,
     );
 

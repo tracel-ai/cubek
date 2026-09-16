@@ -192,12 +192,10 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     space: Partitioning,
     #[comptime] level: Level,
     #[comptime] side: Scaled,
-    #[comptime] planes: usize,
-    #[comptime] lanes: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone())).with_landing(planes, lanes);
-    let b = b.tile(comptime!(space.clone())).with_landing(planes, lanes);
+    let a = a.tile(comptime!(space.clone())).with_landing();
+    let b = b.tile(comptime!(space.clone())).with_landing();
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.cmma_accumulator::<E, E>(
@@ -1550,7 +1548,6 @@ fn check_scaled_cmma(case: CmmaCase) {
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
-    let lanes = client.properties().hardware.plane_size_min as usize;
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     let b: Vec<f32> = (0..depth * cols).map(|i| (i % 7) as f32 - 3.0).collect();
@@ -1644,8 +1641,6 @@ fn check_scaled_cmma(case: CmmaCase) {
         launcher.partitioning_arg(),
         launcher.level(0),
         side,
-        1,
-        lanes,
         [dtype, dtype],
     );
 
@@ -1701,11 +1696,9 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] level: Level,
-    #[comptime] planes: usize,
-    #[comptime] lanes: usize,
     #[define(E, S)] _dtypes: [ElemType; 2],
 ) {
-    let a = a.tile(comptime!(space.clone())).with_landing(planes, lanes);
+    let a = a.tile(comptime!(space.clone())).with_landing();
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
@@ -1715,7 +1708,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
         StageStorage::Strided,
         comptime!(None),
     )
-    .with_landing(planes, lanes);
+    .with_landing();
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
@@ -1759,7 +1752,6 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
     if !require_cmma_8x8x8_f32(&client) {
         return;
     }
-    let lanes = client.properties().hardware.plane_size_min as usize;
     let dtype = f32::elem_type_native();
     let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
     // The rhs as stored, `{N, K}`: every `e2m1` code, cycled, eight to a word down `k`.
@@ -1836,8 +1828,6 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
         ),
         launcher.partitioning_arg(),
         launcher.level(0),
-        1,
-        lanes,
         [dtype, dtype],
     );
 

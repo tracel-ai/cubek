@@ -222,7 +222,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 }
                 TileKind::Gmem(_) => panic!(
                     "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
-                     open the operand with `with_landing(planes, lanes)`, or stage it"
+                     open the operand with `with_landing()`, or stage it"
                 ),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)

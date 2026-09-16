@@ -143,6 +143,31 @@ impl Resident {
     }
 }
 
+
+/// The planes `levels` deal `space` across: the product, over every level dealt on the cube's
+/// planes, of the instances its plane-dealt axes take. One where no level rides the planes.
+///
+/// Each level's count is read against the space its parents hand it, so a count that is
+/// only known at runtime is refused here rather than read as one.
+fn plane_windows(space: &Space, levels: &[Level]) -> usize {
+    let mut handed = space.clone();
+    let mut planes = 1;
+    for level in levels {
+        for axis in level.axes() {
+            if level.distribution(axis).scope() == Some(ComputeScope::Plane) {
+                planes *= level.instances_along(&handed, axis).unwrap_or_else(|| {
+                    panic!(
+                        "Tile::with_landing: {axis:?} is dealt across the cube's planes at a \
+                         count only the launch knows, so the landing cannot be sized"
+                    )
+                });
+            }
+        }
+        handed = level.child(&handed);
+    }
+    planes
+}
+
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// What one plane sums into, in the form `instruction` names.
@@ -352,26 +377,31 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// This operand with a landing: `planes` windows of shared memory, one per plane of `lanes`
-    /// units, each one leaf window of this operand wide, that the fragment leaf lands the
-    /// operand's `values ⊗ scales` in before loading them as a fragment
-    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator). Stated where the operand is
-    /// opened, since the landing is part of its residence, like [`with_scratch`](Tile::with_scratch).
+    /// This operand with a landing: one window of shared memory per plane of the cube, each one
+    /// leaf window of this operand wide, that the fragment leaf lands the operand's
+    /// `values ⊗ scales` in before loading them as a fragment ([`mma_scaled`](Tile::mma_scaled)
+    /// on a cmma accumulator). Stated where the operand is opened, since the landing is part of
+    /// its residence, like [`with_scratch`](Tile::with_scratch).
+    ///
+    /// How many planes is what the operand's levels say — the product of every level dealt on
+    /// the cube's planes — and which window is this plane's is the walk's own decode of the
+    /// hardware position, so the landing and the loops agree by construction.
     ///
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
-    pub fn with_landing(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
+    pub fn with_landing(self) -> Tile<Acc> {
         let cells = comptime!({
             let leaf = self.space.leaf(&self.levels);
             (0..leaf.rank())
                 .map(|p| leaf.extent_at(p))
                 .product::<usize>()
         });
+        let planes = comptime!(plane_windows(&self.space, &self.levels));
         let space = comptime!(self.space.clone());
         let depth = comptime!(self.depth);
         let levels = comptime!(self.levels.clone());
-        let start = (UNIT_POS as usize / lanes) * cells;
+        let start = hardware_pos(ComputeScope::Plane) * cells;
         let end = start + cells;
         let landing = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
             .map(|landing| &landing[start..end]);
