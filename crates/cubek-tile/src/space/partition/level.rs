@@ -368,13 +368,6 @@ impl Level {
         }
     }
 
-    /// Whether each worker along a dealt `axis` takes comptime one tile, so a step decode can
-    /// skip it: every dealt count but a run across workers.
-    pub(crate) fn one_tile_each(&self, axis: Axis) -> bool {
-        matches!(self.distribution(axis), Distribution::Spatial { .. })
-            && !matches!(self.count(axis), Some(Count::Across(_)))
-    }
-
     /// Whether this level cuts `axis` of `space` into a single, statically-known tile, so its
     /// walk coordinate is a constant `0`, even on a rolled walk. A `Dynamic` axis has no comptime
     /// count and is never statically single.

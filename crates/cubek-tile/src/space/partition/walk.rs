@@ -398,13 +398,18 @@ impl Walk {
                 .fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
         );
         // `% count` is a no-op when `idx` has no more significant digit: a range fact,
-        // which folding (which only sees values) cannot know. A count of one is the exception:
-        // there `% 1` folds to the constant `0`, which `quot` alone would not.
+        // which folding (which only sees values) cannot know. The digits above this one are
+        // absent when every earlier count is the constant one — a stated count of one, an
+        // axis dealt one tile a worker, or one the level does not name — which the product of
+        // those counts says as a constant. A count of one is the exception: there `% 1`
+        // folds to the constant `0`, which `quot` alone would not.
         let count = self.counts.at(p);
         let one = count.constant();
-        if comptime!(
-            one != Some(1) && (0..p).all(|e| self.level.one_tile_each(self.space.axis_at(e)))
-        ) {
+        let earlier = self
+            .counts
+            .fproduct(comptime!((0..p).collect::<Vec<_>>()))
+            .constant();
+        if comptime!(one != Some(1) && earlier == Some(1)) {
             quot
         } else {
             quot.frem(count)

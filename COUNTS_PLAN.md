@@ -174,3 +174,18 @@ in steps of the lanes level, now one tile a region instead of two.
 Verified on Metal: 428 + 184 green, the two `packed` tensor-core reds are main's own (same
 numbers at `385b68e7`). Not done here: the metabolic half (the five `edge` readers, the
 `legacy` modules, `realizes_storage`, `division.rs`), phases 5 and 6.
+
+## Phases 5 and 6 (2026-09-16)
+
+Phase 5, decided as a one-off read: the MSL of every family (gemm staged 2048³ and direct
+1×4096×4096, float gemv, q4 gemv, decode, prefill) audited for integer `/` and `%` with a
+runtime divisor. Prologue: the cube position's `% instances` per axis, attention's shared-dim
+`/ inner_weight`. Loops: exactly one, the walk digit's `% count` on the only stepped axis (the
+gemm's K walk, the prefill fold's block walk) — the skip recognised a dealt one-tile axis but not
+a stated count of one. Fixed on `counts/phase5-digit`: `digit` skips the remainder when the
+product of the earlier counts is the constant one; `Level::one_tile_each` gone. Verified on the
+gemm's MSL through a local patch: in-loop runtime divisions 1 → 0. No stream-K run bound, no
+gemm `DynamicAlong`, by decision.
+
+Phase 6, decided as manual: no epoch in the tune keys; delete the tune database after a
+derivation change. Hardware clamps and the duplicate-drop rule stay.
