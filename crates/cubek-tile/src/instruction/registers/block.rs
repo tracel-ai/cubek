@@ -238,7 +238,10 @@ fn rank1_update<
         // scale line covers `fields · lines` of them, and which field a column takes is this
         // walk's to build.
         let span = rhs.span();
-        if comptime!(span.fields == 1 && span.lines == 1) {
+        // A column holding a scale line of its own builds nothing under it, so this walk rolls
+        // where the caller asked it to; one under a field of a line cannot, since the field is
+        // a comptime extract.
+        if comptime!(span.line_per_scale_line()) {
             #[unroll(unroll)]
             for n in 0..nr {
                 let line = rhs.line((k as u32, n as u32));
