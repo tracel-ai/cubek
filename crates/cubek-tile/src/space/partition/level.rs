@@ -43,6 +43,34 @@ impl Count {
             Count::Every => None,
         }
     }
+
+    /// Tiles this count takes along an axis of `extent`, in tiles of `tile`: the stated number,
+    /// or every tile the extent holds, the last one partial where it does not divide.
+    pub(crate) fn tiles(self, extent: usize, tile: usize) -> usize {
+        match self {
+            Count::Of(n) => n,
+            Count::Every | Count::Across(_) => extent.div_ceil(tile),
+        }
+    }
+
+    /// [`tiles`](Count::tiles) where the host can prove it: a stated count needs no extent, and
+    /// every tile of a [`Dynamic`](Extent::Dynamic) axis is the launch's to count.
+    pub(crate) fn tiles_const(self, extent: Extent, tile: usize) -> Option<usize> {
+        match (self, extent) {
+            (Count::Of(n), _) => Some(n),
+            (_, Extent::Static(extent)) => Some(self.tiles(extent, tile)),
+            (_, Extent::Dynamic) => None,
+        }
+    }
+
+    /// What a walk counts along an axis stepped in `tile`: the stated number, or the extent it
+    /// is handed, in that tile.
+    pub(crate) fn grid(self, tile: usize) -> Grid {
+        match self {
+            Count::Of(n) => Grid::Const(n),
+            Count::Every | Count::Across(_) => Grid::Extent(tile),
+        }
+    }
 }
 
 /// One axis of a level: the tile it steps in, how many, and who takes them.
@@ -330,10 +358,7 @@ impl Level {
     pub(crate) fn tiles(&self, space: &Space, axis: Axis) -> usize {
         match self.count(axis) {
             None => 1,
-            Some(Count::Of(n)) => n,
-            Some(Count::Every) | Some(Count::Across(_)) => {
-                space.extent(axis).div_ceil(self.tile_of(axis))
-            }
+            Some(count) => count.tiles(space.extent(axis), self.tile_of(axis)),
         }
     }
 
@@ -342,11 +367,7 @@ impl Level {
     pub(crate) fn tiles_const(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
-            Some(Count::Of(n)) => Some(n),
-            Some(Count::Every) | Some(Count::Across(_)) => match space.extent_raw(axis) {
-                Extent::Static(extent) => Some(extent.div_ceil(self.tile_of(axis))),
-                Extent::Dynamic => None,
-            },
+            Some(count) => count.tiles_const(space.extent_raw(axis), self.tile_of(axis)),
         }
     }
 
@@ -355,8 +376,7 @@ impl Level {
     pub(crate) fn grid(&self, axis: Axis) -> Grid {
         match self.count(axis) {
             None => Grid::Const(1),
-            Some(Count::Of(n)) => Grid::Const(n),
-            Some(Count::Every) | Some(Count::Across(_)) => Grid::Extent(self.tile_of(axis)),
+            Some(count) => count.grid(self.tile_of(axis)),
         }
     }
 
