@@ -8,10 +8,9 @@ use crate::{
     launch::ConvolutionArgs,
     routines::Routine,
 };
-use cubecl::features::Tma;
 use cubecl::{client::Client, prelude::*};
 use cubek_matmul::{
-    definition::{AvailableVectorSizes, MatmulAvailabilityError, MatmulElems},
+    definition::{AvailableVectorSizes, MatmulElems},
     routine::BlueprintStrategy,
 };
 use cubek_std::{InputBinding, MatrixLayout};
@@ -75,13 +74,6 @@ fn launch_with_routine<Rt: Routine>(
 where
     Rt::Args: ConcreteArgs<Rt::MatmulRoutine>,
 {
-    // A TMA-delivered convolution loads through im2col addressing, which consumer Blackwell
-    // (sm_120/121) traps at launch. Decline before touching the device so autotune skips this
-    // routine rather than crashing the context on it.
-    if Rt::USES_IM2COL_TMA && !client.properties().features.tma.contains(Tma::Im2col) {
-        return Err(MatmulAvailabilityError::TmaUnavailable.into());
-    }
-
     let rank = input.data().shape.len();
     let dim_c = rank - 1;
 

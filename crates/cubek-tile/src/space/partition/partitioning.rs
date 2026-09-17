@@ -2,7 +2,10 @@
 
 use cubecl::{prelude::*, unexpanded};
 
-use crate::{Axis, ComputeScope, Count, CubeAxis, Level, Region, RegionExpand, Space, Walk};
+use crate::{
+    Axis, ComputeScope, Contraction, Count, CubeAxis, Labelled, Level, Quadrant, Region,
+    RegionExpand, Space, Walk,
+};
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
@@ -156,6 +159,20 @@ impl Partitioning {
     /// The levels, outermost first — one per loop the kernel writes.
     pub fn levels(&self) -> &[Level] {
         &self.levels
+    }
+
+    /// This partitioning with a name for each of its axes, which is what prints a table worth
+    /// reading: an [`Axis`] is a client-assigned index, so only the client can say what it
+    /// stands for. An axis the labels do not name prints that index.
+    pub fn labelled<'a>(&'a self, labels: &'a [(Axis, &'a str)]) -> Labelled<'a> {
+        Labelled::new(self, labels)
+    }
+
+    /// This partitioning read as a contraction, which prints one figure a level: what a single
+    /// worker of it touches in each of the three operands. Which axis plays which part is the
+    /// client's to say, the same way its names are.
+    pub fn quadrant(&self, contraction: Contraction) -> Quadrant<'_> {
+        Quadrant::new(self, contraction)
     }
 
     /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
