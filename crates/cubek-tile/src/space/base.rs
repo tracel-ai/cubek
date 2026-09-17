@@ -377,8 +377,34 @@ impl Space {
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
+    ///
+    /// **An axis of extent one is not one of them.** It holds a single value, so it sums nothing,
+    /// and a walk that routes an axis ([`Walk::routed`](crate::Walk::routed)) leaves exactly
+    /// that: the walk visits one tile of the axis, everything below reads that tile, and only the
+    /// operand the route placed spans it at all. Structurally that reads as a contraction, which
+    /// it is not.
+    ///
+    /// Listing it splits the `k` edge, and three readers pay. The fastest contracted axis is then
+    /// not the one the operands line along, so no step folds a line into a cell. The two operands
+    /// enumerate different axes, so their contractions read as disagreeing. And the gather nest
+    /// refuses an axis one operand carries alone.
+    ///
+    /// Never every one of them: a contraction one value deep still has an axis to name, and the
+    /// callers that ask which axis an operand contracts along would have none.
     pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
-        self.axes().filter(|&axis| !output.contains(axis)).collect()
+        let contracted: SmallVec<[Axis; MAX_AXES]> =
+            self.axes().filter(|&axis| !output.contains(axis)).collect();
+        // Read raw: a `Dynamic` extent is not known to be one, so it is walked, and asking for
+        // its comptime size would panic.
+        let varying: SmallVec<[Axis; MAX_AXES]> = contracted
+            .iter()
+            .copied()
+            .filter(|&axis| self.extent_raw(axis) != Extent::Static(1))
+            .collect();
+        match varying.is_empty() {
+            true => contracted.last().copied().into_iter().collect(),
+            false => varying,
+        }
     }
 
     /// How many contracted values one step consumes off a `width`-wide line of this operand.
