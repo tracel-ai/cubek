@@ -26,8 +26,8 @@ const TAKEN: &str = "██";
 const COLUMNS: &str = " ⋯";
 const ROWS: &str = " ⋮";
 /// The left margin, and the space between the lhs and the out.
-const MARGIN: &str = "  ";
-const GUTTER: &str = "  ";
+pub(super) const MARGIN: &str = "  ";
+pub(super) const GUTTER: &str = "  ";
 
 /// The three axes a contraction's operands are read off: the lhs is `down × over`, the rhs is
 /// `over × across`, and the out is `down × across`. For a matmul they are `m`, `n` and `k`.
@@ -59,9 +59,9 @@ impl<'a> Quadrant<'a> {
 
 /// One operand's grid at one level: the tiles the worker above it holds, of which the worker
 /// takes the first — every other is its twin, so drawing one says what all of them are.
-struct Grid {
-    rows: usize,
-    cols: usize,
+pub(super) struct Grid {
+    pub(super) rows: usize,
+    pub(super) cols: usize,
 }
 
 impl Grid {
@@ -70,16 +70,16 @@ impl Grid {
         (side.min(cap), side > cap)
     }
 
-    fn width(&self) -> usize {
+    pub(super) fn width(&self) -> usize {
         Grid::shown(self.cols, COLS_SHOWN).0 * TILE.chars().count()
     }
 
-    fn height(&self) -> usize {
+    pub(super) fn height(&self) -> usize {
         Grid::shown(self.rows, ROWS_SHOWN).0
     }
 
     /// Row `row` of the figure: the taken tile at the origin, the elision marks at the far edge.
-    fn line(&self, row: usize) -> String {
+    pub(super) fn line(&self, row: usize) -> String {
         let (cols, elided) = Grid::shown(self.cols, COLS_SHOWN);
         let (rows, deep) = Grid::shown(self.rows, ROWS_SHOWN);
         (0..cols)
@@ -98,7 +98,7 @@ impl Grid {
 /// How many tiles `level` takes along `axis`, as a side of a figure: an axis it does not name is
 /// one tile, and a count only the launch knows is drawn as elided, since nothing here can say how
 /// many there are.
-fn side(level: &Level, space: &Space, axis: Axis) -> usize {
+pub(super) fn side(level: &Level, space: &Space, axis: Axis) -> usize {
     match level.count(axis) {
         None => 1,
         Some(_) => level.tiles_const(space, axis).unwrap_or(usize::MAX),

@@ -3,8 +3,8 @@
 use cubecl::{prelude::*, unexpanded};
 
 use crate::{
-    Axis, ComputeScope, Contraction, Count, CubeAxis, Labelled, Level, Quadrant, Region,
-    RegionExpand, Space, Walk,
+    Axis, Chain, Chained, ComputeScope, Contraction, Count, CubeAxis, Labelled, Level, Quadrant,
+    Region, RegionExpand, Space, Walk,
 };
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
@@ -173,6 +173,13 @@ impl Partitioning {
     /// client's to say, the same way its names are.
     pub fn quadrant(&self, contraction: Contraction) -> Quadrant<'_> {
         Quadrant::new(self, contraction)
+    }
+
+    /// This partitioning read as two chained contractions, which prints one figure a level:
+    /// what a single worker of it touches in each of the six operands. Attention is the one
+    /// that has them.
+    pub fn chained(&self, chain: Chain) -> Chained<'_> {
+        Chained::new(self, chain)
     }
 
     /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
