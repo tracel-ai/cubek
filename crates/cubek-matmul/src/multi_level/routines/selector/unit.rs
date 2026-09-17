@@ -3,7 +3,7 @@ use std::fmt::Display;
 use crate::{
     definition::{
         AccumulatorOperand, MatmulElems, MatmulGlobalElems, MatmulKind, MatmulProblem,
-        MatmulVectorSizes,
+        MatmulVectorSizes, register_lanes,
     },
     multi_level::{
         components::{stage::PartitionBuffering, tile::TileMatmulKind},
@@ -74,6 +74,7 @@ pub fn infer_blueprint_unit(
     let max_smem = hardware.max_shared_memory_size;
     let load_tile_size = load_tile_size(vector_sizes);
     let dtypes = MatmulElems::from_globals(global_elems);
+    let register_lanes = register_lanes(hardware, &dtypes);
 
     let stage_buffering = if double_buffering { 2 } else { 1 };
     let select = |tile_size| {
@@ -87,11 +88,12 @@ pub fn infer_blueprint_unit(
             options,
             &dtypes,
             vector_sizes,
+            register_lanes.map(|_| MAX_UNROLLED_LANES),
         )
     };
 
     let load_blueprint = select(load_tile_size);
-    let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
+    let Some(register_lanes) = register_lanes else {
         return (load_blueprint, dtypes);
     };
     let stage_cells = |blueprint: &BatchMatmulBlueprint| {
@@ -102,7 +104,7 @@ pub fn infer_blueprint_unit(
     // An accumulator row gains a chain per register, so the tile starts as wide as one row keeps in
     // registers, then narrows while its stage overflows shared memory or covers fewer cells than at
     // the load width. A tile of several rows, or a single cell, is sized by its stage alone.
-    let widest_tile_size = registers.widest_lanes(1 + TILE_OPERAND_VECTORS) as u32;
+    let widest_tile_size = register_lanes as u32;
     let blueprint = std::iter::successors(Some(widest_tile_size), |tile_size| Some(tile_size / 2))
         .take_while(|tile_size| *tile_size > load_tile_size)
         .map(select)
@@ -120,9 +122,9 @@ pub fn infer_blueprint_unit(
     (blueprint, dtypes)
 }
 
-/// The lhs and rhs lines the register product holds beside an accumulator row; the product itself
-/// fuses into the add.
-const TILE_OPERAND_VECTORS: usize = 2;
+/// Lanes a register device's kernel body may unroll: past this, LLVM's SLP vectorizer spends
+/// minutes compiling it.
+const MAX_UNROLLED_LANES: u32 = 256;
 
 /// The narrowest tile every operand's loads and stores divide.
 fn load_tile_size(vector_sizes: &MatmulVectorSizes) -> u32 {
@@ -141,6 +143,7 @@ fn unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
+    max_unrolled_lanes: Option<u32>,
 ) -> BatchMatmulBlueprint {
     let kind: MatmulKind = problem.into();
     match kind {
@@ -165,6 +168,7 @@ fn unit_selector(
             options,
             dtypes,
             vector_sizes,
+            max_unrolled_lanes,
         ),
         MatmulKind::VecMat => vecmat_unit_selector(
             problem,
@@ -320,12 +324,17 @@ fn matvec_unit_selector(
     options: UnitTilingBlueprintOptions,
     dtypes: &MatmulElems,
     vector_sizes: &MatmulVectorSizes,
+    max_unrolled_lanes: Option<u32>,
 ) -> BatchMatmulBlueprint {
     let (tile_size, partition_size) = match (problem.lhs_layout, problem.rhs_layout) {
         // Every partition along k is unrolled into the kernel, so their count follows the load
         // tile and a wider tile lengthens the stage instead.
         (MatrixLayout::RowMajor, _) => {
-            ((1, 1, tile_size), (1, 1, load_tile_size(vector_sizes) * 2))
+            let partitions = load_tile_size(vector_sizes) * 2;
+            let partitions = max_unrolled_lanes.map_or(partitions, |lanes| {
+                partitions.min((lanes / tile_size).max(1))
+            });
+            ((1, 1, tile_size), (1, 1, partitions))
         }
         _ => ((tile_size, 1, tile_size), (1, 1, 1)),
     };
