@@ -186,6 +186,23 @@ mod tests {
     use super::*;
     use crate::tiled::cmma::{CmmaDelivery, Partition};
     use crate::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
+    use crate::tiled::{MNK, batch_axis, form_space, labels};
+
+    /// A `16x16x16` instruction, `2x2` fragments a plane, `2x2` planes a cube, stages `32` deep.
+    fn blueprint() -> CmmaBlueprint {
+        CmmaBlueprint {
+            instruction: InstructionShape {
+                m: 16,
+                n: 16,
+                k: 16,
+            },
+            partition: Partition { m: 2, n: 2 },
+            planes: PlaneGrid { m: 2, n: 2 },
+            stage_k: 32,
+            buffering: 2,
+            delivery: CmmaDelivery::Copy,
+        }
+    }
 
     #[test]
     fn the_leaf_up_levels_state_the_grid_the_blueprint_counts() {
@@ -212,5 +229,65 @@ mod tests {
             );
             assert_eq!(partitioning.planes_per_cube(), dim.y, "{bp:?}");
         }
+    }
+
+    /// The five levels as a table, leaf up: each row's tile is the row below it times the count
+    /// beside it, so a tiling that stops dividing an axis where it meant to keep going shows up
+    /// as a row that no longer multiplies out.
+    #[test]
+    fn the_cmma_routine_states_five_levels() {
+        let batch = [batch_axis(0)];
+        let space = Space::new(&[(batch[0], 4), (M, 512), (N, 1024), (K, 4096)]);
+        let partitioning = blueprint().partitioning(&space, &batch);
+
+        assert_eq!(
+            partitioning.labelled(&labels(&space)).to_string(),
+            [
+                "        b0 × m ×  n ×   k    b0 ×   m ×    n ×    k",
+                "",
+                "  ◦      · × · ×  · ×   ·     1 ×  16 ×   16 ×   16",
+                "  ↻      · × 2 ×  2 ×   ·     1 ×  32 ×   32 ×   16",
+                "  ↻      · × · ×  · ×   2     1 ×  32 ×   32 ×   32",
+                "  ▤      · × 2 ×  2 ×   ·     1 ×  64 ×   64 ×   32",
+                "  ↻      · × · ×  · × 128     1 ×  64 ×   64 × 4096",
+                "  ▣      4 × 8 × 16 ×   ·     4 × 512 × 1024 × 4096",
+                "",
+                "        └─ count ───────┘    └─ tile ─────────────┘",
+            ]
+            .join("\n")
+        );
+    }
+
+    /// One figure a level, the lhs left of the out and the rhs above it. The batch axis the
+    /// figure does not span rides the cube level's header, since the drawing is one sheet of
+    /// however many it holds.
+    #[test]
+    fn the_cube_level_draws_a_band_a_band_and_the_cell_they_meet_in() {
+        let batch = [batch_axis(0)];
+        let space = Space::new(&[(batch[0], 4), (M, 512), (N, 1024), (K, 4096)]);
+        let drawing = blueprint()
+            .partitioning(&space, &batch)
+            .quadrant(MNK)
+            .to_string();
+
+        assert!(drawing.starts_with("  ▣ ×4\n"), "{drawing}");
+    }
+
+    /// The kernel form: the same blueprint over a space whose extents the launch stamps. The
+    /// leaf is still a number, because every level states its own tile, and only the counts an
+    /// extent decides wait for a shape.
+    #[test]
+    fn a_dynamic_space_prints_the_form_without_the_shape() {
+        let batch = [batch_axis(0)];
+        let space = form_space(batch.len());
+        let partitioning = blueprint().partitioning(&space, &batch);
+
+        assert_eq!(partitioning.leaf().extent(M), 16);
+        assert!(
+            partitioning
+                .labelled(&labels(&space))
+                .to_string()
+                .contains('?')
+        );
     }
 }

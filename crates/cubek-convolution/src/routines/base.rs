@@ -28,12 +28,6 @@ pub trait Routine {
     /// eventually, but this is nice and simple.
     const IS_SPECIALIZED: bool = false;
 
-    /// Whether this routine delivers the convolution through im2col TMA. Such routines must
-    /// decline where the runtime hasn't advertised [`Tma::Im2col`](cubecl::features::Tma), which
-    /// is how consumer Blackwell (sm_120/121) reports that it traps the im2col
-    /// `cp.async.bulk.tensor` at launch. Guarded in each direction's `launch_with_routine`.
-    const USES_IM2COL_TMA: bool = false;
-
     fn correct_layout(
         client: &Client,
         handle: TensorBinding,
