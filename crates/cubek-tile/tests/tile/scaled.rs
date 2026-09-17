@@ -2024,6 +2024,11 @@ impl TileOrdered {
         ])
     }
 
+    /// The tiles down `k` as one dim of a buffer: the rounds and the tiles in one.
+    fn k_dim(&self) -> PhysicalAxisMap {
+        split(&[(KR, self.rounds), (KB, self.round)])
+    }
+
     /// The activation, served at the width a word of the weight unpacks to.
     fn a_op(&self, client: &Client, launcher: &Launcher) -> StridedOperand {
         let (a_t, _) = TestInput::builder(client.clone(), shape![self.rows, self.depth()])
@@ -2059,7 +2064,7 @@ impl TileOrdered {
             .gathered(
                 Projection::dims()
                     .dim(NB)
-                    .dim(split(&[(KR, self.rounds), (KB, self.round)]))
+                    .dim(self.k_dim())
                     .dim(NI)
                     .dim(KI)
                     .build(),
