@@ -180,11 +180,14 @@ impl BatchMatmulRoutine<()> for GemmRoutine {
                     PlanesSplit::M => PlanesSplit::N,
                     PlanesSplit::N => PlanesSplit::M,
                 });
-                let (planes_split, accumulators, split_units) = if crossed.2 > preferred.2 {
-                    crossed
-                } else {
-                    preferred
-                };
+                // Planes are worker threads only on a CPU; a GPU keeps the variant's axis.
+                let spreads_threads = properties.hardware.num_cpu_cores.is_some();
+                let (planes_split, accumulators, split_units) =
+                    if spreads_threads && crossed.2 > preferred.2 {
+                        crossed
+                    } else {
+                        preferred
+                    };
 
                 let num_planes = max(1, min(target_num_planes, split_units));
 

@@ -148,14 +148,16 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for Gemm<MP> {
                 let block_id = cube_m * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
                     Variant::OuterN => (block_id, cube_n * block_cells),
-                    Variant::OuterM | Variant::Dot => (block_id * block_cells, cube_n),
+                    Variant::OuterM => (block_id * block_cells, cube_n),
+                    Variant::Dot => (block_id, cube_n),
                 }
             }
             PlanesSplit::N => {
                 let block_id = cube_n * config.num_planes + UNIT_POS_Y;
                 match comptime!(variant) {
                     Variant::OuterM => (cube_m * block_cells, block_id),
-                    Variant::OuterN | Variant::Dot => (cube_m, block_id * block_cells),
+                    Variant::OuterN => (cube_m, block_id * block_cells),
+                    Variant::Dot => (cube_m, block_id),
                 }
             }
         };

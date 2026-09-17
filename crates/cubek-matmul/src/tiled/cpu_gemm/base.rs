@@ -52,6 +52,31 @@ fn divisor_at_most(k: usize, cap: usize) -> usize {
     best
 }
 
+/// The divisor of `g` nearest `target`, ties going to the larger
+fn nearest_divisor(g: usize, target: usize) -> usize {
+    let target = target.clamp(1, g.max(1));
+    let mut best: usize = 1;
+    for d in 1..=g {
+        if g.is_multiple_of(d)
+            && (d.abs_diff(target) < best.abs_diff(target)
+                || (d.abs_diff(target) == best.abs_diff(target) && d > best))
+        {
+            best = d;
+        }
+    }
+    best
+}
+
+/// The plane grid whose divisors are nearest the leaf grid's aspect ratio over `planes` planes.
+fn aspect_plane_grid(grid_m: usize, grid_n: usize, planes: usize) -> PlaneGrid {
+    let target_m = (planes as f64 * grid_m as f64 / grid_n as f64)
+        .sqrt()
+        .round() as usize;
+    let m = nearest_divisor(grid_m, target_m);
+    let n = nearest_divisor(grid_n, (planes / m).max(1));
+    PlaneGrid { m, n }
+}
+
 /// The plane grid that puts the most worker threads, at most `cores`, on the leaf grid while
 /// dividing it, the nearest to its aspect ratio among those. A grid of fewer threads than the
 /// device has leaves the rest idle for the whole launch.
@@ -209,7 +234,11 @@ impl CpuGemmRoutine {
         // planes on the overhang.
         let grid_m = m.div_ceil(tile_m).max(1);
         let grid_n = n.div_ceil(tile_n).max(1);
-        let planes = plane_grid(grid_m, grid_n, cores);
+        // A device without CPU cores has no idle threads to fill.
+        let planes = match device_settings.client.properties().hardware.num_cpu_cores {
+            Some(_) => plane_grid(grid_m, grid_n, cores),
+            None => aspect_plane_grid(grid_m, grid_n, cores),
+        };
 
         // Tiles already divide their axes; the clamp is a defensive [1, axis] floor.
         let instruction = InstructionShape {

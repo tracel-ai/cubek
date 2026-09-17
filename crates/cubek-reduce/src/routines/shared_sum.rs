@@ -143,6 +143,7 @@ pub fn shared_sum(
             output.into_tensor_arg(),
             cube_dim.num_elems() as usize,
             num_vectors_per_unit,
+            client.properties().hardware.vector_register_count.is_some(),
             input_elem,
         )
     };
@@ -175,9 +176,13 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     output: &mut Tensor<Atomic<T>>,
     #[comptime] shared_memory_size: usize,
     #[comptime] num_vectors_per_unit: usize,
+    #[comptime] sum_in_register: bool,
     #[define(T)] _dtype: ElemType,
 ) {
     let mut shared_memory = Shared::new_slice(shared_memory_size);
+    if !sum_in_register {
+        shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
+    }
 
     // Each unit reduce `num_vectors_per_unit` vectors.
     let start = ABSOLUTE_POS * num_vectors_per_unit;
@@ -188,11 +193,17 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     let end = select(end < input.shape(), end, input.shape());
 
     // Shared memory may live outside a register, which would make every step a load and a store.
-    let mut unit_sum = Vector::empty().fill(T::from_int(0));
-    for k in start..end {
-        unit_sum += input.read(k);
+    if sum_in_register {
+        let mut unit_sum = Vector::empty().fill(T::from_int(0));
+        for k in start..end {
+            unit_sum += input.read(k);
+        }
+        shared_memory[UNIT_POS as usize] = unit_sum;
+    } else {
+        for k in start..end {
+            shared_memory[UNIT_POS as usize] += input.read(k);
+        }
     }
-    shared_memory[UNIT_POS as usize] = unit_sum;
 
     // Sum all vectors within the shared_memory to a single vector.
     let vector = sum_shared_memory(&mut shared_memory);
