@@ -14,7 +14,7 @@ use crate::*;
 /// more factor of each, and which operand carries it is only *where* it folds in cheapest: once
 /// per `(row, k)` beside the lhs, once per `(col, k)` beside the rhs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Side {
+pub enum Side {
     /// The contraction's left factor: its scales span the accumulator's rows, or the contracted
     /// axis alone, and fold into the value before it forms its products.
     Lhs,

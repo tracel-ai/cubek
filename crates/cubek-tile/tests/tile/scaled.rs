@@ -2296,3 +2296,148 @@ fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
     check_chunked(Arm::Landing, TileScales::Ue4m3, true);
     check_chunked(Arm::Landing, TileScales::Ue4m3, false);
 }
+
+/// `c = a · (b ⊗ s)` over a weight stored in tile order, walked as the compute-bound body walks
+/// it on the tensor cores: a plane holds a partition of fragments — two rows of two columns —
+/// and at every step lands the step's window of each factor once, the activation as it lies,
+/// the weight unpacked and scaled by the chunk's lines; the partition's fragments then load
+/// from the landing a depth at a time, the quant block being the loop inside the partition's
+/// depth: two instructions under one scale.
+#[cube(launch)]
+#[allow(clippy::too_many_arguments)]
+fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
+    a: &TileArg<'_, E, Const<8>>,
+    b: &TileArg<'_, u32, Const<1>>,
+    scale: &TileArg<'_, SS, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] chunks: Level,
+    #[comptime] grid: Level,
+    #[comptime] broadcast: bool,
+    #[define(E, S, SS)] _dtypes: [ElemType; 3],
+) {
+    let a = a.tile(comptime!(space.clone())).with_landing();
+    let b = b.tile_as::<E>(comptime!(space.clone())).with_landing();
+    let scale = scale.tile_as::<S>(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
+        let scale_cube = scale.at(&cube);
+        let c_cube = c.at(&cube);
+        for plane in cube {
+            let a_plane = a_cube.at(&plane);
+            let b_plane = b_cube.at(&plane);
+            let scale_plane = scale_cube.at(&plane);
+            let c_plane = c_cube.at(&plane);
+            let out = comptime!(c_plane.space.clone());
+            let mut lines = MemData::<S>::stage(
+                &scale_plane,
+                comptime!(chunks.clone()),
+                comptime!(StageStorage::Chunk { broadcast }),
+                comptime!(None),
+            );
+            let mut sum = c_plane.cmma_accumulator::<E, E>(
+                &a_plane,
+                comptime!(Fragments::below(&c_plane, &a_plane)),
+                Monoid::Sum,
+            );
+            sum.zero();
+            for chunk in plane {
+                lines.copy_from(&scale_plane.at(&chunk));
+                for step in chunk {
+                    // The step's window of each factor, landed once.
+                    let a_step = a_plane
+                        .at(&step)
+                        .plain()
+                        .landed(Side::Lhs, comptime!(out.clone()));
+                    let b_step = b_plane
+                        .at(&step)
+                        .scaled(&ComptimeOption::new_Some(lines.at(&step)))
+                        .landed(Side::Rhs, comptime!(out.clone()));
+                    for block in step.walk().unrolled() {
+                        for depth in block.walk().unrolled() {
+                            let a_f = PlanePartition::<E>::cmma_fragments(&a_step.at(&depth), &sum);
+                            let b_f = PlanePartition::<E>::cmma_fragments(&b_step.at(&depth), &sum);
+                            for cell in depth.walk().unrolled() {
+                                let mut sum_cell = sum.at(&cell);
+                                sum_cell.mma(&a_f.at(&cell), &b_f.at(&cell), Semiring::SUM_PROD);
+                            }
+                        }
+                    }
+                }
+            }
+            sum.drained_into(&c_plane, comptime!(Some(grid.clone())));
+        }
+    }
+}
+
+/// **A tile-ordered weight lands on the tensor cores under a partition.** Sixteen rows: a plane
+/// holds two fragments of rows by two of columns and walks the contraction two blocks a step,
+/// two instructions a block, landing every step's window once.
+fn check_partitioned(scales: TileScales, broadcast: bool) {
+    let (rows, n_tiles, chunk, chunks, fragment) = (16, 2, 32, 2, 8);
+    let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
+    let client = cubecl::test_device().client();
+    if !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    let dtype = f32::elem_type_native();
+    let c = TestInput::builder(client.clone(), shape![rows, w.cols()])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // Leaf up: the instruction; the grid of fragments a plane holds at one depth; the quant
+    // block, two instructions deep under one scale; the partition's depth, two blocks a step;
+    // the steps of a chunk; the chunks; the planes; the cubes.
+    let levels = Tiling::leaf(&[(M, fragment), (NI, fragment), (KI, fragment)])
+        .walk(&[(M, rows / fragment), (NI, w.tile / fragment)])
+        .walk(&[(KI, w.tile / fragment)])
+        .walk(&[(KB, 2)])
+        .walk(&[(KB, chunk / 2)])
+        .walk_every(&[KB])
+        .planes(&[(NI, 1)])
+        .cubes(&[NB])
+        .levels();
+    let chunks_level = levels[2].clone();
+    let grid = levels[6].clone();
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(w.space(), levels),
+        KernelForm::Static,
+    );
+    let (s_op, stored) = w.s_op(&client, &launcher, scales);
+
+    partitioned_scaled_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        w.a_op(&client, &launcher).arg(),
+        w.b_op(&client, &launcher).arg(),
+        s_op.arg(),
+        w.c_op(&launcher, &c).arg(),
+        launcher.partitioning_arg(),
+        chunks_level,
+        grid,
+        broadcast,
+        [dtype, dtype, stored],
+    );
+    w.check(
+        &client,
+        c,
+        &format!("partition {scales:?} broadcast {broadcast}"),
+    );
+}
+
+#[test]
+fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition() {
+    check_partitioned(TileScales::F32, true);
+    check_partitioned(TileScales::F32, false);
+}
+
+#[test]
+fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition_with_byte_scales() {
+    check_partitioned(TileScales::Ue4m3, true);
+    check_partitioned(TileScales::Ue4m3, false);
+}

@@ -27,6 +27,8 @@ fn line_strides(chunk: &Space, projection: &Projection) -> Vec<usize> {
     let rank = chunk.rank();
     let mut strides = vec![0; rank];
     let mut stride = 1;
+    // Indexed, not iterated: each addressed stride is the product of the ones written below it.
+    #[allow(clippy::needless_range_loop)]
     for p in (0..rank - 1).rev() {
         if projection.addresses(chunk.axis_at(p)) {
             strides[p] = stride;

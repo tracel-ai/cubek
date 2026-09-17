@@ -414,19 +414,19 @@ impl Level {
     /// (batch) axes must hand out one tile. Valid only on a [`Partition`](LevelRole::Partition)
     /// level; the role says whether it applies, this only reads the counts.
     pub(crate) fn partition_grid(&self, space: &Space) -> (usize, usize) {
-        let rank = space.rank();
+        let (p0, p1) = space.matrix_pair();
         for (p, axis) in space.axes().enumerate() {
             let tiles = self
                 .tiles_const(space, axis)
                 .expect("plane partition level: tile counts must be comptime");
             assert!(
-                p >= rank - 2 || tiles == 1,
+                p == p0 || p == p1 || tiles == 1,
                 "plane partition level: leading (batch) axes must hand out one tile"
             );
         }
         (
-            self.tiles_const(space, space.axis_at(rank - 2)).unwrap(),
-            self.tiles_const(space, space.axis_at(rank - 1)).unwrap(),
+            self.tiles_const(space, space.axis_at(p0)).unwrap(),
+            self.tiles_const(space, space.axis_at(p1)).unwrap(),
         )
     }
 

@@ -68,19 +68,15 @@ impl<T: Numeric> Tile<T> {
 }
 
 impl<T: Numeric> MemData<T> {
-    /// This store with `landing` as its plane's landing window ([`Tile::with_landing`]).
-    pub(crate) fn with_landing(self, _landing: Shared<[T]>) -> MemData<T> {
+    /// This store landing on its way to a fragment ([`Tile::with_landing`]).
+    pub(crate) fn with_landing(self) -> MemData<T> {
         unexpanded!()
     }
 }
 
 impl<T: Numeric> MemDataExpand<T> {
-    pub(crate) fn __expand_with_landing_method(
-        mut self,
-        _scope: &Scope,
-        landing: <Shared<[T]> as CubeType>::ExpandType,
-    ) -> Self {
-        self.landing = ComptimeOptionExpand::Some(landing);
+    pub(crate) fn __expand_with_landing_method(mut self, _scope: &Scope) -> Self {
+        self.lands = true;
         self
     }
 }
@@ -847,23 +843,7 @@ impl<T: Numeric> MemData<T> {
 
     /// Whether this store was opened with a landing ([`Tile::with_landing`]).
     pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        #[comptime]
-        match &self.landing {
-            ComptimeOption::Some(_) => true,
-            ComptimeOption::None => false,
-        }
-    }
-
-    /// This plane's landing window, opened by [`Tile::with_landing`].
-    pub(crate) fn landing(&self) -> Shared<[T]> {
-        #[comptime]
-        match &self.landing {
-            ComptimeOption::Some(landing) => landing.clone(),
-            ComptimeOption::None => panic!(
-                "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
-                 shared memory; open the operand with `with_landing()`"
-            ),
-        }
+        comptime!(self.lands)
     }
 
     /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
@@ -901,9 +881,26 @@ impl<T: Numeric> MemData<T> {
     /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
         let rank = comptime!(self.layout.projection.physical_rank());
+        self.row_stride_at(comptime!(rank - 2))
+    }
+
+    /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a
+    /// matrix reader takes as its rows ([`Space::matrix_pair`]), which is the physical one on
+    /// a direct store — one logical axis a physical dim, what a dense stage is. Any other store
+    /// keeps its own row: a storage-tiled one its tile's, a split one the dim above the one
+    /// its trailing axes fold into.
+    pub(crate) fn row_stride_at(&self, #[comptime] row: usize) -> u32 {
+        let rank = comptime!(self.layout.projection.physical_rank());
+        let row = comptime!(
+            if self.projection.is_direct() && !self.layout.projection.is_tiled() {
+                row
+            } else {
+                rank - 2
+            }
+        );
         self.layout
             .physical_strides
-            .at(comptime!(rank - 2))
+            .at(row)
             .fmul(comptime!(self.store.vector_size as u32).runtime())
     }
 
@@ -1394,7 +1391,7 @@ impl<T: Numeric> MemData<T> {
             // A region step moves this window and the source window by the same physical delta,
             // so the source window rides down as it was filled and only `origin` above moves.
             source_window: self.source_window.clone(),
-            landing: self.landing.clone(),
+            lands: comptime!(self.lands),
             map,
             offsets: self.offsets.clone(),
             window_start: start,
@@ -1484,7 +1481,7 @@ impl<T: Numeric> MemData<T> {
             ),
             projection: comptime!(proj),
             source_window: self.source_window.clone(),
-            landing: self.landing.clone(),
+            lands: comptime!(self.lands),
             map: self.map.clone(),
             offsets: self.offsets.clone(),
             window_start: start,

@@ -565,9 +565,9 @@ impl<T: Numeric> Tile<T> {
             // partition through whole, legal only on an uncut k-step level (the walk below
             // then selects statically).
             TileKind::PlanePartition(p) => {
-                let rank = comptime!(self.space.rank());
-                let a0 = comptime!(self.space.axis_at(rank - 2));
-                let a1 = comptime!(self.space.axis_at(rank - 1));
+                let (p0, p1) = comptime!(self.space.matrix_pair());
+                let a0 = comptime!(self.space.axis_at(p0));
+                let a1 = comptime!(self.space.axis_at(p1));
                 // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a
                 // cut axis takes its constant digit and an uncut one selects the whole
                 // partition. A `Dynamic` axis (top level only) stays runtime, yielding `None`.
@@ -774,9 +774,9 @@ impl<T: Numeric> Tile<T> {
     /// The fragment grid this accumulator holds and one fragment's `m × n`: a partition's own
     /// grid, a single plane tile's `1 × 1` of its whole window.
     pub(crate) fn fragment_grid(&self) -> comptime_type!(((usize, usize), usize, usize)) {
-        let rank = comptime!(self.space.rank());
-        let rows = comptime!(self.space.extent_at(rank - 2));
-        let cols = comptime!(self.space.extent_at(rank - 1));
+        let (p0, p1) = comptime!(self.space.matrix_pair());
+        let rows = comptime!(self.space.extent_at(p0));
+        let cols = comptime!(self.space.extent_at(p1));
         match &self.tile_kind {
             TileKind::PlanePartition(p) => {
                 comptime!(((p.m_tiles, p.n_tiles), rows / p.m_tiles, cols / p.n_tiles))

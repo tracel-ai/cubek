@@ -67,11 +67,12 @@ pub struct MemData<T: Numeric> {
     /// [`window`](Self::window) already is the source window. `Some` only for a gathered stage,
     /// whose fill replaced out-of-bounds samples and whose window can no longer say which.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
-    /// This plane's window of shared memory, one leaf window wide, that a scaled operand is
-    /// landed in on its way to a tensor-core fragment: unpacked and scaled by the lanes, loaded
-    /// as the fragment. Opened by [`with_landing`](Tile::with_landing); an operand without one
-    /// reaches the fragment leaf unscaled only.
-    pub(crate) landing: ComptimeOption<Shared<[T]>>,
+    /// Whether this operand lands on its way to a tensor-core fragment: unpacked and scaled by
+    /// the plane's lanes into a window of shared memory the plane owns, sized where it lands
+    /// ([`Scaled::landed`](crate::Scaled::landed)). Opened by [`with_landing`](Tile::with_landing);
+    /// an operand without one reaches the fragment leaf unscaled only.
+    #[cube(comptime)]
+    pub(crate) lands: bool,
 }
 
 /// What backs a [`MemData`]'s values, and what can be done with them there.

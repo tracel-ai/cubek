@@ -194,7 +194,9 @@ impl<T: Numeric> PlaneTile<T> {
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         match self {
             PlaneTile::Cmma(d) => match &src.tile_kind {
-                TileKind::Gmem(m) | TileKind::Smem(m) => d.load_window(m),
+                TileKind::Gmem(m) | TileKind::Smem(m) => {
+                    d.load_window(m, comptime!(src.space.matrix_pair().0))
+                }
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -214,7 +216,7 @@ impl<T: Numeric> PlaneTile<T> {
 
     pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
         match self {
-            PlaneTile::Cmma(d) => d.store_window(mem),
+            PlaneTile::Cmma(d) => d.store_window(mem, comptime!(space.matrix_pair().0)),
             PlaneTile::Mma(d) => d.store_window(mem),
             // Same-type store; the block drains through `store_cast_window`, which is the
             // same write with the cast the wider accumulator needs.
@@ -245,7 +247,7 @@ impl<T: Numeric> PlaneTile<T> {
     ) {
         match self {
             PlaneTile::Cmma(d) => match comptime!(mem.access.write) {
-                Write::Replace => d.store_cast_window(mem),
+                Write::Replace => d.store_cast_window(mem, comptime!(space.matrix_pair().0)),
                 Write::Accumulate => d.accumulate_cast_window(mem, space),
             },
             PlaneTile::Mma(d) => {
@@ -454,28 +456,30 @@ impl<T: Numeric> PlanePartition<T> {
         #[comptime] depth: usize,
         #[comptime] levels: Vec<Level>,
     ) -> Tile<T> {
-        let a0 = comptime!(window.axis_at(window.rank() - 2));
-        let a1 = comptime!(window.axis_at(window.rank() - 1));
+        let (p0, p1) = comptime!(window.matrix_pair());
+        let a0 = comptime!(window.axis_at(p0));
+        let a1 = comptime!(window.axis_at(p1));
 
         // The operand's role is which of the accumulator's axes it shares: `A` spans the rows,
         // `B` the columns. Its fragments run along that axis, one deep along the contraction —
         // counted in the window's own axis order, since that is how `at` addresses them.
-        let contracted = comptime!(window.contraction(&out));
-        let free = comptime!(if contracted == a1 {
-            a0
-        } else {
-            assert!(
-                contracted == a0,
-                "PlanePartition::store: the contracted axis must be one of the trailing two"
-            );
-            a1
+        // Of the matrix pair, the contracted axis is the one the accumulator lacks; a split
+        // contraction's other digits stand outside the pair at extent one.
+        let (contracted, free) = comptime!(match (out.contains(a0), out.contains(a1)) {
+            (false, true) => (a0, a1),
+            (true, false) => (a1, a0),
+            _ => panic!(
+                "PlanePartition::store: one of the window's matrix axes is contracted and the \
+                 other is the accumulator's"
+            ),
         });
-        let out_rows = comptime!(out.axis_at(out.rank() - 2));
+        let (out_p0, out_p1) = comptime!(out.matrix_pair());
+        let out_rows = comptime!(out.axis_at(out_p0));
         let (ident, tiles) = comptime!(if free == out_rows {
             (MatrixIdent::A, grid.0)
         } else {
             assert!(
-                free == out.axis_at(out.rank() - 1),
+                free == out.axis_at(out_p1),
                 "PlanePartition::store: the operand's free axis must be one of the output's \
                  trailing two"
             );
@@ -672,14 +676,14 @@ pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize)
 /// walks. Stated from the leaf up — one fragment's edges, then how many of them — and held to
 /// the window it fills from.
 fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
-    let rank = window.rank();
+    let (p0, p1) = window.matrix_pair();
     let axes: Vec<Axis> = window.axes().collect();
     let leaf: Vec<(Axis, usize)> = axes
         .iter()
         .enumerate()
         .map(|(p, &axis)| match p {
-            p if p == rank - 2 => (axis, frag.0),
-            p if p == rank - 1 => (axis, frag.1),
+            p if p == p0 => (axis, frag.0),
+            p if p == p1 => (axis, frag.1),
             _ => (axis, window.extent(axis)),
         })
         .collect();
@@ -687,8 +691,8 @@ fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -
         .iter()
         .enumerate()
         .map(|(p, &axis)| match p {
-            p if p == rank - 2 => (axis, tiles.0),
-            p if p == rank - 1 => (axis, tiles.1),
+            p if p == p0 => (axis, tiles.0),
+            p if p == p1 => (axis, tiles.1),
             _ => (axis, 1),
         })
         .collect();

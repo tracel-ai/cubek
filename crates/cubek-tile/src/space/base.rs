@@ -293,6 +293,21 @@ impl Space {
         self.extents.axis_at(i)
     }
 
+    /// The positions of the two axes a matrix reader takes as its rows and columns: the
+    /// innermost, and the last axis above it of extent past one. An axis of extent one is a
+    /// number that folds away, so a split contraction's block digit or a column tile's index
+    /// does not stand between a fragment and its rows.
+    pub fn matrix_pair(&self) -> (usize, usize) {
+        let rank = self.rank();
+        let p1 = rank - 1;
+        // A dynamic axis is not a number one: its size is the launch's, and it is a row edge.
+        let p0 = (0..p1)
+            .rev()
+            .find(|&p| !matches!(self.extent_raw(self.axis_at(p)), Extent::Static(1)))
+            .unwrap_or(p1.saturating_sub(1));
+        (p0, p1)
+    }
+
     pub fn position(&self, axis: Axis) -> usize {
         self.extents.position(axis)
     }

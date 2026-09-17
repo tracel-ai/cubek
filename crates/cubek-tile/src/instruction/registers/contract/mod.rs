@@ -15,4 +15,5 @@ mod scale;
 mod shape;
 
 pub(crate) use base::{contracted_per_step, memory};
-pub(crate) use scale::{Side, check_scales_omit_rather_than_divide, check_scales_ride};
+pub use scale::Side;
+pub(crate) use scale::{check_scales_omit_rather_than_divide, check_scales_ride};

@@ -137,15 +137,16 @@ impl Region {
         c1: usize,
     ) -> Region {
         let rank = comptime!(space.rank());
+        let (p0, p1) = comptime!(space.matrix_pair());
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
             // `fcast`, not `as`: a comptime coordinate has to stay a constant or it could no
             // longer select a fragment. `runtime` on the `0` moves the literal into the expand
             // domain and keeps it constant too.
-            let c = if comptime!(p == rank - 2) {
+            let c = if comptime!(p == p0) {
                 c0.fcast::<u32>()
-            } else if comptime!(p == rank - 1) {
+            } else if comptime!(p == p1) {
                 c1.fcast::<u32>()
             } else {
                 0u32.runtime()

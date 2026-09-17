@@ -378,43 +378,29 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// This operand with a landing: one window of shared memory per plane of the cube, each one
-    /// leaf window of this operand wide, that the fragment leaf lands the operand's
-    /// `values ⊗ scales` in before loading them as a fragment ([`mma_scaled`](Tile::mma_scaled)
-    /// on a cmma accumulator). Stated where the operand is opened, since the landing is part of
-    /// its residence, like [`with_scratch`](Tile::with_scratch).
-    ///
-    /// How many planes is what the operand's levels say — the product of every level dealt on
-    /// the cube's planes — and which window is this plane's is the walk's own decode of the
-    /// hardware position, so the landing and the loops agree by construction.
+    /// This operand with a landing: a window of shared memory the plane owns, that the fragment
+    /// leaf lands the operand's `values ⊗ scales` in before loading them as fragments
+    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator, or [`Scaled::landed`] where
+    /// the kernel lands a step whole). Stated where the operand is opened, since the landing is
+    /// part of its residence, like [`with_scratch`](Tile::with_scratch); sized where it lands,
+    /// by the window landed, one per plane of the cube.
     ///
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
     pub fn with_landing(self) -> Tile<Acc> {
-        let cells = comptime!({
-            let leaf = self.space.leaf(&self.levels);
-            (0..leaf.rank())
-                .map(|p| leaf.extent_at(p))
-                .product::<usize>()
-        });
-        let planes = comptime!(plane_windows(&self.space, &self.levels));
         let space = comptime!(self.space.clone());
         let depth = comptime!(self.depth);
         let levels = comptime!(self.levels.clone());
-        let start = hardware_pos(ComputeScope::Plane) * cells;
-        let end = start + cells;
-        let landing = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
-            .map(|landing| &landing[start..end]);
         match self.tile_kind {
             TileKind::Gmem(g) => Tile::<Acc> {
-                tile_kind: TileKind::new_Gmem(g.with_landing(landing)),
+                tile_kind: TileKind::new_Gmem(g.with_landing()),
                 space,
                 depth,
                 levels,
             },
             TileKind::Smem(g) => Tile::<Acc> {
-                tile_kind: TileKind::new_Smem(g.with_landing(landing)),
+                tile_kind: TileKind::new_Smem(g.with_landing()),
                 space,
                 depth,
                 levels,

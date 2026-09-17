@@ -234,20 +234,30 @@ impl<S: Numeric> ScaleLookup<S> {
 
     /// `value`, the line at `pos` of the values' matrix, under the scale covering it.
     pub fn apply<E: Numeric, V: Size>(&self, value: Vector<E, V>, pos: Coords2d) -> Vector<E, V> {
+        let (row, col) = pos;
+        let coords = matrix_coords(
+            row,
+            col,
+            self.matrix,
+            comptime!(&self.values),
+            comptime!(self.axes),
+            comptime!(self.vector_size),
+        );
+        self.apply_at::<E, V>(value, &coords)
+    }
+
+    /// `value`, the line whose first value lies at `coords` of the values' space, under the
+    /// scale covering it.
+    pub fn apply_at<E: Numeric, V: Size>(
+        &self,
+        value: Vector<E, V>,
+        coords: &Coords<u32>,
+    ) -> Vector<E, V> {
         #[comptime]
         match &self.inner {
             ComptimeOption::Some(inner) => {
-                let (row, col) = pos;
-                let coords = matrix_coords(
-                    row,
-                    col,
-                    self.matrix,
-                    comptime!(&self.values),
-                    comptime!(self.axes),
-                    comptime!(self.vector_size),
-                );
                 let scale = inner.scale_at(&own_coords(
-                    &coords,
+                    coords,
                     comptime!(self.values.clone()),
                     comptime!(inner.space.clone()),
                 ));

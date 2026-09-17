@@ -468,12 +468,48 @@ impl<T: Numeric> MemData<T> {
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
-                landing: ComptimeOption::new_None(),
+                lands: false,
             }),
             space: comptime!(meta.space),
             depth: comptime!(0usize),
             levels: comptime!(Vec::new()),
         }
+    }
+
+    /// One plane's landing: a dense, scalar stage over `space`, one window per plane of the
+    /// cube in one shared buffer, this plane's found by the walk's own decode of the hardware
+    /// position. The buffer comes back beside the tile, for the lanes that fill it.
+    pub(crate) fn landing(
+        #[comptime] space: Space,
+        #[comptime] units: usize,
+        #[comptime] planes: usize,
+    ) -> (Tile<T>, Shared<[T]>) {
+        let cells = comptime!(
+            (0..space.rank())
+                .map(|p| space.extent_at(p))
+                .product::<usize>()
+        );
+        let start = hardware_pos(ComputeScope::Plane) * cells;
+        let end = start + cells;
+        let window =
+            Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);
+        let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            vector_size: 1,
+            units,
+        });
+        let tile = MemData::smem_over(
+            meta,
+            &window,
+            ComptimeOption::new_None(),
+            comptime!(Packing::Plain),
+            form,
+            map,
+            ComptimeOption::new_None(),
+        );
+        (tile, window)
     }
 
     /// An unfilled [`SourceWindow`] for a gathered stage: the comptime geometry is the stage's own,

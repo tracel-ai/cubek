@@ -422,7 +422,7 @@ impl<T: Numeric> Tile<T> {
                 }),
                 split_share,
                 init_from: comptime!(InitFrom::Cell),
-                landing: ComptimeOption::new_None(),
+                lands: false,
             }),
             space: comptime!(space),
             depth: comptime!(0usize),
