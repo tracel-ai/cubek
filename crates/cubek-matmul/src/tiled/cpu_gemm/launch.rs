@@ -14,6 +14,9 @@ use crate::{
     tiled::{K, M, N, batch_axis, logical_dims, validate_stored_tile},
 };
 
+/// The leaf's accumulator line, the rhs line it multiplies and the lhs value broadcast over both.
+const LEAF_LIVE_VECTORS: usize = 3;
+
 /// A strided matmul operand must be contiguous along one of its two innermost dims. Under storage
 /// tiling those are the innermost fragments, which is the pair a leaf tile is read through, so the
 /// same rule reads the same way on a tiled buffer.
@@ -153,14 +156,10 @@ pub fn launch_ref(
     // owns the gate: both operands unchecked and `N`-contiguous, the width dividing their
     // inner extents and the `N` leaf edge.
     let rhs = rhs.into_data();
-    let v = launch.vector_size(
-        N,
-        &[
-            (&Geometry::from(&rhs), &[K, N]),
-            (&Geometry::from(&out), &[M, N]),
-        ],
-        sz,
-    );
+    let (rhs_geometry, out_geometry) = (Geometry::from(&rhs), Geometry::from(&out));
+    let lines: [(&Geometry, &[Axis]); 2] = [(&rhs_geometry, &[K, N]), (&out_geometry, &[M, N])];
+    // The leaf is sized at the load width; wider loads serve more of its line per step.
+    let v = launch.register_vector_size(N, &lines, dtypes.acc_register.size(), LEAF_LIVE_VECTORS);
 
     // Bind each operand to its binding: the subspace comes off the operand, the batch list and
     // storage tiling are per-binding launch facts. All operands get the full output batch-axis
