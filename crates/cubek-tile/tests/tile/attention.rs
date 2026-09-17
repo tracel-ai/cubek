@@ -424,31 +424,11 @@ fn attention_fold_cmma_kernel<E: Float>(
             .with_scratch(Resident::OneTile, planes, lanes);
         acc.zero();
         // The fragment grids of every operand, cells in row-major order.
-        let acc_cells = out_w.over(&comptime!(
-            Tiling::leaf(&[(QP, frag), (V, frag)])
-                .walk_every(&[QP, V])
-                .level()
-        ));
-        let p_cells = score_w.over(&comptime!(
-            Tiling::leaf(&[(QP, frag), (S, frag)])
-                .walk_every(&[QP, S])
-                .level()
-        ));
-        let q_cells = q_w.over(&comptime!(
-            Tiling::leaf(&[(QP, frag), (D, frag)])
-                .walk_every(&[QP, D])
-                .level()
-        ));
-        let k_cells = k_w.over(&comptime!(
-            Tiling::leaf(&[(S, frag), (D, frag)])
-                .walk_every(&[S, D])
-                .level()
-        ));
-        let v_cells = v_w.over(&comptime!(
-            Tiling::leaf(&[(S, frag), (V, frag)])
-                .walk_every(&[S, V])
-                .level()
-        ));
+        let acc_cells = out_w.over(&comptime!(Level::every(&[(QP, frag), (V, frag)])));
+        let p_cells = score_w.over(&comptime!(Level::every(&[(QP, frag), (S, frag)])));
+        let q_cells = q_w.over(&comptime!(Level::every(&[(QP, frag), (D, frag)])));
+        let k_cells = k_w.over(&comptime!(Level::every(&[(S, frag), (D, frag)])));
+        let v_cells = v_w.over(&comptime!(Level::every(&[(S, frag), (V, frag)])));
 
         // The probe states the masking once, and the walk takes it as its bound: a block every
         // row masks throughout is one the walk never steps to, rather than two contractions
@@ -876,27 +856,15 @@ fn attention_fold_split_kernel<W: Size>(
     // This team's windows: one slice of rows per team, the levels stated here on the
     // scratch spaces the kernel owns.
     let t = UNIT_POS_Y as usize;
-    let team_scores = comptime!(
-        Tiling::leaf(&[(R, rows), (C, block)])
-            .walk_every(&[R, C])
-            .level()
-    );
+    let team_scores = comptime!(Level::every(&[(R, rows), (C, block)]));
     let tw = score_all.over(&team_scores);
     let mut score = score_all.at(&tw.region(t));
     let mut p = p_all.at(&tw.region(t));
-    let team_rows = comptime!(
-        Tiling::leaf(&[(T, 1), (R, rows)])
-            .walk_every(&[T, R])
-            .level()
-    );
+    let team_rows = comptime!(Level::every(&[(T, 1), (R, rows)]));
     let rw = factors_all.over(&team_rows);
     let mut m_win = m_all.at(&rw.region(t));
     let mut l_win = l_all.at(&rw.region(t));
-    let team_acc = comptime!(
-        Tiling::leaf(&[(R, rows), (V, val_dim)])
-            .walk_every(&[R, V])
-            .level()
-    );
+    let team_acc = comptime!(Level::every(&[(R, rows), (V, val_dim)]));
     let aw = acc_all.over(&team_acc);
     let mut acc = acc_all.at(&aw.region(t));
 

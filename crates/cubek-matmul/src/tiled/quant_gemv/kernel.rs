@@ -46,7 +46,7 @@ pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
     Tiling::leaf(&[
         (M, bp.rows_per_lane),
-        (KB, problem.scales_a_word),
+        (KB, problem.scales_per_word()),
         (KI, problem.block),
     ])
     .lanes(&[(M, bp.groups()), (KB, bp.block_lanes)])

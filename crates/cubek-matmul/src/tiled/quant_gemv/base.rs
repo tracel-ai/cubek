@@ -22,7 +22,8 @@
 
 use std::fmt::Display;
 
-use cubecl::quant::scheme::QuantValue;
+use cubecl::quant::scheme::{QuantValue, ScaleDtype};
+use cubek_tile::{Field, scale_field};
 
 use crate::definition::MatmulSetupError;
 
@@ -39,8 +40,9 @@ pub struct QuantGemvProblem {
     pub field: QuantValue,
     /// Values one scale covers, along the contraction.
     pub block: usize,
-    /// Scales that share one stored word: the scale element's count to a `u32`.
-    pub scales_a_word: usize,
+    /// How the block scales are stored, which is also how many share one word
+    /// ([`Field::per_word`]).
+    pub scales: ScaleDtype,
 }
 
 impl QuantGemvProblem {
@@ -53,6 +55,17 @@ impl QuantGemvProblem {
     /// Blocks along the contraction.
     pub fn blocks(&self) -> usize {
         self.d_in / self.block
+    }
+
+    /// The field one block scale occupies in the word it is stored in.
+    pub fn scale_field(&self) -> Field {
+        scale_field(self.scales)
+    }
+
+    /// Scales one read of them brings: as many as share a stored word. The unit the blocks are
+    /// dealt in, since the lane that reads the word owns the blocks of every field in it.
+    pub fn scales_per_word(&self) -> usize {
+        self.scale_field().per_word()
     }
 }
 
@@ -119,13 +132,13 @@ impl QuantGemvBlueprint {
                 problem.d_out, self.rows_per_cube, self.rows_per_plane
             ));
         }
-        let turn = self.block_lanes * problem.scales_a_word;
+        let turn = self.block_lanes * problem.scales_per_word();
         if !problem.blocks().is_multiple_of(turn) {
             return refuse(format!(
                 "QuantGemv: {} blocks of K are not whole turns of {} lanes at {} scales a word",
                 problem.blocks(),
                 self.block_lanes,
-                problem.scales_a_word
+                problem.scales_per_word()
             ));
         }
         Ok(())
@@ -222,7 +235,7 @@ impl QuantGemvRoutine {
                 plane_dim.is_multiple_of(*lanes)
                     && problem
                         .blocks()
-                        .is_multiple_of(lanes * problem.scales_a_word)
+                        .is_multiple_of(lanes * problem.scales_per_word())
             })
             .max()
             .unwrap_or(1);
@@ -280,7 +293,7 @@ mod tests {
             rows: 1,
             field: QuantValue::Q4S,
             block: 32,
-            scales_a_word: 2,
+            scales: ScaleDtype::F16,
         }
     }
 
