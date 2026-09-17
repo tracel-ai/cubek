@@ -1,7 +1,12 @@
 //! The quantized decode gemv, end to end: packed words in, one scale per block folded at the
 //! contraction, no scale ever widened on the way.
 
-use cubecl::{bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle};
+use cubecl::{
+    bytes::Bytes,
+    prelude::*,
+    quant::scheme::{QuantValue, ScaleDtype},
+    std::tensor::TensorHandle,
+};
 use cubek_matmul::{
     routine::BlueprintStrategy,
     tiled::quant_gemv::{QuantGemvBindings, QuantGemvElems, QuantGemvProblem, launch_ref},
@@ -65,7 +70,7 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         rows,
         field,
         block,
-        scales_a_word: 2,
+        scales: ScaleDtype::F16,
     };
     launch_ref(
         &client,
@@ -86,7 +91,6 @@ fn decode_gemv_matches_the_reference(field: QuantValue, block: usize, rows: usiz
         QuantGemvElems {
             served: f32::elem_type_native(),
             x: f16::elem_type_native(),
-            scales: f16::elem_type_native(),
             tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),
         },
@@ -170,7 +174,7 @@ fn a_second_scale_level_is_one_more_binding() {
         rows,
         field,
         block,
-        scales_a_word: 2,
+        scales: ScaleDtype::F16,
     };
     launch_ref(
         &client,
@@ -193,7 +197,6 @@ fn a_second_scale_level_is_one_more_binding() {
         QuantGemvElems {
             served: f32::elem_type_native(),
             x: f16::elem_type_native(),
-            scales: f16::elem_type_native(),
             tensor_scale: f32::elem_type_native(),
             out: f32::elem_type_native(),
         },

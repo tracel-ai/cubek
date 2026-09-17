@@ -1,7 +1,7 @@
 //! Unit tests for [`Space`]
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, KernelForm, Launcher, Partitioning, Space, Tiling};
+use cubek_tile::{Axis, KernelForm, Launcher, Level, Partitioning, Space, Tiling};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -94,9 +94,7 @@ fn merge_conflicting_extent_panics() {
 
 #[test]
 fn a_level_cuts_each_axis_to_its_tile() {
-    let level = Tiling::leaf(&[(M, 4), (N, 3), (K, 2)])
-        .walk_every(&[M, N, K])
-        .level();
+    let level = Level::every(&[(M, 4), (N, 3), (K, 2)]);
     let tile = level.child(&Space::new(&[(M, 16), (N, 12), (K, 8)]));
     assert_eq!(tile.extent(M), 4);
     assert_eq!(tile.extent(N), 3);

@@ -1,8 +1,9 @@
 //! How an operand's values sit in memory, and what a leaf must read to serve one.
 
-use cubecl::ir::FloatKind;
 use cubecl::ir::types::Fp8Format;
+use cubecl::ir::{ElemType, FloatKind};
 use cubecl::quant::scheme::QuantValue;
+use cubecl::quant::scheme::ScaleDtype;
 
 /// How an operand's values sit in memory.
 ///
@@ -84,6 +85,16 @@ pub fn float_field(kind: FloatKind) -> Field {
         FloatKind::E5M2 => Field::Fp8(Fp8Format::E5M2),
         FloatKind::UE8M0 => Field::Fp8(Fp8Format::UE8M0),
         other => Field::Float(other),
+    }
+}
+
+/// The field a scale of `dtype` occupies in the word it is stored in. Every scale is one of
+/// these, which is what lets one binding serve them all, and [`Field::per_word`] is then how
+/// many of them a read brings.
+pub fn scale_field(dtype: ScaleDtype) -> Field {
+    match ElemType::from_scale_dtype(dtype) {
+        ElemType::Float(kind) => float_field(kind),
+        other => panic!("Field: a scale is stored as a float, and {dtype:?} is {other:?}"),
     }
 }
 

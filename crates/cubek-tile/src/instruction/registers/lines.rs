@@ -59,6 +59,13 @@ impl Span {
         self.fields == 1 && self.lines == 1 && self.steps == 1
     }
 
+    /// Whether a line takes a scale line of its own: there is no field to build under it, so a
+    /// walk over the lines may roll — the one place a scale grouping decides that, since a
+    /// field is a lane of a read and a lane index is not addressable at runtime.
+    pub fn line_per_scale_line(&self) -> bool {
+        self.fields == 1 && self.lines == 1
+    }
+
     /// Lines of the contraction one run covers: one scale line's worth where the line runs
     /// along it, one scale's worth where it runs along the columns.
     pub fn run(&self) -> usize {
@@ -121,6 +128,16 @@ impl<S: Numeric, W: Size> RunScales<S, W> {
     pub fn none() -> Self {
         RunScales::<S, W> {
             lines: ComptimeOption::new_None(),
+        }
+    }
+
+    /// One scale line, for a run that needs a single one: the landing's, where the coordinate a
+    /// scale is constant along is the run itself.
+    pub fn of(line: Vector<S, W>) -> Self {
+        let mut lines = Array::<Vector<S, W>>::new(1usize);
+        lines[0usize] = line;
+        RunScales::<S, W> {
+            lines: ComptimeOption::new_Some(lines),
         }
     }
 

@@ -533,9 +533,7 @@ mod tests {
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
         let (space, lhs, rhs) = spaces();
-        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
-            .walk_every(&[M, N, K])
-            .level();
+        let level = Level::every(&[(M, 8), (N, 8), (K, 4)]);
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
@@ -551,9 +549,7 @@ mod tests {
     #[test]
     fn a_fixed_operand_reuses_the_first_slots_buffer() {
         let (space, lhs, rhs) = spaces();
-        let level = Tiling::leaf(&[(M, 8), (N, 4), (K, 8)])
-            .walk_every(&[M, N, K])
-            .level();
+        let level = Level::every(&[(M, 8), (N, 4), (K, 8)]);
         let plan = SlotPlan::new(
             &[operand(Delivery::Copy, &lhs), operand(Delivery::Copy, &rhs)],
             &space,
@@ -602,9 +598,7 @@ mod tests {
     #[test]
     fn a_tma_operand_is_never_fixed() {
         let (space, lhs, rhs) = spaces();
-        let level = Tiling::leaf(&[(M, 8), (N, 4), (K, 8)])
-            .walk_every(&[M, N, K])
-            .level();
+        let level = Level::every(&[(M, 8), (N, 4), (K, 8)]);
         let plan = SlotPlan::new(
             &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
