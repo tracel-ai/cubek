@@ -442,7 +442,8 @@ fn packed_cmma_rhs<E: Numeric>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let x = x.tile(comptime!(space.clone()));
+    // Both factors land: a fragment loads a window as it lies, and a gmem layout is unchecked.
+    let x = x.tile(comptime!(space.clone())).with_landing();
     let w = w
         .tile_as::<E>(comptime!(space.clone()))
         .with_landing()

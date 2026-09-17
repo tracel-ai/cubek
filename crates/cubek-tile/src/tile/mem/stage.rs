@@ -594,6 +594,12 @@ pub(crate) fn stage_compaction(
     if src.is_direct() && dst.is_direct() {
         return None;
     }
+    // A partition is not a gather: nothing aliases and every window is a box, so its stage is
+    // the dense copy of the logical tile a direct operand's is, and the fill reads the source
+    // box straight through its own digits.
+    if src.composition() == Composition::Disjoint && dst.is_direct() {
+        return None;
+    }
     let compaction = Compaction::of(src, vector_size, |axis| space.extent(axis));
     assert!(
         compaction.projection() == dst,

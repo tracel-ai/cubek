@@ -1551,6 +1551,17 @@ fn gathered_descent(
         match comptime!(term.scale) {
             Scale::Static(s) => {
                 let step = comptime!(if lined {
+                    // A window along the lined axis starts at a whole line, or it is the whole
+                    // axis and starts at its origin; any other cut would place its origin
+                    // inside a line, which a line index cannot say.
+                    assert!(
+                        (edge * s).is_multiple_of(vector_size)
+                            || matches!(cut.space.extent_raw(term.axis), Extent::Static(x) if x == edge),
+                        "MemData::at: the innermost edge {edge} of {:?} is neither a whole number \
+                         of {vector_size}-wide lines nor the axis's whole extent, so a step would \
+                         start mid-line",
+                        term.axis
+                    );
                     edge * s / vector_size
                 } else {
                     edge * s
