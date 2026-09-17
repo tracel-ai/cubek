@@ -16,9 +16,13 @@
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
 
 use cubecl::{
-    bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
+    bytes::Bytes,
+    prelude::*,
+    quant::scheme::{QuantValue, ScaleDtype},
+    std::tensor::TensorHandle,
+    zspace::shape,
 };
-use cubecl_common::e2m1;
+use cubecl_common::{e2m1, e4m3};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 use half::f16;
@@ -1846,4 +1850,289 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
             );
         }
     }
+}
+
+/// The columns, as the two axes a storage tile makes of them: which tile, and where inside it.
+const NB: Axis = Axis(4);
+const NI: Axis = Axis(5);
+/// The rounds of the contraction: the `k` a plane walks under one read of its scales. Takes the
+/// slot `N` has in the other tests, a space naming six axes at most.
+const KR: Axis = Axis(1);
+
+/// `c = a · (b ⊗ s)` over a weight **stored in tile order**, walked the way the memory-bound
+/// kernel walks it: the cube grid, the planes, the steps over the contraction, and the lanes
+/// under them, each lane summing its cells and the plane draining them once.
+#[cube(launch)]
+fn tile_ordered_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
+    a: &TileArg<'_, E, Const<8>>,
+    b: &TileArg<'_, u32, Const<1>>,
+    scale: &TileArg<'_, SS, Const<1>>,
+    c: &TileArg<'_, E, Const<1>>,
+    space: Partitioning,
+    #[comptime] instruction: Instruction,
+    #[comptime] cells: Option<Level>,
+    #[define(E, S, SS)] _dtypes: [ElemType; 3],
+) {
+    let a = a.tile(comptime!(space.clone()));
+    let b = b.tile_as::<E>(comptime!(space.clone()));
+    let scale = scale.tile_as::<S>(comptime!(space.clone()));
+    let c = c.tile(comptime!(space.clone()));
+    for cube in space {
+        let a_cube = a.at(&cube);
+        let b_cube = b.at(&cube);
+        let scale_cube = scale.at(&cube);
+        let c_cube = c.at(&cube);
+        for plane in cube {
+            let a_plane = a_cube.at(&plane);
+            let b_plane = b_cube.at(&plane);
+            let scale_plane = scale_cube.at(&plane);
+            let c_plane = c_cube.at(&plane);
+            let mut sum = c_plane.accumulator::<E, E, E>(
+                &a_plane,
+                &b_plane,
+                comptime!(Fragments::below(&c_plane, &a_plane)),
+                instruction,
+                Monoid::Sum,
+            );
+            sum.zero();
+            for step in plane {
+                for leaf in step {
+                    let mut sum_leaf = sum.at(&leaf);
+                    sum_leaf.mma_scaled(
+                        &a_plane.at(&leaf).plain(),
+                        &b_plane
+                            .at(&leaf)
+                            .scaled(&ComptimeOption::new_Some(scale_plane.at(&leaf))),
+                        Semiring::SUM_PROD,
+                    );
+                }
+            }
+            sum.drained_into(&c_plane, comptime!(cells.clone()));
+        }
+    }
+}
+
+/// The scales of a tile-ordered weight as a test stores them: which float, and the words.
+#[derive(Clone, Copy, Debug)]
+enum TileScales {
+    /// Whole `f32`s, one a word, four a read.
+    F32,
+    /// `ue4m3` bytes, four a word, sixteen a read: what NVFP4 carries.
+    Ue4m3,
+}
+
+/// **A weight stored in tile order binds through the axes a tile makes of each of its own, and
+/// contracts exactly, its scales read once a round.** The values lie `[NB][KB][NI][KI]`: a tile
+/// is sixteen columns of sixteen `k`, a column eight bytes, so one lane's read is one column's
+/// block under one scale. The scales lie `[NB][KR][NI][KB]`: for each column, the scales of a
+/// round's thirty-two tiles side by side, so one lane's read is its own run of them. A plane's
+/// lanes are sixteen columns by two runs of sixteen tiles, a round; the walk over the rounds
+/// sits above them, and a lane holds its run's scales in registers for the run.
+fn check_tile_ordered(scales: TileScales) {
+    let (rows, tile, n_tiles, rounds, per_lane, runs) = (8, 16, 2, 2, 16, 2);
+    let (round, cols) = (per_lane * runs, tile * n_tiles);
+    let (k_tiles, depth) = (round * rounds, round * rounds * tile);
+    let field = QuantValue::E2M1;
+    let factor = 32 / field.size_bits();
+
+    let client = cubecl::test_device().client();
+    let dtype = f32::elem_type_native();
+    let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
+    // The code at `(nb, kb, ni, ki)` over every tile down `k`, every `e2m1` code cycled, and the
+    // words as stored: tile order, a column's sixteen codes eight to a word, low nibble first.
+    let code = |nb: usize, kb: usize, ni: usize, ki: usize| {
+        (((nb * k_tiles + kb) * tile + ni) * tile + ki) % 16
+    };
+    let mut words = Vec::with_capacity(n_tiles * k_tiles * tile * tile / factor);
+    for nb in 0..n_tiles {
+        for kb in 0..k_tiles {
+            for ni in 0..tile {
+                for word in 0..tile / factor {
+                    words.push((0..factor).fold(0u32, |acc, j| {
+                        acc | ((code(nb, kb, ni, word * factor + j) as u32)
+                            << (j * field.size_bits()))
+                    }));
+                }
+            }
+        }
+    }
+    // One scale per column per tile, stored `[NB][KR][NI][KB]`: halves from 0.5 to 4, exact in
+    // `e4m3`.
+    let scale_at =
+        |nb: usize, kr: usize, ni: usize, kb: usize| ((nb * rounds + kr) * tile + ni) * round + kb;
+    let s: Vec<f32> = (0..n_tiles * rounds * tile * round)
+        .map(|i| (i % 8) as f32 / 2.0 + 0.5)
+        .collect();
+
+    let (a_t, _) = TestInput::builder(client.clone(), shape![rows, depth])
+        .dtype(dtype)
+        .custom(a.clone())
+        .generate_with_f32_host_data();
+    let b_t = TensorHandle::new_contiguous(
+        vec![n_tiles, k_tiles, tile, tile / factor],
+        client.create(Bytes::from_elems(words)),
+        u32::elem_type_native(),
+    );
+    let c = TestInput::builder(client.clone(), shape![rows, cols])
+        .dtype(dtype)
+        .zeros()
+        .generate_without_host_data();
+
+    // Leaf up: a lane holds one column over a run of tiles; the plane's lanes are sixteen
+    // columns by two runs, a round; the walk over the rounds sits above them; one plane a cube,
+    // one cube a column tile.
+    let levels = Tiling::leaf(&[(M, rows), (NI, 1), (KB, per_lane), (KI, tile)])
+        .lanes(&[(NI, tile), (KB, runs)])
+        .walk_every(&[KR])
+        .planes(&[(NB, 1)])
+        .cubes(&[NB])
+        .levels();
+    let lanes = levels[3].clone();
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[
+                (M, rows),
+                (NB, n_tiles),
+                (NI, tile),
+                (KR, rounds),
+                (KB, round),
+                (KI, tile),
+            ]),
+            levels,
+        ),
+        KernelForm::Static,
+    );
+
+    // The activation is served at the width a word of the weight unpacks to, so a step of the
+    // register block folds one word.
+    let a_op = launcher
+        .arg(a_t.binding())
+        .gathered(
+            Projection::dims()
+                .dim(M)
+                .dim(split(&[(KR, rounds), (KB, round), (KI, tile)]))
+                .build(),
+        )
+        .vectorize(factor)
+        .build();
+    let b_op = launcher
+        .arg(b_t.binding())
+        .gathered(
+            Projection::dims()
+                .dim(NB)
+                .dim(split(&[(KR, rounds), (KB, round)]))
+                .dim(NI)
+                .dim(KI)
+                .build(),
+        )
+        .packed(field)
+        .build();
+    let scales_axes = Projection::dims()
+        .dim(NB)
+        .dim(KR)
+        .dim(NI)
+        .dim(KB)
+        .spanning(KI)
+        .build();
+    // The scales bind as they are stored and are served as `f32`: whole words four a read, or
+    // `ue4m3` bytes four to a word and sixteen a read, the same projection over a dim a quarter
+    // as long. Either way a read is one lane's own run of them.
+    let (s_op, stored) = match scales {
+        TileScales::F32 => {
+            let (s_t, _) = TestInput::builder(client.clone(), shape![n_tiles, rounds, tile, round])
+                .dtype(dtype)
+                .custom(s.clone())
+                .generate_with_f32_host_data();
+            (
+                launcher
+                    .arg(s_t.binding())
+                    .gathered(scales_axes)
+                    .vectorize(4)
+                    .build(),
+                dtype,
+            )
+        }
+        TileScales::Ue4m3 => {
+            let per_word = 4;
+            let bytes: Vec<u32> = s
+                .chunks(per_word)
+                .map(|word| {
+                    word.iter().enumerate().fold(0u32, |acc, (j, &v)| {
+                        acc | ((e4m3::from_f32(v).to_bits() as u32) << (j * 8))
+                    })
+                })
+                .collect();
+            let s_t = TensorHandle::new_contiguous(
+                vec![n_tiles, rounds, tile, round / per_word],
+                client.create(Bytes::from_elems(bytes)),
+                u32::elem_type_native(),
+            );
+            (
+                launcher
+                    .arg(s_t.binding())
+                    .gathered(scales_axes)
+                    .packed(scale_field(ScaleDtype::UE4M3))
+                    .vectorize(per_lane / per_word)
+                    .build(),
+                u32::elem_type_native(),
+            )
+        }
+    };
+    let c_op = launcher
+        .arg(c.clone().binding())
+        .gathered(
+            Projection::dims()
+                .dim(M)
+                .dim(split(&[(NB, n_tiles), (NI, tile)]))
+                .build(),
+        )
+        .build();
+
+    tile_ordered_scaled_matmul::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        a_op.arg(),
+        b_op.arg(),
+        s_op.arg(),
+        c_op.arg(),
+        launcher.partitioning_arg(),
+        Instruction::Registers {
+            config: REGISTER_BLOCK,
+        },
+        Some(lanes),
+        [dtype, dtype, stored],
+    );
+
+    let got = HostData::from_tensor_handle(&client, c, HostDataType::F32);
+    for m in 0..rows {
+        for n in 0..cols {
+            let (nb, ni) = (n / tile, n % tile);
+            let want: f32 = (0..depth)
+                .map(|k| {
+                    let (kt, ki) = (k / tile, k % tile);
+                    let (kr, kb) = (kt / round, kt % round);
+                    let b = e2m1::from_bits(code(nb, kt, ni, ki) as u8).to_f32();
+                    a[m * depth + k] * b * s[scale_at(nb, kr, ni, kb)]
+                })
+                .sum();
+            let have = got.get_f32(&[m, n]);
+            assert!(
+                (have - want).abs() < 1e-2 * want.abs().max(1.0),
+                "{scales:?} at ({m}, {n}): got {have}, want {want}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_tile_ordered_weight_contracts_exactly() {
+    check_tile_ordered(TileScales::F32);
+}
+
+/// NVFP4's own scales: `ue4m3` bytes four to a word, a lane's run of sixteen tiles one read.
+#[test]
+fn a_tile_ordered_weight_contracts_exactly_under_byte_scales() {
+    check_tile_ordered(TileScales::Ue4m3);
 }
