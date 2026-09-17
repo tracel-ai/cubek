@@ -390,6 +390,10 @@ fn cmma_packed_weight_names_the_stage_across_m() {
     use crate::harness::assert_result;
 
     let client = client();
+    // Cmma is planned against a plane, so a device without one turns down every blueprint below.
+    if client.properties().hardware.plane_size_max <= 1 {
+        return;
+    }
     let dtype = f32::elem_type_native();
     let (n, k) = (512, 256);
     let dtypes = MatmulElems::from_single_dtype(dtype);
