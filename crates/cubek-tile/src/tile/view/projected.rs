@@ -440,7 +440,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd_mut: a tma source is not written"),
-            TileKind::Procedural(_) => panic!("Tile::nd_mut: a procedural tile is not writable"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::nd_mut: a procedural tile is not writable")
+            }
         }
     }
 
@@ -469,6 +471,26 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
+    /// The words a packed tile holds, as they lie, one coordinate per axis of the tile's
+    /// [`Space`](crate::Space): the twin of [`nd_packed`](Tile::nd_packed) that does not unpack.
+    pub(crate) fn nd_words<WP: Size>(
+        &self,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<u32, WP>, CoordsDyn> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) | TileKind::Smem(g) => {
+                let layout = axis_projection(
+                    comptime!(self.space.clone()),
+                    comptime!(g.projection.clone()),
+                    g.map.clone(),
+                    self.vector_size(),
+                );
+                g.nd_words::<WP>(layout, guard)
+            }
+            _ => panic!("Tile::nd_words: only a memory tile holds words"),
+        }
+    }
+
     /// Whether [`Guard::Proved`] would drop a guard no box check can stand in for. A
     /// [`Boundary::Clamp`] axis is the one such guard: a clamped read is in bounds *after*
     /// remapping, so the window reports it in bounds whatever the raw coordinate was and nothing a
@@ -481,7 +503,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(true),
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => comptime!(true),
         }
     }
 
@@ -508,6 +531,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
+            TileKind::Chunk(_) => panic!("Tile::nd: a chunk is read at a coordinate (`scale_at`)"),
             TileKind::Procedural(data) => {
                 let layout = axis_projection(
                     comptime!(self.space.clone()),
@@ -586,7 +610,7 @@ impl<T: Numeric> Tile<T> {
             // A procedural tile is always scalar-addressed at the leaf (`vector_size() == 1`,
             // enforced by `ProceduralDataExpand::__expand_vector_size_method`). The direct
             // projection therefore steps by single elements along the innermost axis.
-            TileKind::Procedural(_) => NdReader::new(
+            TileKind::Procedural(_) | TileKind::Chunk(_) => NdReader::new(
                 axis_projection(
                     comptime!(self.space.clone()),
                     comptime!(Projection::direct_over(&self.space)),

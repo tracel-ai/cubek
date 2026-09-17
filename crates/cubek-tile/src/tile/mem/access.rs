@@ -42,7 +42,9 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) => panic!("Tile::view: a procedural tile has no memory view"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::view: a procedural tile has no memory view")
+            }
         }
     }
 
@@ -58,7 +60,9 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view_mut: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) => panic!("Tile::view_mut: a procedural tile is not writable"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::view_mut: a procedural tile is not writable")
+            }
         }
     }
 }
@@ -1095,6 +1099,24 @@ impl<T: Numeric> MemData<T> {
         #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout, guard)
+    }
+
+    /// The words a packed store holds, as they lie, over the tile's whole logical box: what a
+    /// chunk loads a lane's line from, decoded later at the read.
+    pub(crate) fn nd_words<WP: Size>(
+        &self,
+        layout: AxisProjection,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<u32, WP>, CoordsDyn> {
+        comptime!(assert!(
+            matches!(self.store.packing, Packing::Packed { .. }),
+            "MemData::nd_words: only a packed store holds words"
+        ));
+        let words = self.window_view_storage::<u32, WP>(guard).view(layout);
+        MaskedView::new(
+            words,
+            comptime!(guard.checks() && self.access.overhang.masks()),
+        )
     }
 
     /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical

@@ -85,7 +85,8 @@ impl<T: Float> TileExpand<T> {
             | TileKindExpand::Smem(_)
             | TileKindExpand::PlaneTile(_)
             | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_) => {
+            | TileKindExpand::TmaGmem(_)
+            | TileKindExpand::Chunk(_) => {
                 panic!("Tile::normalized: only a separable procedural tile has factor runs")
             }
         }

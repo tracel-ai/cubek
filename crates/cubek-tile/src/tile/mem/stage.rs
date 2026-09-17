@@ -73,6 +73,30 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
+        match comptime!(storage.clone()) {
+            // A chunk is not memory: the plane holds it, at the depth one region of `level`
+            // sits, so the regions below the level window it as they window the operand.
+            StageStorage::Chunk { broadcast } => Tile::<T> {
+                tile_kind: TileKind::new_Chunk(Chunk::<T>::new(
+                    operand,
+                    comptime!(level.clone()),
+                    broadcast,
+                )),
+                space: comptime!(level.child(&operand.space)),
+                depth: comptime!(operand.depth + 1),
+                levels: comptime!(operand.levels.clone()),
+            },
+            _ => MemData::<T>::stage_memory(operand, level, storage, width),
+        }
+    }
+
+    /// [`stage`](MemData::stage) in shared memory.
+    fn stage_memory(
+        operand: &Tile<T>,
+        #[comptime] level: Level,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+    ) -> Tile<T> {
         let dequant_at = operand.dequant_at();
         match comptime!(dequant_at) {
             DequantAt::Load => {
@@ -189,7 +213,7 @@ impl<T: Numeric> MemData<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_stored: a fragment is not a stage source")
             }
-            TileKind::Procedural(_) => {
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
                 panic!("MemData::smem_stored: a procedural tile is not a stage source")
             }
         }
@@ -752,6 +776,9 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
+            StageStorage::Chunk { .. } => {
+                panic!("StageStorage::Chunk: a chunk is not shared memory")
+            }
             StageStorage::Tiled { block } => {
                 let nested = Space::new(
                     &space

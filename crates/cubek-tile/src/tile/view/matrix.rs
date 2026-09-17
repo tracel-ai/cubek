@@ -444,7 +444,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::matrix: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
-            TileKind::Procedural(_) => panic!("Tile::matrix: a procedural tile has no memory view"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::matrix: a procedural tile has no memory view")
+            }
         }
     }
 
@@ -474,7 +476,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::matrix_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
-            TileKind::Procedural(_) => {
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
                 panic!("Tile::matrix_mut: a procedural tile is not writable")
             }
         }
@@ -537,7 +539,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) => {
                 panic!("Tile::matrix_transparent: a tma source has no element view")
             }
-            TileKind::Procedural(_) => {
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
                 panic!("Tile::matrix_transparent: a procedural tile has no memory view")
             }
         }
@@ -599,7 +601,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) => {
                 panic!("Tile::fragment_matrix: a tma source has no element view")
             }
-            TileKind::Procedural(_) => {
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
                 panic!("Tile::fragment_matrix: a procedural tile has no memory view")
             }
         }

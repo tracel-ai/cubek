@@ -1855,21 +1855,23 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
 /// The columns, as the two axes a storage tile makes of them: which tile, and where inside it.
 const NB: Axis = Axis(4);
 const NI: Axis = Axis(5);
-/// The rounds of the contraction: the `k` a plane walks under one read of its scales. Takes the
-/// slot `N` has in the other tests, a space naming six axes at most.
-const KR: Axis = Axis(1);
 
 /// `c = a · (b ⊗ s)` over a weight **stored in tile order**, walked the way the memory-bound
-/// kernel walks it: the cube grid, the planes, the steps over the contraction, and the lanes
-/// under them, each lane summing its cells and the plane draining them once.
+/// kernel walks it on either arm: the cube grid, the planes, the chunks a plane walks under one
+/// load of its scales, the steps of a chunk, and the level under them — the lanes of a register
+/// block, or the one fragment a plane holds. The scales of a chunk are loaded once, into the
+/// plane's lanes or its own shared window, and every step reads its scale from there.
 #[cube(launch)]
-fn tile_ordered_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
+#[allow(clippy::too_many_arguments)]
+fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     a: &TileArg<'_, E, Const<8>>,
     b: &TileArg<'_, u32, Const<1>>,
     scale: &TileArg<'_, SS, Const<1>>,
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] instruction: Instruction,
+    #[comptime] chunks: Level,
+    #[comptime] broadcast: bool,
     #[comptime] cells: Option<Level>,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
@@ -1898,6 +1900,12 @@ fn tile_ordered_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
+            let mut lines = MemData::<S>::stage(
+                &scale_plane,
+                comptime!(chunks.clone()),
+                comptime!(StageStorage::Chunk { broadcast }),
+                comptime!(None),
+            );
             let mut sum = c_plane.accumulator::<E, E, E>(
                 &a_plane,
                 &b_plane,
@@ -1906,16 +1914,19 @@ fn tile_ordered_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                 Monoid::Sum,
             );
             sum.zero();
-            for step in plane {
-                for leaf in step {
-                    let mut sum_leaf = sum.at(&leaf);
-                    sum_leaf.mma_scaled(
-                        &a_plane.at(&leaf).plain(),
-                        &b_plane
-                            .at(&leaf)
-                            .scaled(&ComptimeOption::new_Some(scale_plane.at(&leaf))),
-                        Semiring::SUM_PROD,
-                    );
+            for chunk in plane {
+                lines.copy_from(&scale_plane.at(&chunk));
+                for step in chunk {
+                    for leaf in step {
+                        let mut sum_leaf = sum.at(&leaf);
+                        sum_leaf.mma_scaled(
+                            &a_plane.at(&leaf).plain(),
+                            &b_plane
+                                .at(&leaf)
+                                .scaled(&ComptimeOption::new_Some(lines.at(&leaf))),
+                            Semiring::SUM_PROD,
+                        );
+                    }
                 }
             }
             sum.drained_into(&c_plane, comptime!(cells.clone()));
@@ -1935,24 +1946,22 @@ fn contiguous_strides(shape: &[usize]) -> Vec<usize> {
 /// The scales of a tile-ordered weight as a test stores them: which float, and the words.
 #[derive(Clone, Copy, Debug)]
 enum TileScales {
-    /// Whole `f32`s, one a word, four a read.
+    /// Whole `f32`s, one a word.
     F32,
-    /// `ue4m3` bytes, four a word, sixteen a read: what NVFP4 carries.
+    /// `ue4m3` bytes, four to a word: what NVFP4 carries.
     Ue4m3,
 }
 
 /// A weight stored in tile order, with its activation and the host's view of both.
 ///
 /// The values lie `[NB][KB][NI][KI]`: a tile is sixteen columns of sixteen `k`, a column eight
-/// bytes. The scales lie `[NB][KR][NI][KB]`: for each column, the scales of a round's tiles side
-/// by side, a round being what a plane walks under one read of its scales.
+/// bytes. The scales lie `[NB][KB][NI]`: a tile's sixteen scales are one line, one per column,
+/// and the tiles down `k` follow one another, so a chunk of them is consecutive lines.
 struct TileOrdered {
     rows: usize,
     tile: usize,
     n_tiles: usize,
-    rounds: usize,
-    /// Tiles down `k` in one round.
-    round: usize,
+    k_tiles: usize,
     a: Vec<f32>,
     words: Vec<u32>,
     s: Vec<f32>,
@@ -1961,26 +1970,25 @@ struct TileOrdered {
 impl TileOrdered {
     const FIELD: QuantValue = QuantValue::E2M1;
 
-    fn new(rows: usize, n_tiles: usize, rounds: usize, round: usize) -> Self {
+    fn new(rows: usize, n_tiles: usize, k_tiles: usize) -> Self {
         let tile = 16;
-        let depth = round * rounds * tile;
+        let depth = k_tiles * tile;
         let factor = 32 / Self::FIELD.size_bits();
         let a: Vec<f32> = (0..rows * depth).map(|i| (i % 5) as f32 - 2.0).collect();
         let this = TileOrdered {
             rows,
             tile,
             n_tiles,
-            rounds,
-            round,
+            k_tiles,
             a,
             words: Vec::new(),
             s: Vec::new(),
         };
         // The words as stored: tile order, a column's sixteen codes eight to a word, low nibble
         // first.
-        let mut words = Vec::with_capacity(n_tiles * this.k_tiles() * tile * tile / factor);
+        let mut words = Vec::with_capacity(n_tiles * k_tiles * tile * tile / factor);
         for nb in 0..n_tiles {
-            for kb in 0..this.k_tiles() {
+            for kb in 0..k_tiles {
                 for ni in 0..tile {
                     for word in 0..tile / factor {
                         words.push((0..factor).fold(0u32, |acc, j| {
@@ -1994,18 +2002,14 @@ impl TileOrdered {
         // One scale per column per tile: halves from 0.5 to 4, exact in `e4m3`, and different
         // between neighbouring columns *and* neighbouring tiles, so a scale read at the wrong
         // column or the wrong block is a wrong number rather than the same one.
-        let s: Vec<f32> = (0..n_tiles * rounds * tile * round)
+        let s: Vec<f32> = (0..n_tiles * k_tiles * tile)
             .map(|i| ((i % 8) + (i / 8) + (i / 64)) as f32 % 8.0 / 2.0 + 0.5)
             .collect();
         TileOrdered { words, s, ..this }
     }
 
-    fn k_tiles(&self) -> usize {
-        self.round * self.rounds
-    }
-
     fn depth(&self) -> usize {
-        self.k_tiles() * self.tile
+        self.k_tiles * self.tile
     }
 
     fn cols(&self) -> usize {
@@ -2019,9 +2023,9 @@ impl TileOrdered {
         (ki + 3 * ni + 5 * kb + 7 * nb) % 16
     }
 
-    /// The scale at `(nb, kr, ni, kb)`, as stored.
-    fn scale_at(&self, nb: usize, kr: usize, ni: usize, kb: usize) -> f32 {
-        self.s[((nb * self.rounds + kr) * self.tile + ni) * self.round + kb]
+    /// The scale at `(nb, kb, ni)`, as stored.
+    fn scale_at(&self, nb: usize, kb: usize, ni: usize) -> f32 {
+        self.s[(nb * self.k_tiles + kb) * self.tile + ni]
     }
 
     /// The product on the host.
@@ -2029,10 +2033,9 @@ impl TileOrdered {
         let (nb, ni) = (n / self.tile, n % self.tile);
         (0..self.depth())
             .map(|k| {
-                let (kt, ki) = (k / self.tile, k % self.tile);
-                let (kr, kb) = (kt / self.round, kt % self.round);
-                let b = e2m1::from_bits(self.code(nb, kt, ni, ki) as u8).to_f32();
-                self.a[m * self.depth() + k] * b * self.scale_at(nb, kr, ni, kb)
+                let (kb, ki) = (k / self.tile, k % self.tile);
+                let b = e2m1::from_bits(self.code(nb, kb, ni, ki) as u8).to_f32();
+                self.a[m * self.depth() + k] * b * self.scale_at(nb, kb, ni)
             })
             .sum()
     }
@@ -2042,15 +2045,9 @@ impl TileOrdered {
             (M, self.rows),
             (NB, self.n_tiles),
             (NI, self.tile),
-            (KR, self.rounds),
-            (KB, self.round),
+            (KB, self.k_tiles),
             (KI, self.tile),
         ])
-    }
-
-    /// The tiles down `k` as one dim of a buffer: the rounds and the tiles in one.
-    fn k_dim(&self) -> PhysicalAxisMap {
-        split(&[(KR, self.rounds), (KB, self.round)])
     }
 
     /// The activation, served at the width a word of the weight unpacks to.
@@ -2064,11 +2061,7 @@ impl TileOrdered {
             .gathered(
                 Projection::dims()
                     .dim(M)
-                    .dim(split(&[
-                        (KR, self.rounds),
-                        (KB, self.round),
-                        (KI, self.tile),
-                    ]))
+                    .dim(split(&[(KB, self.k_tiles), (KI, self.tile)]))
                     .build(),
             )
             .vectorize(32 / Self::FIELD.size_bits())
@@ -2078,52 +2071,43 @@ impl TileOrdered {
     /// The weight as stored. A packed binding counts values, its words being the packing's
     /// business: the shape and the strides are the tiles' in values.
     fn b_op(&self, client: &Client, launcher: &Launcher) -> StridedOperand {
-        let shape = vec![self.n_tiles, self.k_tiles(), self.tile, self.tile];
+        let shape = vec![self.n_tiles, self.k_tiles, self.tile, self.tile];
         let b_t = TensorHandle::new_contiguous(
             shape.clone(),
             client.create(Bytes::from_elems(self.words.clone())),
             u32::elem_type_native(),
         );
         let mut binding = b_t.binding();
-        binding.shape = shape.into();
-        binding.strides =
-            contiguous_strides(&[self.n_tiles, self.k_tiles(), self.tile, self.tile]).into();
+        binding.shape = shape.clone().into();
+        binding.strides = contiguous_strides(&shape).into();
         launcher
             .arg(binding)
-            .gathered(
-                Projection::dims()
-                    .dim(NB)
-                    .dim(self.k_dim())
-                    .dim(NI)
-                    .dim(KI)
-                    .build(),
-            )
+            .gathered(Projection::dims().dim(NB).dim(KB).dim(NI).dim(KI).build())
             .packed(Self::FIELD)
             .build()
     }
 
-    /// The scales as stored, served as `f32`: whole words, or `ue4m3` bytes four to a word, the
-    /// same shape in values either way; `per_read` of them a read. Returns the element they are
-    /// stored as.
+    /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
+    /// `ue4m3` bytes four to a word, the same shape in values either way. Returns the element
+    /// they are stored as.
     fn s_op(
         &self,
         client: &Client,
         launcher: &Launcher,
         scales: TileScales,
-        per_read: usize,
     ) -> (StridedOperand, ElemType) {
         let axes = Projection::dims()
             .dim(NB)
-            .dim(KR)
-            .dim(NI)
             .dim(KB)
+            .dim(NI)
             .spanning(KI)
             .build();
+        let shape = vec![self.n_tiles, self.k_tiles, self.tile];
         match scales {
             TileScales::F32 => {
                 let (s_t, _) = TestInput::builder(
                     client.clone(),
-                    shape![self.n_tiles, self.rounds, self.tile, self.round],
+                    shape![self.n_tiles, self.k_tiles, self.tile],
                 )
                 .dtype(f32::elem_type_native())
                 .custom(self.s.clone())
@@ -2132,7 +2116,7 @@ impl TileOrdered {
                     launcher
                         .arg(s_t.binding())
                         .gathered(axes)
-                        .vectorize(per_read)
+                        .vectorize(self.tile)
                         .build(),
                     f32::elem_type_native(),
                 )
@@ -2148,7 +2132,6 @@ impl TileOrdered {
                         })
                     })
                     .collect();
-                let shape = vec![self.n_tiles, self.rounds, self.tile, self.round];
                 let s_t = TensorHandle::new_contiguous(
                     shape.clone(),
                     client.create(Bytes::from_elems(bytes)),
@@ -2162,7 +2145,7 @@ impl TileOrdered {
                         .arg(binding)
                         .gathered(axes)
                         .packed(scale_field(ScaleDtype::UE4M3))
-                        .vectorize(per_read)
+                        .vectorize(self.tile)
                         .build(),
                     u32::elem_type_native(),
                 )
@@ -2197,81 +2180,28 @@ impl TileOrdered {
     }
 }
 
-/// **A weight stored in tile order binds through the axes a tile makes of each of its own, and
-/// contracts exactly, its scales read once a round.** One lane's read of the values is one
-/// column's block under one scale; one lane's read of the scales is its own run of them, held in
-/// registers for the run. A plane's lanes are sixteen columns by two runs of sixteen tiles, a
-/// round; the walk over the rounds sits above them.
-fn check_tile_ordered(scales: TileScales) {
-    let (rows, n_tiles, rounds, per_lane, runs) = (8, 2, 2, 16, 2);
-    let w = TileOrdered::new(rows, n_tiles, rounds, per_lane * runs);
+/// Which arm a chunked contraction runs on.
+#[derive(Clone, Copy, Debug)]
+enum Arm {
+    Registers,
+    Landing,
+}
+
+/// **A plane holds its scales for a chunk.** The weight lies in tile order and its scales in
+/// lines, `[NB][KB][NI]`; a plane walks the contraction a chunk of thirty-two blocks at a time,
+/// loads the chunk's thirty-two lines once — lane `t` holding line `t`, or the plane's own
+/// shared window holding them all — and every step reads the scale of the value it lands or
+/// contracts at that value's coordinates, a word at a time.
+///
+/// On the register arm a lane holds one column over one block a step, the plane's lanes are a
+/// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane
+/// holds one fragment, eight rows by half a tile's columns, and walks a chunk a fragment's
+/// depth at a time.
+fn check_chunked(arm: Arm, scales: TileScales, broadcast: bool) {
+    let (rows, n_tiles, chunk, chunks) = (8, 2, 32, 2);
+    let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
-    let dtype = f32::elem_type_native();
-    let c = TestInput::builder(client.clone(), shape![rows, w.cols()])
-        .dtype(dtype)
-        .zeros()
-        .generate_without_host_data();
-
-    // Leaf up: a lane holds one column over a run of tiles; the plane's lanes are sixteen
-    // columns by two runs, a round; the walk over the rounds sits above them; one plane a cube,
-    // one cube a column tile.
-    let levels = Tiling::leaf(&[(M, rows), (NI, 1), (KB, per_lane), (KI, w.tile)])
-        .lanes(&[(NI, w.tile), (KB, runs)])
-        .walk_every(&[KR])
-        .planes(&[(NB, 1)])
-        .cubes(&[NB])
-        .levels();
-    let lanes = levels[3].clone();
-    let launcher = Launcher::implied(
-        &client,
-        Partitioning::new(w.space(), levels),
-        KernelForm::Static,
-    );
-    let per_read = match scales {
-        TileScales::F32 => 4,
-        TileScales::Ue4m3 => per_lane,
-    };
-    let (s_op, stored) = w.s_op(&client, &launcher, scales, per_read);
-
-    tile_ordered_scaled_matmul::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        w.a_op(&client, &launcher).arg(),
-        w.b_op(&client, &launcher).arg(),
-        s_op.arg(),
-        w.c_op(&launcher, &c).arg(),
-        launcher.partitioning_arg(),
-        Instruction::Registers {
-            config: REGISTER_BLOCK,
-        },
-        Some(lanes),
-        [dtype, dtype, stored],
-    );
-    w.check(&client, c, &format!("{scales:?} registers"));
-}
-
-#[test]
-fn a_tile_ordered_weight_contracts_exactly() {
-    check_tile_ordered(TileScales::F32);
-}
-
-/// NVFP4's own scales: `ue4m3` bytes four to a word, a lane's run of sixteen tiles one read.
-#[test]
-fn a_tile_ordered_weight_contracts_exactly_under_byte_scales() {
-    check_tile_ordered(TileScales::Ue4m3);
-}
-
-/// **A tile-ordered weight lands on the tensor cores.** The same walk as the register arm's
-/// above the lanes: one plane holds one fragment of the output, eight rows by half a tile's
-/// columns, and walks the contraction a fragment's depth at a time; the weight is landed by the
-/// plane's lanes straight out of its stored words, unpacked and scaled, and loaded as the
-/// fragment the plain instruction takes.
-fn check_tile_ordered_cmma(scales: TileScales) {
-    let (rows, n_tiles, rounds, round, fragment) = (8, 2, 1, 32, 8);
-    let w = TileOrdered::new(rows, n_tiles, rounds, round);
-    let client = cubecl::test_device().client();
-    if !require_cmma_8x8x8_f32(&client) {
+    if matches!(arm, Arm::Landing) && !require_cmma_8x8x8_f32(&client) {
         return;
     }
     let dtype = f32::elem_type_native();
@@ -2280,27 +2210,44 @@ fn check_tile_ordered_cmma(scales: TileScales) {
         .zeros()
         .generate_without_host_data();
 
-    // Leaf up: one fragment, which is a level of one all the same, since the body's innermost
-    // loop is a level's; the walk over the contraction; the planes of a cube share a column
-    // tile; one cube a column tile.
-    let levels = Tiling::leaf(&[(M, rows), (NI, fragment), (KI, fragment)])
-        .walk(&[(NI, 1)])
-        .walk_every(&[KR, KB, KI])
-        .planes(&[(NI, w.tile / fragment)])
-        .cubes(&[NB])
-        .levels();
+    // Leaf up: what a lane or a plane holds a step, the steps of a chunk, the chunks, the planes
+    // of a cube, the cubes. A fragment is a level of one all the same, since the body's innermost
+    // loop is a level's.
+    let levels = match arm {
+        Arm::Registers => Tiling::leaf(&[(M, rows), (NI, 1), (KB, 1), (KI, w.tile)])
+            .lanes(&[(NI, w.tile), (KB, 2)])
+            .walk(&[(KB, chunk / 2)])
+            .walk_every(&[KB])
+            .planes(&[(NB, 1)])
+            .cubes(&[NB])
+            .levels(),
+        Arm::Landing => Tiling::leaf(&[(M, rows), (NI, 8), (KI, 8)])
+            .walk(&[(NI, 1)])
+            .walk(&[(KB, chunk), (KI, 2)])
+            .walk_every(&[KB])
+            .planes(&[(NI, w.tile / 8)])
+            .cubes(&[NB])
+            .levels(),
+    };
+    let chunks_level = levels[2].clone();
+    let cells = match arm {
+        Arm::Registers => Some(levels[4].clone()),
+        Arm::Landing => None,
+    };
+    let instruction = match arm {
+        Arm::Registers => Instruction::Registers {
+            config: REGISTER_BLOCK,
+        },
+        Arm::Landing => Instruction::Cmma,
+    };
     let launcher = Launcher::implied(
         &client,
         Partitioning::new(w.space(), levels),
         KernelForm::Static,
     );
-    let per_read = match scales {
-        TileScales::F32 => 1,
-        TileScales::Ue4m3 => 4,
-    };
-    let (s_op, stored) = w.s_op(&client, &launcher, scales, per_read);
+    let (s_op, stored) = w.s_op(&client, &launcher, scales);
 
-    tile_ordered_scaled_matmul::launch(
+    chunked_scaled_matmul::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
@@ -2309,27 +2256,43 @@ fn check_tile_ordered_cmma(scales: TileScales) {
         s_op.arg(),
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
-        Instruction::Cmma,
-        None,
+        instruction,
+        chunks_level,
+        broadcast,
+        cells,
         [dtype, dtype, stored],
     );
-    w.check(&client, c, &format!("{scales:?} cmma"));
+    w.check(
+        &client,
+        c,
+        &format!("{arm:?} {scales:?} broadcast {broadcast}"),
+    );
+}
+
+#[test]
+fn a_plane_holds_its_scales_for_a_chunk() {
+    check_chunked(Arm::Registers, TileScales::F32, true);
+}
+
+#[test]
+fn a_plane_holds_its_byte_scales_for_a_chunk() {
+    check_chunked(Arm::Registers, TileScales::Ue4m3, true);
+}
+
+#[test]
+fn a_plane_lands_a_chunk_of_scales_in_its_window() {
+    check_chunked(Arm::Registers, TileScales::F32, false);
+    check_chunked(Arm::Registers, TileScales::Ue4m3, false);
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores() {
-    check_tile_ordered_cmma(TileScales::F32);
+    check_chunked(Arm::Landing, TileScales::F32, true);
+    check_chunked(Arm::Landing, TileScales::F32, false);
 }
 
-/// NVFP4's own scales under the same landing. The scales lie `[NB][KR][NI][KB]`, four to a
-/// word down `KB`, and a fragment walks one block of `KB` at a time: a window one block deep
-/// into a line of four has no line index to say where it starts, which `MemData::at` refuses.
-/// What serves it is the chunk: the plane holds a chunk of scale lines in its lanes and each
-/// step reads its line by broadcast, so the scales are windowed by the chunk and never by the
-/// block.
 #[test]
-#[ignore = "a window one block deep into a line of four byte scales starts mid-line; the chunk \
-            stage is what holds a plane's scales for the walk"]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
-    check_tile_ordered_cmma(TileScales::Ue4m3);
+    check_chunked(Arm::Landing, TileScales::Ue4m3, true);
+    check_chunked(Arm::Landing, TileScales::Ue4m3, false);
 }

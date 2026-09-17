@@ -148,7 +148,7 @@ impl Resident {
 ///
 /// Each level's count is read against the space its parents hand it, so a count that is
 /// only known at runtime is refused here rather than read as one.
-fn plane_windows(space: &Space, levels: &[Level]) -> usize {
+pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut handed = space.clone();
     let mut planes = 1;
     for level in levels {
@@ -358,7 +358,8 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => {
                 panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
             }
         }
@@ -372,7 +373,8 @@ impl<Acc: Numeric> Tile<Acc> {
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => comptime!(false),
         }
     }
 
@@ -420,7 +422,8 @@ impl<Acc: Numeric> Tile<Acc> {
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => {
                 panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
             }
         }

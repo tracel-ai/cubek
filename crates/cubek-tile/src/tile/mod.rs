@@ -6,6 +6,7 @@
 mod accumulator;
 mod atomic;
 mod base;
+mod chunk;
 mod cmma;
 mod mem;
 mod mma;
@@ -20,6 +21,7 @@ mod view;
 
 pub use accumulator::*;
 pub use base::*;
+pub use chunk::*;
 pub use cmma::*;
 pub use mem::*;
 pub use mma::*;

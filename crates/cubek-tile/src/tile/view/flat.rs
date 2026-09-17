@@ -76,7 +76,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::flat: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
-            TileKind::Procedural(_) => panic!("Tile::flat: a procedural tile has no memory view"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::flat: a procedural tile has no memory view")
+            }
         }
     }
 
@@ -92,7 +94,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::flat_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
-            TileKind::Procedural(_) => panic!("Tile::flat_mut: a procedural tile is not writable"),
+            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+                panic!("Tile::flat_mut: a procedural tile is not writable")
+            }
         }
     }
 }

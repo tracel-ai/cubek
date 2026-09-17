@@ -188,7 +188,8 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
-                | TileKind::Procedural(_) => {
+                | TileKind::Procedural(_)
+                | TileKind::Chunk(_) => {
                     panic!("mma: an operand reaches a fragment from a memory window")
                 }
             }
@@ -228,7 +229,8 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => {
                 panic!("mma: an operand lands from its memory window")
             }
         };
@@ -247,18 +249,39 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let per_row = comptime!(read.cols / vw);
         let width = comptime!(vw as u32);
         let row_cells = comptime!(read.cols as u32);
-        for cell in range_stepped(
-            UNIT_POS_PLANE,
-            comptime!((read.rows * per_row) as u32),
-            PLANE_DIM,
-        ) {
-            let r = cell.fdiv(comptime!(per_row as u32));
-            let c = cell.frem(comptime!(per_row as u32));
-            let landed = scales.apply::<E, VW>(matrix.read((r, c)), (r, c));
-            let base = (r * row_cells + c * width) as usize;
-            #[unroll]
-            for j in 0..vw {
-                landing[base + j] = landed.extract(j);
+        let cells = comptime!((read.rows * per_row) as u32);
+        let by_shuffle = scales.by_shuffle();
+        if comptime!(by_shuffle) {
+            // A scale held in the plane's lanes reaches the lane that asks by a shuffle, and a
+            // shuffle is the whole plane's or nothing: every lane takes every turn, whether or
+            // not a line is left for it. A lane past the lines reads the last one again and
+            // writes nothing.
+            #[allow(clippy::manual_div_ceil)]
+            let turns = (cells + PLANE_DIM - 1) / PLANE_DIM;
+            for turn in 0..turns {
+                let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
+                let cell = min(mine, cells - 1);
+                let r = cell.fdiv(comptime!(per_row as u32));
+                let c = cell.frem(comptime!(per_row as u32));
+                let landed = scales.apply::<E, VW>(matrix.read((r, c)), (r, c));
+                if mine < cells {
+                    let base = (r * row_cells + c * width) as usize;
+                    #[unroll]
+                    for j in 0..vw {
+                        landing[base + j] = landed.extract(j);
+                    }
+                }
+            }
+        } else {
+            for cell in range_stepped(UNIT_POS_PLANE, cells, PLANE_DIM) {
+                let r = cell.fdiv(comptime!(per_row as u32));
+                let c = cell.frem(comptime!(per_row as u32));
+                let landed = scales.apply::<E, VW>(matrix.read((r, c)), (r, c));
+                let base = (r * row_cells + c * width) as usize;
+                #[unroll]
+                for j in 0..vw {
+                    landing[base + j] = landed.extract(j);
+                }
             }
         }
         sync_plane();

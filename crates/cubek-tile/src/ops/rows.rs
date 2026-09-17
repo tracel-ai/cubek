@@ -71,7 +71,10 @@ impl<EA: Float> Tile<EA> {
                 });
                 p.rescale_rows(corr, lanes)
             }
-            TileKind::PlaneTile(_) | TileKind::TmaGmem(_) | TileKind::Procedural(_) => {
+            TileKind::PlaneTile(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Chunk(_) => {
                 panic!("rescale_rows: a memory tile or a plane-resident accumulator")
             }
         }

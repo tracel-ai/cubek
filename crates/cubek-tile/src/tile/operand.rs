@@ -222,6 +222,16 @@ pub struct ScaleLookup<S: Numeric> {
 
 #[cube]
 impl<S: Numeric> ScaleLookup<S> {
+    /// Whether a read reaches the lane that asks by a plane shuffle ([`Chunk::by_shuffle`]),
+    /// so the reader keeps its lanes converged around it.
+    pub fn by_shuffle(&self) -> comptime_type!(bool) {
+        #[comptime]
+        match &self.inner {
+            ComptimeOption::Some(inner) => inner.by_shuffle(),
+            ComptimeOption::None => comptime!(false),
+        }
+    }
+
     /// `value`, the line at `pos` of the values' matrix, under the scale covering it.
     pub fn apply<E: Numeric, V: Size>(&self, value: Vector<E, V>, pos: Coords2d) -> Vector<E, V> {
         #[comptime]
@@ -236,20 +246,11 @@ impl<S: Numeric> ScaleLookup<S> {
                     comptime!(self.axes),
                     comptime!(self.vector_size),
                 );
-                let sw = inner.vector_size();
-                let size!(SW) = sw;
-                let (at, field) = scale_coords(
+                let scale = inner.scale_at(&own_coords(
                     &coords,
                     comptime!(self.values.clone()),
                     comptime!(inner.space.clone()),
-                    sw,
-                );
-                let line = inner.nd_packed::<SW>(comptime!(Guard::Checked)).read(at);
-                let scale = if comptime!(sw > 1) {
-                    line.extract_dynamic(field.fcast::<usize>())
-                } else {
-                    line.extract(0usize)
-                };
+                ));
                 value * Vector::<E, V>::cast_from(scale * self.coarser.extract(0usize))
             }
             ComptimeOption::None => value,
@@ -257,23 +258,77 @@ impl<S: Numeric> ScaleLookup<S> {
     }
 }
 
-/// Where the scale covering the value at `coords` lies: the scales' own coordinate, one entry
-/// per axis of their space, its innermost a line index; and the field of that line the value's
-/// coordinate falls in.
 #[cube]
-fn scale_coords(
+impl<S: Numeric> Tile<S> {
+    /// Whether a read of this tile reaches the lane that asks by a plane shuffle
+    /// ([`Chunk::by_shuffle`]).
+    pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
+        match &self.tile_kind {
+            TileKind::Chunk(chunk) => chunk.by_shuffle(),
+            TileKind::Gmem(_)
+            | TileKind::Smem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(false),
+        }
+    }
+
+    /// The one scale at `coords`, one entry per axis of this tile's space, through whatever
+    /// holds it: a chunk is read at the coordinate itself; a memory tile serves lines, so the
+    /// coordinate names a line and the field of it the scale sits in.
+    pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
+        match &self.tile_kind {
+            TileKind::Chunk(chunk) => chunk.read(coords),
+            TileKind::Gmem(_) | TileKind::Smem(_) => {
+                let sw = self.vector_size();
+                let size!(SW) = sw;
+                let (at, field) = line_coords(coords, sw);
+                let line = self.nd_packed::<SW>(comptime!(Guard::Checked)).read(at);
+                if comptime!(sw > 1) {
+                    line.extract_dynamic(field.fcast::<usize>())
+                } else {
+                    line.extract(0usize)
+                }
+            }
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::scale_at: a scale is read from memory or from a chunk")
+            }
+        }
+    }
+}
+
+/// The value's coordinate in the scales' own space: one entry per axis of theirs, each the
+/// value's coordinate along that axis.
+#[cube]
+fn own_coords(
     coords: &Coords<u32>,
     #[comptime] values: Space,
     #[comptime] scales: Space,
-    #[comptime] sw: usize,
-) -> (CoordsDyn, u32) {
+) -> Coords<u32> {
     let rank = comptime!(scales.rank());
+    let mut own = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..rank {
+        let axis = comptime!(scales.axis_at(p));
+        own.push(coords.at(comptime!(values.position(axis))));
+    }
+    own
+}
+
+/// `coords` as a memory tile serving `sw`-wide lines addresses them: the innermost a line
+/// index, and beside it the field of that line the coordinate falls in.
+#[cube]
+fn line_coords(coords: &Coords<u32>, #[comptime] sw: usize) -> (CoordsDyn, u32) {
+    let rank = coords.len();
     let mut pos = CoordsDyn::new();
     let mut field = 0u32.runtime();
     #[unroll]
     for p in 0..rank {
-        let axis = comptime!(scales.axis_at(p));
-        let coord = coords.at(comptime!(values.position(axis)));
+        let coord = coords.at(p);
         if comptime!(p == rank - 1 && sw > 1) {
             field = coord.frem(comptime!(sw as u32));
             pos.push(coord.fdiv(comptime!(sw as u32)));
