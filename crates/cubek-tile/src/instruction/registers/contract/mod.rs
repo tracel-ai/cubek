@@ -9,12 +9,10 @@
 
 mod base;
 mod direct;
-mod factor;
 mod gather;
 mod promoted;
 mod scale;
 mod shape;
 
 pub(crate) use base::{contracted_per_step, memory};
-pub(crate) use factor::scale_width;
 pub(crate) use scale::{Side, check_scales_omit_rather_than_divide, check_scales_ride};

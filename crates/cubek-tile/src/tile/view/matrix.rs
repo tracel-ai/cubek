@@ -306,6 +306,62 @@ pub(crate) fn batch_matrix(
     )
 }
 
+/// The logical coordinate of the value line at `(row, col)` of the `i`-th batch matrix a tile
+/// reads as: one entry per axis of the tile's space, in scalars, the line's first value. What a
+/// scale covering that line is looked up at ([`ScaleLookup`](crate::ScaleLookup)).
+#[cube]
+pub(crate) fn matrix_coords(
+    row: u32,
+    col: u32,
+    i: usize,
+    #[comptime] space: &Space,
+    #[comptime] axes: MatrixAxes,
+    #[comptime] vector_size: usize,
+) -> Coords<u32> {
+    let rank = comptime!(space.rank());
+    let mut coords = Coords::<u32>::new();
+    let batches = unravel_const(
+        comptime!(
+            (0..axes.row_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ),
+        i.fcast::<u32>(),
+    );
+    #[unroll]
+    for p in 0..batches.len() {
+        coords.push(batches.at(p));
+    }
+    let rows = unravel_const(
+        comptime!(
+            (axes.row_split..axes.col_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ),
+        row,
+    );
+    #[unroll]
+    for p in 0..rows.len() {
+        coords.push(rows.at(p));
+    }
+    // The column edge counts in lines, so its innermost digit is a line index; the value's own
+    // coordinate is that many lines in.
+    let cols = unravel_const(
+        comptime!(line_extents(space, vector_size, axes.col_split, rank)),
+        col,
+    );
+    let n = cols.len();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            coords.push(cols.at(p).fmul(comptime!(vector_size as u32)));
+        } else {
+            coords.push(cols.at(p));
+        }
+    }
+    coords
+}
+
 /// The tile's whole logical box as one `rows x cols` matrix, its axes grouped by
 /// [`MatrixAxes::whole`]. `cols` is scalar, as a fragment states it; the view serves lines, so
 /// the column edge and the innermost extent both divide by the width.

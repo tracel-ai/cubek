@@ -10,12 +10,9 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
-    std::tensor::layout::CoordsDyn,
 };
 
-use crate::instruction::registers::contract::{
-    Side, check_scales_omit_rather_than_divide, check_scales_ride, scale_width,
-};
+use crate::instruction::registers::contract::Side;
 use crate::*;
 
 #[cube]
@@ -220,7 +217,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     ///
     /// **A scale is looked up at the coordinates of the value it covers.** The walk is over the
     /// landing's lines, in the order they lie, so neighbouring lanes write neighbouring words;
-    /// each line's position in the values' space is what its scale is read at
+    /// each line's position in the values' matrix is what its scale is read at
     /// ([`ScaleLookup`]). No matrix of the scales is oriented anywhere: which of their axes is
     /// the block and which the column is answered by the coordinates, whatever order the two
     /// tensors state their axes in.
@@ -235,18 +232,13 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 panic!("mma: an operand lands from its memory window")
             }
         };
-        let levels = self.levels();
-
         let vw = values.vector_size();
         let size!(VW) = vw;
-        let sw = scale_width(&levels);
-        let size!(SW) = sw;
         let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
         let matrix = values.matrix_packed::<VW>(axes, 0usize);
-        let scales = ScaleLookup::<S, SW>::of(
-            &levels,
-            comptime!(values.space.clone()),
-            vw,
+        let scales = self.lookup(
+            axes,
+            0usize,
             comptime!(read.side),
             comptime!(read.out.clone()),
             comptime!(read.acc_axes),
@@ -262,8 +254,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         ) {
             let r = cell.fdiv(comptime!(per_row as u32));
             let c = cell.frem(comptime!(per_row as u32));
-            let coords = value_coords(r, c, comptime!(values.space.clone()), axes, vw);
-            let landed = scales.apply::<E, VW>(matrix.read((r, c)), &coords);
+            let landed = scales.apply::<E, VW>(matrix.read((r, c)), (r, c));
             let base = (r * row_cells + c * width) as usize;
             #[unroll]
             for j in 0..vw {
@@ -273,201 +264,4 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         sync_plane();
         landing
     }
-}
-
-/// The logical coordinate of the value line at `(row, col)` of a landing's matrix: one entry
-/// per axis of the values' space, in scalars, the line's first value. The batch axes above the
-/// matrix are pinned to the first, which is the one a landing holds.
-#[cube]
-fn value_coords(
-    row: u32,
-    col: u32,
-    #[comptime] space: Space,
-    #[comptime] axes: MatrixAxes,
-    #[comptime] vw: usize,
-) -> Coords<u32> {
-    let rank = comptime!(space.rank());
-    let mut coords = Coords::<u32>::new();
-    #[unroll]
-    for _batch in 0..comptime!(axes.row_split) {
-        coords.push(0u32.runtime());
-    }
-    let rows = unravel_const(
-        comptime!(
-            (axes.row_split..axes.col_split)
-                .map(|p| space.extent_at(p))
-                .collect::<Vec<_>>()
-        ),
-        row,
-    );
-    #[unroll]
-    for p in 0..rows.len() {
-        coords.push(rows.at(p));
-    }
-    // The column edge counts in lines, so its innermost digit is a line index; the value's own
-    // coordinate is that many lines in.
-    let cols = unravel_const(
-        comptime!(line_extents(&space, vw, axes.col_split, rank)),
-        col,
-    );
-    let n = cols.len();
-    #[unroll]
-    for p in 0..n {
-        if comptime!(p == n - 1) {
-            coords.push(cols.at(p).fmul(comptime!(vw as u32)));
-        } else {
-            coords.push(cols.at(p));
-        }
-    }
-    coords
-}
-
-/// The scales a landing multiplies by, read at the coordinates of the value they cover.
-///
-/// A scale is a tile in the values' space with the axes one scale holds whole omitted, so the
-/// value's own coordinate names its scale: the coordinate of every axis the scales address is
-/// the value's, and the axes they omit contribute nothing. The level nearest the values is read
-/// as the lines its binding serves, and the scale is the field of that line the coordinate
-/// falls in — a shift and a byte where the scales come four to a word. Every coarser level is
-/// read once, at the region's origin, and carried as one value: a coarser level covers the
-/// whole region, so it has no position of its own inside it.
-///
-/// Absent is a factor with no scales, and it emits nothing: its values go through as they lie.
-#[derive(CubeType)]
-struct ScaleLookup<'a, S: Numeric, W: Size> {
-    /// The level nearest the values, where the factor carries any.
-    inner: ComptimeOption<MaskedView<'a, Vector<S, W>, CoordsDyn>>,
-    /// Every coarser level, already met and carried as one value.
-    coarser: Vector<S, Const<1>>,
-    /// The values' space, which every coordinate handed in is stated over.
-    #[cube(comptime)]
-    values: Space,
-    /// The inner level's space, which the lookup is read over.
-    #[cube(comptime)]
-    scales: Option<Space>,
-}
-
-#[cube]
-impl<'a, S: Numeric, W: Size> ScaleLookup<'a, S, W> {
-    /// The lookup for a factor carrying `levels`, whose values lie in `values` and are served
-    /// `vw` wide; `side`, `out` and `acc_axes` are what the scales' statement is checked against.
-    fn of(
-        levels: &'a Sequence<Tile<S>>,
-        #[comptime] values: Space,
-        #[comptime] vw: usize,
-        #[comptime] side: Side,
-        #[comptime] out: Space,
-        #[comptime] acc_axes: MatrixAxes,
-    ) -> Self {
-        let count = levels.len();
-        let mut coarser = Vector::<S, Const<1>>::cast_from(1);
-        #[unroll]
-        for k in 1..count {
-            let above = levels.index(k);
-            let rank = comptime!(above.space.rank());
-            let above_width = above.vector_size();
-            let size!(AW) = above_width;
-            let mut origin = CoordsDyn::new();
-            #[unroll]
-            for _axis in 0..rank {
-                origin.push(0u32.runtime());
-            }
-            // Read as the word it lies in, and its own scale is the word's first field.
-            let one = above
-                .nd_packed::<AW>(comptime!(Guard::Checked))
-                .read(origin)
-                .extract(0usize);
-            coarser *= Vector::<S, Const<1>>::cast_from(one);
-        }
-        if comptime!(count > 0) {
-            let inner = levels.index(0);
-            let projection = inner.projection();
-            comptime!(check_scales_omit_rather_than_divide(&projection));
-            comptime!(check_scales_ride(side, &inner.space, &out, acc_axes));
-            // A line of values is under one scale: the axis it runs along is one the scales
-            // omit, or the line is one value.
-            let innermost = comptime!(values.axis_at(values.rank() - 1));
-            comptime!(assert!(
-                vw == 1 || !projection.addresses(innermost),
-                "mma: a landed line runs {vw} values along {innermost:?}, which its scales \
-                 address, so one line lies under several scales; serve the factor one value a \
-                 line, or omit {innermost:?} from the scales"
-            ));
-            comptime!(assert!(
-                inner.space.axes().all(|axis| values.contains(axis)),
-                "mma: the scales span {:?} where the values span {:?}; a scale is looked up at \
-                 the value's coordinates, so every axis of the scales is one of the values'",
-                inner.space.axes().collect::<Vec<_>>(),
-                values.axes().collect::<Vec<_>>()
-            ));
-            ScaleLookup::<'a, S, W> {
-                inner: ComptimeOption::new_Some(inner.nd_packed::<W>(comptime!(Guard::Checked))),
-                coarser,
-                values,
-                scales: comptime!(Some(inner.space.clone())),
-            }
-        } else {
-            ScaleLookup::<'a, S, W> {
-                inner: ComptimeOption::new_None(),
-                coarser,
-                values,
-                scales: comptime!(None),
-            }
-        }
-    }
-
-    /// `value`, the line whose first value lies at `coords`, under the scale covering it.
-    fn apply<E: Numeric, V: Size>(
-        &self,
-        value: Vector<E, V>,
-        coords: &Coords<u32>,
-    ) -> Vector<E, V> {
-        #[comptime]
-        match &self.inner {
-            ComptimeOption::Some(view) => {
-                let sw = W::value();
-                let (pos, field) = scale_coords(
-                    coords,
-                    comptime!(self.values.clone()),
-                    comptime!(self.scales.clone().unwrap()),
-                    sw,
-                );
-                let line = view.read(pos);
-                let scale = if comptime!(sw > 1) {
-                    line.extract_dynamic(field.fcast::<usize>())
-                } else {
-                    line.extract(0usize)
-                };
-                value * Vector::<E, V>::cast_from(scale * self.coarser.extract(0usize))
-            }
-            ComptimeOption::None => value,
-        }
-    }
-}
-
-/// Where the scale covering the value at `coords` lies: the scales' own coordinate, one entry
-/// per axis of their space, its innermost a line index; and the field of that line the value's
-/// coordinate falls in.
-#[cube]
-fn scale_coords(
-    coords: &Coords<u32>,
-    #[comptime] values: Space,
-    #[comptime] scales: Space,
-    #[comptime] sw: usize,
-) -> (CoordsDyn, u32) {
-    let rank = comptime!(scales.rank());
-    let mut pos = CoordsDyn::new();
-    let mut field = 0u32.runtime();
-    #[unroll]
-    for p in 0..rank {
-        let axis = comptime!(scales.axis_at(p));
-        let coord = coords.at(comptime!(values.position(axis)));
-        if comptime!(p == rank - 1 && sw > 1) {
-            field = coord.frem(comptime!(sw as u32));
-            pos.push(coord.fdiv(comptime!(sw as u32)));
-        } else {
-            pos.push(coord);
-        }
-    }
-    (pos, field)
 }

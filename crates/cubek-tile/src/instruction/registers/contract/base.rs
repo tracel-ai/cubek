@@ -29,10 +29,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
 ) {
     let lhs_values = lhs.values();
     let rhs_values = rhs.values();
-    let lhs_levels = lhs.levels();
-    let rhs_levels = rhs.levels();
-    let lhs_count = lhs_levels.len();
-    let rhs_count = rhs_levels.len();
+    let lhs_count = lhs.levels().len();
+    let rhs_count = rhs.levels().len();
     let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
 
     let lhs_gathered = lhs_values.gathered();
@@ -94,10 +92,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
     } else {
         direct::contract::<E, EL, LS, ER, RS>(
             acc,
-            &lhs_values,
-            &lhs_levels,
-            &rhs_values,
-            &rhs_levels,
+            lhs,
+            rhs,
             space,
             contracted_per_step,
             config,
