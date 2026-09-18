@@ -246,11 +246,7 @@ impl<
         let lhs = TensorMapArg::new(
             Im2colArgs {
                 pixel_box_lower_corner: calculate_lower_corner(&problem.padding),
-                pixel_box_upper_corner: calculate_upper_corner(
-                    &problem.padding,
-                    &problem.kernel_size,
-                    &problem.dilation,
-                ),
+                pixel_box_upper_corner: calculate_upper_corner(problem),
                 channels_per_pixel: tile_size_k,
                 pixels_per_column: stage_m,
             },
@@ -315,13 +311,29 @@ fn calculate_lower_corner(padding: &[i32]) -> Vec<i32> {
     padding.iter().map(|padding| -*padding).collect()
 }
 
-fn calculate_upper_corner(padding: &[i32], kernel_size: &[u32], dilation: &[u32]) -> Vec<i32> {
-    padding
-        .iter()
-        .zip(kernel_size)
-        .zip(dilation)
-        .map(|((padding, kernel_size), dilation)| {
-            *padding - (*kernel_size - 1) as i32 * *dilation as i32
+/// The upper corner bounds the pixel box the im2col tensor map may be addressed in: a base
+/// coordinate is legal only while it stays under `in_shape + upper_corner`.
+pub(crate) fn calculate_upper_corner(problem: &ConvolutionProblem) -> Vec<i32> {
+    let ConvolutionProblem {
+        padding,
+        kernel_size,
+        dilation,
+        stride,
+        in_shape,
+        out_shape,
+        ..
+    } = problem;
+
+    (0..padding.len())
+        .map(|d| {
+            let symmetric = padding[d] - (kernel_size[d] - 1) as i32 * dilation[d] as i32;
+            // `problem.padding` is the padding at the *beginning* of each dimension, so it cannot bound the
+            // far edge on its own. Where padding is asymmetric, `out_shape` is derived from the leading *and*
+            // trailing padding while the corner would only see the leading half, and the last output position
+            // addresses one pixel past the box. So take whichever is larger.
+            let max_coord = (out_shape[d] as i32 - 1) * stride[d] as i32 - padding[d];
+            let required = max_coord - in_shape[d] as i32 + 1;
+            symmetric.max(required)
         })
         .collect()
 }
