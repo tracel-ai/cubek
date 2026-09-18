@@ -399,6 +399,9 @@ impl<T: Numeric> MemData<T> {
                     units: meta.units,
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
+                    // A stage moves into another stage the way the units move anything that is
+                    // already on chip: `cp.async` is global→shared only.
+                    delivery: Delivery::Copy,
                 }),
                 lanes: comptime!(Lanes {
                     share: LaneShare::Whole,

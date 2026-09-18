@@ -13,8 +13,9 @@ use cubecl::std::tensor::layout::linear::linear_view;
 use cubecl::zspace::Tiling;
 
 use crate::{
-    Axis, Boundary, ConcreteLayout, DequantAt, Geometry, Level, Packing, PhysicalAxis, Projection,
-    QuantTileArgLaunch, Space, Storage, StorageTiling, TileArgLaunch, TileSpec, validate_scheme,
+    Axis, Boundary, ConcreteLayout, Delivery, DequantAt, Geometry, Level, Packing, PhysicalAxis,
+    Projection, QuantTileArgLaunch, Space, Storage, StorageTiling, TileArgLaunch, TileSpec,
+    validate_scheme,
 };
 
 /// Typestate marker: a required [`StridedTileSource`] field has been set.
@@ -59,6 +60,8 @@ struct TileSourceData<'a> {
     /// Whether the subspace dims are bound in the order they step rather than the order the
     /// binding names them ([`stored`](StridedTileSource::stored)).
     stored: bool,
+    /// Who moves the operand into a stage ([`delivered`](StridedTileSource::delivered)).
+    delivery: Delivery,
 }
 
 /// Typestate builder for a strided tile kernel operand, started with
@@ -100,6 +103,7 @@ impl<'a> StridedTileSource<'a, Unset, Unset, Unset> {
                 levels: &[],
                 quant: None,
                 stored: false,
+                delivery: Delivery::Copy,
             },
             _state: PhantomData,
         }
@@ -196,6 +200,13 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
         self.data.packing = Packing::Packed {
             field: field.into(),
         };
+        self
+    }
+
+    /// Who moves the operand into a stage: the units storing it, or issuing asynchronous copies
+    /// of it ([`TileSpec::delivered`]). The default is the store, which every device serves.
+    pub fn delivered(mut self, delivery: Delivery) -> Self {
+        self.data.delivery = delivery;
         self
     }
 
@@ -442,6 +453,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             levels,
             quant,
             stored,
+            delivery,
         } = self.data;
         let space = space.unwrap();
 
@@ -573,7 +585,8 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             .boundaries(&boundaries)
             .units(units)
             .packing(packing)
-            .storage(storage);
+            .storage(storage)
+            .delivered(delivery);
         if let Some(quant) = &quant {
             // Quantization is not supported for gathered operands.
             assert!(

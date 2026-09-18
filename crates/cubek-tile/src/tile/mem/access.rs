@@ -1365,6 +1365,7 @@ impl<T: Numeric> MemData<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
+                delivery: self.access.delivery,
             }),
             lanes: comptime!(Lanes {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
@@ -1457,6 +1458,7 @@ impl<T: Numeric> MemData<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: self.access.storage,
+                delivery: self.access.delivery,
             }),
             lanes: self.lanes,
             split_share: comptime!(self.split_share),

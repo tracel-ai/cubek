@@ -93,12 +93,13 @@ impl<T: Numeric> Tile<T> {
         }
     }
 
-    /// Who moves this operand's bytes into a stage: the cube's units, the TMA engine, or nobody
-    /// (a cooperative evaluation). How it is stored does not enter into it, so a storage-tiled
-    /// buffer and a plain one both copy. A plane fragment has no bytes to move and panics here.
+    /// Who moves this operand's bytes into a stage: the cube's units, storing or issuing copies
+    /// as the binding stated ([`TileSpec::delivery`]), the TMA engine, or nobody (a cooperative
+    /// evaluation). How it is stored does not enter into it, so a storage-tiled buffer and a
+    /// plain one both copy. A plane fragment has no bytes to move and panics here.
     pub fn delivery(&self) -> comptime_type!(Delivery) {
         match &self.tile_kind {
-            TileKind::Gmem(_) => comptime!(Delivery::Copy),
+            TileKind::Gmem(d) => comptime!(d.access.delivery),
             TileKind::Smem(_) => comptime!(Delivery::Copy),
             TileKind::TmaGmem(_) => comptime!(Delivery::Tma),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {

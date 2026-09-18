@@ -1,5 +1,6 @@
-//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine) and
-//! its type-level twin [`DeliveryFamily`], which lets one kernel body serve every argument type.
+//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, storing or issuing
+//! copies, or the TMA engine) and its type-level twin [`DeliveryFamily`], which lets one kernel
+//! body serve every argument type.
 //!
 //! How the operand is *stored* is a separate fact, and it rides the spec's
 //! [`Storage`](crate::Storage): a storage-tiled operand states the level its tile is the tile of,
@@ -10,17 +11,25 @@ use cubecl::prelude::*;
 
 use crate::{Completion, Partitioning, Storage, StridedOperand, Tile, TileArg, TmaTileArg};
 
-/// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
-/// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
-/// via [`delivery`](crate::Tile::delivery); the staging sync comes from it.
+/// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, the same
+/// copy issued asynchronously, or a coordinate-backed materialization with no buffer at all), or
+/// the TMA engine. Read off a tile via [`delivery`](crate::Tile::delivery); the staging sync
+/// comes from it.
 ///
-/// Storage-tiledness is not a variant here. A storage tile is a fact of the data, stated by the
-/// spec's [`Storage`], and it only decides how wide a run each stage is: under `Copy` the units
-/// copy that run, under `Tma` it is the box the engine fetches.
+/// A delivery is a fact of the *binding*, not of the tile kind: a plain tensor is read by the
+/// units either way, so a spec states which ([`TileSpec::delivered`]) and a tensor map is its own
+/// argument. Storage-tiledness is not a variant here either. A storage tile is a fact of the
+/// data, stated by the spec's [`Storage`], and it only decides how wide a run each stage is:
+/// under `Copy` the units copy that run, under `Tma` it is the box the engine fetches.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Delivery {
+    /// The units load each line and store it into the stage.
     #[default]
     Copy,
+    /// The units issue each line as an asynchronous global→shared copy (`cp.async`) that lands
+    /// on its own, and publish the slot once the copies have: the same walk as `Copy` with the
+    /// load and the store out of the units' hands.
+    AsyncCopy,
     Procedural,
     Tma,
 }
@@ -39,6 +48,7 @@ impl Delivery {
     pub(crate) fn completion(&self) -> Completion {
         match self {
             Delivery::Copy | Delivery::Procedural => Completion::Stores,
+            Delivery::AsyncCopy => Completion::IssuedCopies,
             Delivery::Tma => Completion::Transaction,
         }
     }
@@ -103,11 +113,11 @@ impl TensorDelivery for Cooperative {
     }
 }
 
-/// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
-/// in-kernel by [`Tile::of`]. Serves a plain operand and a storage-tiled one alike: the spec's
-/// [`Storage`] says which, and a stated storage tile only makes each stage one contiguous run
-/// instead of a row at a time. So an activation and a weight packed to the stage ride here
-/// together.
+/// The family of every delivery the cube's units perform ([`Delivery::Copy`] and
+/// [`Delivery::AsyncCopy`]): a tensor + spec ([`TileArg`]), tiled in-kernel by [`Tile::of`].
+/// Serves a plain operand and a storage-tiled one alike, stored or issued as copies: the spec
+/// says which, and a stated storage tile only makes each stage one contiguous run instead of a
+/// row at a time. So an activation and a weight packed to the stage ride here together.
 pub struct Cooperative;
 
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
@@ -139,5 +149,30 @@ impl DeliveryFamily for Tma {
         #[comptime] space: Partitioning,
     ) -> Tile<E> {
         arg.tile(space)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Axis, TileSpec};
+
+    /// A binding is moved by the units, storing or issuing copies; the other two deliveries
+    /// arrive through arguments of their own, so a spec that named one would be a tensor read
+    /// as something it is not.
+    #[test]
+    #[should_panic(expected = "not a spec's to state")]
+    fn a_spec_states_only_what_the_units_perform() {
+        TileSpec::direct(&[Axis(0)]).delivered(Delivery::Tma);
+    }
+
+    #[test]
+    fn a_spec_is_stored_unless_it_says_otherwise() {
+        let spec = TileSpec::direct(&[Axis(0)]);
+        assert_eq!(spec.delivery, Delivery::Copy);
+        assert_eq!(
+            spec.delivered(Delivery::AsyncCopy).delivery,
+            Delivery::AsyncCopy
+        );
     }
 }
