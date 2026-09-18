@@ -13,6 +13,7 @@ use cubecl::{
     std::{FastDivmod, tensor::ViewMut},
     tensor_vector_size_parallel,
 };
+use cubek_std::launch::Accumulation;
 
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool2d_direct<E: Numeric, EA: Numeric, N: Size>(
@@ -70,7 +71,13 @@ pub(crate) fn adaptive_avg_pool2d_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype, acc_dtype],
+            // One over the sum and its tap: the read is memory bound, wider lanes measured slower.
+            live_vectors: 3,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

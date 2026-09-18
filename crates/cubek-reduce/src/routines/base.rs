@@ -41,6 +41,17 @@ pub struct ReduceProblem {
     pub address_type: AddressType,
 }
 
+impl ReduceProblem {
+    /// The element types among the vectors a fold step keeps live.
+    pub fn live_elems(&self) -> Vec<ElemType> {
+        let mut elems = vec![self.dtypes.input, self.dtypes.accumulation];
+        if self.instruction.tracks_coordinates() {
+            elems.push(u32::elem_type_native());
+        }
+        elems
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum BlueprintStrategy<R: Routine> {
     Forced(R::Blueprint, CubeDim),

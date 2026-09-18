@@ -76,9 +76,11 @@ pub enum Variant {
 }
 
 impl Variant {
-    /// Which output axis the planes within a cube enumerate. The planes
-    /// step across this axis; the other axis is held constant within the
-    /// cube and only advances via the cube grid.
+    /// Which output axis the planes within a cube prefer to enumerate. The
+    /// planes step across this axis; the other axis is held constant within
+    /// the cube and only advances via the cube grid. Blocks are independent
+    /// along both axes, so the routine takes the other axis when it has more
+    /// blocks to spread.
     pub fn planes_split(self) -> PlanesSplit {
         match self {
             // Vector accumulator is along M: independent per N column,
@@ -89,6 +91,24 @@ impl Variant {
             // so columnar work parallelizes naturally on wide outputs.
             Variant::OuterN => PlanesSplit::M,
             Variant::Dot => PlanesSplit::N,
+        }
+    }
+
+    /// The output axis a plane's block of accumulators runs along: the outer
+    /// products' vector axis, and for `Dot`, which keeps one, the axis its planes split.
+    pub fn block_axis(self, planes_split: PlanesSplit) -> PlanesSplit {
+        match self {
+            Variant::Dot => planes_split,
+            Variant::OuterN => PlanesSplit::N,
+            Variant::OuterM => PlanesSplit::M,
+        }
+    }
+
+    /// Output cells one accumulator covers along the block axis.
+    pub fn cells_per_accumulator(self, vector_size: usize) -> usize {
+        match self {
+            Variant::Dot => 1,
+            Variant::OuterN | Variant::OuterM => vector_size,
         }
     }
 
@@ -136,6 +156,7 @@ pub struct GemmConfig {
     pub(crate) num_planes: u32,
     pub(crate) variant: Variant,
     pub(crate) planes_split: PlanesSplit,
+    pub(crate) accumulators: u32,
     pub(crate) check_bounds: CheckBounds,
 }
 

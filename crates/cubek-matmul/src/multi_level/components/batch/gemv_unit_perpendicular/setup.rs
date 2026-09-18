@@ -33,6 +33,8 @@ pub struct VecMatUnitPerpendicularBlueprint {
     pub num_planes: usize,
     // Should equal plane_dim * vector_size
     pub tile_dim: usize,
+    /// Accumulators each plane keeps, side by side along `n`.
+    pub accumulators: usize,
     pub hypercube_blueprint: HypercubeBlueprint,
     pub check_bounds: CheckBounds,
 }
@@ -90,6 +92,7 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
         Ok(VecMatUnitPerpendicularConfig {
             plane_dim: device_props.hardware.plane_size_max,
             num_planes: blueprint.num_planes as u32,
+            accumulators: blueprint.accumulators as u32,
             check_bounds: blueprint.check_bounds,
         })
     }
@@ -171,6 +174,20 @@ impl BatchMatmulFamily<()> for VecMatUnitPerpendicularFamily {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Problem dimension k={:?} must be divisible by vector size ({:?})",
                 problem.k, vector_size,
+            ))));
+        }
+
+        let accumulators = blueprint.accumulators;
+        let block = blueprint.tile_dim * accumulators;
+        if accumulators == 0 || (accumulators > 1 && plane_dim > 1) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "A block of {accumulators} accumulators needs one unit per plane, got plane_dim {plane_dim}"
+            ))));
+        }
+        if accumulators > 1 && !problem.n.is_multiple_of(block) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Problem dimension n={:?} must be divisible by the block of {accumulators} accumulators ({block:?})",
+                problem.n,
             ))));
         }
 

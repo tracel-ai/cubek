@@ -28,12 +28,18 @@ impl RegisterMatmul {
         tile_size: TileSize,
         plane_dim: u32,
         swizzle_modes: SwizzleModes,
+        registers_hold_lanes: bool,
     ) -> Self {
         Self {
             tile_size,
             plane_dim,
             swizzle_modes,
-            product_type: ProductType::from_layouts(lhs_layout, rhs_layout, tile_size),
+            product_type: ProductType::from_layouts(
+                lhs_layout,
+                rhs_layout,
+                tile_size,
+                registers_hold_lanes,
+            ),
         }
     }
 }
@@ -71,7 +77,7 @@ impl TileVariant for RegisterMatmul {
     }
 
     fn expand(
-        _device_props: &DeviceProperties,
+        device_props: &DeviceProperties,
         blueprint: &BatchMatmulBlueprint,
         _dtypes: &MatmulElems,
         _vector_sizes: &MatmulVectorSizes,
@@ -82,6 +88,7 @@ impl TileVariant for RegisterMatmul {
             blueprint.tiling_scheme.tile_size,
             blueprint.plane_dim,
             blueprint.swizzle_modes,
+            device_props.hardware.vector_register_count.is_some(),
         )
     }
 

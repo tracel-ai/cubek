@@ -3,6 +3,7 @@ use cubecl::{
     ir::HardwareProperties, prelude::*, std::tensor::is_contiguous, tensor_vector_size_parallel,
     tensor_vector_size_perpendicular,
 };
+use cubek_std::launch::Accumulation;
 
 /// Calculate the number of planes in a cube.
 pub fn calculate_plane_count_per_cube(
@@ -33,13 +34,13 @@ pub fn generate_vector_size(
     input: &TensorBinding,
     output: &TensorBinding,
     axis: usize,
-    dtype: ElemType,
+    accumulation: Accumulation<'_>,
     vectorization_mode: VectorizationMode,
     strategy: &VectorizationStrategy,
 ) -> (usize, usize) {
     let vector_size_input = match vectorization_mode {
         VectorizationMode::Parallel => tensor_vector_size_parallel(
-            client.io_optimized_vector_sizes(dtype.size()),
+            accumulation.vector_sizes(client),
             &input.shape,
             &input.strides,
             axis,
@@ -90,39 +91,16 @@ pub fn generate_vector_size(
                 .filter_map(|(i, o)| (i == o).then_some(output.shape[i]))
                 .product();
 
-            match client.properties().hardware.num_cpu_cores.is_some() {
-                true => {
-                    // On CPU we benefit from bigger vector size, which increases the number of
-                    // consecutive loads from global memory on perpendicular reduce.
-                    // R::supported_vector_sizes() was always arbitrary, review this and find alternate
-                    // algorithm. For now it replicates existing behaviour.
-                    let supported_vector_sizes =
-                        client.io_optimized_vector_sizes(1).filter(|size| {
-                            *size <= max_vector_size && max_vector_size.is_multiple_of(*size)
-                        });
+            let supported_vector_sizes = accumulation
+                .vector_sizes(client)
+                .filter(|&size| size <= max_vector_size && max_vector_size.is_multiple_of(size));
 
-                    tensor_vector_size_perpendicular(
-                        supported_vector_sizes,
-                        &input.shape,
-                        &input.strides,
-                        axis,
-                    )
-                }
-                false => {
-                    let supported_vector_sizes = client
-                        .io_optimized_vector_sizes(dtype.size())
-                        .filter(|&size| {
-                            size <= max_vector_size && max_vector_size.is_multiple_of(size)
-                        });
-
-                    tensor_vector_size_perpendicular(
-                        supported_vector_sizes,
-                        &input.shape,
-                        &input.strides,
-                        axis,
-                    )
-                }
-            }
+            tensor_vector_size_perpendicular(
+                supported_vector_sizes,
+                &input.shape,
+                &input.strides,
+                axis,
+            )
         }
     };
 
@@ -146,7 +124,7 @@ pub fn generate_vector_size(
         && is_contiguous(&input.shape, &input.strides)
         && axis == input.shape.len() - 1
     {
-        let supported_vector_sizes = client.io_optimized_vector_sizes(dtype.size());
+        let supported_vector_sizes = client.io_optimized_vector_sizes(accumulation.load.size());
         let num_reduce = output.shape.iter().copied().product::<usize>();
         // The SIMD output write must stay within a single contiguous run of
         // scalars. Excluding the reduce axis bounds the run so that for

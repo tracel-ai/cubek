@@ -13,6 +13,9 @@ use crate::{
 use cubecl::{client::Client, ir::ElemType, prelude::*};
 use cubek_tile::{Geometry, KernelForm, Launcher};
 
+/// The tap the leaf reads, the weight scaling it and the accumulator cell it folds into.
+const LEAF_LIVE_VECTORS: usize = 3;
+
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
 /// Resolves the strategy against the device and the problem, then dispatches on the mode.
@@ -149,13 +152,14 @@ fn dispatch<F: SeparableFilterFamily>(
     let launch =
         Launcher::partitioned(client, plan.partitioning(), plan.grid(), KernelForm::Static);
 
-    let vector_size = launch.vector_size(
+    let vector_size = launch.register_vector_size(
         CHANNEL,
         &[
             (&Geometry::from(&input), &[CHANNEL]),
             (&Geometry::from(&output), &[CHANNEL]),
         ],
         dtype.size(),
+        LEAF_LIVE_VECTORS,
     );
 
     let properties = F::mode_properties();

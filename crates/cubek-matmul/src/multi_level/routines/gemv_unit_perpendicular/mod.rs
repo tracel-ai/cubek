@@ -24,7 +24,7 @@ use crate::{
             stage::NumStages,
         },
         definition::CubeMappingLaunch,
-        num_concurrent_planes,
+        num_concurrent_planes, outer_product_accumulators,
     },
     routine::{BlueprintStrategy, DeviceSettings, Routine},
 };
@@ -127,7 +127,16 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
                 let max_planes_for_swizzle = problem.k.div_ceil(tile_dim);
                 let num_planes = max(1, min(target_num_planes, max_planes_for_swizzle));
 
-                let working_planes = problem.n.div_ceil(tile_dim);
+                let accumulators = match device_settings.plane_dim {
+                    1 => outer_product_accumulators(
+                        &properties.hardware,
+                        &dtypes,
+                        device_settings.vector_sizes.rhs,
+                        problem.n,
+                    ),
+                    _ => 1,
+                };
+                let working_planes = problem.n.div_ceil(tile_dim * accumulators);
                 let aligned_n = problem.n.is_multiple_of(tile_dim);
                 let aligned_k = problem.k.is_multiple_of(tile_dim);
                 let check_bounds = if !aligned_n || !aligned_k {
@@ -147,6 +156,7 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
                     dtypes: dtypes.clone(),
                     num_planes,
                     tile_dim,
+                    accumulators,
                     hypercube_blueprint: HypercubeBlueprint::builder()
                         .cube_count_strategy(CubeCountStrategy::Flattened)
                         .global_order(GlobalOrder::RowMajor)
@@ -181,7 +191,9 @@ impl BatchMatmulRoutine<()> for GemvUnitPerpendicularRoutine {
         )?
         .to_cube_dim(device_settings.plane_dim)?;
 
-        let working_planes = problem.n.div_ceil(blueprint.tile_dim);
+        let working_planes = problem
+            .n
+            .div_ceil(blueprint.tile_dim * blueprint.accumulators);
         let working_cubes = working_planes.div_ceil(blueprint.num_planes);
 
         let cube_count_plan = CubeCountPlan::from_blueprint(
