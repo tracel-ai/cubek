@@ -33,7 +33,7 @@ impl<'a> SlotOperand<'a> {
 pub(crate) struct SlotPlan {
     operands: Vec<OperandPlan>,
     sync: Sync,
-    collective_full: bool,
+    publishers: Publishers,
     fillers: usize,
 }
 
@@ -42,12 +42,15 @@ impl SlotPlan {
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
         let fillers = level.fillers();
         let sync = Sync::for_deliveries(&deliveries, fillers);
-        let collective_full = Sync::collective_full(&deliveries);
+        let publishers = Publishers::of(&deliveries, fillers);
         // A cooperative fill deals its elements out over every unit position of the cube, so
         // planes that are not there leave their share of the stage unwritten, and quietly: the
         // slot publishes on schedule and the wrong bytes are read.
+        let stores = deliveries
+            .iter()
+            .any(|delivery| delivery.completion() == Completion::Stores);
         assert!(
-            fillers == 0 || !collective_full,
+            fillers == 0 || !stores,
             "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
              a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
         );
@@ -74,7 +77,7 @@ impl SlotPlan {
         SlotPlan {
             operands: planned_operands,
             sync,
-            collective_full,
+            publishers,
             fillers,
         }
     }
@@ -98,8 +101,8 @@ impl SlotPlan {
         self.sync
     }
 
-    pub(crate) fn collective_full(&self) -> bool {
-        self.collective_full
+    pub(crate) fn publishers(&self) -> Publishers {
+        self.publishers
     }
 
     /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
@@ -179,7 +182,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
                 (staged_lhs, staged_rhs),
                 Pipeline::new(
                     comptime!(plan.sync()),
-                    comptime!(plan.collective_full()),
+                    comptime!(plan.publishers()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(SmallVec::from_slice(&[
@@ -385,7 +388,7 @@ impl<T: Numeric> Ring<Tile<T>> {
                 staged_input,
                 Pipeline::new(
                     comptime!(plan.sync()),
-                    comptime!(plan.collective_full()),
+                    comptime!(plan.publishers()),
                     comptime!(plan.fillers()),
                 ),
                 comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),

@@ -8,7 +8,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{Partitioning, Storage, StridedOperand, Sync, Tile, TileArg, TmaTileArg};
+use crate::{Completion, Partitioning, Storage, StridedOperand, Tile, TileArg, TmaTileArg};
 
 /// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
 /// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
@@ -35,11 +35,11 @@ impl Delivery {
         matches!(self, Delivery::Tma)
     }
 
-    /// The synchronization required to materialize this source in a staging slot.
-    pub(crate) fn rendezvous(&self) -> Sync {
+    /// When a fill of this delivery is complete, and so what publishes it in a staging slot.
+    pub(crate) fn completion(&self) -> Completion {
         match self {
-            Delivery::Copy | Delivery::Procedural => Sync::Cube,
-            Delivery::Tma => Sync::Barrier,
+            Delivery::Copy | Delivery::Procedural => Completion::Stores,
+            Delivery::Tma => Completion::Transaction,
         }
     }
 
@@ -72,8 +72,8 @@ impl Delivery {
 /// [`TileSpec`] ([`TileArg`] strided or storage-tiled, [`TmaTileArg`] tensor map), so a tensor
 /// can never pair with another operand's spec; only the kernel's one [`Space`] crosses the
 /// seam. A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled or TMA
-/// unchanged; the launch entry picks the family. One family covers both operands, since
-/// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
+/// unchanged; the launch entry picks the family. One family covers both operands, since a
+/// staging slot rendezvouses both of them the same way ([`Sync`](crate::Sync)).
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.

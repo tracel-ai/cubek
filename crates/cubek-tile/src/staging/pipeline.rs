@@ -1,12 +1,25 @@
 //! The [`Pipeline`]: the fill-vs-read rendezvous for one staging slot, and the [`Sync`] strategy
-//! deduced from the operands' delivery. The [`Barrier`](Sync::Barrier) strategy mirrors
-//! cubek-matmul's `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are
-//! degenerate cases.
+//! deduced from when the operands' fills complete ([`Completion`]). The
+//! [`Barrier`](Sync::Barrier) strategy mirrors cubek-matmul's `specialized/matmul.rs`;
+//! [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
 
 use crate::*;
+
+/// When a fill of one delivery is complete, and so what publishes it: the one fact a slot asks
+/// of a delivery, from which its rendezvous ([`Sync`]) and its publishers ([`Publishers`]) follow.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Completion {
+    /// The unit's own stores: ordered by the rendezvous (`sync_cube`, or the unit's `arrive`).
+    Stores,
+    /// Copies the unit issued that land on their own: it commits them to the barrier, then
+    /// arrives.
+    IssuedCopies,
+    /// One bulk transaction whose bytes one issuer declares: that issuer's `arrive` alone.
+    Transaction,
+}
 
 /// How a slot rendezvouses its fill against its read; fixed comptime at construction
 /// from the operands' delivery.
@@ -17,43 +30,62 @@ pub enum Sync {
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
     /// in `write` and covers both this slot's fill→read and the sibling's read→refill.
     Cube,
-    /// Hardware async bulk copy (TMA): `full`/`empty` mbarrier pair with a `phase` parity, producer
-    /// and consumer decoupled so the copy overlaps compute.
+    /// Asynchronous fills (a bulk copy, or copies the units issue): `full`/`empty` mbarrier pair
+    /// with a `phase` parity, producer and consumer decoupled so the fill overlaps compute.
     Barrier,
 }
 
 impl Sync {
     /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill.
-    /// `Barrier` dominates `Cube` because TMA transaction completion must be included in the
-    /// slot's publication, and a filled slot starts there: `Cube` rendezvouses on `sync_cube`,
+    /// A `sync_cube` orders stores and nothing else, so a fill that completes any other way
+    /// needs the barrier; and a filled slot starts there: `Cube` rendezvouses on `sync_cube`,
     /// which needs every unit of the cube, and the two roles never meet there.
     pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Sync {
         assert!(
             !deliveries.is_empty(),
             "Staging: a slot must have at least one delivery"
         );
-        let floor = if fillers > 0 {
-            Sync::Barrier
-        } else {
-            Sync::Cube
-        };
-        deliveries.iter().fold(floor, |sync, delivery| {
-            match (sync, delivery.rendezvous()) {
-                (Sync::Barrier, _) | (_, Sync::Barrier) => Sync::Barrier,
-                (Sync::Cube, Sync::Cube) => Sync::Cube,
-                (Sync::Solo, _) | (_, Sync::Solo) => {
-                    unreachable!("source rendezvous is never Solo")
-                }
-            }
-        })
-    }
-
-    /// Whether a barrier slot needs every unit to publish its writes. Pure TMA has one hardware
-    /// issuer; a mixed slot also contains a synchronous cooperative fill.
-    pub(crate) fn collective_full(deliveries: &[Delivery]) -> bool {
-        deliveries
+        let asynchronous = deliveries
             .iter()
-            .any(|delivery| delivery.rendezvous() == Sync::Cube)
+            .any(|delivery| delivery.completion() != Completion::Stores);
+        match fillers > 0 || asynchronous {
+            true => Sync::Barrier,
+            false => Sync::Cube,
+        }
+    }
+}
+
+/// Which units arrive on a barrier slot's `full` to publish its fill ([`Pipeline::producers`]).
+///
+/// Every unit that wrote or issued into the slot has to be counted, and a unit that only issued
+/// a bulk transaction has nothing of its own to publish: so a slot no plane was set aside for is
+/// published by the one unit that issued its bulk copy, and by every unit as soon as any operand
+/// completes by the units' own stores or issued copies. A slot filled by planes of their own
+/// needs every one of their units whatever delivered it: nothing else holds a filling plane in
+/// step with the elected one, and a plane that falls a lap behind waits on a parity that has
+/// already gone by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Publishers {
+    /// Every unit of the cube.
+    Every,
+    /// Every unit of the planes set aside to fill.
+    Fillers,
+    /// The one elected issuer alone.
+    Elected,
+}
+
+impl Publishers {
+    pub(crate) fn of(deliveries: &[Delivery], fillers: usize) -> Publishers {
+        let units_own = deliveries
+            .iter()
+            .any(|delivery| delivery.completion() != Completion::Transaction);
+        if fillers > 0 {
+            Publishers::Fillers
+        } else if units_own {
+            Publishers::Every
+        } else {
+            Publishers::Elected
+        }
     }
 }
 
@@ -83,7 +115,7 @@ pub enum Pipeline {
         /// read and freed the slot.
         empty: Shared<Barrier>,
         /// Whether `full` counts every producer's arrival or only the elected issuer's
-        /// ([`Pipeline::producers`]).
+        /// ([`Publishers`]).
         all_publish: bool,
         /// The one unit that issues this slot's bulk copies and declares their bytes
         /// ([`Pipeline::elected`]).
@@ -107,41 +139,35 @@ impl Pipeline {
     /// present.
     pub(crate) fn new(
         #[comptime] sync: Sync,
-        #[comptime] collective_full: bool,
+        #[comptime] publishers: Publishers,
         #[comptime] fillers: usize,
     ) -> Pipeline {
         match sync {
             Sync::Solo => Pipeline::new_Solo(),
             Sync::Cube => Pipeline::new_Cube(),
             Sync::Barrier => {
-                let full =
-                    Barrier::shared(Pipeline::producers(collective_full, fillers), UNIT_POS == 0);
+                let full = Barrier::shared(Pipeline::producers(publishers, fillers), UNIT_POS == 0);
                 let empty = Barrier::shared(Pipeline::consumers(fillers), UNIT_POS == 0);
                 sync_async_proxy_shared();
                 sync_cube();
                 let elected = Pipeline::elected(fillers);
-                let all_publish = comptime!(collective_full || fillers > 0);
+                let all_publish = comptime!(publishers != Publishers::Elected);
                 Pipeline::new_Barrier(full, empty, all_publish, elected, 0, 0)
             }
         }
     }
 
-    /// Units that arrive on `full`. A bulk copy into a slot no plane was set aside for is
-    /// published by the one unit that issued it. A slot that also holds a cooperative fill needs
-    /// every unit that wrote it. And a slot filled by planes of their own needs every one of
-    /// their units: nothing else holds a filling plane in step with the elected one, and a plane
-    /// that falls a lap behind waits on a parity that has already gone by.
+    /// Units that arrive on `full`: the count [`Publishers`] names, over a walk `fillers` planes
+    /// fill.
     ///
     /// The elected unit is one of the arrivals, and it declares the transaction bytes before it
     /// arrives, so the phase cannot complete on the others' arrivals with the bytes still to
     /// come.
-    pub fn producers(#[comptime] collective_full: bool, #[comptime] fillers: usize) -> u32 {
-        if comptime!(collective_full) {
-            CUBE_DIM
-        } else if comptime!(fillers > 0) {
-            comptime!(fillers as u32) * CUBE_DIM_X
-        } else {
-            1u32.runtime()
+    pub(crate) fn producers(#[comptime] publishers: Publishers, #[comptime] fillers: usize) -> u32 {
+        match publishers {
+            Publishers::Every => CUBE_DIM,
+            Publishers::Fillers => comptime!(fillers as u32) * CUBE_DIM_X,
+            Publishers::Elected => 1u32.runtime(),
         }
     }
 
@@ -213,15 +239,22 @@ mod tests {
             Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
             Sync::Barrier
         );
-        assert!(Sync::collective_full(&[
-            Delivery::Procedural,
-            Delivery::Tma
-        ]));
+        assert_eq!(
+            Publishers::of(&[Delivery::Procedural, Delivery::Tma], 0),
+            Publishers::Every
+        );
     }
 
     #[test]
     fn pure_tma_keeps_its_single_producer_arrival() {
-        assert!(!Sync::collective_full(&[Delivery::Tma]));
+        assert_eq!(Publishers::of(&[Delivery::Tma], 0), Publishers::Elected);
+    }
+
+    /// A slot filled by planes of their own is published by every one of their units, whatever
+    /// delivered it: the count is what holds a lagging filling plane in step.
+    #[test]
+    fn a_filled_slot_is_published_by_every_filling_unit() {
+        assert_eq!(Publishers::of(&[Delivery::Tma], 2), Publishers::Fillers);
     }
 
     /// `sync_cube` needs every unit of the cube, and a walk that sets planes aside to fill has

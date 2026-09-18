@@ -110,7 +110,7 @@ impl<T: CubeType> Staging<T> {
 
     /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
     /// declared by [`Pipeline::fill`] land. Which units arrive is the slot's to say
-    /// ([`Pipeline::producers`]).
+    /// ([`Publishers`]).
     pub(crate) fn release_write(&mut self) {
         match &mut self.pipeline {
             Pipeline::Barrier {
