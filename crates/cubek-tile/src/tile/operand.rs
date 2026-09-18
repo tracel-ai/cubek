@@ -230,7 +230,7 @@ pub struct ScaleLookup<S: Numeric> {
 
 #[cube]
 impl<S: Numeric> ScaleLookup<S> {
-    /// Whether a read reaches the lane that asks by a plane shuffle ([`PlaneLines::by_shuffle`]),
+    /// Whether a read reaches the lane that asks by a plane shuffle ([`Tile::by_shuffle`]),
     /// so the reader keeps its lanes converged around it.
     pub fn by_shuffle(&self) -> comptime_type!(bool) {
         #[comptime]
@@ -278,11 +278,12 @@ impl<S: Numeric> ScaleLookup<S> {
 
 #[cube]
 impl<S: Numeric> Tile<S> {
-    /// Whether a read of this tile reaches the lane that asks by a plane shuffle
-    /// ([`PlaneLines::by_shuffle`]).
+    /// Whether a read of this tile reaches the lane that asks by a plane shuffle, which the
+    /// whole plane takes part in: a reader must keep its lanes converged around it. True of the
+    /// plane's own lanes ([`Lanes`]) and of nothing else.
     pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
-            TileKind::PlaneLines(lines) => lines.by_shuffle(),
+            TileKind::Lanes(_) => comptime!(true),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -293,15 +294,15 @@ impl<S: Numeric> Tile<S> {
     }
 
     /// The one scale at `coords`, one entry per axis of this tile's space, through whatever
-    /// holds it: a chunk is read at the coordinate itself; a memory tile serves lines, so the
-    /// coordinate names a line and the field of it the scale sits in.
+    /// holds it: the plane's lanes are read at the coordinate itself; a memory tile serves
+    /// lines, so the coordinate names a line and the field of it the scale sits in.
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
         match &self.tile_kind {
-            TileKind::PlaneLines(lines) => lines.read(coords),
+            TileKind::Lanes(lines) => lines.read(coords),
             TileKind::Gmem(_) | TileKind::Smem(_) => {
                 let sw = self.vector_size();
                 let size!(SW) = sw;
-                let (at, field) = line_coords(coords, sw);
+                let (at, field) = line_and_field(coords, sw);
                 let line = self.nd_packed::<SW>(comptime!(Guard::Checked)).read(at);
                 if comptime!(sw > 1) {
                     line.extract_dynamic(field.fcast::<usize>())
@@ -313,7 +314,7 @@ impl<S: Numeric> Tile<S> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_) => {
-                panic!("Tile::scale_at: a scale is read from memory or from a chunk")
+                panic!("Tile::scale_at: a scale is read from memory or from the plane's lanes")
             }
         }
     }
@@ -337,19 +338,19 @@ fn own_coords(
     own
 }
 
-/// `coords` as a memory tile serving `sw`-wide lines addresses them: the innermost a line
-/// index, and beside it the field of that line the coordinate falls in.
+/// `coords` as a tile serving `width`-wide lines addresses them: the line that holds the value,
+/// and the field of that line the value sits in.
 #[cube]
-fn line_coords(coords: &Coords<u32>, #[comptime] sw: usize) -> (CoordsDyn, u32) {
+fn line_and_field(coords: &Coords<u32>, #[comptime] width: usize) -> (CoordsDyn, u32) {
     let rank = coords.len();
     let mut pos = CoordsDyn::new();
     let mut field = 0u32.runtime();
     #[unroll]
     for p in 0..rank {
         let coord = coords.at(p);
-        if comptime!(p == rank - 1 && sw > 1) {
-            field = coord.frem(comptime!(sw as u32));
-            pos.push(coord.fdiv(comptime!(sw as u32)));
+        if comptime!(p == rank - 1 && width > 1) {
+            field = coord.frem(comptime!(width as u32));
+            pos.push(coord.fdiv(comptime!(width as u32)));
         } else {
             pos.push(coord);
         }
@@ -382,15 +383,15 @@ pub trait MaybeTile: CubeType {
     /// This level at `region`, descending it as [`Tile::at`] descends a factor.
     fn at(&self, region: &Region) -> ComptimeOption<Tile<Self::E>>;
 
-    /// This level as the steps under one region of `chunk` read it: a stage the plane holds,
-    /// refilled once a chunk with [`copy_from`](MaybeTile::copy_from). Where `chunk` names no
-    /// level the steps read the level where it lies, and this is that level.
+    /// This level as the steps under one region of `level` read it: a stage refilled once a
+    /// region with [`copy_from`](MaybeTile::copy_from). Where `level` names none the steps read
+    /// the level where it lies, and this is that level.
     ///
     /// A level a scheme never bound stages nothing and stays absent, so a kernel stages its
     /// scales without asking whether it has any.
     fn staged(
         &self,
-        #[comptime] chunk: Option<Level>,
+        #[comptime] level: Option<Level>,
         #[comptime] storage: StageStorage,
     ) -> ComptimeOption<Tile<Self::E>>;
 
@@ -415,18 +416,18 @@ impl<E: Numeric> MaybeTile for ComptimeOption<Tile<E>> {
 
     fn staged(
         &self,
-        #[comptime] chunk: Option<Level>,
+        #[comptime] level: Option<Level>,
         #[comptime] storage: StageStorage,
     ) -> ComptimeOption<Tile<E>> {
-        match comptime!(chunk) {
+        match comptime!(level) {
             None => self.clone(),
-            Some(chunk) =>
+            Some(level) =>
             {
                 #[comptime]
                 match self {
-                    ComptimeOption::Some(level) => ComptimeOption::new_Some(MemData::<E>::stage(
-                        level,
-                        comptime!(chunk.clone()),
+                    ComptimeOption::Some(scales) => ComptimeOption::new_Some(MemData::<E>::stage(
+                        scales,
+                        comptime!(level.clone()),
                         comptime!(storage.clone()),
                         comptime!(None),
                     )),

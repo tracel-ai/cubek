@@ -42,8 +42,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
-                panic!("Tile::view: a procedural tile has no memory view")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::view: a procedural tile and the plane's lanes have no memory view")
             }
         }
     }
@@ -60,8 +60,8 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view_mut: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
-                panic!("Tile::view_mut: a procedural tile is not writable")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::view_mut: a procedural tile and the plane's lanes are not writable")
             }
         }
     }
@@ -885,7 +885,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a
-    /// matrix reader takes as its rows ([`Space::matrix_pair`]), which is the physical one on
+    /// matrix reader takes as its rows ([`MatrixAxes::edges`]), which is the physical one on
     /// a direct store — one logical axis a physical dim, what a dense stage is. Any other store
     /// keeps its own row: a storage-tiled one its tile's, a split one the dim above the one
     /// its trailing axes fold into.
@@ -1099,7 +1099,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The words a packed store holds, as they lie, over the tile's whole logical box: what a
-    /// chunk loads a lane's line from, decoded later at the read.
+    /// lane loads its line from, decoded later at the read.
     pub(crate) fn nd_words<WP: Size>(
         &self,
         layout: AxisProjection,
@@ -1403,7 +1403,7 @@ impl<T: Numeric> MemData<T> {
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
-            lanes: comptime!(Lanes {
+            lanes: comptime!(LaneRoles {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
                 work: join_lane_work(self.lanes.work, step.level.rides_lanes()),
             }),

@@ -74,14 +74,11 @@ impl<T: Numeric> MemData<T> {
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
         match comptime!(storage.clone()) {
-            // A chunk is not memory: the plane holds it, at the depth one region of `level`
-            // sits, so the regions below the level window it as they window the operand.
-            StageStorage::PlaneLines { broadcast } => Tile::<T> {
-                tile_kind: TileKind::new_PlaneLines(PlaneLines::<T>::new(
-                    operand,
-                    comptime!(level.clone()),
-                    broadcast,
-                )),
+            // The lanes are not memory: the plane holds them, at the depth one region of
+            // `level` sits, so the regions below the level window them as they window the
+            // operand.
+            StageStorage::Lanes => Tile::<T> {
+                tile_kind: TileKind::new_Lanes(Lanes::<T>::new(operand, comptime!(level.clone()))),
                 space: comptime!(level.child(&operand.space)),
                 depth: comptime!(operand.depth + 1),
                 levels: comptime!(operand.levels.clone()),
@@ -213,8 +210,10 @@ impl<T: Numeric> MemData<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_stored: a fragment is not a stage source")
             }
-            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
-                panic!("MemData::smem_stored: a procedural tile is not a stage source")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!(
+                    "MemData::smem_stored: a procedural tile and the plane's lanes are not a stage source"
+                )
             }
         }
     }
@@ -461,7 +460,7 @@ impl<T: Numeric> MemData<T> {
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
                 }),
-                lanes: comptime!(Lanes {
+                lanes: comptime!(LaneRoles {
                     share: LaneShare::Whole,
                     work: LaneWork::Repeated,
                 }),
@@ -812,8 +811,8 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
-            StageStorage::PlaneLines { .. } => {
-                panic!("StageStorage::PlaneLines: a chunk is not shared memory")
+            StageStorage::Lanes => {
+                panic!("StageStorage::Lanes: the plane's lanes are not shared memory")
             }
             StageStorage::Tiled { block } => {
                 let nested = Space::new(

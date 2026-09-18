@@ -4,7 +4,7 @@
 //! it read the same region.
 
 use super::{Level, Partitioning, Space};
-use crate::{Axis, Coords, Fold, FoldExpand, Walk};
+use crate::{Axis, Coords, Fold, FoldExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
 /// One level's cut of one space: the tile coordinates a loop over `level` handed out, and the
@@ -137,16 +137,16 @@ impl Region {
         c1: usize,
     ) -> Region {
         let rank = comptime!(space.rank());
-        let (p0, p1) = comptime!(space.matrix_pair());
+        let edges = comptime!(MatrixAxes::edges(&space));
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
             // `fcast`, not `as`: a comptime coordinate has to stay a constant or it could no
             // longer select a fragment. `runtime` on the `0` moves the literal into the expand
             // domain and keeps it constant too.
-            let c = if comptime!(p == p0) {
+            let c = if comptime!(p == edges.row_split) {
                 c0.fcast::<u32>()
-            } else if comptime!(p == p1) {
+            } else if comptime!(p == edges.col_split) {
                 c1.fcast::<u32>()
             } else {
                 0u32.runtime()

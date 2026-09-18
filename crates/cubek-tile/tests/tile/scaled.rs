@@ -1871,7 +1871,6 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[comptime] instruction: Instruction,
     #[comptime] chunks: Level,
-    #[comptime] broadcast: bool,
     #[comptime] cells: Option<Level>,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
@@ -1896,7 +1895,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::PlaneLines { broadcast }),
+                comptime!(StageStorage::Lanes),
                 comptime!(None),
             );
             let mut sum = c_plane.accumulator::<E, E, E>(
@@ -2188,7 +2187,7 @@ enum Arm {
 /// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane
 /// holds one fragment, eight rows by half a tile's columns, and walks a chunk a fragment's
 /// depth at a time.
-fn check_chunked(arm: Arm, scales: TileScales, broadcast: bool) {
+fn check_chunked(arm: Arm, scales: TileScales) {
     let (rows, n_tiles, chunk, chunks) = (8, 2, 32, 2);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
@@ -2249,43 +2248,30 @@ fn check_chunked(arm: Arm, scales: TileScales, broadcast: bool) {
         launcher.partitioning_arg(),
         instruction,
         chunks_level,
-        broadcast,
         cells,
         [dtype, dtype, stored],
     );
-    w.check(
-        &client,
-        c,
-        &format!("{arm:?} {scales:?} broadcast {broadcast}"),
-    );
+    w.check(&client, c, &format!("{arm:?} {scales:?}"));
 }
 
 #[test]
-fn a_plane_holds_its_scales_for_a_chunk() {
-    check_chunked(Arm::Registers, TileScales::F32, true);
+fn a_plane_holds_its_scales_in_its_lanes() {
+    check_chunked(Arm::Registers, TileScales::F32);
 }
 
 #[test]
-fn a_plane_holds_its_byte_scales_for_a_chunk() {
-    check_chunked(Arm::Registers, TileScales::Ue4m3, true);
-}
-
-#[test]
-fn a_plane_lands_a_chunk_of_scales_in_its_window() {
-    check_chunked(Arm::Registers, TileScales::F32, false);
-    check_chunked(Arm::Registers, TileScales::Ue4m3, false);
+fn a_plane_holds_its_byte_scales_in_its_lanes() {
+    check_chunked(Arm::Registers, TileScales::Ue4m3);
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores() {
-    check_chunked(Arm::Landing, TileScales::F32, true);
-    check_chunked(Arm::Landing, TileScales::F32, false);
+    check_chunked(Arm::Landing, TileScales::F32);
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
-    check_chunked(Arm::Landing, TileScales::Ue4m3, true);
-    check_chunked(Arm::Landing, TileScales::Ue4m3, false);
+    check_chunked(Arm::Landing, TileScales::Ue4m3);
 }
 
 /// `c = a · (b ⊗ s)` over a weight stored in tile order, walked as the compute-bound body walks
@@ -2304,7 +2290,6 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[comptime] chunks: Level,
     #[comptime] grid: Level,
-    #[comptime] broadcast: bool,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     let a = a.tile(comptime!(space.clone())).with_landing();
@@ -2325,7 +2310,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::PlaneLines { broadcast }),
+                comptime!(StageStorage::Lanes),
                 comptime!(None),
             );
             let mut sum = c_plane.cmma_accumulator::<E, E>(
@@ -2366,7 +2351,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
 /// **A tile-ordered weight lands on the tensor cores under a partition.** Sixteen rows: a plane
 /// holds two fragments of rows by two of columns and walks the contraction two blocks a step,
 /// two instructions a block, landing every step's window once.
-fn check_partitioned(scales: TileScales, broadcast: bool) {
+fn check_partitioned(scales: TileScales) {
     let (rows, n_tiles, chunk, chunks, fragment) = (16, 2, 32, 2, 8);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
@@ -2411,24 +2396,17 @@ fn check_partitioned(scales: TileScales, broadcast: bool) {
         launcher.partitioning_arg(),
         chunks_level,
         grid,
-        broadcast,
         [dtype, dtype, stored],
     );
-    w.check(
-        &client,
-        c,
-        &format!("partition {scales:?} broadcast {broadcast}"),
-    );
+    w.check(&client, c, &format!("partition {scales:?}"));
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition() {
-    check_partitioned(TileScales::F32, true);
-    check_partitioned(TileScales::F32, false);
+    check_partitioned(TileScales::F32);
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition_with_byte_scales() {
-    check_partitioned(TileScales::Ue4m3, true);
-    check_partitioned(TileScales::Ue4m3, false);
+    check_partitioned(TileScales::Ue4m3);
 }

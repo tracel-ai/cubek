@@ -47,7 +47,7 @@ pub struct MemData<T: Numeric> {
     /// What the plane's lanes are to these cells. Both halves are stamped across
     /// [`at`](Tile::at)s, since the level that spreads an axis is only known on the way down.
     #[cube(comptime)]
-    pub(crate) lanes: Lanes,
+    pub(crate) lanes: LaneRoles,
     /// What one instance holds of these cells, stamped across [`at`](Tile::at)s like
     /// [`lanes`](Self::lanes): each level's whole space still has the axis this operand's
     /// projection dropped, which is what tells a split from a cut whose edge is the whole axis.

@@ -416,7 +416,7 @@ impl<T: Numeric> Tile<T> {
                     units: spec.units,
                     storage: spec.storage,
                 }),
-                lanes: comptime!(Lanes {
+                lanes: comptime!(LaneRoles {
                     share: LaneShare::Whole,
                     work: lane_work,
                 }),

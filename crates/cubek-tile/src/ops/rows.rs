@@ -74,7 +74,7 @@ impl<EA: Float> Tile<EA> {
             TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => {
+            | TileKind::Lanes(_) => {
                 panic!("rescale_rows: a memory tile or a plane-resident accumulator")
             }
         }

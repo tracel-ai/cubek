@@ -359,7 +359,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => {
+            | TileKind::Lanes(_) => {
                 panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
             }
         }
@@ -374,7 +374,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => comptime!(false),
+            | TileKind::Lanes(_) => comptime!(false),
         }
     }
 
@@ -409,7 +409,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => {
+            | TileKind::Lanes(_) => {
                 panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
             }
         }

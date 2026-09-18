@@ -175,7 +175,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
-                | TileKind::PlaneLines(_) => {
+                | TileKind::Lanes(_) => {
                     panic!("mma: an operand reaches a fragment from a memory window")
                 }
             }
@@ -255,7 +255,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             for turn in 0..turns {
                 let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
                 let line = min(mine, lines - 1);
-                let coords = line_coords(line, comptime!(line_extents.clone()), vw);
+                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
                 let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
                 if mine < lines {
                     let base = offset_of(&coords, comptime!(strides.clone()));
@@ -267,7 +267,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             }
         } else {
             for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
-                let coords = line_coords(line, comptime!(line_extents.clone()), vw);
+                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
                 let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
                 let base = offset_of(&coords, comptime!(strides.clone()));
                 #[unroll]
@@ -295,7 +295,7 @@ impl<E: Numeric> Tile<E> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => panic!("mma: a fragment loads from a shared window"),
+            | TileKind::Lanes(_) => panic!("mma: a fragment loads from a shared window"),
         }
     }
 }
@@ -345,7 +345,7 @@ fn dense_strides(space: &Space) -> Vec<usize> {
 /// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
 /// `vw`-wide lines: one entry per axis, the line's first value.
 #[cube]
-fn line_coords(
+fn coords_of_line(
     line: u32,
     #[comptime] line_extents: Vec<usize>,
     #[comptime] vw: usize,

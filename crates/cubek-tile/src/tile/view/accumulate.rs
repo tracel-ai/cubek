@@ -74,7 +74,7 @@ pub(crate) enum Drain {
 }
 
 impl Drain {
-    pub(crate) const fn of(lanes: Lanes, write: Write) -> Self {
+    pub(crate) const fn of(lanes: LaneRoles, write: Write) -> Self {
         match lanes.share {
             LaneShare::Plane => Drain::PlaneFold,
             LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
@@ -102,7 +102,7 @@ impl Drain {
 pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
-    lanes: Lanes,
+    lanes: LaneRoles,
     #[cube(comptime)]
     monoid: Monoid,
     #[cube(comptime)]
@@ -115,7 +115,7 @@ pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = 
 impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
-        #[comptime] lanes: Lanes,
+        #[comptime] lanes: LaneRoles,
         #[comptime] split_share: SplitShare,
         #[comptime] write: Write,
         #[comptime] monoid: Monoid,

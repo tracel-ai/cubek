@@ -123,7 +123,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::PlaneLines(_) => panic!(
+            | TileKind::Lanes(_) => panic!(
                 "Tile::mma_with: the software instruction contracts into a memory accumulator; a \
                  register accumulator carries its own block (Tile::block_accumulator)"
             ),
@@ -161,8 +161,8 @@ pub fn mma_leaf<E: Numeric, Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric
              runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
         ),
         TileKind::TmaGmem(_) => panic!("mma: a tma source is not an accumulator sink"),
-        TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
-            panic!("mma: a procedural tile is not an accumulator sink")
+        TileKind::Procedural(_) | TileKind::Lanes(_) => {
+            panic!("mma: a procedural tile and the plane's lanes are not an accumulator sink")
         }
     }
 }
@@ -277,7 +277,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
         | TileKind::PlanePartition(_)
         | TileKind::TmaGmem(_)
         | TileKind::Procedural(_)
-        | TileKind::PlaneLines(_) => comptime!(false),
+        | TileKind::Lanes(_) => comptime!(false),
     }
 }
 
