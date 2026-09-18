@@ -24,7 +24,7 @@ pub(crate) enum Completion {
 /// How a slot rendezvouses its fill against its read; fixed comptime at construction
 /// from the operands' delivery.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Sync {
+pub(crate) enum Sync {
     /// One unit fills and reads its own slot: no collective (single-plane / CPU).
     Solo,
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
@@ -32,7 +32,21 @@ pub enum Sync {
     Cube,
     /// Asynchronous fills (a bulk copy, or copies the units issue): `full`/`empty` mbarrier pair
     /// with a `phase` parity, producer and consumer decoupled so the fill overlaps compute.
-    Barrier,
+    ///
+    /// Who meets over the pair is the barrier's own business, and nothing the other two arms
+    /// have an answer for: the fields ride the variant rather than travelling beside it.
+    Barrier {
+        /// Which units arrive on `full` to publish the fill ([`Publishers`]).
+        publishers: Publishers,
+        /// Planes of the cube set aside to fill this slot and take no tile
+        /// ([`Level::filled_by`]). They are the reason a slot can need the barrier even when
+        /// every fill of it completes by stores.
+        fillers: usize,
+        /// Whether any of the slot's fills is landed by the bulk-copy engine. That engine writes
+        /// through the *async proxy*, so the barriers it signals have to be fenced into that
+        /// proxy before it lands anything on them ([`Pipeline::new`]).
+        transacts: bool,
+    },
 }
 
 impl Sync {
@@ -49,8 +63,28 @@ impl Sync {
             .iter()
             .any(|delivery| delivery.completion() != Completion::Stores);
         match fillers > 0 || asynchronous {
-            true => Sync::Barrier,
+            true => Sync::Barrier {
+                publishers: Publishers::of(deliveries, fillers),
+                fillers,
+                transacts: deliveries
+                    .iter()
+                    .any(|delivery| delivery.completion() == Completion::Transaction),
+            },
             false => Sync::Cube,
+        }
+    }
+
+    /// Whether this is the asynchronous rendezvous, the one an operand cannot be lifted out of.
+    pub(crate) fn is_barrier(&self) -> bool {
+        matches!(self, Sync::Barrier { .. })
+    }
+
+    /// Planes set aside to fill, which only a barrier slot has: a `sync_cube` needs every unit
+    /// of the cube, so a walk that holds planes back never rendezvouses on one.
+    pub(crate) fn fillers(&self) -> usize {
+        match self {
+            Sync::Barrier { fillers, .. } => *fillers,
+            Sync::Cube | Sync::Solo => 0,
         }
     }
 }
@@ -131,24 +165,31 @@ pub enum Pipeline {
 
 #[cube]
 impl Pipeline {
-    /// Allocate the pipeline for `sync`: the `full`/`empty` mbarrier pair, sealed by a proxy fence
-    /// before any bulk copy, for [`Barrier`](Sync::Barrier); nothing to allocate otherwise.
+    /// Allocate the pipeline for `sync`: the `full`/`empty` mbarrier pair for
+    /// [`Barrier`](Sync::Barrier); nothing to allocate otherwise.
     ///
-    /// Both barriers are armed and fenced before any plane takes a role, which is why the
-    /// election here is unit 0 and the `sync_cube` is the whole cube's: every unit is still
-    /// present.
-    pub(crate) fn new(
-        #[comptime] sync: Sync,
-        #[comptime] publishers: Publishers,
-        #[comptime] fillers: usize,
-    ) -> Pipeline {
+    /// A slot the bulk-copy engine lands ([`transacts`](Sync::Barrier::transacts)) is fenced into
+    /// the async proxy the engine writes through, before it is asked to land anything on these
+    /// barriers. A copy the units issue writes through the generic proxy and needs no such fence
+    /// — and the fence is Hopper's own instruction, so emitting it for a slot no engine fills is
+    /// a kernel every earlier architecture refuses to assemble.
+    ///
+    /// Both barriers are armed before any plane takes a role, which is why the election here is
+    /// unit 0 and the `sync_cube` is the whole cube's: every unit is still present.
+    pub(crate) fn new(#[comptime] sync: Sync) -> Pipeline {
         match sync {
             Sync::Solo => Pipeline::new_Solo(),
             Sync::Cube => Pipeline::new_Cube(),
-            Sync::Barrier => {
+            Sync::Barrier {
+                publishers,
+                fillers,
+                transacts,
+            } => {
                 let full = Barrier::shared(Pipeline::producers(publishers, fillers), UNIT_POS == 0);
                 let empty = Barrier::shared(Pipeline::consumers(fillers), UNIT_POS == 0);
-                sync_async_proxy_shared();
+                if comptime!(transacts) {
+                    sync_async_proxy_shared();
+                }
                 sync_cube();
                 let elected = Pipeline::elected(fillers);
                 let all_publish = comptime!(publishers != Publishers::Elected);
@@ -194,7 +235,8 @@ impl Pipeline {
     }
 
     /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
-    /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
+    /// stages under its `full` mbarrier — the engine's bulk copy, or the units' own issued
+    /// copies, as the source's delivery says; a `Cube` slot is a plain blocking
     /// [`copy_from`](Tile::copy_from). In-place operands never reach it: they allocate no
     /// destination, so their read goes to the source instead of through a fill.
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
@@ -211,8 +253,18 @@ impl Pipeline {
                         s.stage_into(d, full);
                     }
                 }
-                // A strided source under a barrier is a plain synchronous copy.
-                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s, space),
+                (TileKind::Smem(d), TileKind::Gmem(s)) => match comptime!(s.access.delivery) {
+                    // The unit issues the lines and reads none of them back; `release_write`
+                    // commits what it issued to `full` before arriving on it.
+                    Delivery::AsyncCopy => d.fill_async(s, space),
+                    // A stored source under a barrier is a plain synchronous copy.
+                    Delivery::Copy => d.fill_from(s, space),
+                    other => {
+                        panic!("Pipeline::fill: a bound tensor is never delivered by {other:?}")
+                    }
+                },
+                // Shared memory is on chip already: nothing asynchronous moves it.
+                (TileKind::Smem(d), TileKind::Smem(s)) => d.fill_from(s, space),
                 (TileKind::Smem(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
@@ -235,10 +287,7 @@ mod tests {
 
     #[test]
     fn procedural_and_tma_share_a_barrier_pipeline() {
-        assert_eq!(
-            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
-            Sync::Barrier
-        );
+        assert!(Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0).is_barrier());
         assert_eq!(
             Publishers::of(&[Delivery::Procedural, Delivery::Tma], 0),
             Publishers::Every
@@ -261,6 +310,29 @@ mod tests {
     /// none of its slots reached by all of them.
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
-        assert_eq!(Sync::for_deliveries(&[Delivery::Copy], 1), Sync::Barrier);
+        assert!(Sync::for_deliveries(&[Delivery::Copy], 1).is_barrier());
+    }
+
+    /// The proxy fence follows the bulk copy rather than the barrier.
+    ///
+    /// The engine writes through the async proxy and the cube's own units do not, so only a slot
+    /// the engine fills has to fence its barriers into it. The fence is also the newest
+    /// architectures' own instruction, so a slot that carried one it did not need would be a
+    /// kernel every earlier one refuses to assemble — and a kernel that never assembles reads
+    /// back as whatever its output already held.
+    #[test]
+    fn only_a_bulk_transaction_fences_the_slots_barriers() {
+        let fences = |delivery| {
+            matches!(
+                Sync::for_deliveries(&[delivery, delivery], 0),
+                Sync::Barrier {
+                    transacts: true,
+                    ..
+                }
+            )
+        };
+        assert!(fences(Delivery::Tma));
+        assert!(!fences(Delivery::AsyncCopy));
+        assert!(!fences(Delivery::Copy));
     }
 }

@@ -97,15 +97,19 @@ impl<T: Numeric> MemData<T> {
                     }
                     None => source_width,
                 });
-                // A TMA-filled stage's shared buffer must be TMA-aligned (its
-                // bulk copy addresses shared memory directly); a copy-filled one
-                // needs only the element alignment `smem` gives. TMA operands
-                // are always direct (a descriptor addresses a row-major window),
-                // so the gathered arm never needs it.
+                // A stage whose fill addresses shared memory itself must be aligned for it: a
+                // TMA box to [`TMA_STAGE_ALIGNMENT`], and an asynchronous copy to the line it
+                // takes whole, which every line of the buffer then sits a whole number of from
+                // the start. A stage the units store into needs only the element alignment
+                // `smem` gives. Neither mover gathers (a descriptor addresses a row-major
+                // window, and [`fill_async`](MemData::fill_async) refuses one), so the gathered
+                // arm below never takes an alignment.
                 let delivery = operand.delivery();
-                let alignment = comptime!(match delivery.is_tma() {
-                    true => TMA_STAGE_ALIGNMENT,
-                    false => 0usize,
+                let elem = elem_type_of::<T>();
+                let alignment = comptime!(match delivery {
+                    Delivery::Tma => TMA_STAGE_ALIGNMENT,
+                    Delivery::AsyncCopy => vector_size * elem.size(),
+                    Delivery::Copy | Delivery::Procedural => 0usize,
                 });
                 if comptime!(projection.is_direct()) {
                     MemData::smem_aligned(space, vector_size, storage, units, alignment)

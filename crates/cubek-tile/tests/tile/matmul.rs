@@ -6,7 +6,7 @@
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
     features::TypeUsage,
-    ir::ElemType,
+    ir::{ElemType, OpaqueType},
     prelude::*,
     std::tensor::TensorHandle,
     zspace::shape,
@@ -41,6 +41,22 @@ pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     if !supported {
         TestOutcome::Validated(ValidationResult::Skipped(
             "device has no 8x8x8 f32 cmma (tensor-core) fragment support".to_string(),
+        ))
+        .enforce();
+    }
+    supported
+}
+
+/// Skip guard for the tests whose stages are filled by issued copies: the copy instruction, and
+/// the barrier a slot publishes those copies on. Reported rather than silently passed — a device
+/// with neither runs the stored fill instead, which proves nothing about this one.
+fn require_copy_async(client: &Client) -> bool {
+    let props = client.properties();
+    let supported =
+        props.features.copy_async && props.features.types.opaque.contains(&OpaqueType::Barrier);
+    if !supported {
+        TestOutcome::Validated(ValidationResult::Skipped(
+            "device has no asynchronous copy, or no barrier to publish one on".to_string(),
         ))
         .enforce();
     }
@@ -1701,6 +1717,20 @@ fn assert_tiled_matmul(
 /// Drives [`matmul_smem_ring`] for `C = A @ B`: the cube level over the walk it stages, through
 /// a run of boxes where `tiling` states one, both inputs staged, `depth` regions in flight.
 fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
+    check_matmul_delivered(m, n, k, tiling, depth, Delivery::Copy)
+}
+
+/// [`check_matmul`] with the two staged operands bound to be moved by `delivery`. The kernel is
+/// the same program either way: which mover fills a stage is a fact of the binding, and the
+/// slot's rendezvous follows from it.
+fn check_matmul_delivered(
+    m: usize,
+    n: usize,
+    k: usize,
+    tiling: Tiling,
+    depth: usize,
+    delivery: Delivery,
+) {
     let client = cubecl::test_device().client();
     let levels = tiling.levels();
     let tile_edge = leaf_edge(&levels, M);
@@ -1723,13 +1753,17 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
         .tile(&[tile_edge, tile_edge])
         .uniform(7, -100.0, 100.0);
 
+    // The output is never staged, so only the two the ring fills carry a delivery.
+    let staged = |input: &TileInput| {
+        TileArgLaunch::new(input.tensor_arg(1), input.spec().delivered(delivery))
+    };
     matmul_smem_ring::launch(
         &client,
         launcher.cube_count(),
         CubeDim::new_single(),
         1,
-        a.arg(),
-        b.arg(),
+        staged(&a),
+        staged(&b),
         c.arg(),
         launcher.partitioning_arg(),
         launcher.level(0),
@@ -1739,6 +1773,31 @@ fn check_matmul(m: usize, n: usize, k: usize, tiling: Tiling, depth: usize) {
         f32::elem_type_native(),
     );
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
+}
+
+/// A stage the units fill by *issuing* copies holds what a stage they fill by storing holds.
+///
+/// The bytes land without any unit reading them back, so the slot's publication is the whole of
+/// what makes them visible to the reader: a fill whose copies were not committed to the barrier
+/// before the arrival reads as whatever the stage held, which at the first region is the
+/// allocation's own garbage and at every later one the previous region's operands. Walked two
+/// regions deep, so a slot is republished while its successor is in flight.
+#[test]
+fn a_stage_filled_by_issued_copies_matmuls_as_one_filled_by_stores() {
+    let client = cubecl::test_device().client();
+    if !require_copy_async(&client) {
+        return;
+    }
+    check_matmul_delivered(
+        8,
+        8,
+        16,
+        Tiling::leaf(&[(M, 4), (N, 4), (K, 4)])
+            .walk_every(&[M, N, K])
+            .cubes(&[]),
+        2,
+        Delivery::AsyncCopy,
+    );
 }
 
 /// `mma` never takes the init from the caller: the accumulating kernel folds onto what `c`

@@ -39,6 +39,16 @@ pub enum Delivery {
 /// [`validate_tma`](Delivery::validate_tma) refuses one past it.
 pub const TMA_MAX_BOX_DIM: usize = 256;
 
+/// Bytes one asynchronous copy moves at its widest. It takes a power of two from
+/// [`ASYNC_COPY_MIN_BYTES`] up to this, and a line that is neither is refused where the fill is
+/// issued. Public so a derivation can hold an operand to the widest before it elects
+/// [`AsyncCopy`](Delivery::AsyncCopy): an operand whose addresses suit that line suits every
+/// narrower one a launch might settle on.
+pub const ASYNC_COPY_MAX_BYTES: usize = 16;
+
+/// Bytes one asynchronous copy moves at its narrowest ([`ASYNC_COPY_MAX_BYTES`]).
+pub const ASYNC_COPY_MIN_BYTES: usize = 4;
+
 impl Delivery {
     pub fn is_tma(&self) -> bool {
         matches!(self, Delivery::Tma)

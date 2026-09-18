@@ -10,6 +10,7 @@
 //! offset and count on these loops, taken from the pipeline, which already knows both numbers.
 
 use cubecl::{
+    prelude::barrier::{copy_async, copy_async_checked},
     prelude::*,
     quant::scheme::{QuantStore, QuantValue},
     std::quant::unpack_fields,
@@ -131,9 +132,11 @@ impl<T: Numeric> MemData<T> {
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     // Unpacked: one element per value, so the physical line is the served line.
                     QuantStore::Native => match comptime!(info.scheme.value) {
-                        QuantValue::Q8F | QuantValue::Q8S => {
-                            self.fill_straight::<i8, W>(src, comptime!(space.clone()))
-                        }
+                        QuantValue::Q8F | QuantValue::Q8S => self.fill_straight::<i8, W>(
+                            src,
+                            comptime!(space.clone()),
+                            comptime!(Mover::Store),
+                        ),
                         other => panic!(
                             "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
                             other
@@ -144,7 +147,11 @@ impl<T: Numeric> MemData<T> {
                     QuantStore::PackedU32(_) => {
                         let size!(WP) =
                             comptime!(self.store.vector_size / info.scheme.num_quants());
-                        self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
+                        self.fill_straight::<u32, WP>(
+                            src,
+                            comptime!(space.clone()),
+                            comptime!(Mover::Store),
+                        );
                     }
                     other => panic!(
                         "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
@@ -178,7 +185,7 @@ impl<T: Numeric> MemData<T> {
                     src.store.vector_size
                 ));
             }
-            self.fill_straight::<T, W>(src, comptime!(space.clone()));
+            self.fill_straight::<T, W>(src, comptime!(space.clone()), comptime!(Mover::Store));
         } else {
             // The general path reads the source as a flat run of its *window* and writes the
             // destination as a flat run of its own, which pairs the two only when they are the same
@@ -255,6 +262,60 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// Memory transport leaf, asynchronous: the walk [`fill_from`](MemData::fill_from) performs,
+    /// with each line issued as a global→shared copy that lands on its own rather than read into
+    /// a register and stored. Publishing the slot is what waits for the copies, which is the
+    /// staging slot's to do ([`Delivery::AsyncCopy`]).
+    ///
+    /// **The mover carries bytes verbatim**, which is the whole of what it refuses: whatever the
+    /// straight fill *decodes* on the way through has no copy instruction that would do it. The
+    /// refusals below say which, each in its own words, and a launch that elected this delivery
+    /// for an operand it does not suit is what reaches one.
+    pub(crate) fn fill_async(&mut self, src: &MemData<T>, #[comptime] space: Space) {
+        let width = comptime!(self.store.vector_size);
+        let size!(W) = comptime!(width);
+        // The element is an intrinsic's answer rather than host data, so it is bound here and
+        // only read inside the comptime blocks below.
+        let elem = elem_type_of::<T>();
+        comptime!(assert!(
+            src.projection.is_direct() && self.projection.is_direct(),
+            "MemData::fill_async: a copy moves a box of bytes and cannot gather; a gathered \
+             operand stages through the compacted window its own fill writes"
+        ));
+        comptime!(assert!(
+            src.store.quant.is_none()
+                && self.store.quant.is_none()
+                && src.store.packing == Packing::Plain
+                && self.store.packing == Packing::Plain,
+            "MemData::fill_async: a copy hands over the stored bytes, so a quantized or packed \
+             operand reaches its stage through the fill that decodes it"
+        ));
+        comptime!(assert!(
+            src.store.vector_size == width,
+            "MemData::fill_async: a copy moves whole lines, but this stage is served {width} wide \
+             from a {}-wide operand, so each of its lines is assembled from source cells",
+            src.store.vector_size
+        ));
+        comptime!(assert!(
+            self.access.write == Write::Replace,
+            "MemData::fill_async: a copy replaces the bytes it lands on; a destination that folds \
+             has to read each cell to add into it"
+        ));
+        comptime!(assert!(
+            self.access.whole && !self.access.overhang.masks(),
+            "MemData::fill_async: a copy is issued over the destination's own physical order, \
+             which only a whole unmasked stage is walked in"
+        ));
+        comptime!(assert!(
+            Mover::moves(width * elem.size()),
+            "MemData::fill_async: one copy moves a power of two from {ASYNC_COPY_MIN_BYTES} to \
+             {ASYNC_COPY_MAX_BYTES} bytes, and this operand's line is {}; serve it at a width \
+             whose line is one of them",
+            width * elem.size()
+        ));
+        self.fill_straight::<T, W>(src, space, comptime!(Mover::AsyncCopy { width }));
+    }
+
     /// The straight-line half of [`fill_from`](MemData::fill_from): the destination filled in its
     /// own physical order, whole `Vector<I2, WP2>` lines, decoding the source once per line rather
     /// than per cell. `I2` / `WP2` are the *storage* element and physical width: served for a plain
@@ -267,6 +328,7 @@ impl<T: Numeric> MemData<T> {
         &mut self,
         src: &MemData<T>,
         #[comptime] space: Space,
+        #[comptime] mover: Mover,
     ) {
         // A gathered stage owns mutable map registers alongside its bytes. Store the source
         // window's coefficients and phase into those registers so bytes and interpretation are
@@ -350,7 +412,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, WP2>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding,
+                d, &s, projection, &shape, total, total_c, units, straight, padding, mover,
             );
         } else {
             let s = if comptime!(steps.is_empty()) {
@@ -369,7 +431,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding,
+                d, &s, projection, &shape, total, total_c, units, straight, padding, mover,
             );
         }
     }
@@ -1637,9 +1699,33 @@ fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Option<usize>
     }
 }
 
+/// What one line of a cooperative fill does with its source — the two [`Delivery`]s the cube's
+/// own units perform, as the act a line takes. Comptime, so the walk is one program and only
+/// its leaf differs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Mover {
+    /// The unit reads the line through the source view and stores it.
+    Store,
+    /// The unit issues an asynchronous copy of it and reads nothing: the bytes land on their
+    /// own, and publishing the slot is what waits for them. `width` is the line in elements,
+    /// which one copy instruction moves whole — the [`Store`](Mover::Store) reads it off the
+    /// types instead, and only this case needs it stated.
+    AsyncCopy { width: usize },
+}
+
+impl Mover {
+    /// Whether one asynchronous copy carries a line of `line_bytes`: a power of two between
+    /// [`ASYNC_COPY_MIN_BYTES`] and [`ASYNC_COPY_MAX_BYTES`], which is the whole of what the
+    /// instruction offers.
+    pub(crate) fn moves(line_bytes: usize) -> bool {
+        line_bytes.is_power_of_two()
+            && (ASYNC_COPY_MIN_BYTES..=ASYNC_COPY_MAX_BYTES).contains(&line_bytes)
+    }
+}
+
 /// Schedule cooperative cyclic writing of destination stage lines across cube units.
 ///
-/// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
+/// Dispatches each line via [`move_line`], taking an unrolled loop when the task count
 /// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
 #[cube]
 fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
@@ -1652,6 +1738,7 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     #[comptime] units: usize,
     #[comptime] straight: bool,
     #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
 ) {
     if comptime!(straight) {
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
@@ -1660,17 +1747,23 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             let i = UNIT_POS as usize + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
-                    d[i] = read_stage_line::<I2, WP2, SW>(
+                    move_line::<I2, WP2, SW>(
+                        d,
+                        i,
                         s,
                         &physical_pos(comptime!(projection.clone()), i, shape),
                         comptime!(padding),
+                        comptime!(mover),
                     );
                 }
             } else {
-                d[i] = read_stage_line::<I2, WP2, SW>(
+                move_line::<I2, WP2, SW>(
+                    d,
+                    i,
                     s,
                     &physical_pos(comptime!(projection.clone()), i, shape),
                     comptime!(padding),
+                    comptime!(mover),
                 );
             }
         }
@@ -1678,12 +1771,45 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            d[i] = read_stage_line::<I2, WP2, SW>(
+            move_line::<I2, WP2, SW>(
+                d,
+                i,
                 s,
                 &physical_pos(comptime!(projection.clone()), i, shape),
                 comptime!(padding),
+                comptime!(mover),
             );
             i += workers;
+        }
+    }
+}
+
+/// Move the line at source position `pos` into destination line `i`, by `mover`: the unit's own
+/// load and store, or one asynchronous copy it issues.
+#[cube]
+fn move_line<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    i: usize,
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    pos: &CoordsDyn,
+    #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
+) {
+    match comptime!(mover) {
+        Mover::Store => {
+            d[i] = read_stage_line::<I2, WP2, SW>(s, pos, comptime!(padding));
+        }
+        Mover::AsyncCopy { width } => {
+            // One line in, one line out: the destination is re-typed to the source's line rather
+            // than proved equal to it, since only the comptime refusals in
+            // [`fill_async`](MemData::fill_async) pair the two widths.
+            let source = s.line(pos.clone());
+            let destination = d.slice_mut(i, i + 1);
+            if comptime!(s.check) {
+                copy_async_checked(source, destination.downcast_mut(), comptime!(width as u32));
+            } else {
+                copy_async(source, destination.downcast_mut(), comptime!(width as u32));
+            }
         }
     }
 }

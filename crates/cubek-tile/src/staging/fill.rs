@@ -33,8 +33,6 @@ impl<'a> SlotOperand<'a> {
 pub(crate) struct SlotPlan {
     operands: Vec<OperandPlan>,
     sync: Sync,
-    publishers: Publishers,
-    fillers: usize,
 }
 
 impl SlotPlan {
@@ -42,24 +40,26 @@ impl SlotPlan {
         let deliveries: Vec<_> = operands.iter().map(|op| op.delivery).collect();
         let fillers = level.fillers();
         let sync = Sync::for_deliveries(&deliveries, fillers);
-        let publishers = Publishers::of(&deliveries, fillers);
-        // A cooperative fill deals its elements out over every unit position of the cube, so
-        // planes that are not there leave their share of the stage unwritten, and quietly: the
-        // slot publishes on schedule and the wrong bytes are read.
-        let stores = deliveries
+        // A cooperative fill deals its lines out over every unit position of the cube, whether
+        // the unit stores each one or issues a copy of it, so planes that are not there leave
+        // their share of the stage unwritten, and quietly: the slot publishes on schedule and
+        // the wrong bytes are read. Only a fill one unit issues whole — a bulk transaction —
+        // can be left to planes of their own.
+        let cyclic = deliveries
             .iter()
-            .any(|delivery| delivery.completion() == Completion::Stores);
+            .any(|delivery| delivery.completion() != Completion::Transaction);
         assert!(
-            fillers == 0 || !stores,
-            "Staging: a slot that mixes a cooperative fill with a bulk copy cannot be filled by \
-             a subset of the cube, and this walk sets {fillers} plane(s) aside to fill it"
+            fillers == 0 || !cyclic,
+            "Staging: a slot whose fill is dealt across the cube's units cannot be filled by a \
+             subset of them, and this walk sets {fillers} plane(s) aside to fill it; only a bulk \
+             transaction is issued by one unit whole"
         );
         // Fix an operand only when its window is genuinely invariant across the walk. A barrier
         // slot arrives `full` once per fill, so lifting one operand out of the joint per-region
         // fill leaves the slot's parity counting fills that no longer happen; the whole slot
         // streams instead. A dynamic level can't decide invariance at comptime. Both fall back
         // to streaming.
-        let can_fix_invariants = op_space.is_static() && sync != Sync::Barrier;
+        let can_fix_invariants = op_space.is_static() && !sync.is_barrier();
         let planned_operands = operands
             .iter()
             .map(|op| {
@@ -77,8 +77,6 @@ impl SlotPlan {
         SlotPlan {
             operands: planned_operands,
             sync,
-            publishers,
-            fillers,
         }
     }
 
@@ -97,17 +95,15 @@ impl SlotPlan {
         self.operand_plan(operand, slot).mode == WindowMode::Reused
     }
 
+    /// How every slot of the ring rendezvouses its fill against its read, and who meets there
+    /// ([`Sync`]).
     pub(crate) fn sync(&self) -> Sync {
         self.sync
     }
 
-    pub(crate) fn publishers(&self) -> Publishers {
-        self.publishers
-    }
-
     /// Planes of the cube that fill this walk's stages and take no tile ([`Level::filled_by`]).
     pub(crate) fn fillers(&self) -> usize {
-        self.fillers
+        self.sync.fillers()
     }
 }
 
@@ -180,11 +176,7 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
             };
             let staging = Staging::wrap(
                 (staged_lhs, staged_rhs),
-                Pipeline::new(
-                    comptime!(plan.sync()),
-                    comptime!(plan.publishers()),
-                    comptime!(plan.fillers()),
-                ),
+                Pipeline::new(comptime!(plan.sync())),
                 comptime!(SmallVec::from_slice(&[
                     plan.operand_plan(FIRST, slot),
                     plan.operand_plan(SECOND, slot),
@@ -386,11 +378,7 @@ impl<T: Numeric> Ring<Tile<T>> {
             };
             let staging = Staging::wrap(
                 staged_input,
-                Pipeline::new(
-                    comptime!(plan.sync()),
-                    comptime!(plan.publishers()),
-                    comptime!(plan.fillers()),
-                ),
+                Pipeline::new(comptime!(plan.sync())),
                 comptime!(SmallVec::from_slice(&[plan.operand_plan(FIRST, slot)])),
             );
             slots.push(staging);
@@ -580,18 +568,36 @@ mod tests {
         assert_eq!(plan.fillers(), 2);
     }
 
-    /// A cooperative fill is spread over every unit position of the cube, so planes that are not
+    /// A cooperative fill is dealt over every unit position of the cube, so planes that are not
     /// there leave their share unwritten. Refused by name rather than read back as wrong bytes.
+    ///
+    /// True of a unit that issues its line's copy exactly as of one that stores it: the deal is
+    /// the same walk and only the mover under it differs, which is why the refusal is written
+    /// over what publishes a fill rather than over the two spellings of a store.
     #[test]
-    #[should_panic(expected = "cannot be filled by a subset of the cube")]
     fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
         let (space, lhs, rhs) = spaces();
         let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[M, N, K])
             .filled_by(1)
             .level();
+        for cooperative in [Delivery::Copy, Delivery::AsyncCopy, Delivery::Procedural] {
+            let planned = std::panic::catch_unwind(|| {
+                SlotPlan::new(
+                    &[operand(Delivery::Tma, &lhs), operand(cooperative, &rhs)],
+                    &space,
+                    &level,
+                )
+            });
+            assert!(
+                planned.is_err(),
+                "a {cooperative:?} fill was dealt to a subset of the cube"
+            );
+        }
+        // The bulk transaction alone: one unit issues the whole of it, so the planes set aside
+        // can be the ones that do.
         SlotPlan::new(
-            &[operand(Delivery::Tma, &lhs), operand(Delivery::Copy, &rhs)],
+            &[operand(Delivery::Tma, &lhs), operand(Delivery::Tma, &rhs)],
             &space,
             &level,
         );
