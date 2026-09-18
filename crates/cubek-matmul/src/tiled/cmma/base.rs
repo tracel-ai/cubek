@@ -19,6 +19,7 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
+use cubek_tile::Pitch;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -80,6 +81,11 @@ pub struct CmmaBlueprint {
     pub buffering: usize,
     /// Launch-time transport for both inputs (the output always uses a regular buffer copy).
     pub delivery: CmmaDelivery,
+    /// What each stage leaves between its fragment rows. [`select`] states
+    /// [`Dense`](Pitch::Dense): what padding is worth costs shared memory against bank
+    /// conflicts, and this routine has no table to race the two in, so only a pinned plan
+    /// asks for it.
+    pub pitch: Pitch,
 }
 
 impl CmmaBlueprint {
@@ -413,6 +419,7 @@ impl CmmaRoutine {
             },
             stage_k,
             buffering: 2,
+            pitch: Pitch::Dense,
             delivery,
         })
     }

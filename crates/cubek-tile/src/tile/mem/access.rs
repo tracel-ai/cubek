@@ -351,12 +351,14 @@ impl<T: Numeric> MemData<T> {
             Some(c) if !c.is_dense() => c.steps().to_vec(),
             _ => Vec::new(),
         });
-        let shape = self.layout.physical_shape.clone();
+        // The destination's own addressing, taken before the buffer is borrowed: a fill walks it
+        // through the same layout every reader reads it through.
+        let layout = self.base();
+        let shape = layout.physical_shape.clone();
         let plen = shape.len().comptime();
         let total = shape
             .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
             .fcast::<usize>();
-        let projection = comptime!(self.layout.projection.clone());
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.
         let lanes = comptime!(fill_extent(&space, sw, w, check));
@@ -412,7 +414,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, WP2>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding, mover,
+                d, &s, &layout, total, total_c, units, straight, padding, mover,
             );
         } else {
             let s = if comptime!(steps.is_empty()) {
@@ -431,7 +433,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding, mover,
+                d, &s, &layout, total, total_c, units, straight, padding, mover,
             );
         }
     }
@@ -803,6 +805,9 @@ impl<T: Numeric> MemData<T> {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
+            // One contiguous run from the origin, each coordinate at its innermost fragment's
+            // stride: its lines are its own.
+            in_order: comptime!(true),
         }
     }
 
@@ -1725,14 +1730,14 @@ impl Mover {
 
 /// Schedule cooperative cyclic writing of destination stage lines across cube units.
 ///
-/// Dispatches each line via [`move_line`], taking an unrolled loop when the task count
+/// Dispatches each line via [`fill_line`], taking an unrolled loop when the task count
 /// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
 #[cube]
+#[allow(clippy::too_many_arguments)]
 fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
     s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
-    #[comptime] projection: Projection,
-    shape: &Coords<u32>,
+    layout: &GmemLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
     #[comptime] units: usize,
@@ -1747,40 +1752,57 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             let i = UNIT_POS as usize + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
-                    move_line::<I2, WP2, SW>(
-                        d,
-                        i,
-                        s,
-                        &physical_pos(comptime!(projection.clone()), i, shape),
-                        comptime!(padding),
-                        comptime!(mover),
-                    );
+                    fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
                 }
             } else {
-                move_line::<I2, WP2, SW>(
-                    d,
-                    i,
-                    s,
-                    &physical_pos(comptime!(projection.clone()), i, shape),
-                    comptime!(padding),
-                    comptime!(mover),
-                );
+                fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
             }
         }
     } else {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            move_line::<I2, WP2, SW>(
-                d,
-                i,
-                s,
-                &physical_pos(comptime!(projection.clone()), i, shape),
-                comptime!(padding),
-                comptime!(mover),
-            );
+            fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
             i += workers;
         }
+    }
+}
+
+/// Fill the destination's line `i`: where it lands in the buffer, where its cells sit in the
+/// source, and the [`Mover`] that carries them.
+#[cube]
+fn fill_line<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    i: usize,
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    layout: &GmemLayout,
+    #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
+) {
+    let shape = layout.physical_shape.clone();
+    let digits = line_digits(i, &shape);
+    let pos = fold_physical(comptime!(layout.projection.clone()), &digits, &shape);
+    let at = landing(i, &digits, layout);
+    move_line::<I2, WP2, SW>(d, at, s, &pos, comptime!(padding), comptime!(mover));
+}
+
+/// Where the destination's line `i` lands in its buffer: at `i` itself where the buffer holds its
+/// lines in their own order, and at its digits dotted with the buffer's strides where a
+/// [`Pitch`] left gaps between the fragment rows.
+#[cube]
+fn landing(i: usize, digits: &Coords<u32>, layout: &GmemLayout) -> usize {
+    if comptime!(layout.in_order) {
+        i
+    } else {
+        let rank = digits.len().comptime();
+        let mut terms = Sequence::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            terms.push(digits.at(p).fmul(layout.physical_strides.at(p)));
+        }
+        terms
+            .fsum(comptime!((0..rank).collect::<Vec<_>>()))
+            .fcast::<usize>()
     }
 }
 
@@ -1831,19 +1853,18 @@ fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     }
 }
 
-/// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
-/// digit per physical axis ([`line_digit`]), then [`fold_physical`] folds a storage-tiled axis's
-/// several digits back into one, off `projection`'s own div/modulo (`GmemLayout`'s synthetic
-/// per-position map, invertible by construction).
+/// Physical line `i` decoded into one digit per physical axis ([`line_digit`]): what both ends of
+/// a fill are addressed by — [`fold_physical`] turns them into the source's logical coordinate,
+/// and [`landing`] dots them with the destination's own strides.
 #[cube]
-fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32>) -> CoordsDyn {
+fn line_digits(i: usize, shape: &Coords<u32>) -> Coords<u32> {
     let x = i.fcast::<u32>();
     let mut digits = Coords::<u32>::new();
     #[unroll]
     for j in 0..shape.len() {
         digits.push(line_digit(x, shape, j));
     }
-    fold_physical(comptime!(projection), &digits, shape)
+    digits
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.

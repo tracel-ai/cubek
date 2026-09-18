@@ -176,7 +176,8 @@ impl<T: Numeric> Store<T> {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
     /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
-    /// such a tile can be written in physical order.
+    /// such a tile can be written in physical order. Whether that order is the buffer's own line
+    /// order is the layout's ([`GmemLayout`](super::GmemLayout)), since the strides decide it.
     pub whole: bool,
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.

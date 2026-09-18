@@ -106,6 +106,11 @@ impl<T: Numeric> MemData<T> {
                 // arm below never takes an alignment.
                 let delivery = operand.delivery();
                 let elem = elem_type_of::<T>();
+                comptime!(assert!(
+                    !(delivery.is_tma() && storage.pitch() == Pitch::Padded),
+                    "MemData::stage: a bulk copy lands its rows at the box's own pitch, so it \
+                     cannot fill a stage whose fragment rows are padded apart"
+                ));
                 let alignment = comptime!(match delivery {
                     Delivery::Tma => TMA_STAGE_ALIGNMENT,
                     Delivery::AsyncCopy => vector_size * elem.size(),
@@ -217,7 +222,8 @@ impl<T: Numeric> MemData<T> {
         #[comptime] units: usize,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
-        let form = comptime!(StageForm::dense(&space, vector_size, storage));
+        let elem = elem_type_of::<T>();
+        let form = comptime!(StageForm::dense(&space, vector_size, storage, elem.size()));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
         let meta = comptime!(StageMeta {
             space,
@@ -326,8 +332,10 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         // One stored line is one served line, just narrower, so only the element and width change:
         // the layout and window below are the same grid either way.
-        let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let size!(WP) = comptime!(vector_size / scheme.num_quants());
+        let stored = elem_type_of::<I>();
+        let stored_bytes = comptime!(vector_size / scheme.num_quants().max(1) * stored.size());
+        let form = comptime!(StageForm::dense(&space, vector_size, storage, stored_bytes));
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
@@ -369,6 +377,7 @@ impl<T: Numeric> MemData<T> {
         });
         let (physical_shape, physical_strides) = storage_layout(comptime!(form.clone()));
         let (origin, extent) = full_window(comptime!(form.clone()));
+        let in_order = comptime!(form.in_order());
         // Smem never overhangs its own buffer, so the bound is the extent and checks are off.
         let bound = extent.clone();
         let gmem_projection = comptime!(form.positional.clone());
@@ -384,6 +393,7 @@ impl<T: Numeric> MemData<T> {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
+                    in_order,
                 },
                 // Stage origins are never negative, and smem never overhangs (`Overhang::Never`
                 // below), so the boundary policy is never consulted. The empty list is the only
@@ -581,6 +591,10 @@ pub(crate) fn stage_compaction(
 pub(crate) struct StageForm {
     /// Physical extents in lines, innermost already divided by the store width.
     extents: Vec<usize>,
+    /// What one step along each physical axis costs in lines: the row-major suffix products of
+    /// [`extents`](StageForm::extents), unless a [`Pitch`] lifted the fragment row's own stride
+    /// and every stride outside it with it.
+    strides: Vec<usize>,
     /// The buffer's own per-position map, what [`GmemLayout`] splits coordinates through.
     positional: Projection,
     /// How the staged tile's logical axes address those extents.
@@ -593,16 +607,25 @@ pub(crate) struct StageForm {
 impl StageForm {
     /// A materialized dense copy of the logical tile: what every direct operand stages into. An
     /// empty `nesting` is a plain row-major buffer; each block in it adds a `[grid…, block…]` split,
-    /// so the buffer lays the innermost block down contiguously.
-    fn dense(space: &Space, vector_size: usize, stage: StageStorage) -> StageForm {
+    /// so the buffer lays the innermost block down contiguously. `elem_size` sizes the line the
+    /// storage's [`Pitch`] is counted in.
+    pub(crate) fn dense(
+        space: &Space,
+        vector_size: usize,
+        stage: StageStorage,
+        elem_size: usize,
+    ) -> StageForm {
         let nesting = stage.nesting(space);
+        let extents = StageForm::dense_extents(space, vector_size, &nesting);
+        let strides = StageForm::pitched(&extents, stage.pitch(), vector_size * elem_size);
         StageForm {
-            extents: StageForm::dense_extents(space, vector_size, &nesting),
             positional: Projection::of_tiling(StorageTiling::uniform(space.rank(), nesting.len())),
             // A dense stage is a copy of the tile itself, so it addresses its own buffer directly
             // whatever the operand it stages was gathered through.
             projection: Projection::direct_over(space),
             steps: SmallVec::new(),
+            strides,
+            extents,
         }
     }
 
@@ -629,20 +652,65 @@ impl StageForm {
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),
             projection: compaction.projection().clone(),
             steps: compaction.steps().iter().copied().collect(),
+            strides: StageForm::pitched(&extents, Pitch::Dense, 0),
             extents,
         }
     }
 
-    /// How many lines the buffer holds.
-    fn cells(&self) -> usize {
-        self.extents.iter().product()
+    /// How many lines the buffer holds: the outermost axis's extent at its own stride, so a
+    /// pitch's padding is counted with the cells it separates.
+    pub(crate) fn cells(&self) -> usize {
+        match self.extents.first() {
+            Some(extent) => extent * self.strides[0],
+            None => 0,
+        }
     }
 
-    /// Row-major suffix-product strides over [`extents`](StageForm::extents).
-    fn strides(&self) -> Vec<usize> {
+    /// The stride of each physical axis in lines: row-major suffix products of `extents`, except
+    /// that the fragment's rows start `pitch` apart. The innermost axis is the line itself and
+    /// the one outside it is the row, so a pitch lands there and every stride outside it follows.
+    ///
+    /// `line_bytes` is what the pitch is expressed in lines of; it is read only where the pitch
+    /// pads, which is why the gathered form (always dense) may pass none.
+    fn pitched(extents: &[usize], pitch: Pitch, line_bytes: usize) -> Vec<usize> {
+        let rank = extents.len();
+        let mut strides = vec![1usize; rank];
+        if rank >= 2 {
+            let row = pitch.of(extents[rank - 1] * line_bytes);
+            let dense = extents[rank - 1] * line_bytes;
+            assert!(
+                row == dense || row.is_multiple_of(line_bytes),
+                "StageForm: a {row}-byte pitch is not whole {line_bytes}-byte lines, so a \
+                 fragment row would start inside one; a padded stage is served in lines no wider \
+                 than the chunk a pitch counts in"
+            );
+            strides[rank - 2] = match row == dense {
+                true => extents[rank - 1],
+                false => row / line_bytes,
+            };
+            for p in (0..rank - 2).rev() {
+                strides[p] = extents[p + 1] * strides[p + 1];
+            }
+        }
+        strides
+    }
+
+    /// Whether the buffer holds its lines in their own order, so the `i`th line of a walk over it
+    /// sits at offset `i`. False exactly where a pitch left gaps between the fragment rows.
+    pub(crate) fn in_order(&self) -> bool {
+        self.strides == StageForm::pitched(&self.extents, Pitch::Dense, 0)
+    }
+
+    /// Where logical line `line` lands in the buffer: its digits under the extents, dotted with
+    /// the strides. What the fill computes per line, and what every reader's layout walk arrives
+    /// at through the same strides.
+    fn offset(&self, line: usize) -> usize {
         (0..self.extents.len())
-            .map(|p| self.extents[p + 1..].iter().product())
-            .collect()
+            .map(|p| {
+                let finer: usize = self.extents[p + 1..].iter().product();
+                (line / finer % self.extents[p]) * self.strides[p]
+            })
+            .sum()
     }
 
     /// A dense stage's physical line extents: `[extents…]` flat, or `[grid…, …, block…]`, one grid per
@@ -679,7 +747,7 @@ impl StageForm {
 /// A stage's physical shape and strides, in lines like [`Tile::of`]'s.
 #[cube]
 fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
-    let strides_c = comptime!(form.strides());
+    let strides_c = comptime!(form.strides.clone());
 
     let mut shape = Coords::<u32>::new();
     let mut strides = Coords::<u32>::new();
@@ -716,7 +784,7 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
-            StageStorage::Tiled { block } => {
+            StageStorage::Tiled { block, .. } => {
                 let nested = Space::new(
                     &space
                         .axes()
@@ -804,20 +872,73 @@ mod tests {
     #[test]
     fn a_form_strides_row_major() {
         let (space, levels) = space();
-        let form = StageForm::dense(&space, 4, StageStorage::Strided);
+        let form = StageForm::dense(&space, 4, StageStorage::Strided, ELEM);
         assert_eq!(form.extents, vec![16, 4]);
-        assert_eq!(form.strides(), vec![4, 1]);
+        assert_eq!(form.strides, vec![4, 1]);
         assert_eq!(form.cells(), space.tile_size() / 4);
 
-        let tiled = StageForm::dense(
-            &space,
-            1,
-            StageStorage::Tiled {
-                block: space.leaf(&levels).extents(),
-            },
-        );
+        let tiled = StageForm::dense(&space, 1, tiled(&space, &levels, Pitch::Dense), ELEM);
         assert_eq!(tiled.extents, vec![4, 4, 4, 4]);
-        assert_eq!(tiled.strides(), vec![64, 16, 4, 1]);
+        assert_eq!(tiled.strides, vec![64, 16, 4, 1]);
+        assert!(tiled.in_order(), "nothing sits between dense rows");
+    }
+
+    /// A padded stage holds its every logical cell, once, inside the buffer it reserves. The
+    /// padding is what no cell lands in, and a form that let two cells share an offset would
+    /// read as one operand's cells appearing in the other's fragment.
+    #[test]
+    fn a_padded_form_lands_every_cell_once() {
+        let (space, levels) = space();
+        for pitch in [Pitch::Dense, Pitch::Padded] {
+            let form = StageForm::dense(&space, 1, tiled(&space, &levels, pitch), ELEM);
+            let lines: usize = form.extents.iter().product();
+            let mut seen = std::collections::HashSet::new();
+            for line in 0..lines {
+                let offset = form.offset(line);
+                assert!(
+                    offset < form.cells(),
+                    "{pitch:?}: line {line} lands past the buffer"
+                );
+                assert!(seen.insert(offset), "{pitch:?}: two lines land on {offset}");
+            }
+            assert_eq!(seen.len(), lines);
+        }
+    }
+
+    /// What the pitch is for: every aligned group of the rows one phase reads lands on that
+    /// many distinct chunks of a bank line. The dense form is the control — a 4-element row of
+    /// 2-byte cells is 8 bytes, so its rows pair up two to a chunk and half of every phase is
+    /// replayed.
+    #[test]
+    fn a_padded_fragments_rows_fall_in_chunks_of_their_own() {
+        let (space, levels) = space();
+        let chunks = |pitch: Pitch| {
+            let form = StageForm::dense(&space, 1, tiled(&space, &levels, pitch), ELEM);
+            // The fragment's rows are the second-innermost axis; a phase reads eight of them,
+            // and this block holds four, so the whole fragment is one partial phase.
+            let rows = form.extents[form.extents.len() - 2];
+            (0..rows)
+                .map(|row| form.offset(row * form.extents[form.extents.len() - 1]) * ELEM / CHUNK)
+                .map(|chunk| chunk % PHASE)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        };
+        assert_eq!(chunks(Pitch::Padded), 4, "each row in a chunk of its own");
+        assert_eq!(chunks(Pitch::Dense), 2, "two rows to a chunk, and replayed");
+    }
+
+    /// Bytes of the element the forms above are built over, and the chunks a bank line holds:
+    /// what the padded pitch is stated in ([`Pitch`]).
+    const ELEM: usize = 2;
+    const CHUNK: usize = 16;
+    const PHASE: usize = 8;
+
+    /// The stage storage grouping `space`'s leaf block at `pitch`.
+    fn tiled(space: &Space, levels: &[Level], pitch: Pitch) -> StageStorage {
+        StageStorage::Tiled {
+            block: space.leaf(levels).extents(),
+            pitch,
+        }
     }
 
     /// A gathered stage is the compacted window, not the logical tile: `M` and `N` here map onto
@@ -835,6 +956,7 @@ mod tests {
             ],
         );
         let form = StageForm::gathered(&space, 1, StageStorage::Strided, &projection);
+        assert_eq!(form.strides, vec![4, 1]);
         // 8 x 8 logical cells over 1 + 7 + 7 physical ones, times the ungathered 4 of `K`.
         assert_eq!(form.extents, vec![15, 4]);
         assert_eq!(form.cells(), 60);
@@ -859,6 +981,7 @@ mod tests {
             1,
             StageStorage::Tiled {
                 block: vec![(M, 4), (N, 4), (K, 4)],
+                pitch: Pitch::Dense,
             },
             &projection,
         );
@@ -878,9 +1001,7 @@ mod tests {
     #[test]
     fn the_nesting_follows_the_layout() {
         let (space, levels) = space();
-        let tiled = StageStorage::Tiled {
-            block: space.leaf(&levels).extents(),
-        };
+        let tiled = tiled(&space, &levels, Pitch::Dense);
         assert!(tiled.nesting(&space)[0].laid_out_like(&space.leaf(&levels)));
         assert!(StageStorage::Strided.nesting(&space).is_empty());
         assert!(tiled.nesting(&space.leaf(&levels)).is_empty());

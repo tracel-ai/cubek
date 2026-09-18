@@ -70,6 +70,7 @@ fn cmma_partition_1x1_f32() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
+    use cubek_tile::Pitch;
 
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape { m: 8, n: 8, k: 8 },
@@ -78,10 +79,41 @@ fn cmma_partition_1x1_f32() {
         stage_k: 48,
         buffering: 2,
         delivery: CmmaDelivery::Copy,
+        pitch: Pitch::Dense,
     };
     test_matmul_strategy(
         client(),
         rect(128, 64, 96, f32_elems()),
+        Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
+    );
+}
+
+/// The same plan with its fragment rows padded apart, which is the one thing a stage's
+/// [`Pitch`] changes: the buffer grows, every address a reader forms moves with the strides,
+/// and the product must not.
+///
+/// The closest consumer of a storage-tiled stage there is, so it is where a pitch that put a
+/// row somewhere no reader followed would show up as a wrong product rather than as a slow one.
+#[test]
+fn cmma_padded_pitch_f32() {
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
+    };
+    use cubek_tile::Pitch;
+
+    let blueprint = CmmaBlueprint {
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
+        partition: Partition { m: 1, n: 2 },
+        planes: PlaneGrid { m: 2, n: 1 },
+        stage_k: 16,
+        buffering: 2,
+        delivery: CmmaDelivery::Copy,
+        pitch: Pitch::Padded,
+    };
+    test_matmul_strategy(
+        client(),
+        rect(64, 64, 64, f32_elems()),
         Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
     );
 }
@@ -122,6 +154,7 @@ fn cmma_tma_rejects_oversized_box() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
+    use cubek_tile::Pitch;
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
@@ -136,6 +169,7 @@ fn cmma_tma_rejects_oversized_box() {
         stage_k: 16,
         buffering: 2,
         delivery: CmmaDelivery::Tma,
+        pitch: Pitch::Dense,
     };
     let problem = rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {

@@ -780,7 +780,10 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
                 std::slice::from_ref(&level).to_vec()
             )
             .leaf()
-            .extents()
+            .extents(),
+            // The stage a plane-level test builds in its own body: the pitch is the
+            // driver's knob, and these kernels are not what drives it.
+            pitch: Pitch::Dense,
         }),
         depth,
     );
@@ -915,7 +918,10 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            // The stage a plane-level test builds in its own body: the pitch is the
+            // driver's knob, and these kernels are not what drives it.
+            pitch: Pitch::Dense,
         }),
         depth,
     );
@@ -975,7 +981,10 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
-            .extents()
+            .extents(),
+            // The stage a plane-level test builds in its own body: the pitch is the
+            // driver's knob, and these kernels are not what drives it.
+            pitch: Pitch::Dense,
         }),
         depth,
     );
@@ -1057,7 +1066,10 @@ fn cmma_matmul_five_levels<E: Numeric>(
                 ]
             )
             .leaf()
-            .extents()
+            .extents(),
+            // The stage a plane-level test builds in its own body: the pitch is the
+            // driver's knob, and these kernels are not what drives it.
+            pitch: Pitch::Dense,
         }),
         depth,
     );
@@ -2507,7 +2519,15 @@ fn matmul_multilevel_staged_then_double() {
 /// on any backend (each 4×4 stage cut into contiguous 2×2 blocks).
 #[test]
 fn matmul_multilevel_tiled_stage() {
-    check_matmul_multilevel(8, 8, 8, StageLayout::Tiled, Inner::Direct, 1);
+    check_matmul_multilevel(8, 8, 8, StageLayout::Tiled(Pitch::Dense), Inner::Direct, 1);
+}
+
+/// The same stage with its fragment rows padded apart. The buffer grows and every address moves
+/// with the strides — the fill's, the descent's, the leaf's — so a pitch any one of them did not
+/// follow reads as a wrong product rather than as a slow one.
+#[test]
+fn matmul_multilevel_padded_stage() {
+    check_matmul_multilevel(8, 8, 8, StageLayout::Tiled(Pitch::Padded), Inner::Direct, 1);
 }
 
 /// What the inner of two levels does with the outer stage: read its final tiles where they lie,
@@ -2523,15 +2543,16 @@ enum Inner {
 /// How a test's stages lay their buffers out, resolved against the space the test builds.
 #[derive(Clone, Copy)]
 enum StageLayout {
-    Tiled,
+    Tiled(Pitch),
     Strided,
 }
 
 impl StageLayout {
     fn storage(self, launcher: &Launcher) -> StageStorage {
         match self {
-            StageLayout::Tiled => StageStorage::Tiled {
+            StageLayout::Tiled(pitch) => StageStorage::Tiled {
                 block: launcher.partitioning().leaf().extents(),
+                pitch,
             },
             StageLayout::Strided => StageStorage::Strided,
         }
@@ -4226,21 +4247,21 @@ fn cmma_matmul_quant_block_k_8x8x8() {
 /// only: run with `cargo test-metal`.
 #[test]
 fn cmma_matmul_staged_k_walk() {
-    check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Tiled);
+    check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Tiled(Pitch::Dense));
 }
 
 /// The double-buffered variant: four K regions rotating through two smem slots, the
 /// accumulator fragment resident across all of them.
 #[test]
 fn cmma_matmul_double_buffered_k_walk() {
-    check_cmma_matmul_k_walk(32, 2, 1, StageLayout::Tiled);
+    check_cmma_matmul_k_walk(32, 2, 1, StageLayout::Tiled(Pitch::Dense));
 }
 
 /// An odd region total (three K stages): the loop leaves the last region primed in slot 0;
 /// the epilogue must publish and consume it.
 #[test]
 fn cmma_matmul_double_buffered_odd_k_walk() {
-    check_cmma_matmul_k_walk(24, 2, 1, StageLayout::Tiled);
+    check_cmma_matmul_k_walk(24, 2, 1, StageLayout::Tiled(Pitch::Dense));
 }
 
 /// The K walk staged into a plain strided stage (the legacy `sync_full_strided` storage):
@@ -4250,11 +4271,19 @@ fn cmma_matmul_staged_k_walk_strided_stage() {
     check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Strided);
 }
 
+/// The cmma K walk over a stage whose fragment rows are padded apart: a fragment load addresses
+/// its rows by the stride the stage states, so a pitch it did not follow reads another
+/// fragment's cells.
+#[test]
+fn cmma_matmul_staged_k_walk_padded_stage() {
+    check_cmma_matmul_k_walk(16, 1, 1, StageLayout::Tiled(Pitch::Padded));
+}
+
 /// The staged cmma K walk with operands served in 2-wide lines: the cooperative fill
 /// moves lines, the cmma transport addresses the scalar buffer underneath.
 #[test]
 fn cmma_matmul_staged_k_walk_vectorized() {
-    check_cmma_matmul_k_walk(16, 1, 2, StageLayout::Tiled);
+    check_cmma_matmul_k_walk(16, 1, 2, StageLayout::Tiled(Pitch::Dense));
 }
 
 /// The staged cmma K walk with the rhs stored `{N, K}`: the stage keeps that order and the `B`
@@ -4262,7 +4291,7 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 /// its own lines. Double-buffered, so the ring's prefetch moves that order too.
 #[test]
 fn cmma_matmul_double_buffered_k_walk_transposed_rhs() {
-    check_cmma_matmul_k_walk_with(32, 2, 1, StageLayout::Tiled, true);
+    check_cmma_matmul_k_walk_with(32, 2, 1, StageLayout::Tiled(Pitch::Dense), true);
 }
 
 /// The one level always stages, whatever its depth: a cmma leaf cannot consume the global inputs
@@ -4440,7 +4469,7 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
         c.arg(),
         launcher.partitioning_arg(),
         launcher.level(0),
-        StageLayout::Tiled.storage(&launcher),
+        StageLayout::Tiled(Pitch::Dense).storage(&launcher),
         1,
         instruction,
         f32::elem_type_native(),

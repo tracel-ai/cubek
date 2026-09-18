@@ -24,6 +24,13 @@ pub(crate) struct GmemLayout {
     pub(crate) physical_strides: Coords<u32>,
     #[cube(comptime)]
     pub(crate) projection: Projection,
+    /// Whether those strides put the buffer's lines in their own order, so the `i`th line of a
+    /// walk over it sits at offset `i`. True of every buffer laid row-major over its extents;
+    /// false where a stage's [`Pitch`](crate::Pitch) leaves gaps between its fragment rows, which
+    /// is what makes a fill dot each line's digits with the strides rather than write straight
+    /// through.
+    #[cube(comptime)]
+    pub(crate) in_order: bool,
 }
 
 #[cube]

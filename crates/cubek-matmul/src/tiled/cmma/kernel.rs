@@ -121,6 +121,7 @@ pub fn cmma_kernel<
             .chain([(M, i.m), (N, i.n), (K, i.k)])
             .collect::<Vec<_>>()
     );
+    let pitch = comptime!(bp.pitch);
     let a = D::tile::<EL, VA>(a, comptime!(space.clone()));
     let b = D::tile::<ER, VB>(b, comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
@@ -140,7 +141,8 @@ pub fn cmma_kernel<
             &a,
             &b,
             comptime!(StageStorage::Tiled {
-                block: block.clone()
+                block: block.clone(),
+                pitch,
             }),
             depth,
         );
@@ -187,6 +189,7 @@ mod tests {
     use crate::tiled::cmma::{CmmaDelivery, Partition};
     use crate::tiled::cpu_gemm::{InstructionShape, PlaneGrid};
     use crate::tiled::{MNK, batch_axis, form_space, labels};
+    use cubek_tile::Pitch;
 
     /// A `16x16x16` instruction, `2x2` fragments a plane, `2x2` planes a cube, stages `32` deep.
     fn blueprint() -> CmmaBlueprint {
@@ -201,6 +204,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::Copy,
+            pitch: Pitch::Dense,
         }
     }
 
@@ -219,6 +223,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::Copy,
+                pitch: Pitch::Dense,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);
