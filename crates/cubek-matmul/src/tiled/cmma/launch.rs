@@ -7,7 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
+    Axis, Cooperative, Geometry, KernelForm, Launcher, Pitch, Space, TensorDelivery, Tma,
+    TmaTileArgLaunch,
 };
 
 use crate::{
@@ -242,7 +243,7 @@ pub fn launch_ref(
             rhs,
             out,
             &out_batch_axes,
-        ),
+        )?,
         CmmaDelivery::Tma => launch_tma(
             client,
             &launch,
@@ -275,7 +276,7 @@ struct Elems {
 /// width the launcher's gate allows, bound to its [`Operand`](cubek_tile::Operand) by the shared
 /// [`StridedTileSource`](cubek_tile::StridedTileSource) derivation. An operand's own spec says
 /// whether it is plain or storage-tiled; this path serves both, and a mixed pair.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::result_large_err)]
 fn launch_strided<D>(
     client: &Client,
     launch: &Launcher,
@@ -288,17 +289,23 @@ fn launch_strided<D>(
     rhs: TensorBinding,
     out: TensorBinding,
     out_batch_axes: &[Axis],
-) where
+) -> Result<(), MatmulSetupError>
+where
     D: TensorDelivery,
 {
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
+    let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
+    // The width is settled here and the pitch came off the blueprint, so this is the first place
+    // that can ask whether the two describe one buffer. The stage would otherwise refuse the
+    // pair while it allocates, which is a kernel that will not expand rather than a plan turned
+    // down.
+    validate_pitched_lines(blueprint, &[(v_a, elems.lhs), (v_b, elems.rhs)])?;
     let a = launch
         .arg(lhs)
         .subspace(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
         .build();
-    let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
     let b = launch
         .arg(rhs)
         .subspace(&[K, N])
@@ -330,6 +337,32 @@ fn launch_strided<D>(
         elems.out,
         elems.acc,
     );
+    Ok(())
+}
+
+/// Refuse a plan whose stage pitch cannot be stated in the lines its operands are served in.
+///
+/// [`Pitch::Padded`] starts each fragment row an odd number of 16-byte chunks after the one
+/// above it, which a wider line has no whole multiple of — the stage would start a row inside
+/// a line. Only the staged inputs are asked: the output is never staged, so it carries no pitch.
+#[allow(clippy::result_large_err)]
+fn validate_pitched_lines(
+    blueprint: &CmmaBlueprint,
+    served: &[(usize, ElemType)],
+) -> Result<(), MatmulSetupError> {
+    for &(vector_size, elem) in served {
+        let line_bytes = vector_size * elem.size();
+        if !blueprint.pitch.serves_lines(line_bytes) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a {:?} stage pitch cannot be stated in the {line_bytes}-byte lines this \
+                 operand is served in ({vector_size} x {elem:?}); serve it narrower, or state \
+                 {:?}",
+                blueprint.pitch,
+                Pitch::Dense
+            ))));
+        }
+    }
+    Ok(())
 }
 
 /// The TMA path: each input rides a tensor map whose box is the stage (scalar; TMA moves

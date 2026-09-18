@@ -61,6 +61,10 @@ pub struct TileSpec {
     /// the launch; [`Whole`](Storage::Strided) for every untiled operand, which is every operand
     /// that does not say otherwise.
     pub storage: Storage,
+    /// Who moves this operand into a stage: the units storing it ([`Delivery::Copy`], unless
+    /// stated), or the units issuing asynchronous copies of it ([`Delivery::AsyncCopy`]). A fact
+    /// of the binding rather than of the tile, since the same tensor is read either way.
+    pub delivery: Delivery,
 }
 
 impl TileSpec {
@@ -75,6 +79,7 @@ impl TileSpec {
             units: 0,
             packing: Packing::Plain,
             storage: Storage::Strided,
+            delivery: Delivery::Copy,
         }
     }
 
@@ -110,6 +115,19 @@ impl TileSpec {
     /// the launch, [`Whole`](Storage::Strided) by default (which is what every untiled operand is).
     pub fn storage(mut self, storage: Storage) -> Self {
         self.storage = storage;
+        self
+    }
+
+    /// State who moves this operand into a stage. Only the two the units perform are a spec's
+    /// to state: a tensor map is its own argument ([`TmaTileArg`]) and a procedural source has
+    /// no binding.
+    pub fn delivered(mut self, delivery: Delivery) -> Self {
+        assert!(
+            matches!(delivery, Delivery::Copy | Delivery::AsyncCopy),
+            "TileSpec::delivered: a bound tensor is moved by the units, storing it or issuing \
+             copies of it; {delivery:?} is not a spec's to state"
+        );
+        self.delivery = delivery;
         self
     }
 

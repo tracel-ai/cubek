@@ -14,11 +14,15 @@
 //! - Shapes not divisible by the instruction (the cmma transport cannot mask an overhang).
 //! - A storage-tiled input whose storage tile is not this plan's stage on its axes: the storage
 //!   tile names the stage, the plan cannot disagree. Which delivery moves it is unrelated.
+//! - A padded [`Pitch`] under a delivery or a line width that cannot state one: a bulk copy
+//!   pitches its rows itself, and a line wider than the chunk a pitch counts in would start a
+//!   row inside one.
 
 use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
+use cubek_tile::Pitch;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -80,6 +84,11 @@ pub struct CmmaBlueprint {
     pub buffering: usize,
     /// Launch-time transport for both inputs (the output always uses a regular buffer copy).
     pub delivery: CmmaDelivery,
+    /// What each stage leaves between its fragment rows. [`select`] states
+    /// [`Dense`](Pitch::Dense): what padding is worth costs shared memory against bank
+    /// conflicts, and this routine has no table to race the two in, so only a pinned plan
+    /// asks for it.
+    pub pitch: Pitch,
 }
 
 impl CmmaBlueprint {
@@ -123,6 +132,17 @@ impl CmmaBlueprint {
                 "Cmma requires a shape divisible by the stage: \
                  {}x{}x{} vs stage {stage_m}x{stage_n}x{} (stage_k {})",
                 problem.m, problem.n, problem.k, i.k, self.stage_k
+            ))));
+        }
+        // A bulk copy lands its rows at the box's own pitch, so it has no way to leave gaps
+        // between them. Refused here rather than where the stage is allocated: the pitch rides a
+        // persisted autotune key, and a key that comes back paired with a TMA delivery is a plan
+        // to turn down, not a kernel to fail expanding.
+        if self.delivery.is_tma() && self.pitch != Pitch::Dense {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a bulk copy lands its rows at its box's own pitch, so a {:?} delivery \
+                 cannot fill a stage whose fragment rows are {:?} apart",
+                self.delivery, self.pitch
             ))));
         }
         // The bulk-copy box is the stage; TMA owns which boxes it can encode.
@@ -413,6 +433,7 @@ impl CmmaRoutine {
             },
             stage_k,
             buffering: 2,
+            pitch: Pitch::Dense,
             delivery,
         })
     }

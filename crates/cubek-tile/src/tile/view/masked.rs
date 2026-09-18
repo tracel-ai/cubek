@@ -65,6 +65,34 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
     }
 }
 
+#[cube]
+impl<'a, T: CubePrimitive, C: Coordinates + 'static> MaskedView<'a, T, C> {
+    /// The one line at `pos` as a linear slice, clipped to nothing where this view masks and
+    /// `pos` lies past the operand's own data.
+    ///
+    /// What a copy *of* that line is issued over, rather than what [`read`](Self::read) hands
+    /// back: an asynchronous copy lands its own bytes and so cannot mask a cell on the way
+    /// through, and a source shorter than the copy is what makes the hardware zero the rest.
+    ///
+    /// One length stands for the whole line because a line is wholly in or wholly out: an axis
+    /// served in lines is never masked (the launch refuses that pair), so only a whole outer
+    /// coordinate can fall past the bound.
+    pub(crate) fn line(&self, pos: C) -> &[T] {
+        let one = C::from_int(pos.clone(), 1i64);
+        let line = self
+            .view
+            .clone()
+            .slice_unchecked(pos.clone(), one)
+            .as_linear_slice();
+        if comptime!(self.check) {
+            let held = select(self.view.is_in_bounds(pos), 1usize, 0usize);
+            line.slice(0, held)
+        } else {
+            line.slice(0, 1)
+        }
+    }
+}
+
 /// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching
 /// the masked reads.
 #[derive(CubeType)]

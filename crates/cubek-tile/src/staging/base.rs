@@ -110,8 +110,9 @@ impl<T: CubeType> Staging<T> {
 
     /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
     /// declared by [`Pipeline::fill`] land. Which units arrive is the slot's to say
-    /// ([`Pipeline::producers`]).
+    /// ([`Publishers`]).
     pub(crate) fn release_write(&mut self) {
+        let commits = self.commits();
         match &mut self.pipeline {
             Pipeline::Barrier {
                 full,
@@ -120,6 +121,11 @@ impl<T: CubeType> Staging<T> {
                 writes,
                 ..
             } => {
+                // One commit covers every copy this unit issued into the slot, and it is not an
+                // arrival of its own, so the arrive below still publishes exactly once.
+                if comptime!(commits) {
+                    full.commit_copy_async();
+                }
                 if *all_publish || UNIT_POS == *elected {
                     full.arrive();
                 }
@@ -127,6 +133,16 @@ impl<T: CubeType> Staging<T> {
             }
             Pipeline::Cube | Pipeline::Solo => {}
         }
+    }
+
+    /// Whether any operand of this slot is published by copies its units issued, and so has to
+    /// commit them to `full` before arriving on it.
+    fn commits(&self) -> comptime_type!(bool) {
+        comptime!(
+            self.plans
+                .iter()
+                .any(|plan| plan.delivery.completion() == Completion::IssuedCopies)
+        )
     }
 
     /// Consumer acquire: wait the slot's fill (`full`, RAW) for `Barrier`; nothing for `Cube` (already

@@ -177,7 +177,8 @@ impl<T: Numeric> Store<T> {
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
     /// Whether the window still covers the whole buffer (constructors yes, [`at`](Tile::at) no):
-    /// such a tile can be written in physical order.
+    /// such a tile can be written in physical order. Whether that order is the buffer's own line
+    /// order is the layout's ([`GmemLayout`](super::GmemLayout)), since the strides decide it.
     pub whole: bool,
     pub overhang: Overhang,
     /// What a write here does to the cell it lands on.
@@ -189,6 +190,9 @@ pub struct Access {
     /// turns [`Tiled`](Storage::Tiled) into [`Contiguous`](Storage::Contiguous) at the storage tile's own level; the
     /// buffer's layout itself never changes.
     pub storage: Storage,
+    /// Who moves this operand into a stage ([`TileSpec::delivery`]); carried down every
+    /// [`at`](crate::Tile::at), since a window is filled from as its operand is.
+    pub delivery: Delivery,
 }
 
 /// What a write to a store does to the cell it lands on.

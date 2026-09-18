@@ -70,6 +70,7 @@ fn cmma_partition_1x1_f32() {
         cmma::{CmmaBlueprint, CmmaDelivery, Partition},
         cpu_gemm::{InstructionShape, PlaneGrid},
     };
+    use cubek_tile::Pitch;
 
     let blueprint = CmmaBlueprint {
         instruction: InstructionShape { m: 8, n: 8, k: 8 },
@@ -78,10 +79,41 @@ fn cmma_partition_1x1_f32() {
         stage_k: 48,
         buffering: 2,
         delivery: CmmaDelivery::Copy,
+        pitch: Pitch::Dense,
     };
     test_matmul_strategy(
         client(),
         rect(128, 64, 96, f32_elems()),
+        Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
+    );
+}
+
+/// The same plan with its fragment rows padded apart, which is the one thing a stage's
+/// [`Pitch`] changes: the buffer grows, every address a reader forms moves with the strides,
+/// and the product must not.
+///
+/// The closest consumer of a storage-tiled stage there is, so it is where a pitch that put a
+/// row somewhere no reader followed would show up as a wrong product rather than as a slow one.
+#[test]
+fn cmma_padded_pitch_f32() {
+    use cubek_matmul::tiled::{
+        cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+        cpu_gemm::{InstructionShape, PlaneGrid},
+    };
+    use cubek_tile::Pitch;
+
+    let blueprint = CmmaBlueprint {
+        instruction: InstructionShape { m: 8, n: 8, k: 8 },
+        partition: Partition { m: 1, n: 2 },
+        planes: PlaneGrid { m: 2, n: 1 },
+        stage_k: 16,
+        buffering: 2,
+        delivery: CmmaDelivery::Copy,
+        pitch: Pitch::Padded,
+    };
+    test_matmul_strategy(
+        client(),
+        rect(64, 64, 64, f32_elems()),
         Tiled::Cmma(BlueprintStrategy::Forced(blueprint)).into(),
     );
 }
@@ -122,6 +154,7 @@ fn cmma_tma_rejects_oversized_box() {
             cpu_gemm::{InstructionShape, PlaneGrid},
         },
     };
+    use cubek_tile::Pitch;
 
     let client = client();
     // stage_n = planes.n * partition.n * instruction.n = 512 > 256.
@@ -136,6 +169,7 @@ fn cmma_tma_rejects_oversized_box() {
         stage_k: 16,
         buffering: 2,
         delivery: CmmaDelivery::Tma,
+        pitch: Pitch::Dense,
     };
     let problem = rect(64, 1024, 64, f16_elems());
     let device_settings = DeviceSettings {
@@ -161,6 +195,64 @@ fn cmma_tma_rejects_oversized_box() {
         }
         Err(other) => panic!("expected a box-limit rejection, got {other:?}"),
         Ok(_) => panic!("expected a box-limit rejection, got a blueprint"),
+    }
+}
+
+/// A TMA plan that also asks for a padded pitch: the engine lands its rows at its box's own
+/// pitch, so it has no way to leave gaps between them.
+///
+/// Rejected at blueprint time like the box limit above, and for the same reason it matters —
+/// the pitch rides a persisted autotune key, so a key that comes back paired with a TMA
+/// delivery has to read as a plan to turn down rather than as a kernel that will not expand.
+#[test]
+fn cmma_tma_rejects_padded_pitch() {
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition, StoredTiles},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::Pitch;
+
+    let client = client();
+    let blueprint = CmmaBlueprint {
+        instruction: InstructionShape {
+            m: 16,
+            n: 16,
+            k: 16,
+        },
+        partition: Partition { m: 1, n: 1 },
+        planes: PlaneGrid { m: 1, n: 1 },
+        stage_k: 16,
+        buffering: 2,
+        delivery: CmmaDelivery::Tma,
+        pitch: Pitch::Padded,
+    };
+    let problem = rect(64, 64, 64, f16_elems());
+    let device_settings = DeviceSettings {
+        plane_dim: client.properties().hardware.plane_size_max,
+        max_cube_count: client.properties().hardware.max_cube_count,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, 4, 4, 4)
+            .pick_max()
+            .unwrap(),
+        client,
+    };
+    let strategy = BlueprintStrategy::Forced(blueprint);
+    match CmmaRoutine::blueprint(
+        &strategy,
+        &problem,
+        &device_settings,
+        problem.global_dtypes.out,
+        StoredTiles::default(),
+    ) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(msg.contains("Padded"), "wrong rejection: {msg}");
+        }
+        Err(other) => panic!("expected a padded-pitch rejection, got {other:?}"),
+        Ok(_) => panic!("expected a padded-pitch rejection, got a blueprint"),
     }
 }
 

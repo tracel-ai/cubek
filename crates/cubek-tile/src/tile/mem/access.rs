@@ -10,6 +10,7 @@
 //! offset and count on these loops, taken from the pipeline, which already knows both numbers.
 
 use cubecl::{
+    prelude::barrier::{copy_async, copy_async_checked},
     prelude::*,
     quant::scheme::{QuantStore, QuantValue},
     std::quant::unpack_fields,
@@ -131,9 +132,11 @@ impl<T: Numeric> MemData<T> {
                 ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                     // Unpacked: one element per value, so the physical line is the served line.
                     QuantStore::Native => match comptime!(info.scheme.value) {
-                        QuantValue::Q8F | QuantValue::Q8S => {
-                            self.fill_straight::<i8, W>(src, comptime!(space.clone()))
-                        }
+                        QuantValue::Q8F | QuantValue::Q8S => self.fill_straight::<i8, W>(
+                            src,
+                            comptime!(space.clone()),
+                            comptime!(Mover::Store),
+                        ),
                         other => panic!(
                             "MemData::fill_from: native quant storage element {:?} is not wired (i8 only)",
                             other
@@ -144,7 +147,11 @@ impl<T: Numeric> MemData<T> {
                     QuantStore::PackedU32(_) => {
                         let size!(WP) =
                             comptime!(self.store.vector_size / info.scheme.num_quants());
-                        self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
+                        self.fill_straight::<u32, WP>(
+                            src,
+                            comptime!(space.clone()),
+                            comptime!(Mover::Store),
+                        );
                     }
                     other => panic!(
                         "MemData::fill_from: quant storage {:?} is not wired (native or packed-u32)",
@@ -168,7 +175,7 @@ impl<T: Numeric> MemData<T> {
                  window it was shaped over, at the same packing and width"
             ));
             let size!(WP) = comptime!(self.store.packing.physical(self.store.vector_size));
-            self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
+            self.fill_straight::<u32, WP>(src, comptime!(space.clone()), comptime!(Mover::Store));
         } else if comptime!(
             self.access.whole
                 && !self.access.overhang.masks()
@@ -191,7 +198,7 @@ impl<T: Numeric> MemData<T> {
                     src.store.vector_size
                 ));
             }
-            self.fill_straight::<T, W>(src, comptime!(space.clone()));
+            self.fill_straight::<T, W>(src, comptime!(space.clone()), comptime!(Mover::Store));
         } else {
             // The general path reads the source as a flat run of its *window* and writes the
             // destination as a flat run of its own, which pairs the two only when they are the same
@@ -268,6 +275,71 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
+    /// Memory transport leaf, asynchronous: the walk [`fill_from`](MemData::fill_from) performs,
+    /// with each line issued as a global→shared copy that lands on its own rather than read into
+    /// a register and stored. Publishing the slot is what waits for the copies, which is the
+    /// staging slot's to do ([`Delivery::AsyncCopy`]).
+    ///
+    /// **The mover carries bytes verbatim**, which is the whole of what it refuses: whatever the
+    /// straight fill *decodes* on the way through has no copy instruction that would do it. The
+    /// refusals below say which, each in its own words, and a launch that elected this delivery
+    /// for an operand it does not suit is what reaches one.
+    ///
+    /// # Alignment
+    ///
+    /// The copy instruction wants both ends aligned to the line it moves, and misalignment is
+    /// the one failure it does *not* announce: the bytes land wrong rather than not at all. So
+    /// neither end is asserted here, because neither can be reached unaligned — the destination
+    /// is allocated to the line ([`MemData::stage`] under [`Delivery::AsyncCopy`]), and the
+    /// source's every line offset is a whole number of lines from a buffer the allocator
+    /// aligned past one. That second half is [`Geometry::serves_lines`], which every operand
+    /// passes before it is built: the innermost dim steps by 1 and every coarser stride is whole
+    /// lines, so no coordinate the walk forms addresses inside one.
+    pub(crate) fn fill_async(&mut self, src: &MemData<T>, #[comptime] space: Space) {
+        let width = comptime!(self.store.vector_size);
+        let size!(W) = comptime!(width);
+        // The element is an intrinsic's answer rather than host data, so it is bound here and
+        // only read inside the comptime blocks below.
+        let elem = elem_type_of::<T>();
+        comptime!(assert!(
+            src.projection.is_direct() && self.projection.is_direct(),
+            "MemData::fill_async: a copy moves a box of bytes and cannot gather; a gathered \
+             operand stages through the compacted window its own fill writes"
+        ));
+        comptime!(assert!(
+            src.store.quant.is_none()
+                && self.store.quant.is_none()
+                && src.store.packing == Packing::Plain
+                && self.store.packing == Packing::Plain,
+            "MemData::fill_async: a copy hands over the stored bytes, so a quantized or packed \
+             operand reaches its stage through the fill that decodes it"
+        ));
+        comptime!(assert!(
+            src.store.vector_size == width,
+            "MemData::fill_async: a copy moves whole lines, but this stage is served {width} wide \
+             from a {}-wide operand, so each of its lines is assembled from source cells",
+            src.store.vector_size
+        ));
+        comptime!(assert!(
+            self.access.write == Write::Replace,
+            "MemData::fill_async: a copy replaces the bytes it lands on; a destination that folds \
+             has to read each cell to add into it"
+        ));
+        comptime!(assert!(
+            self.access.whole && !self.access.overhang.masks(),
+            "MemData::fill_async: a copy is issued over the destination's own physical order, \
+             which only a whole unmasked stage is walked in"
+        ));
+        comptime!(assert!(
+            Mover::moves(width * elem.size()),
+            "MemData::fill_async: one copy moves a power of two from {ASYNC_COPY_MIN_BYTES} to \
+             {ASYNC_COPY_MAX_BYTES} bytes, and this operand's line is {}; serve it at a width \
+             whose line is one of them",
+            width * elem.size()
+        ));
+        self.fill_straight::<T, W>(src, space, comptime!(Mover::AsyncCopy { width }));
+    }
+
     /// The straight-line half of [`fill_from`](MemData::fill_from): the destination filled in its
     /// own physical order, whole `Vector<I2, WP2>` lines, decoding the source once per line rather
     /// than per cell. `I2` / `WP2` are the *storage* element and physical width: served for a plain
@@ -280,6 +352,7 @@ impl<T: Numeric> MemData<T> {
         &mut self,
         src: &MemData<T>,
         #[comptime] space: Space,
+        #[comptime] mover: Mover,
     ) {
         // A gathered stage owns mutable map registers alongside its bytes. Store the source
         // window's coefficients and phase into those registers so bytes and interpretation are
@@ -302,12 +375,14 @@ impl<T: Numeric> MemData<T> {
             Some(c) if !c.is_dense() => c.steps().to_vec(),
             _ => Vec::new(),
         });
-        let shape = self.layout.physical_shape.clone();
+        // The destination's own addressing, taken before the buffer is borrowed: a fill walks it
+        // through the same layout every reader reads it through.
+        let layout = self.base();
+        let shape = layout.physical_shape.clone();
         let plen = shape.len().comptime();
         let total = shape
             .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
             .fcast::<usize>();
-        let projection = comptime!(self.layout.projection.clone());
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.
         let lanes = comptime!(fill_extent(&space, sw, w, check));
@@ -363,7 +438,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, WP2>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, units, straight, padding, mover,
             );
         } else {
             let s = if comptime!(steps.is_empty()) {
@@ -382,7 +457,7 @@ impl<T: Numeric> MemData<T> {
                 )
             };
             fill_lines::<I2, WP2, Const<1>>(
-                d, &s, projection, &shape, total, total_c, units, straight, padding,
+                d, &s, &layout, total, total_c, units, straight, padding, mover,
             );
         }
     }
@@ -759,6 +834,9 @@ impl<T: Numeric> MemData<T> {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
+            // One contiguous run from the origin, each coordinate at its innermost fragment's
+            // stride: its lines are its own.
+            in_order: comptime!(true),
         }
     }
 
@@ -1402,6 +1480,7 @@ impl<T: Numeric> MemData<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
+                delivery: self.access.delivery,
             }),
             lanes: comptime!(LaneRoles {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
@@ -1494,6 +1573,7 @@ impl<T: Numeric> MemData<T> {
                 write: self.access.write,
                 units: self.access.units,
                 storage: self.access.storage,
+                delivery: self.access.delivery,
             }),
             lanes: self.lanes,
             split_share: comptime!(self.split_share),
@@ -1683,21 +1763,46 @@ fn fill_extent(space: &Space, sw: usize, w: usize, check: bool) -> Option<usize>
     }
 }
 
+/// What one line of a cooperative fill does with its source — the two [`Delivery`]s the cube's
+/// own units perform, as the act a line takes. Comptime, so the walk is one program and only
+/// its leaf differs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Mover {
+    /// The unit reads the line through the source view and stores it.
+    Store,
+    /// The unit issues an asynchronous copy of it and reads nothing: the bytes land on their
+    /// own, and publishing the slot is what waits for them. `width` is the line in elements,
+    /// which one copy instruction moves whole — the [`Store`](Mover::Store) reads it off the
+    /// types instead, and only this case needs it stated.
+    AsyncCopy { width: usize },
+}
+
+impl Mover {
+    /// Whether one asynchronous copy carries a line of `line_bytes`: a power of two between
+    /// [`ASYNC_COPY_MIN_BYTES`] and [`ASYNC_COPY_MAX_BYTES`], which is the whole of what the
+    /// instruction offers.
+    pub(crate) fn moves(line_bytes: usize) -> bool {
+        line_bytes.is_power_of_two()
+            && (ASYNC_COPY_MIN_BYTES..=ASYNC_COPY_MAX_BYTES).contains(&line_bytes)
+    }
+}
+
 /// Schedule cooperative cyclic writing of destination stage lines across cube units.
 ///
-/// Dispatches line reads via [`read_stage_line`], taking an unrolled loop when the task count
+/// Dispatches each line via [`fill_line`], taking an unrolled loop when the task count
 /// is small and static (`straight == true`) or a dynamic `CUBE_DIM`-strided while loop otherwise.
 #[cube]
+#[allow(clippy::too_many_arguments)]
 fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
     d: &mut [Vector<I2, WP2>],
     s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
-    #[comptime] projection: Projection,
-    shape: &Coords<u32>,
+    layout: &GmemLayout,
     total: usize,
     #[comptime] total_c: Option<u64>,
     #[comptime] units: usize,
     #[comptime] straight: bool,
     #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
 ) {
     if comptime!(straight) {
         let tasks = comptime!((total_c.unwrap() as usize).div_ceil(units));
@@ -1706,30 +1811,86 @@ fn fill_lines<I2: Numeric, WP2: Size, SW: Size>(
             let i = UNIT_POS as usize + comptime!(t * units);
             if comptime!((t + 1) * units > total_c.unwrap() as usize) {
                 if i < total {
-                    d[i] = read_stage_line::<I2, WP2, SW>(
-                        s,
-                        &physical_pos(comptime!(projection.clone()), i, shape),
-                        comptime!(padding),
-                    );
+                    fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
                 }
             } else {
-                d[i] = read_stage_line::<I2, WP2, SW>(
-                    s,
-                    &physical_pos(comptime!(projection.clone()), i, shape),
-                    comptime!(padding),
-                );
+                fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
             }
         }
     } else {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            d[i] = read_stage_line::<I2, WP2, SW>(
-                s,
-                &physical_pos(comptime!(projection.clone()), i, shape),
-                comptime!(padding),
-            );
+            fill_line::<I2, WP2, SW>(d, i, s, layout, comptime!(padding), comptime!(mover));
             i += workers;
+        }
+    }
+}
+
+/// Fill the destination's line `i`: where it lands in the buffer, where its cells sit in the
+/// source, and the [`Mover`] that carries them.
+#[cube]
+fn fill_line<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    i: usize,
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    layout: &GmemLayout,
+    #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
+) {
+    let shape = layout.physical_shape.clone();
+    let digits = line_digits(i, &shape);
+    let pos = fold_physical(comptime!(layout.projection.clone()), &digits, &shape);
+    let at = landing(i, &digits, layout);
+    move_line::<I2, WP2, SW>(d, at, s, &pos, comptime!(padding), comptime!(mover));
+}
+
+/// Where the destination's line `i` lands in its buffer: at `i` itself where the buffer holds its
+/// lines in their own order, and at its digits dotted with the buffer's strides where a
+/// [`Pitch`] left gaps between the fragment rows.
+#[cube]
+fn landing(i: usize, digits: &Coords<u32>, layout: &GmemLayout) -> usize {
+    if comptime!(layout.in_order) {
+        i
+    } else {
+        let rank = digits.len().comptime();
+        let mut terms = Sequence::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            terms.push(digits.at(p).fmul(layout.physical_strides.at(p)));
+        }
+        terms
+            .fsum(comptime!((0..rank).collect::<Vec<_>>()))
+            .fcast::<usize>()
+    }
+}
+
+/// Move the line at source position `pos` into destination line `i`, by `mover`: the unit's own
+/// load and store, or one asynchronous copy it issues.
+#[cube]
+fn move_line<I2: Numeric, WP2: Size, SW: Size>(
+    d: &mut [Vector<I2, WP2>],
+    i: usize,
+    s: &MaskedView<'_, Vector<I2, SW>, CoordsDyn>,
+    pos: &CoordsDyn,
+    #[comptime] padding: Option<Padding>,
+    #[comptime] mover: Mover,
+) {
+    match comptime!(mover) {
+        Mover::Store => {
+            d[i] = read_stage_line::<I2, WP2, SW>(s, pos, comptime!(padding));
+        }
+        Mover::AsyncCopy { width } => {
+            // One line in, one line out: the destination is re-typed to the source's line rather
+            // than proved equal to it, since only the comptime refusals in
+            // [`fill_async`](MemData::fill_async) pair the two widths.
+            let source = s.line(pos.clone());
+            let destination = d.slice_mut(i, i + 1);
+            if comptime!(s.check) {
+                copy_async_checked(source, destination.downcast_mut(), comptime!(width as u32));
+            } else {
+                copy_async(source, destination.downcast_mut(), comptime!(width as u32));
+            }
         }
     }
 }
@@ -1751,19 +1912,18 @@ fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
     }
 }
 
-/// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
-/// digit per physical axis ([`line_digit`]), then [`fold_physical`] folds a storage-tiled axis's
-/// several digits back into one, off `projection`'s own div/modulo (`GmemLayout`'s synthetic
-/// per-position map, invertible by construction).
+/// Physical line `i` decoded into one digit per physical axis ([`line_digit`]): what both ends of
+/// a fill are addressed by — [`fold_physical`] turns them into the source's logical coordinate,
+/// and [`landing`] dots them with the destination's own strides.
 #[cube]
-fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32>) -> CoordsDyn {
+fn line_digits(i: usize, shape: &Coords<u32>) -> Coords<u32> {
     let x = i.fcast::<u32>();
     let mut digits = Coords::<u32>::new();
     #[unroll]
     for j in 0..shape.len() {
         digits.push(line_digit(x, shape, j));
     }
-    fold_physical(comptime!(projection), &digits, shape)
+    digits
 }
 
 /// Assemble one padded destination line from adjacent scalar source cells.

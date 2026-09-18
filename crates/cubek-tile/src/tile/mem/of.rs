@@ -392,6 +392,9 @@ impl<T: Numeric> Tile<T> {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
+                    // A bound tensor is addressed by the strides it arrived with, and a walk over
+                    // the whole of it is its own line order; only a stage's pitch parts the two.
+                    in_order: comptime!(true),
                 },
                 window: Window::new(
                     origin,
@@ -415,6 +418,7 @@ impl<T: Numeric> Tile<T> {
                     write,
                     units: spec.units,
                     storage: spec.storage,
+                    delivery: spec.delivery,
                 }),
                 lanes: comptime!(LaneRoles {
                     share: LaneShare::Whole,
