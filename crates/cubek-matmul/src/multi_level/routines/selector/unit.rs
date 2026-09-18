@@ -839,6 +839,7 @@ mod tests {
         HardwareProperties {
             load_width,
             vector_register_count,
+            io_width: 512,
             plane_size_min: 1,
             plane_size_max: 1,
             max_bindings: u32::MAX,
