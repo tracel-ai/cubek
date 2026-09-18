@@ -116,14 +116,12 @@ impl MatrixAxes {
     }
 
     /// The two edges a matrix reader takes as its rows and columns: the innermost axis, and the
-    /// last axis above it of extent past one. An axis of extent one is a number that folds away,
-    /// so a split contraction's block digit or a column tile's index does not stand between a
-    /// fragment and its rows; every such axis lands in the row group, where it contributes a
-    /// coordinate of `0`.
+    /// last axis above it of extent past one.
     ///
-    /// What a fragment, a partition and a trailing region read through, none of which state a
-    /// shape to find the grouping from ([`find`](Self::find)) and none of which can take the
-    /// literal last two ([`trailing_pair`](Self::trailing_pair)) without tripping over a `1`.
+    /// An axis of extent one is a number that folds away, so a split contraction's block digit or
+    /// a column tile's index does not stand between a fragment and its rows. What a fragment, a
+    /// partition and a trailing region read through, none of which knows a shape to find the
+    /// grouping from ([`find`](Self::find)).
     pub fn edges(space: &Space) -> Self {
         let rank = space.rank();
         let col_split = rank - 1;

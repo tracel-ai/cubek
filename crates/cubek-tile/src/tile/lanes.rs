@@ -1,19 +1,18 @@
 //! A tile the plane holds in its lanes: loaded once, coalesced, and shared by shuffle.
 //!
-//! Lane `t` holds line `t`, read whole by one coalesced read of the plane. A value is then
-//! reached at its coordinates, the line named by the coordinates along the lines' axes and the
-//! byte by the coordinate along the line, and arrives at the lane that asks by a plane shuffle,
-//! a word at a time.
+//! Lane `t` holds line `t`. A value is reached at its coordinates, the line named by the
+//! coordinates along the lines' axes and the byte by the coordinate along the line, and arrives
+//! at the lane that asks by a plane shuffle, a word at a time.
 //!
 //! **One line per lane**, so a box deeper than the plane is wide does not fit. The plane's width
-//! is the launch's, not a comptime fact of the kernel, so nothing here can refuse one; a caller
-//! that wants more lines than the device gives it lanes wants a shared-memory stage, which is a
-//! different tile and not a mode of this one.
+//! is the launch's rather than a comptime fact, so nothing here can refuse one; a caller wanting
+//! more lines than the device gives it lanes wants a shared-memory stage, which is a different
+//! tile and not a mode of this one.
 //!
-//! The lines are held as the words they lie in and decoded at the read: four `ue4m3` bytes to a
-//! word, or a whole `f32`. Nothing here windows a line. A window into the box is a scalar origin,
-//! so a step one block deep into a line of four is a coordinate, never a line index a window
-//! cannot state ([`MemData::at`](crate::MemData) refuses exactly that cut).
+//! The lines are held as the words they lie in and decoded at the read. Nothing here windows a
+//! line: a window into the box is a scalar origin, so a step one block deep into a line of four
+//! is a coordinate, never a line index a window cannot state
+//! ([`MemData::at`](crate::MemData) refuses exactly that cut).
 
 use std::marker::PhantomData;
 
@@ -24,31 +23,6 @@ use crate::*;
 // Words one line holds, as a scope-registered size rather than a generic: bound where the tile
 // is opened, so the width stays a storage detail of it and never reaches `TileKind`.
 define_size!(pub(crate) LW);
-
-/// What a coordinate along each axis of `loaded` counts in lines: row-major over the axes
-/// `projection` addresses above the line, zero along the rest.
-fn line_strides(loaded: &Space, projection: &Projection) -> Vec<usize> {
-    let rank = loaded.rank();
-    let mut strides = vec![0; rank];
-    let mut stride = 1;
-    // Indexed, not iterated: each addressed stride is the product of the ones written below it.
-    #[allow(clippy::needless_range_loop)]
-    for p in (0..rank - 1).rev() {
-        if projection.addresses(loaded.axis_at(p)) {
-            strides[p] = stride;
-            stride *= loaded.extent_at(p);
-        }
-    }
-    strides
-}
-
-/// Lines `loaded` holds: one per position along the axes `projection` addresses above the line.
-fn lines_of(loaded: &Space, projection: &Projection) -> usize {
-    (0..loaded.rank() - 1)
-        .filter(|&p| projection.addresses(loaded.axis_at(p)))
-        .map(|p| loaded.extent_at(p))
-        .product()
-}
 
 /// Bind the line width `LW` for the rest of the kernel's scope.
 #[cube]
@@ -93,6 +67,26 @@ pub struct Lanes<T: Numeric> {
     _served: PhantomData<T>,
 }
 
+impl<T: Numeric> Lanes<T> {
+    /// How `loaded` counts in lines: what a coordinate along each of its axes is worth, row-major
+    /// over the axes `projection` addresses above the line and zero along the rest, and how many
+    /// lines that leaves. The count is the last stride the walk writes, so one pass gives both.
+    fn line_strides(loaded: &Space, projection: &Projection) -> (Vec<usize>, usize) {
+        let rank = loaded.rank();
+        let mut strides = vec![0; rank];
+        let mut lines = 1;
+        // Indexed, not iterated: each addressed stride is the product of the ones written below it.
+        #[allow(clippy::needless_range_loop)]
+        for p in (0..rank - 1).rev() {
+            if projection.addresses(loaded.axis_at(p)) {
+                strides[p] = lines;
+                lines *= loaded.extent_at(p);
+            }
+        }
+        (strides, lines)
+    }
+}
+
 #[cube]
 impl<T: Numeric> Lanes<T> {
     /// The box one region of `level` over `operand` fills, held one line to a lane, empty until
@@ -106,8 +100,7 @@ impl<T: Numeric> Lanes<T> {
             projection.addresses(loaded.axis_at(rank - 1)),
             "Lanes: the line runs along the operand's innermost axis, which it must address"
         ));
-        let strides = comptime!(line_strides(&loaded, &projection));
-        let lines = comptime!(lines_of(&loaded, &projection));
+        let (strides, lines) = comptime!(Lanes::<T>::line_strides(&loaded, &projection));
         let packing = operand.packing();
         let served = elem_type_of::<T>();
         // The lines are held as words: a packed operand's as they lie, a plain one's as the
@@ -192,9 +185,9 @@ impl<T: Numeric> Lanes<T> {
         if lane < comptime!(lines as u32) {
             #[unroll]
             for r in 0..reads {
-                // The line's coordinate along every axis: its digits along the addressed ones,
-                // the origin along the rest (which one line holds whole), and along the line
-                // itself the read, counted in the lines the source serves.
+                // The line's coordinate along every axis: its digits along the addressed
+                // ones, zero along the rest (which one line holds whole), and the read along the
+                // line itself, counted in the lines the source serves.
                 let mut at = CoordsDyn::new();
                 #[unroll]
                 for p in 0..rank - 1 {

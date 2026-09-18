@@ -264,11 +264,7 @@ impl<S: Numeric> ScaleLookup<S> {
         #[comptime]
         match &self.inner {
             ComptimeOption::Some(inner) => {
-                let scale = inner.scale_at(&own_coords(
-                    coords,
-                    comptime!(self.values.clone()),
-                    comptime!(inner.space.clone()),
-                ));
+                let scale = inner.scale_for(coords, comptime!(self.values.clone()));
                 value * Vector::<E, V>::cast_from(scale * self.coarser.extract(0usize))
             }
             ComptimeOption::None => value,
@@ -299,17 +295,7 @@ impl<S: Numeric> Tile<S> {
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
         match &self.tile_kind {
             TileKind::Lanes(lines) => lines.read(coords),
-            TileKind::Gmem(_) | TileKind::Smem(_) => {
-                let sw = self.vector_size();
-                let size!(SW) = sw;
-                let (at, field) = line_and_field(coords, sw);
-                let line = self.nd_packed::<SW>(comptime!(Guard::Checked)).read(at);
-                if comptime!(sw > 1) {
-                    line.extract_dynamic(field.fcast::<usize>())
-                } else {
-                    line.extract(0usize)
-                }
-            }
+            TileKind::Gmem(_) | TileKind::Smem(_) => self.value_in_line(coords),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -318,44 +304,48 @@ impl<S: Numeric> Tile<S> {
             }
         }
     }
-}
 
-/// The value's coordinate in the scales' own space: one entry per axis of theirs, each the
-/// value's coordinate along that axis.
-#[cube]
-fn own_coords(
-    coords: &Coords<u32>,
-    #[comptime] values: Space,
-    #[comptime] scales: Space,
-) -> Coords<u32> {
-    let rank = comptime!(scales.rank());
-    let mut own = Coords::<u32>::new();
-    #[unroll]
-    for p in 0..rank {
-        let axis = comptime!(scales.axis_at(p));
-        own.push(coords.at(comptime!(values.position(axis))));
+    /// The one scale covering the value at `coords` of a tile spanning `values`.
+    ///
+    /// A scale's space omits the axes one scale holds whole, so the value's own coordinate along
+    /// each axis the scales do carry names the scale, and the omitted ones contribute nothing.
+    pub(crate) fn scale_for(&self, coords: &Coords<u32>, #[comptime] values: Space) -> S {
+        let rank = comptime!(self.space.rank());
+        let mut own = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let axis = comptime!(self.space.axis_at(p));
+            own.push(coords.at(comptime!(values.position(axis))));
+        }
+        self.scale_at(&own)
     }
-    own
-}
 
-/// `coords` as a tile serving `width`-wide lines addresses them: the line that holds the value,
-/// and the field of that line the value sits in.
-#[cube]
-fn line_and_field(coords: &Coords<u32>, #[comptime] width: usize) -> (CoordsDyn, u32) {
-    let rank = coords.len();
-    let mut pos = CoordsDyn::new();
-    let mut field = 0u32.runtime();
-    #[unroll]
-    for p in 0..rank {
-        let coord = coords.at(p);
-        if comptime!(p == rank - 1 && width > 1) {
-            field = coord.frem(comptime!(width as u32));
-            pos.push(coord.fdiv(comptime!(width as u32)));
+    /// The one value at `coords` of a tile that serves lines: every coordinate but the innermost
+    /// names the line outright, and the innermost splits into the line and the field of it the
+    /// value sits in.
+    fn value_in_line(&self, coords: &Coords<u32>) -> S {
+        let rank = coords.len();
+        let width = self.vector_size();
+        let size!(W) = width;
+        let mut at = CoordsDyn::new();
+        let mut field = 0u32.runtime();
+        #[unroll]
+        for p in 0..rank {
+            let coord = coords.at(p);
+            if comptime!(p == rank - 1 && width > 1) {
+                field = coord.frem(comptime!(width as u32));
+                at.push(coord.fdiv(comptime!(width as u32)));
+            } else {
+                at.push(coord);
+            }
+        }
+        let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
+        if comptime!(width > 1) {
+            line.extract_dynamic(field.fcast::<usize>())
         } else {
-            pos.push(coord);
+            line.extract(0usize)
         }
     }
-    (pos, field)
 }
 
 /// A scale level a launch may or may not have bound, as the tile it serves: `u32` words read in
