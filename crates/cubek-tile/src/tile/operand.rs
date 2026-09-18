@@ -76,6 +76,14 @@ impl<E: Numeric> Tile<E> {
             levels,
         }
     }
+
+    /// [`scaled`](Tile::scaled) by a level the caller has in hand.
+    ///
+    /// `scaled` takes what a *scheme* may or may not have bound; this takes what a kernel is
+    /// holding, which is the common case wherever the scales were staged rather than looked up.
+    pub fn scaled_by<S: Numeric>(&self, level: Tile<S>) -> Scaled<E, S> {
+        self.scaled(&ComptimeOption::new_Some(level))
+    }
 }
 
 #[cube]
@@ -222,7 +230,7 @@ pub struct ScaleLookup<S: Numeric> {
 
 #[cube]
 impl<S: Numeric> ScaleLookup<S> {
-    /// Whether a read reaches the lane that asks by a plane shuffle ([`Chunk::by_shuffle`]),
+    /// Whether a read reaches the lane that asks by a plane shuffle ([`PlaneLines::by_shuffle`]),
     /// so the reader keeps its lanes converged around it.
     pub fn by_shuffle(&self) -> comptime_type!(bool) {
         #[comptime]
@@ -271,10 +279,10 @@ impl<S: Numeric> ScaleLookup<S> {
 #[cube]
 impl<S: Numeric> Tile<S> {
     /// Whether a read of this tile reaches the lane that asks by a plane shuffle
-    /// ([`Chunk::by_shuffle`]).
+    /// ([`PlaneLines::by_shuffle`]).
     pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
-            TileKind::Chunk(chunk) => chunk.by_shuffle(),
+            TileKind::PlaneLines(lines) => lines.by_shuffle(),
             TileKind::Gmem(_)
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
@@ -289,7 +297,7 @@ impl<S: Numeric> Tile<S> {
     /// coordinate names a line and the field of it the scale sits in.
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
         match &self.tile_kind {
-            TileKind::Chunk(chunk) => chunk.read(coords),
+            TileKind::PlaneLines(lines) => lines.read(coords),
             TileKind::Gmem(_) | TileKind::Smem(_) => {
                 let sw = self.vector_size();
                 let size!(SW) = sw;
@@ -373,6 +381,24 @@ pub trait MaybeTile: CubeType {
 
     /// This level at `region`, descending it as [`Tile::at`] descends a factor.
     fn at(&self, region: &Region) -> ComptimeOption<Tile<Self::E>>;
+
+    /// This level as the steps under one region of `chunk` read it: a stage the plane holds,
+    /// refilled once a chunk with [`copy_from`](MaybeTile::copy_from). Where `chunk` names no
+    /// level the steps read the level where it lies, and this is that level.
+    ///
+    /// A level a scheme never bound stages nothing and stays absent, so a kernel stages its
+    /// scales without asking whether it has any.
+    fn staged(
+        &self,
+        #[comptime] chunk: Option<Level>,
+        #[comptime] storage: StageStorage,
+    ) -> ComptimeOption<Tile<Self::E>>;
+
+    /// This level filled from `src`, where both are there; nothing where either is not.
+    ///
+    /// The pair is what a stage and the scales it stages are: they are bound together or not at
+    /// all, so a caller says "fill" once rather than testing both.
+    fn copy_from(&mut self, src: &ComptimeOption<Tile<Self::E>>);
 }
 
 #[cube]
@@ -384,6 +410,36 @@ impl<E: Numeric> MaybeTile for ComptimeOption<Tile<E>> {
         match self {
             ComptimeOption::Some(level) => ComptimeOption::new_Some(level.at(region)),
             ComptimeOption::None => ComptimeOption::new_None(),
+        }
+    }
+
+    fn staged(
+        &self,
+        #[comptime] chunk: Option<Level>,
+        #[comptime] storage: StageStorage,
+    ) -> ComptimeOption<Tile<E>> {
+        match comptime!(chunk) {
+            None => self.clone(),
+            Some(chunk) =>
+            {
+                #[comptime]
+                match self {
+                    ComptimeOption::Some(level) => ComptimeOption::new_Some(MemData::<E>::stage(
+                        level,
+                        comptime!(chunk.clone()),
+                        comptime!(storage.clone()),
+                        comptime!(None),
+                    )),
+                    ComptimeOption::None => ComptimeOption::new_None(),
+                }
+            }
+        }
+    }
+
+    fn copy_from(&mut self, src: &ComptimeOption<Tile<E>>) {
+        #[comptime]
+        if let (ComptimeOption::Some(stage), ComptimeOption::Some(src)) = (self, src) {
+            stage.copy_from(src);
         }
     }
 }

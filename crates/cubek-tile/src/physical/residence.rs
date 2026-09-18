@@ -15,8 +15,8 @@ pub enum StageStorage {
     Strided,
     /// Not shared memory at all: the lines a plane holds for one chunk of its walk, in its
     /// lanes and read by shuffle where `broadcast`, else in the plane's own shared window
-    /// ([`Chunk`](crate::Chunk)).
-    Chunk {
+    /// ([`PlaneLines`](crate::PlaneLines)).
+    PlaneLines {
         broadcast: bool,
     },
 }

@@ -440,7 +440,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd_mut: a tma source is not written"),
-            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
                 panic!("Tile::nd_mut: a procedural tile is not writable")
             }
         }
@@ -504,7 +504,7 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Chunk(_) => comptime!(true),
+            | TileKind::PlaneLines(_) => comptime!(true),
         }
     }
 
@@ -531,7 +531,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
-            TileKind::Chunk(_) => panic!("Tile::nd: a chunk is read at a coordinate (`scale_at`)"),
+            TileKind::PlaneLines(_) => {
+                panic!("Tile::nd: a chunk is read at a coordinate (`scale_at`)")
+            }
             TileKind::Procedural(data) => {
                 let layout = axis_projection(
                     comptime!(self.space.clone()),
@@ -610,7 +612,7 @@ impl<T: Numeric> Tile<T> {
             // A procedural tile is always scalar-addressed at the leaf (`vector_size() == 1`,
             // enforced by `ProceduralDataExpand::__expand_vector_size_method`). The direct
             // projection therefore steps by single elements along the innermost axis.
-            TileKind::Procedural(_) | TileKind::Chunk(_) => NdReader::new(
+            TileKind::Procedural(_) | TileKind::PlaneLines(_) => NdReader::new(
                 axis_projection(
                     comptime!(self.space.clone()),
                     comptime!(Projection::direct_over(&self.space)),

@@ -359,7 +359,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Chunk(_) => {
+            | TileKind::PlaneLines(_) => {
                 panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
             }
         }
@@ -374,7 +374,7 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Chunk(_) => comptime!(false),
+            | TileKind::PlaneLines(_) => comptime!(false),
         }
     }
 
@@ -409,9 +409,22 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Chunk(_) => {
+            | TileKind::PlaneLines(_) => {
                 panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
             }
+        }
+    }
+
+    /// This operand landed where `instruction` needs it, and untouched where it does not.
+    ///
+    /// A fragment loads a window as it lies, so a factor reaching one lands first
+    /// ([`with_landing`](Tile::with_landing)); a register block reads its operand through its
+    /// layout and lands nothing. Which instructions want a landing is this crate's to know, so
+    /// a kernel that serves both arms opens its operands once instead of branching per operand.
+    pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<Acc> {
+        match comptime!(instruction) {
+            Instruction::Registers { .. } => self,
+            Instruction::Cmma | Instruction::Mma { .. } => self.with_landing(),
         }
     }
 

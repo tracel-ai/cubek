@@ -102,24 +102,20 @@ pub fn pack(
         .copied()
         .chain([rows / tr, cols / tc, tr, tc])
         .collect();
+    // The tiling the result carries: its batch dims plain, both matrix dims one nesting deep.
+    let fragments: Vec<usize> = batches.iter().map(|_| 1).chain([2, 2]).collect();
+    let config = |e| MatmulSetupError::InvalidConfig(Box::new(format!("pack: {e:?}")));
+    let tiling = Tiling::new(&fragments).map_err(config)?;
     let mut dst = TensorHandle::empty(client, Shape::from(physical), dtype);
     dst.metadata = Box::new(
         dst.metadata
             .as_ref()
             .clone()
-            .with_tiling(packed_tiling(&batches)?)
-            .map_err(|e| MatmulSetupError::InvalidConfig(Box::new(format!("pack: {e:?}"))))?,
+            .with_tiling(tiling)
+            .map_err(config)?,
     );
     pack_into(client, src, dst.clone().binding(), dtype)?;
     Ok(dst)
-}
-
-/// The tiling a packed matrix carries: its batch dims plain, both matrix dims one nesting deep.
-#[allow(clippy::result_large_err)]
-fn packed_tiling(batches: &[usize]) -> Result<Tiling, MatmulSetupError> {
-    let fragments: Vec<usize> = batches.iter().map(|_| 1).chain([2, 2]).collect();
-    Tiling::new(&fragments)
-        .map_err(|e| MatmulSetupError::InvalidConfig(Box::new(format!("pack: {e:?}"))))
 }
 
 /// [`pack`] into a destination the caller allocated: the same relayout, writing where it says.

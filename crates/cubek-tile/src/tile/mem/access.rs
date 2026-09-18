@@ -42,7 +42,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
                 panic!("Tile::view: a procedural tile has no memory view")
             }
         }
@@ -60,7 +60,7 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view_mut: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) | TileKind::Chunk(_) => {
+            TileKind::Procedural(_) | TileKind::PlaneLines(_) => {
                 panic!("Tile::view_mut: a procedural tile is not writable")
             }
         }

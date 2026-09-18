@@ -1,4 +1,5 @@
-//! The chunk: the stage a plane holds for the steps it walks under one load of its scales.
+//! The lines a plane holds: the stage it keeps for the steps it walks under one load of its
+//! scales. A *chunk* is that span of the walk; these are what the plane holds for one.
 //!
 //! Lane `t` holds line `t`, loaded once for the chunk by one coalesced read of the plane. A
 //! value's scale is then read at the value's coordinates — the line named by the coordinates
@@ -57,7 +58,7 @@ fn register_line_words(#[comptime] words: usize) {
 /// The lines a plane holds for one chunk of its walk, and where inside them a window sits.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Chunk<T: Numeric> {
+pub struct PlaneLines<T: Numeric> {
     /// This lane's line, as the words it lies in, where the plane shuffles: lane `t` holds
     /// line `t`. One entry, held in an array so a load can replace it.
     lanes: Array<Vector<u32, LW>>,
@@ -91,21 +92,21 @@ pub struct Chunk<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> Chunk<T> {
+impl<T: Numeric> PlaneLines<T> {
     /// The chunk one region of `level` over `operand` fills, held in the lanes (`broadcast`) or
     /// in the plane's shared window, empty until [`load`](Self::load).
     pub(crate) fn new(
         operand: &Tile<T>,
         #[comptime] level: Level,
         #[comptime] broadcast: bool,
-    ) -> Chunk<T> {
+    ) -> PlaneLines<T> {
         let chunk = comptime!(level.child(&operand.space));
         let rank = comptime!(chunk.rank());
         let line = comptime!(chunk.extent_at(rank - 1));
         let projection = operand.projection();
         comptime!(assert!(
             projection.addresses(chunk.axis_at(rank - 1)),
-            "Chunk: the line runs along the operand's innermost axis, which it must address"
+            "PlaneLines: the line runs along the operand's innermost axis, which it must address"
         ));
         let strides = comptime!(line_strides(&chunk, &projection));
         let lines = comptime!(lines_of(&chunk, &projection));
@@ -118,16 +119,16 @@ impl<T: Numeric> Chunk<T> {
             Packing::Plain => match served {
                 ElemType::Float(kind) if float_field_bits(kind) == 32 => Field::Float(kind),
                 other => panic!(
-                    "Chunk: a plain operand is held as whole 32-bit words, and {other:?} is not \
+                    "PlaneLines: a plain operand is held as whole 32-bit words, and {other:?} is not \
                      one; bind the scales packed, or serve them as `f32`"
                 ),
             },
-            Packing::Native => panic!("Chunk: a native store has no words to hold"),
+            Packing::Native => panic!("PlaneLines: a native store has no words to hold"),
         });
         let per_word = comptime!(field.per_word());
         comptime!(assert!(
             line.is_multiple_of(per_word),
-            "Chunk: a line of {line} values is not whole words of {per_word}"
+            "PlaneLines: a line of {line} values is not whole words of {per_word}"
         ));
         let words = comptime!(line / per_word);
         register_line_words(words);
@@ -149,7 +150,7 @@ impl<T: Numeric> Chunk<T> {
         for _axis in 0..rank {
             origin.push(0u32.runtime());
         }
-        Chunk::<T> {
+        PlaneLines::<T> {
             lanes: Array::<Vector<u32, LW>>::new(1usize),
             landing,
             origin,
@@ -206,7 +207,7 @@ impl<T: Numeric> Chunk<T> {
         let served = src.vector_size();
         comptime!(assert!(
             line.is_multiple_of(served),
-            "Chunk::copy_from: a lane reads its line of {line} values in whole reads, and the \
+            "PlaneLines::copy_from: a lane reads its line of {line} values in whole reads, and the \
              source serves {served} a read"
         ));
         let reads = comptime!(line / served);
@@ -250,7 +251,7 @@ impl<T: Numeric> Chunk<T> {
                         }
                         bits
                     }
-                    Packing::Native => panic!("Chunk::copy_from: a native store has no words"),
+                    Packing::Native => panic!("PlaneLines::copy_from: a native store has no words"),
                 };
                 #[unroll]
                 for j in 0..per_read {
@@ -280,7 +281,7 @@ impl<T: Numeric> Chunk<T> {
 
     /// This chunk windowed one level down, to `step`'s box: the origin moves, in scalars, and
     /// nothing is cropped.
-    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Chunk<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> PlaneLines<T> {
         let rank = comptime!(space.rank());
         let mut origin = Coords::<u32>::new();
         #[unroll]
@@ -293,7 +294,7 @@ impl<T: Numeric> Chunk<T> {
                     .fadd(step.coord(axis).fmul(edge).fcast::<u32>()),
             );
         }
-        Chunk::<T> {
+        PlaneLines::<T> {
             lanes: self.lanes,
             landing: self.landing.clone(),
             origin,
@@ -344,7 +345,7 @@ impl<T: Numeric> Chunk<T> {
                 ComptimeOption::Some(landing) => {
                     landing[(line.fmul(comptime!(words as u32)).fadd(word)) as usize]
                 }
-                ComptimeOption::None => panic!("Chunk: no lines are held"),
+                ComptimeOption::None => panic!("PlaneLines: no lines are held"),
             }
         };
         let size!(PW) = per_word;

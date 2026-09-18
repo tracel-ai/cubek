@@ -1875,19 +1875,12 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     #[comptime] cells: Option<Level>,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
-    // A fragment loads a window as it lies, so a factor reaching one lands first; a register
-    // block reads global memory through its layout and lands nothing.
-    let land = comptime!(!matches!(instruction, Instruction::Registers { .. }));
-    let a = if comptime!(land) {
-        a.tile(comptime!(space.clone())).with_landing()
-    } else {
-        a.tile(comptime!(space.clone()))
-    };
-    let b = if comptime!(land) {
-        b.tile_as::<E>(comptime!(space.clone())).with_landing()
-    } else {
-        b.tile_as::<E>(comptime!(space.clone()))
-    };
+    // Both factors land where the instruction reads a window as it lies, and neither does where
+    // it reads through a layout; `landed_for` is where that rule lives.
+    let a = a.tile(comptime!(space.clone())).landed_for(instruction);
+    let b = b
+        .tile_as::<E>(comptime!(space.clone()))
+        .landed_for(instruction);
     let scale = scale.tile_as::<S>(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     for cube in space {
@@ -1903,7 +1896,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Chunk { broadcast }),
+                comptime!(StageStorage::PlaneLines { broadcast }),
                 comptime!(None),
             );
             let mut sum = c_plane.accumulator::<E, E, E>(
@@ -1921,9 +1914,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
                         let mut sum_leaf = sum.at(&leaf);
                         sum_leaf.mma_scaled(
                             &a_plane.at(&leaf).plain(),
-                            &b_plane
-                                .at(&leaf)
-                                .scaled(&ComptimeOption::new_Some(lines.at(&leaf))),
+                            &b_plane.at(&leaf).scaled_by(lines.at(&leaf)),
                             Semiring::SUM_PROD,
                         );
                     }
@@ -2334,7 +2325,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Chunk { broadcast }),
+                comptime!(StageStorage::PlaneLines { broadcast }),
                 comptime!(None),
             );
             let mut sum = c_plane.cmma_accumulator::<E, E>(
