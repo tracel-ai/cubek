@@ -84,8 +84,13 @@ fn avg_pool2d_backward_kernel<E: Numeric, N: Size>(
 
                 if begin_w >= iw_start && (iw as u32) < iw_end {
                     if count_include_pad {
-                        grad_acc += grad[index / vector_size]
-                            / Vector::cast_from(kernel_size_0 * kernel_size_1);
+                        // Ceil-mode extensions lie outside the padded input.
+                        let padded_h =
+                            clamp_max(kernel_size_0, border_bottom + padding_0 - oh * stride_0);
+                        let padded_w =
+                            clamp_max(kernel_size_1, border_right + padding_1 - ow * stride_1);
+                        grad_acc +=
+                            grad[index / vector_size] / Vector::cast_from(padded_h * padded_w);
                     } else {
                         let ih_diff = ih_end - ih_start;
                         let iw_diff = iw_end - iw_start;
