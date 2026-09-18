@@ -114,8 +114,7 @@ impl<T: Numeric> RegisterData<T> {
         // value a step, so its accumulator width is the width whichever edge a factor's scales
         // share is served at.
         let reduce = comptime!(
-            operands
-                .contracting(&out)
+            Space::contracted(&[&lhs_values.space, &rhs_values.space], &out)
                 .iter()
                 .map(|&axis| (axis, operands.extent(axis)))
                 .collect::<Vec<_>>()

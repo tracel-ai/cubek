@@ -118,8 +118,7 @@ pub(crate) fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
 
 /// The coordinate `operand` is read at, one entry per axis of its own space: an axis present in
 /// `acc` takes its coordinate from `acc_coords`, a contracted one from `reduce_coords`. An axis in
-/// neither is degenerate, since [`Space::contracting`] walks every contracted axis holding more
-/// than one value, so its one value sits at zero.
+/// neither is a routed one, which [`Space::contracted`] leaves out, so its one value sits at zero.
 ///
 /// `acc_coords` is indexed by `acc.position(axis)`, so it holds one entry per axis of the
 /// accumulator's *space*, in that space's order — not one per edge of whatever matrix a caller

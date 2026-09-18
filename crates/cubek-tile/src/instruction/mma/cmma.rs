@@ -148,8 +148,7 @@ impl FragmentRead {
             mr: m,
             kc: k,
             cols: n,
-            reduce: operands
-                .contracting(out)
+            reduce: Space::contracted(&[lhs, rhs], out)
                 .iter()
                 .map(|&axis| (axis, operands.extent(axis)))
                 .collect::<Vec<_>>(),
