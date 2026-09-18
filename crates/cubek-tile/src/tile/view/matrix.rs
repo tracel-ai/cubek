@@ -115,6 +115,27 @@ impl MatrixAxes {
         }
     }
 
+    /// The two edges a matrix reader takes as its rows and columns: the innermost axis, and the
+    /// last axis above it of extent past one.
+    ///
+    /// An axis of extent one is a number that folds away, so a split contraction's block digit or
+    /// a column tile's index does not stand between a fragment and its rows. What a fragment, a
+    /// partition and a trailing region read through, none of which knows a shape to find the
+    /// grouping from ([`find`](Self::find)).
+    pub fn edges(space: &Space) -> Self {
+        let rank = space.rank();
+        let col_split = rank - 1;
+        // A dynamic axis is not a number one: its size is the launch's, and it is a row edge.
+        let row_split = (0..col_split)
+            .rev()
+            .find(|&p| !matches!(space.extent_raw(space.axis_at(p)), Extent::Static(1)))
+            .unwrap_or(col_split.saturating_sub(1));
+        MatrixAxes {
+            row_split,
+            col_split,
+        }
+    }
+
     /// An accumulator's matrix, against the lhs it is contracted with.
     ///
     /// The innermost axis is a column edge by construction: it is what the sink lines along. How
@@ -306,6 +327,62 @@ pub(crate) fn batch_matrix(
     )
 }
 
+/// The logical coordinate of the value line at `(row, col)` of the `i`-th batch matrix a tile
+/// reads as: one entry per axis of the tile's space, in scalars, the line's first value. What a
+/// scale covering that line is looked up at ([`ScaleLookup`](crate::ScaleLookup)).
+#[cube]
+pub(crate) fn matrix_coords(
+    row: u32,
+    col: u32,
+    i: usize,
+    #[comptime] space: &Space,
+    #[comptime] axes: MatrixAxes,
+    #[comptime] vector_size: usize,
+) -> Coords<u32> {
+    let rank = comptime!(space.rank());
+    let mut coords = Coords::<u32>::new();
+    let batches = unravel_const(
+        comptime!(
+            (0..axes.row_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ),
+        i.fcast::<u32>(),
+    );
+    #[unroll]
+    for p in 0..batches.len() {
+        coords.push(batches.at(p));
+    }
+    let rows = unravel_const(
+        comptime!(
+            (axes.row_split..axes.col_split)
+                .map(|p| space.extent_at(p))
+                .collect::<Vec<_>>()
+        ),
+        row,
+    );
+    #[unroll]
+    for p in 0..rows.len() {
+        coords.push(rows.at(p));
+    }
+    // The column edge counts in lines, so its innermost digit is a line index; the value's own
+    // coordinate is that many lines in.
+    let cols = unravel_const(
+        comptime!(line_extents(space, vector_size, axes.col_split, rank)),
+        col,
+    );
+    let n = cols.len();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            coords.push(cols.at(p).fmul(comptime!(vector_size as u32)));
+        } else {
+            coords.push(cols.at(p));
+        }
+    }
+    coords
+}
+
 /// The tile's whole logical box as one `rows x cols` matrix, its axes grouped by
 /// [`MatrixAxes::whole`]. `cols` is scalar, as a fragment states it; the view serves lines, so
 /// the column edge and the innermost extent both divide by the width.
@@ -388,7 +465,9 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::matrix: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
-            TileKind::Procedural(_) => panic!("Tile::matrix: a procedural tile has no memory view"),
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::matrix: a procedural tile and the plane's lanes have no memory view")
+            }
         }
     }
 
@@ -418,8 +497,8 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::matrix_mut: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
-            TileKind::Procedural(_) => {
-                panic!("Tile::matrix_mut: a procedural tile is not writable")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::matrix_mut: a procedural tile and the plane's lanes are not writable")
             }
         }
     }
@@ -481,8 +560,10 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) => {
                 panic!("Tile::matrix_transparent: a tma source has no element view")
             }
-            TileKind::Procedural(_) => {
-                panic!("Tile::matrix_transparent: a procedural tile has no memory view")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!(
+                    "Tile::matrix_transparent: a procedural tile and the plane's lanes have no memory view"
+                )
             }
         }
     }
@@ -543,8 +624,10 @@ impl<T: Numeric> Tile<T> {
             TileKind::TmaGmem(_) => {
                 panic!("Tile::fragment_matrix: a tma source has no element view")
             }
-            TileKind::Procedural(_) => {
-                panic!("Tile::fragment_matrix: a procedural tile has no memory view")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!(
+                    "Tile::fragment_matrix: a procedural tile and the plane's lanes have no memory view"
+                )
             }
         }
     }

@@ -18,3 +18,4 @@ pub mod registers;
 pub use algebra::*;
 pub use base::*;
 pub use config::*;
+pub use registers::contract::Side;

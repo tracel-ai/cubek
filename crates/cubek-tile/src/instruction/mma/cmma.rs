@@ -10,11 +10,10 @@
 use cubecl::{
     cmma::{self, Matrix, MatrixIdent, MatrixLayout},
     prelude::*,
-    std::tensor::layout::Coords2d,
+    std::tensor::layout::CoordsDyn,
 };
 
-use crate::instruction::registers::contract::{ContractEdges, Side, level_of, scales_of, span};
-use crate::instruction::registers::lines::{CombinedScales, Lines, LinesExpand, RunScales};
+use crate::instruction::registers::contract::Side;
 use crate::*;
 
 #[cube]
@@ -44,23 +43,17 @@ impl<A: Numeric> CmmaData<A> {
                 _ => panic!("cmma operands must be cmma fragments"),
             },
             _ => {
-                let lw = lhs_values.vector_size();
-                let rw = rhs_values.vector_size();
                 let a_read = comptime!(FragmentRead::new(
                     Side::Lhs,
                     &lhs_values.space,
                     &rhs_values.space,
-                    &out,
-                    lw,
-                    rw
+                    &out
                 ));
                 let b_read = comptime!(FragmentRead::new(
                     Side::Rhs,
                     &lhs_values.space,
                     &rhs_values.space,
-                    &out,
-                    lw,
-                    rw
+                    &out
                 ));
                 let mut a_frag = unsafe {
                     Matrix::<EL>::uninitialized(
@@ -99,8 +92,8 @@ pub(crate) fn rhs_layout(rhs: &Space, contracted: Axis) -> MatrixLayout {
 }
 
 /// How one factor of a tensor-core contraction is read into its fragment: the fragment's own
-/// edges, the matrix this factor's window is, and what a scale level covering its lines is
-/// stated against.
+/// edges, the matrix this factor's window is, and what the scales it carries are checked
+/// against.
 ///
 /// Read off the two operand spaces and the accumulator's, once per factor, so neither can
 /// disagree with the other about the contraction they share. `side` is stated by the caller —
@@ -111,30 +104,17 @@ pub(crate) struct FragmentRead {
     pub m: usize,
     pub n: usize,
     pub k: usize,
-    /// The layout the rhs window reads at; the lhs is always row-major.
+    /// The layout the rhs window reads at: col-major where the contraction is its trailing
+    /// axis and the fragment reads its window as the transpose; the lhs is always row-major.
     pub layout: MatrixLayout,
-    /// This factor's own window as a matrix, and whether it is the transpose of the matrix its
-    /// scales address (a rhs read col-major).
-    pub rows: usize,
-    pub cols: usize,
-    pub transposed: bool,
-    /// What a scale level over this factor is stated against.
+    /// What the scales riding this factor are checked against: the side they were stated on,
+    /// and the accumulator.
     pub side: Side,
-    pub operands: Space,
     pub out: Space,
-    pub acc_axes: MatrixAxes,
-    pub edges: ContractEdges,
 }
 
 impl FragmentRead {
-    pub(crate) fn new(
-        side: Side,
-        lhs: &Space,
-        rhs: &Space,
-        out: &Space,
-        lw: usize,
-        rw: usize,
-    ) -> Self {
+    pub(crate) fn new(side: Side, lhs: &Space, rhs: &Space, out: &Space) -> Self {
         // The fragment's edges off the accumulator's axes and the contracted extent, as the plain
         // leaf reads them: a split contraction is one `k` edge, whatever its digits.
         let acc_axes = MatrixAxes::accumulator(out, lhs);
@@ -143,45 +123,13 @@ impl FragmentRead {
         let operands = Space::merge(&[lhs, rhs]);
         let k = operands.contracted_extent(out);
         let layout = rhs_layout(rhs, lhs.axis_at(lhs.rank() - 1));
-        let transposed = layout == MatrixLayout::ColMajor;
-        let edges = ContractEdges {
-            mr: m,
-            kc: k,
-            cols: n,
-            reduce: Space::contracted(&[lhs, rhs], out)
-                .iter()
-                .map(|&axis| (axis, operands.extent(axis)))
-                .collect::<Vec<_>>(),
-            columns: (acc_axes.col_split..out.rank())
-                .map(|p| (out.axis_at(p), out.extent_at(p)))
-                .collect::<Vec<_>>(),
-            lw,
-            aw: match transposed {
-                true => 1,
-                false => rw,
-            },
-            contracted_per_step: 1,
-        };
-        // The lhs window is `m × k` in the order it lies; the rhs is `k × n`, or its transpose
-        // where the contraction is its trailing axis.
-        let (rows, cols) = match (side, transposed) {
-            (Side::Lhs, _) => (m, k),
-            (Side::Rhs, true) => (n, k),
-            (Side::Rhs, false) => (k, n),
-        };
         FragmentRead {
             m,
             n,
             k,
             layout,
-            rows,
-            cols,
-            transposed: transposed && side == Side::Rhs,
             side,
-            operands,
             out: out.clone(),
-            acc_axes,
-            edges,
         }
     }
 }
@@ -192,31 +140,42 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     ///
     /// A fragment loads a window as it lies, so the window's layout has to be one the
     /// instruction can be told: a shared one is, and a global one is not. **The landing is how a
-    /// factor answers that** ([`land`](Scaled::land)) — it holds the factor's own values in the
-    /// plane's shared window, row-major by construction, and the load reads them from there.
-    /// A factor carrying scales has no other route, since its values do not exist anywhere
-    /// until they are scaled; one carrying none takes it when it has a landing, and is read
-    /// from its window as it lies when the window is already shared.
+    /// factor answers that** ([`landed`](Scaled::landed)) — it holds the factor's own values in
+    /// a window of shared memory the plane owns, dense over the window's axes, and the load
+    /// reads them from there. A factor carrying scales has no other route, since its values do
+    /// not exist anywhere until they are scaled; one carrying none takes it when it has a
+    /// landing, and is read from its window as it lies when the window is already shared.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let values = self.values();
         let count = self.levels().len();
         let landed = values.has_landing();
+        let packing = values.packing();
         if comptime!(count > 0 || landed) {
-            let landing = self.land(comptime!(read.clone()));
-            cmma::load(frag, &landing, comptime!(read.cols as u32));
+            let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
+            landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every lane's load has read it.
             sync_plane();
         } else {
             match &values.tile_kind {
-                TileKind::Smem(m) => cmma::load(frag, m.window_slice(), m.row_stride()),
+                TileKind::Smem(m) => {
+                    // A packed stage holds words, and a fragment loads a window as it lies: it
+                    // lands first, or it is not read at all.
+                    comptime!(assert!(
+                        packing == Packing::Plain,
+                        "mma: a packed stage reaches a fragment through a landing; open the \
+                         operand with `with_landing`"
+                    ));
+                    cmma::load(frag, m.window_slice(), m.row_stride())
+                }
                 TileKind::Gmem(_) => panic!(
                     "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
-                     open the operand with `with_landing(planes, lanes)`, or stage it"
+                     open the operand with `with_landing()`, or stage it"
                 ),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
-                | TileKind::Procedural(_) => {
+                | TileKind::Procedural(_)
+                | TileKind::Lanes(_) => {
                     panic!("mma: an operand reaches a fragment from a memory window")
                 }
             }
@@ -234,98 +193,86 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         ));
     }
 
-    /// This factor in its plane's landing, row-major: each lane reads lines through the values'
-    /// packed view, multiplies each by the block scale covering it where the factor carries one,
-    /// and writes them; the plane then syncs past the writes.
+    /// This factor in its plane's landing: a stage in shared memory, dense over the window's
+    /// own axes, holding `values ⊗ scales`, that the fragments of the window load from as they
+    /// load from any shared stage. Sized here, to this window: a kernel that lands a step whole
+    /// lands it once, and its partition's fragments load from it.
     ///
-    /// A factor with no scales lands its values as they lie — the same walk, with nothing to
-    /// multiply by — which is what makes the landing an operand's *residence* rather than a
-    /// scale mechanism: it is the answer to a layout a fragment cannot be told, and a packed or
-    /// scaled factor needs it for its values as well.
+    /// Each lane reads lines through the values' packed view, multiplies each by the scale
+    /// looked up at the line's own coordinates where the factor carries one, and writes them at
+    /// those coordinates; the plane then syncs past the writes. A factor with no scales lands
+    /// its values as they lie — the same walk, with nothing to multiply by — which is what
+    /// makes the landing an operand's *residence* rather than a scale mechanism: it is the
+    /// answer to a layout a fragment cannot be told, and a packed or scaled factor needs it for
+    /// its values as well.
     ///
-    /// The walk is the scales': the plane takes the `(coordinate a scale is constant along,
-    /// scale line under it)` pairs between its lanes, and under each pair the `fields · lines`
-    /// value lines that scale covers are built. One read of the scales serves all of them, every
-    /// field of the word used. A factor carrying none has one line a pair, so the pairs are the
-    /// lines and the plane spreads them as it always did.
-    fn land(&self, #[comptime] read: FragmentRead) -> Shared<[E]> {
+    /// `side` and `out` are what the scales' statement is checked against: the accumulator's
+    /// space, and which factor of it this is.
+    pub fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
         let values = self.values();
-        let mut landing = match &values.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.landing(),
-            TileKind::PlaneTile(_)
-            | TileKind::PlanePartition(_)
-            | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("mma: an operand lands from its memory window")
-            }
+        let lands = values.has_landing();
+        comptime!(assert!(
+            lands,
+            "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
+             shared memory; open the operand with `with_landing()`"
+        ));
+        let space = comptime!(values.space.clone());
+        let rank = comptime!(space.rank());
+        let units = values.units();
+        let planes = comptime!(plane_windows(&space, &values.levels));
+        let (stage, mut window) = MemData::<E>::landing(comptime!(space.clone()), units, planes);
+        let landing = Tile::<E> {
+            tile_kind: stage.tile_kind,
+            space: comptime!(space.clone()),
+            depth: comptime!(values.depth),
+            levels: comptime!(values.levels.clone()),
         };
-        let levels = self.levels();
-        let level = level_of(
-            &levels,
-            comptime!(read.operands.clone()),
-            comptime!(read.out.clone()),
-            comptime!(read.acc_axes),
-            comptime!(read.edges.clone()),
-            comptime!(read.side),
-        );
-        let span = comptime!(span(level));
 
         let vw = values.vector_size();
         let size!(VW) = vw;
-        let size!(SW) = comptime!(span.fields);
-        let axes = comptime!(MatrixAxes::of(&values.space, read.rows, read.cols));
-        let matrix = values.matrix_packed::<VW>(axes, 0usize);
-        let scales = scales_of::<S, SW>(&levels, comptime!(level), 0usize);
-
-        let per_scale_line = comptime!(span.fields * span.lines);
-        let per_row = comptime!(read.cols / vw);
-        let width = comptime!(vw as u32);
-        let row_cells = comptime!(read.cols as u32);
-        // A transposed window's lines run down the scales' rows, so its line column is the
-        // coordinate a scale is constant along and its row is the block.
-        let (majors, runs) = comptime!(match read.transposed {
-            true => (per_row, read.rows / per_scale_line),
-            false => (read.rows, per_row / per_scale_line),
-        });
-        comptime!(assert!(
-            majors * runs * per_scale_line == read.rows * per_row,
-            "mma: a {}x{per_row} landing does not divide into scale lines of {per_scale_line}",
-            read.rows
-        ));
-        // Which of the two the landing's own column is — the walk takes its cells in the order
-        // they lie, so neighbouring lanes write neighbouring words. The decode is the plane's,
-        // by a comptime count.
-        for pair in range_stepped(UNIT_POS_PLANE, comptime!((majors * runs) as u32), PLANE_DIM) {
-            let (major, run) = match comptime!(read.transposed) {
-                true => (
-                    pair % comptime!(majors as u32),
-                    pair / comptime!(majors as u32),
-                ),
-                false => (pair / comptime!(runs as u32), pair % comptime!(runs as u32)),
-            };
-            let scale = run_scale::<S, SW>(
-                &scales,
-                match comptime!(read.transposed) {
-                    true => (major * width, run),
-                    false => (major, run),
-                },
-            );
-            #[unroll]
-            for field in 0..comptime!(span.fields) {
-                for l in 0..comptime!(span.lines as u32) {
-                    let at = run * comptime!(per_scale_line as u32)
-                        + comptime!((field * span.lines) as u32)
-                        + l;
-                    let (r, c) = match comptime!(read.transposed) {
-                        true => (at, major),
-                        false => (major, at),
-                    };
-                    let landed = scale.apply::<E, VW>(matrix.read((r, c)), 0usize, field);
-                    let base = (r * row_cells + c * width) as usize;
+        let view = values.nd_packed::<VW>(comptime!(Guard::Checked));
+        let acc_axes = comptime!(accumulator_axes(side, &out, &space));
+        let scales = self.lookup(
+            comptime!(MatrixAxes::trailing_pair(&space)),
+            0usize,
+            side,
+            comptime!(out.clone()),
+            acc_axes,
+        );
+        // The window's lines, the innermost axis counted in lines; and where each one lands,
+        // dense over the window's axes in scalars.
+        let line_extents = comptime!(line_extents(&space, vw, 0, rank));
+        let lines = comptime!(line_extents.iter().product::<usize>() as u32);
+        let strides = comptime!(dense_strides(&space));
+        let by_shuffle = scales.by_shuffle();
+        if comptime!(by_shuffle) {
+            // A scale held in the plane's lanes reaches the lane that asks by a shuffle, and a
+            // shuffle is the whole plane's or nothing: every lane takes every turn, whether or
+            // not a line is left for it. A lane past the lines reads the last one again and
+            // writes nothing.
+            #[allow(clippy::manual_div_ceil)]
+            let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
+            for turn in 0..turns {
+                let mine = turn * PLANE_DIM + UNIT_POS_PLANE;
+                let line = min(mine, lines - 1);
+                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
+                let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
+                if mine < lines {
+                    let base = offset_of(&coords, comptime!(strides.clone()));
                     #[unroll]
                     for j in 0..vw {
-                        landing[base + j] = landed.extract(j);
+                        window[base + j] = landed.extract(j);
                     }
+                }
+            }
+        } else {
+            for line in range_stepped(UNIT_POS_PLANE, lines, PLANE_DIM) {
+                let coords = coords_of_line(line, comptime!(line_extents.clone()), vw);
+                let landed = scales.apply_at::<E, VW>(view.read(as_dyn(&coords, vw)), &coords);
+                let base = offset_of(&coords, comptime!(strides.clone()));
+                #[unroll]
+                for j in 0..vw {
+                    window[base + j] = landed.extract(j);
                 }
             }
         }
@@ -334,16 +281,114 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     }
 }
 
-/// The scale line covering one run of a landing, or nothing where the factor carries no scales —
-/// which is what makes one walk serve both ([`RunScales::apply`] passes the value through).
 #[cube]
-fn run_scale<'a, S: Numeric, W: Size>(
-    scales: &'a ComptimeOption<CombinedScales<'a, S, W>>,
-    pos: Coords2d,
-) -> RunScales<S, W> {
-    #[comptime]
-    match scales {
-        ComptimeOption::Some(source) => RunScales::of(source.line(pos)),
-        ComptimeOption::None => RunScales::none(),
+impl<E: Numeric> Tile<E> {
+    /// This landing loaded into `frag` as it lies: dense over the window's axes, so a row of
+    /// the fragment's matrix is as long as the columns' axes multiply to — the trailing run of
+    /// axes on the innermost one's side of the contraction against `out`.
+    pub(crate) fn load_into(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
+        let cols = comptime!(landed_cols(&self.space, &out) as u32);
+        match &self.tile_kind {
+            TileKind::Smem(m) => cmma::load(frag, m.window_slice(), cols),
+            TileKind::Gmem(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_)
+            | TileKind::Lanes(_) => panic!("mma: a fragment loads from a shared window"),
+        }
     }
+}
+
+/// The columns of a landed window's matrix: the product of its trailing axes on the innermost
+/// axis's side of the contraction — contracted with it, or the accumulator's with it — which is
+/// where a row-major copy of the window turns to its next row.
+fn landed_cols(window: &Space, out: &Space) -> usize {
+    let rank = window.rank();
+    let innermost = out.contains(window.axis_at(rank - 1));
+    (0..rank)
+        .rev()
+        .take_while(|&p| out.contains(window.axis_at(p)) == innermost)
+        .map(|p| window.extent_at(p))
+        .product()
+}
+
+/// The accumulator's matrix as [`MatrixAxes::accumulator`] reads it off the lhs, read off one
+/// factor alone: the column group is the innermost run of `out`'s axes the lhs does not span,
+/// which is the run the rhs does.
+fn accumulator_axes(side: Side, out: &Space, own: &Space) -> MatrixAxes {
+    let mut col_split = out.rank() - 1;
+    let in_columns = |axis: Axis| match side {
+        Side::Lhs => !own.contains(axis),
+        Side::Rhs => own.contains(axis),
+    };
+    while col_split > 1 && in_columns(out.axis_at(col_split - 1)) {
+        col_split -= 1;
+    }
+    MatrixAxes {
+        row_split: col_split - 1,
+        col_split,
+    }
+}
+
+/// Row-major scalar strides over `space`: where a coordinate lands in a dense copy of it.
+fn dense_strides(space: &Space) -> Vec<usize> {
+    let rank = space.rank();
+    let mut strides = vec![1; rank];
+    for p in (0..rank - 1).rev() {
+        let below = strides[p + 1] * space.extent_at(p + 1);
+        strides[p] = below;
+    }
+    strides
+}
+
+/// The scalar coordinate of the `line`-th line of a window whose innermost axis counts in
+/// `vw`-wide lines: one entry per axis, the line's first value.
+#[cube]
+fn coords_of_line(
+    line: u32,
+    #[comptime] line_extents: Vec<usize>,
+    #[comptime] vw: usize,
+) -> Coords<u32> {
+    let n = comptime!(line_extents.len());
+    let digits = unravel_const(line_extents, line);
+    let mut coords = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            coords.push(digits.at(p).fmul(comptime!(vw as u32)));
+        } else {
+            coords.push(digits.at(p));
+        }
+    }
+    coords
+}
+
+/// `coords` as an N-D view addresses them: the innermost a line index.
+#[cube]
+fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
+    let n = coords.len();
+    let mut at = CoordsDyn::new();
+    #[unroll]
+    for p in 0..n {
+        if comptime!(p == n - 1) {
+            at.push(coords.at(p).fdiv(comptime!(vw as u32)));
+        } else {
+            at.push(coords.at(p));
+        }
+    }
+    at
+}
+
+/// Where `coords` lands in a dense copy: the scalar offset under `strides`.
+#[cube]
+#[allow(clippy::needless_range_loop)]
+fn offset_of(coords: &Coords<u32>, #[comptime] strides: Vec<usize>) -> usize {
+    let n = coords.len();
+    let mut offset = 0u32.runtime();
+    #[unroll]
+    for p in 0..n {
+        offset = offset.fadd(coords.at(p).fmul(comptime!(strides[p] as u32)));
+    }
+    offset as usize
 }

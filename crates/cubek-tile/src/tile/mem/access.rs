@@ -42,7 +42,9 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) => panic!("Tile::view: a procedural tile has no memory view"),
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::view: a procedural tile and the plane's lanes have no memory view")
+            }
         }
     }
 
@@ -58,25 +60,23 @@ impl<T: Numeric> Tile<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::view_mut: a plane tile has no memory view")
             }
-            TileKind::Procedural(_) => panic!("Tile::view_mut: a procedural tile is not writable"),
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!("Tile::view_mut: a procedural tile and the plane's lanes are not writable")
+            }
         }
     }
 }
 
 impl<T: Numeric> MemData<T> {
-    /// This store with `landing` as its plane's landing window ([`Tile::with_landing`]).
-    pub(crate) fn with_landing(self, _landing: Shared<[T]>) -> MemData<T> {
+    /// This store landing on its way to a fragment ([`Tile::with_landing`]).
+    pub(crate) fn with_landing(self) -> MemData<T> {
         unexpanded!()
     }
 }
 
 impl<T: Numeric> MemDataExpand<T> {
-    pub(crate) fn __expand_with_landing_method(
-        mut self,
-        _scope: &Scope,
-        landing: <Shared<[T]> as CubeType>::ExpandType,
-    ) -> Self {
-        self.landing = ComptimeOptionExpand::Some(landing);
+    pub(crate) fn __expand_with_landing_method(mut self, _scope: &Scope) -> Self {
+        self.lands = true;
         self
     }
 }
@@ -156,6 +156,19 @@ impl<T: Numeric> MemData<T> {
                 ),
             }
             self.stage_scales(src);
+        } else if comptime!(self.store.packing != Packing::Plain) {
+            // Packed → packed: the words verbatim, the same straight-line fill a quantized stage
+            // takes, with nothing beside them — the scales are an operand of their own.
+            comptime!(assert!(
+                self.access.whole
+                    && !self.access.overhang.masks()
+                    && src.store.packing == self.store.packing
+                    && self.store.vector_size == src.store.vector_size,
+                "MemData::fill_from: a packed stage is a fresh whole buffer filled from the \
+                 window it was shaped over, at the same packing and width"
+            ));
+            let size!(WP) = comptime!(self.store.packing.physical(self.store.vector_size));
+            self.fill_straight::<u32, WP>(src, comptime!(space.clone()));
         } else if comptime!(
             self.access.whole
                 && !self.access.overhang.masks()
@@ -523,15 +536,20 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// How far this store's quantized form travels ([`DequantAt`]). A plain store answers
+    /// How far this store's stored form travels ([`DequantAt`]). A plain store answers
     /// [`DequantAt::Load`]: served and stored are the same element, so nothing is left to decode.
+    /// A [`packed`](Packing::Packed) store with no scheme answers [`DequantAt::Read`]: its words
+    /// are what a stage copies and what a read unpacks, and nothing in between serves a value.
     // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
     #[allow(clippy::let_and_return)]
     pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
         let dequant_at = #[comptime]
         match &self.store.quant {
             ComptimeOption::Some(info) => comptime!(info.dequant_at),
-            ComptimeOption::None => DequantAt::Load,
+            ComptimeOption::None => comptime!(match self.store.packing {
+                Packing::Plain => DequantAt::Load,
+                _ => DequantAt::Read,
+            }),
         };
         dequant_at
     }
@@ -825,23 +843,7 @@ impl<T: Numeric> MemData<T> {
 
     /// Whether this store was opened with a landing ([`Tile::with_landing`]).
     pub(crate) fn has_landing(&self) -> comptime_type!(bool) {
-        #[comptime]
-        match &self.landing {
-            ComptimeOption::Some(_) => true,
-            ComptimeOption::None => false,
-        }
-    }
-
-    /// This plane's landing window, opened by [`Tile::with_landing`].
-    pub(crate) fn landing(&self) -> Shared<[T]> {
-        #[comptime]
-        match &self.landing {
-            ComptimeOption::Some(landing) => landing.clone(),
-            ComptimeOption::None => panic!(
-                "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
-                 shared memory; open the operand with `with_landing(planes, lanes)`"
-            ),
-        }
+        comptime!(self.lands)
     }
 
     /// Line offset of the window origin: the accumulated `window_start`. Addresses the window as
@@ -879,9 +881,26 @@ impl<T: Numeric> MemData<T> {
     /// tile's row axis, widened back to scalars; a constant on a static store.
     pub(crate) fn row_stride(&self) -> u32 {
         let rank = comptime!(self.layout.projection.physical_rank());
+        self.row_stride_at(comptime!(rank - 2))
+    }
+
+    /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a
+    /// matrix reader takes as its rows ([`MatrixAxes::edges`]), which is the physical one on
+    /// a direct store — one logical axis a physical dim, what a dense stage is. Any other store
+    /// keeps its own row: a storage-tiled one its tile's, a split one the dim above the one
+    /// its trailing axes fold into.
+    pub(crate) fn row_stride_at(&self, #[comptime] row: usize) -> u32 {
+        let rank = comptime!(self.layout.projection.physical_rank());
+        let row = comptime!(
+            if self.projection.is_direct() && !self.layout.projection.is_tiled() {
+                row
+            } else {
+                rank - 2
+            }
+        );
         self.layout
             .physical_strides
-            .at(comptime!(rank - 2))
+            .at(row)
             .fmul(comptime!(self.store.vector_size as u32).runtime())
     }
 
@@ -1077,6 +1096,24 @@ impl<T: Numeric> MemData<T> {
         #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
         self.transparent::<I, WP, W, CoordsDyn, AxisProjection>(layout, guard)
+    }
+
+    /// The words a packed store holds, as they lie, over the tile's whole logical box: what a
+    /// lane loads its line from, decoded later at the read.
+    pub(crate) fn nd_words<WP: Size>(
+        &self,
+        layout: AxisProjection,
+        #[comptime] guard: Guard,
+    ) -> MaskedView<'_, Vector<u32, WP>, CoordsDyn> {
+        comptime!(assert!(
+            matches!(self.store.packing, Packing::Packed { .. }),
+            "MemData::nd_words: only a packed store holds words"
+        ));
+        let words = self.window_view_storage::<u32, WP>(guard).view(layout);
+        MaskedView::new(
+            words,
+            comptime!(guard.checks() && self.access.overhang.masks()),
+        )
     }
 
     /// [`nd_transparent`](MemData::nd_transparent) over the *physical* box instead of the logical
@@ -1354,7 +1391,7 @@ impl<T: Numeric> MemData<T> {
             // A region step moves this window and the source window by the same physical delta,
             // so the source window rides down as it was filled and only `origin` above moves.
             source_window: self.source_window.clone(),
-            landing: self.landing.clone(),
+            lands: comptime!(self.lands),
             map,
             offsets: self.offsets.clone(),
             window_start: start,
@@ -1366,7 +1403,7 @@ impl<T: Numeric> MemData<T> {
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
-            lanes: comptime!(Lanes {
+            lanes: comptime!(LaneRoles {
                 share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
                 work: join_lane_work(self.lanes.work, step.level.rides_lanes()),
             }),
@@ -1444,7 +1481,7 @@ impl<T: Numeric> MemData<T> {
             ),
             projection: comptime!(proj),
             source_window: self.source_window.clone(),
-            landing: self.landing.clone(),
+            lands: comptime!(self.lands),
             map: self.map.clone(),
             offsets: self.offsets.clone(),
             window_start: start,
@@ -1533,6 +1570,17 @@ fn gathered_descent(
         match comptime!(term.scale) {
             Scale::Static(s) => {
                 let step = comptime!(if lined {
+                    // A window along the lined axis starts at a whole line, or it is the whole
+                    // axis and starts at its origin; any other cut would place its origin
+                    // inside a line, which a line index cannot say.
+                    assert!(
+                        (edge * s).is_multiple_of(vector_size)
+                            || matches!(cut.space.extent_raw(term.axis), Extent::Static(x) if x == edge),
+                        "MemData::at: the innermost edge {edge} of {:?} is neither a whole number \
+                         of {vector_size}-wide lines nor the axis's whole extent, so a step would \
+                         start mid-line",
+                        term.axis
+                    );
                     edge * s / vector_size
                 } else {
                     edge * s

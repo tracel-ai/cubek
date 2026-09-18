@@ -9,10 +9,8 @@
 
 use cubecl::prelude::*;
 
-use super::factor::{level_of, scale_width, scales_of, span};
-use super::scale::{ContractEdges, Side};
+use super::scale::Side;
 use crate::instruction::registers::block;
-use crate::instruction::registers::lines::{CombinedScales, ScaledLines};
 use crate::*;
 
 #[cube]
@@ -45,8 +43,6 @@ impl<T: Numeric> RegisterData<T> {
     ) {
         let lhs_values = lhs.values();
         let rhs_values = rhs.values();
-        let lhs_levels = lhs.levels();
-        let rhs_levels = rhs.levels();
         comptime!(assert!(
             semiring.add() == self.monoid,
             "RegisterData::mma: this block folds its partials under {:?} and drains them that \
@@ -88,10 +84,6 @@ impl<T: Numeric> RegisterData<T> {
              along the contraction at that width (it is {lw} wide)"
         ));
         let size!(L) = lw;
-        let lsw = scale_width(&lhs_levels);
-        let rsw = scale_width(&rhs_levels);
-        let size!(LSW) = lsw;
-        let size!(RSW) = rsw;
 
         // Every contracted axis multiplied out: a partitioned contraction carries more than one.
         let operands = comptime!(Space::merge(&[&lhs_values.space, &rhs_values.space]));
@@ -110,85 +102,35 @@ impl<T: Numeric> RegisterData<T> {
             MatrixAxes::of(&rhs_values.space, kc, cols)
         });
 
-        // This block's own edges, which is all a scale level needs of it. It walks one contracted
-        // value a step, so its accumulator width is the width whichever edge a factor's scales
-        // share is served at.
-        let reduce = comptime!(
-            Space::contracted(&[&lhs_values.space, &rhs_values.space], &out)
-                .iter()
-                .map(|&axis| (axis, operands.extent(axis)))
-                .collect::<Vec<_>>()
-        );
-        let columns = comptime!(
-            (acc_axes.col_split..out.rank())
-                .map(|p| (out.axis_at(p), out.extent_at(p)))
-                .collect::<Vec<_>>()
-        );
-        let lhs_level = level_of(
-            &lhs_levels,
-            comptime!(operands.clone()),
-            comptime!(out.clone()),
-            comptime!(acc_axes),
-            comptime!(ContractEdges {
-                mr,
-                kc,
-                cols,
-                reduce: reduce.clone(),
-                columns: columns.clone(),
-                lw,
-                aw: vw,
-                contracted_per_step: fold,
-            }),
-            comptime!(Side::Lhs),
-        );
-        let rhs_level = level_of(
-            &rhs_levels,
-            comptime!(operands.clone()),
-            comptime!(out.clone()),
-            comptime!(acc_axes),
-            comptime!(ContractEdges {
-                mr,
-                kc,
-                cols,
-                reduce,
-                columns,
-                lw,
-                aw: vw,
-                contracted_per_step: fold,
-            }),
-            comptime!(Side::Rhs),
-        );
-        let lhs_span = comptime!(span(lhs_level));
-        let rhs_span = comptime!(span(rhs_level));
-
         let config = comptime!(self.config);
         let unroll = comptime!(mr * nr * vw <= config.budget);
         let lane_fanout = comptime!(config.lane_fanout);
 
-        // Each factor as the block reads it: its values, times whatever scales it carries.
-        let lhs_mat = ScaledLines::<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>::new(
-            lhs_values.matrix_packed::<L>(lhs_axes, 0usize),
-            scales_of::<LS, LSW>(&lhs_levels, comptime!(lhs_level), 0usize),
-            comptime!(lhs_span),
+        // Each factor as the block reads it: its values' matrix, and its scales looked up at
+        // every line's own coordinates. The rhs and the block share the width `RA` (asserted
+        // above, `vw == self.vector_size`).
+        let lhs_mat = lhs_values.matrix_packed::<L>(lhs_axes, 0usize);
+        let rhs_mat = rhs_values.matrix_packed::<RA>(rhs_axes, 0usize);
+        let lhs_scales = lhs.lookup(
+            lhs_axes,
+            0usize,
+            comptime!(Side::Lhs),
+            comptime!(out.clone()),
+            comptime!(acc_axes),
         );
-        // The rhs and the block share the width `RA` (asserted above, `vw == self.vector_size`).
-        let rhs_mat = ScaledLines::<MatrixView<Vector<ER, RA>>, CombinedScales<RS, RSW>>::new(
-            rhs_values.matrix_packed::<RA>(rhs_axes, 0usize),
-            scales_of::<RS, RSW>(&rhs_levels, comptime!(rhs_level), 0usize),
-            comptime!(rhs_span),
+        let rhs_scales = rhs.lookup(
+            rhs_axes,
+            0usize,
+            comptime!(Side::Rhs),
+            comptime!(out.clone()),
+            comptime!(acc_axes),
         );
 
-        block::contract::<
-            T,
-            EL,
-            L,
-            ER,
-            RA,
-            ScaledLines<MatrixView<Vector<EL, L>>, CombinedScales<LS, LSW>>,
-            ScaledLines<MatrixView<Vector<ER, RA>>, CombinedScales<RS, RSW>>,
-        >(
+        block::contract::<T, EL, L, LS, ER, RA, RS>(
             &lhs_mat,
+            &lhs_scales,
             &rhs_mat,
+            &rhs_scales,
             &mut self.data,
             lw,
             fold,
