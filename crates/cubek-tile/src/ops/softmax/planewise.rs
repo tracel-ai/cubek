@@ -63,6 +63,107 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
+    /// [`scale_and_mask_planar`](Tile::scale_and_mask_planar) and
+    /// [`row_max_planar`](Tile::row_max_planar) in one sweep: the max is taken
+    /// over the value each lane just scaled and masked, before it is written
+    /// back, so the tile is read once instead of twice.
+    ///
+    /// The seed is `base` on every lane, which is free for the reason the
+    /// separate max gives — a max is idempotent, so the seed survives the fold
+    /// whichever lane carried it.
+    pub fn scale_mask_max_planar(
+        &mut self,
+        acc: &mut Array<EA>,
+        base: &Array<EA>,
+        scale: EA,
+        probe: &MaskProbe,
+        mask: &Tile<u32>,
+        #[comptime] rpp: usize,
+        #[comptime] lanes: usize,
+    ) {
+        let rows = comptime!(self.space.extent_at(0));
+        let cols = comptime!(self.space.extent_at(1));
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
+        let mut view = self.flat_mut::<W>();
+
+        #[unroll]
+        for ri in 0..rpp {
+            let mut partial = base[ri];
+            let r = ri;
+            if r < rows {
+                let q = probe.row_q(r);
+                #[unroll]
+                for li in 0..comptime!(lines.div_ceil(lanes)) {
+                    let line = lane(lanes) + li * lanes;
+                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                        let i = r * lines + line;
+                        let mut v = view.read(i) * Vector::<EA, W>::cast_from(scale);
+                        #[unroll]
+                        for j in 0..w {
+                            let masked = probe.masked(q, probe.origin_s + line * w + j, mask);
+                            let cell = select(masked, EA::min_value(), v.extract(j));
+                            v.insert(j, cell);
+                            partial = max(partial, cell);
+                        }
+                        view.write(i, v);
+                    }
+                }
+            }
+            acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Max));
+        }
+    }
+
+    /// [`exp_diff_planar`](Tile::exp_diff_planar) and
+    /// [`row_sum_planar`](Tile::row_sum_planar) in one sweep: each lane sums
+    /// the probabilities it just wrote, so the tile is read once instead of
+    /// twice.
+    ///
+    /// No seed, for the reason the separate sum gives — a sum's identity is
+    /// zero and every lane contributes its own lines exactly once.
+    pub fn exp_diff_sum_planar(
+        &mut self,
+        acc: &mut Array<EA>,
+        rowwise: &Array<EA>,
+        #[comptime] rpp: usize,
+        #[comptime] lanes: usize,
+    ) {
+        let rows = comptime!(self.space.extent_at(0));
+        let cols = comptime!(self.space.extent_at(1));
+        let threshold = EA::new(LOGIT_MASKED);
+        let w = self.vector_size();
+        let size!(W) = w;
+        let lines = comptime!(cols / w);
+        let mut view = self.flat_mut::<W>();
+
+        #[unroll]
+        for ri in 0..rpp {
+            let mut partial = EA::from_int(0);
+            let r = ri;
+            if r < rows {
+                let live = EA::cast_from(rowwise[ri] >= threshold);
+                let safe_m = clamp_min(rowwise[ri], threshold);
+                #[unroll]
+                for li in 0..comptime!(lines.div_ceil(lanes)) {
+                    let line = lane(lanes) + li * lanes;
+                    if comptime!(lines.is_multiple_of(lanes)) || line < lines {
+                        let i = r * lines + line;
+                        let mut v = view.read(i);
+                        #[unroll]
+                        for j in 0..w {
+                            let cell = live * (v.extract(j) - safe_m).exp();
+                            v.insert(j, cell);
+                            partial += cell;
+                        }
+                        view.write(i, v);
+                    }
+                }
+            }
+            acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Sum));
+        }
+    }
+
     /// [`row_max`](Tile::row_max) at plane ownership: a lane's partial over its
     /// own lines, then one plane reduction per row. Seeding with `base` on
     /// every lane is free — a max is idempotent, so the seed survives the fold

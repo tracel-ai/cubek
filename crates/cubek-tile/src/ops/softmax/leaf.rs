@@ -80,16 +80,20 @@ impl<EA: Float> Tile<EA> {
 
         match comptime!(state.share) {
             RowShare::Unit { rows } => {
-                self.scale_and_mask(scale, probe, mask, rows);
-                self.row_max(&mut max_buf, &state.m, rows);
-                self.exp_diff(&max_buf, rows);
-                self.row_sum(&mut sum_buf, rows);
+                self.scale_mask_max(&mut max_buf, &state.m, scale, probe, mask, rows);
+                self.exp_diff_sum(&mut sum_buf, &max_buf, rows);
             }
             RowShare::Plane { rows, lanes } => {
-                self.scale_and_mask_planar(scale, probe, mask, rows, lanes);
-                self.row_max_planar(&mut max_buf, &state.m, rows, lanes);
-                self.exp_diff_planar(&max_buf, rows, lanes);
-                self.row_sum_planar(&mut sum_buf, rows, lanes);
+                self.scale_mask_max_planar(
+                    &mut max_buf,
+                    &state.m,
+                    scale,
+                    probe,
+                    mask,
+                    rows,
+                    lanes,
+                );
+                self.exp_diff_sum_planar(&mut sum_buf, &max_buf, rows, lanes);
             }
         }
 
