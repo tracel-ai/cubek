@@ -284,6 +284,17 @@ impl<T: Numeric> MemData<T> {
     /// straight fill *decodes* on the way through has no copy instruction that would do it. The
     /// refusals below say which, each in its own words, and a launch that elected this delivery
     /// for an operand it does not suit is what reaches one.
+    ///
+    /// # Alignment
+    ///
+    /// The copy instruction wants both ends aligned to the line it moves, and misalignment is
+    /// the one failure it does *not* announce: the bytes land wrong rather than not at all. So
+    /// neither end is asserted here, because neither can be reached unaligned — the destination
+    /// is allocated to the line ([`MemData::stage`] under [`Delivery::AsyncCopy`]), and the
+    /// source's every line offset is a whole number of lines from a buffer the allocator
+    /// aligned past one. That second half is [`Geometry::serves_lines`], which every operand
+    /// passes before it is built: the innermost dim steps by 1 and every coarser stride is whole
+    /// lines, so no coordinate the walk forms addresses inside one.
     pub(crate) fn fill_async(&mut self, src: &MemData<T>, #[comptime] space: Space) {
         let width = comptime!(self.store.vector_size);
         let size!(W) = comptime!(width);

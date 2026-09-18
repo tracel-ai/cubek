@@ -46,7 +46,8 @@ pub const TMA_MAX_BOX_DIM: usize = 256;
 /// narrower one a launch might settle on.
 pub const ASYNC_COPY_MAX_BYTES: usize = 16;
 
-/// Bytes one asynchronous copy moves at its narrowest ([`ASYNC_COPY_MAX_BYTES`]).
+/// Bytes one asynchronous copy moves at its narrowest; its widest is
+/// [`ASYNC_COPY_MAX_BYTES`].
 pub const ASYNC_COPY_MIN_BYTES: usize = 4;
 
 impl Delivery {

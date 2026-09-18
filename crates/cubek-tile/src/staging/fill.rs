@@ -521,6 +521,19 @@ mod tests {
         SlotOperand::new(delivery, space)
     }
 
+    /// What a caught panic said, so a test can hold a refusal to its own words rather than to
+    /// the mere fact that something gave way. `assert!` panics with a `String` and a bare
+    /// `panic!` with a `&str`; anything else is not one of ours.
+    fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+        match payload.downcast::<String>() {
+            Ok(message) => *message,
+            Err(payload) => match payload.downcast::<&'static str>() {
+                Ok(message) => message.to_string(),
+                Err(_) => panic!("the panic carried no message"),
+            },
+        }
+    }
+
     #[test]
     fn a_streamed_operand_is_rebuilt_in_every_slot() {
         let (space, lhs, rhs) = spaces();
@@ -581,17 +594,30 @@ mod tests {
             .walk_every(&[M, N, K])
             .filled_by(1)
             .level();
-        for cooperative in [Delivery::Copy, Delivery::AsyncCopy, Delivery::Procedural] {
-            let planned = std::panic::catch_unwind(|| {
-                SlotPlan::new(
-                    &[operand(Delivery::Tma, &lhs), operand(cooperative, &rhs)],
-                    &space,
-                    &level,
-                )
+        // Every arm has to fail *by this refusal*: the plan asserts several things, and a test
+        // that took any panic for the answer would keep passing once the walk started failing
+        // for some other reason.
+        let hushed = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let refusals =
+            [Delivery::Copy, Delivery::AsyncCopy, Delivery::Procedural].map(|cooperative| {
+                let planned = std::panic::catch_unwind(|| {
+                    SlotPlan::new(
+                        &[operand(Delivery::Tma, &lhs), operand(cooperative, &rhs)],
+                        &space,
+                        &level,
+                    )
+                });
+                (cooperative, planned.err().map(panic_message))
+            });
+        std::panic::set_hook(hushed);
+        for (cooperative, why) in refusals {
+            let why = why.unwrap_or_else(|| {
+                panic!("a {cooperative:?} fill was dealt to a subset of the cube")
             });
             assert!(
-                planned.is_err(),
-                "a {cooperative:?} fill was dealt to a subset of the cube"
+                why.contains("cannot be filled by a subset of them"),
+                "a {cooperative:?} fill was refused, but for this instead: {why}"
             );
         }
         // The bulk transaction alone: one unit issues the whole of it, so the planes set aside

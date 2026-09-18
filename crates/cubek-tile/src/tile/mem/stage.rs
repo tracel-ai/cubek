@@ -771,7 +771,9 @@ impl StageForm {
     pub(crate) fn cells(&self) -> usize {
         match self.extents.first() {
             Some(extent) => extent * self.strides[0],
-            None => 0,
+            // The empty product, as the row-major count this replaced read it: a form over no
+            // axis holds the one cell its own origin is, and a buffer of none is not allocatable.
+            None => 1,
         }
     }
 
@@ -787,11 +789,14 @@ impl StageForm {
         if rank >= 2 {
             let row = pitch.of(extents[rank - 1] * line_bytes);
             let dense = extents[rank - 1] * line_bytes;
+            // The pair is the plan's to settle: a routine asks `serves_lines` of its own width
+            // before it launches, so reaching this is a caller that stated a width and a pitch
+            // that do not describe one buffer.
             assert!(
-                row == dense || row.is_multiple_of(line_bytes),
+                row == dense || pitch.serves_lines(line_bytes),
                 "StageForm: a {row}-byte pitch is not whole {line_bytes}-byte lines, so a \
-                 fragment row would start inside one; a padded stage is served in lines no wider \
-                 than the chunk a pitch counts in"
+                 fragment row would start inside one; a padded stage is served in lines the \
+                 chunk a pitch counts in is a whole number of"
             );
             strides[rank - 2] = match row == dense {
                 true => extents[rank - 1],

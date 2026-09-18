@@ -14,6 +14,9 @@
 //! - Shapes not divisible by the instruction (the cmma transport cannot mask an overhang).
 //! - A storage-tiled input whose storage tile is not this plan's stage on its axes: the storage
 //!   tile names the stage, the plan cannot disagree. Which delivery moves it is unrelated.
+//! - A padded [`Pitch`] under a delivery or a line width that cannot state one: a bulk copy
+//!   pitches its rows itself, and a line wider than the chunk a pitch counts in would start a
+//!   row inside one.
 
 use std::fmt::Display;
 
@@ -129,6 +132,17 @@ impl CmmaBlueprint {
                 "Cmma requires a shape divisible by the stage: \
                  {}x{}x{} vs stage {stage_m}x{stage_n}x{} (stage_k {})",
                 problem.m, problem.n, problem.k, i.k, self.stage_k
+            ))));
+        }
+        // A bulk copy lands its rows at the box's own pitch, so it has no way to leave gaps
+        // between them. Refused here rather than where the stage is allocated: the pitch rides a
+        // persisted autotune key, and a key that comes back paired with a TMA delivery is a plan
+        // to turn down, not a kernel to fail expanding.
+        if self.delivery.is_tma() && self.pitch != Pitch::Dense {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a bulk copy lands its rows at its box's own pitch, so a {:?} delivery \
+                 cannot fill a stage whose fragment rows are {:?} apart",
+                self.delivery, self.pitch
             ))));
         }
         // The bulk-copy box is the stage; TMA owns which boxes it can encode.

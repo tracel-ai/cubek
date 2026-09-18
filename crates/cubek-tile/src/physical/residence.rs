@@ -32,7 +32,7 @@ pub enum StageStorage {
 
 /// The pitch between a tiled stage's fragment rows: what one row starts after the row above it.
 ///
-/// A fragment is read a phase at a time, and a phase reads [`PHASE_ROWS`] rows across the banks of
+/// A fragment is read a phase at a time, and a phase reads `PHASE_ROWS` rows across the banks of
 /// one line. Rows that start a whole *odd* number of chunks apart land those reads on that many
 /// distinct chunks, one each; rows laid end to end at an even count of chunks collide, two or more
 /// rows to a chunk, and the phase is replayed once per collision.
@@ -64,6 +64,23 @@ impl Pitch {
             // an odd count is coprime with the chunks of a bank line, so consecutive rows walk
             // all of them before any repeats.
             Pitch::Padded => (row_bytes.div_ceil(PITCH_CHUNK_BYTES).max(1) | 1) * PITCH_CHUNK_BYTES,
+        }
+    }
+
+    /// Whether a stage served in `line_bytes`-wide lines can start its rows at this pitch.
+    ///
+    /// A buffer is addressed in lines, so a pitch it cannot state in whole ones would start a
+    /// fragment row inside a line. [`Padded`](Pitch::Padded) states an *odd* count of
+    /// `PITCH_CHUNK_BYTES` chunks, which is whole lines only where the chunk itself is: a
+    /// 32-byte line is out, since an odd multiple of 16 is never a multiple of 32. Dense states
+    /// the row, which is whole lines by construction.
+    ///
+    /// Asked host-side, where a plan that pairs a padded pitch with too wide a line is still a
+    /// plan to reject rather than a kernel to refuse.
+    pub fn serves_lines(&self, line_bytes: usize) -> bool {
+        match self {
+            Pitch::Dense => true,
+            Pitch::Padded => line_bytes > 0 && PITCH_CHUNK_BYTES.is_multiple_of(line_bytes),
         }
     }
 }
@@ -124,5 +141,25 @@ mod tests {
         for row_bytes in [16usize, 32, 48, 64] {
             assert_eq!(Pitch::Dense.of(row_bytes), row_bytes);
         }
+    }
+
+    /// The line a padded stage can be served in, stated as the pitch it produces: whatever
+    /// [`Pitch::serves_lines`] admits, every row [`Pitch::of`] pitches is whole lines of it.
+    /// The point of asking is that a plan states its width and its pitch separately, and only
+    /// some pairs describe a buffer.
+    #[test]
+    fn a_padded_pitch_serves_the_lines_it_is_whole_multiples_of() {
+        for line_bytes in [1usize, 2, 4, 8, 16, 32, 64] {
+            let served = Pitch::Padded.serves_lines(line_bytes);
+            let whole = [16usize, 32, 48, 64, 128]
+                .iter()
+                .all(|&row| Pitch::Padded.of(row).is_multiple_of(line_bytes));
+            assert_eq!(served, whole, "{line_bytes}-byte lines");
+            assert!(
+                Pitch::Dense.serves_lines(line_bytes),
+                "a dense pitch is the row, which is whole lines already"
+            );
+        }
+        assert!(!Pitch::Padded.serves_lines(0), "a line holds something");
     }
 }

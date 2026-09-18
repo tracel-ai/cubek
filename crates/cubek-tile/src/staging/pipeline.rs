@@ -322,17 +322,29 @@ mod tests {
     /// back as whatever its output already held.
     #[test]
     fn only_a_bulk_transaction_fences_the_slots_barriers() {
-        let fences = |delivery| {
+        // `fillers` too, because a stored fill reaches the barrier only through planes set aside
+        // for it: asked at zero, `Copy` answers that it takes no fence by taking no barrier, and
+        // the case the fence was gated for — a barrier slot with no engine behind it — would go
+        // unasked.
+        let fences = |delivery, fillers| {
             matches!(
-                Sync::for_deliveries(&[delivery, delivery], 0),
+                Sync::for_deliveries(&[delivery, delivery], fillers),
                 Sync::Barrier {
                     transacts: true,
                     ..
                 }
             )
         };
-        assert!(fences(Delivery::Tma));
-        assert!(!fences(Delivery::AsyncCopy));
-        assert!(!fences(Delivery::Copy));
+        let barriers =
+            |delivery, fillers| Sync::for_deliveries(&[delivery, delivery], fillers).is_barrier();
+
+        assert!(fences(Delivery::Tma, 0));
+        assert!(fences(Delivery::Tma, 2), "the engine fills it either way");
+
+        assert!(barriers(Delivery::AsyncCopy, 0) && !fences(Delivery::AsyncCopy, 0));
+        assert!(barriers(Delivery::Copy, 1) && !fences(Delivery::Copy, 1));
+        // The one arm with no barrier to fence: a stored fill every unit of the cube reaches
+        // rendezvouses on `sync_cube`.
+        assert!(!barriers(Delivery::Copy, 0));
     }
 }

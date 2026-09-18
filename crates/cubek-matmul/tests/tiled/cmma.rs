@@ -198,6 +198,64 @@ fn cmma_tma_rejects_oversized_box() {
     }
 }
 
+/// A TMA plan that also asks for a padded pitch: the engine lands its rows at its box's own
+/// pitch, so it has no way to leave gaps between them.
+///
+/// Rejected at blueprint time like the box limit above, and for the same reason it matters —
+/// the pitch rides a persisted autotune key, so a key that comes back paired with a TMA
+/// delivery has to read as a plan to turn down rather than as a kernel that will not expand.
+#[test]
+fn cmma_tma_rejects_padded_pitch() {
+    use cubek_matmul::{
+        definition::{AvailableVectorSizes, MatmulSetupError},
+        routine::DeviceSettings,
+        tiled::{
+            cmma::{CmmaBlueprint, CmmaDelivery, CmmaRoutine, Partition, StoredTiles},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::Pitch;
+
+    let client = client();
+    let blueprint = CmmaBlueprint {
+        instruction: InstructionShape {
+            m: 16,
+            n: 16,
+            k: 16,
+        },
+        partition: Partition { m: 1, n: 1 },
+        planes: PlaneGrid { m: 1, n: 1 },
+        stage_k: 16,
+        buffering: 2,
+        delivery: CmmaDelivery::Tma,
+        pitch: Pitch::Padded,
+    };
+    let problem = rect(64, 64, 64, f16_elems());
+    let device_settings = DeviceSettings {
+        plane_dim: client.properties().hardware.plane_size_max,
+        max_cube_count: client.properties().hardware.max_cube_count,
+        vector_sizes: AvailableVectorSizes::from_type_sizes(&client, 4, 4, 4)
+            .pick_max()
+            .unwrap(),
+        client,
+    };
+    let strategy = BlueprintStrategy::Forced(blueprint);
+    match CmmaRoutine::blueprint(
+        &strategy,
+        &problem,
+        &device_settings,
+        problem.global_dtypes.out,
+        StoredTiles::default(),
+    ) {
+        Err(MatmulSetupError::InvalidConfig(msg)) => {
+            let msg = msg.to_string();
+            assert!(msg.contains("Padded"), "wrong rejection: {msg}");
+        }
+        Err(other) => panic!("expected a padded-pitch rejection, got {other:?}"),
+        Ok(_) => panic!("expected a padded-pitch rejection, got a blueprint"),
+    }
+}
+
 /// A caller asking for an input register type of its own (tf32 fragments off an f32 tensor)
 /// is asking for a cast this routine does not emit. It is rejected at setup rather than run
 /// at the global type behind the caller's back.
