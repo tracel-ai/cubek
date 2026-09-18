@@ -397,11 +397,31 @@ impl Space {
     }
 
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
-    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
-    /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`
-    /// shape asks here rather than reading an operand's rank.
+    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts while
+    /// it varies. How many there are is what picks a leaf's instruction, so every site that
+    /// deduces a 2-D single-`K` shape asks here rather than reading an operand's rank.
+    ///
+    /// **An axis of extent one that not every operand spans is not one of them.** A walk that
+    /// routes an axis ([`Walk::routed`](crate::Walk::routed)) leaves exactly that: one tile of
+    /// the axis, spanned only by the operand the route placed. It pairs with nothing and sums a
+    /// single value, so it is a coordinate, not a contraction. Listed, it splits the `k` edge:
+    /// the fastest contracted axis is no longer the one the operands line along, so no step
+    /// folds a line into a cell, and the gather nest refuses an axis one operand carries alone.
+    ///
+    /// An axis every operand spans stays whatever its extent: a separable operand names one
+    /// factor per contracted axis, by position, and a one-tap window is still a factor.
     pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
-        Space::merge(operands).contracting(output)
+        let merged = Space::merge(operands);
+        merged
+            .contracting(output)
+            .into_iter()
+            // Read raw: a `Dynamic` extent is not known to be one, so it is walked, and asking
+            // for its comptime size would panic.
+            .filter(|&axis| {
+                merged.extent_raw(axis) != Extent::Static(1)
+                    || operands.iter().all(|operand| operand.contains(axis))
+            })
+            .collect()
     }
 
     /// The `k` edge this operand contracts over against `output`: the product of every
@@ -423,8 +443,19 @@ impl Space {
     /// two operands listing the same axes in different orders contract mismatched positions with
     /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
     /// axis list, which is stated per operand, so nothing upstream forces them to agree.
+    ///
+    /// Compared over the [`contracted`](Space::contracted) axes, so a routed axis one operand
+    /// carries alone does not read as a disagreement.
     pub(crate) fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
-        lhs.contracting(output) == rhs.contracting(output)
+        let joint = Space::contracted(&[lhs, rhs], output);
+        let listed = |operand: &Space| -> SmallVec<[Axis; MAX_AXES]> {
+            operand
+                .contracting(output)
+                .into_iter()
+                .filter(|axis| joint.contains(axis))
+                .collect()
+        };
+        listed(lhs) == listed(rhs)
     }
 
     /// The single axis this operand contracts against `output`:
