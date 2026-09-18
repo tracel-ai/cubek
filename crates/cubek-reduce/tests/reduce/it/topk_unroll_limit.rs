@@ -1,6 +1,6 @@
 //! Top-k past `TOPK_UNROLL_BUDGET`.
 //!
-//! `plane_topk_insert`, `plane_topk_merge` and `topk_finalize_*` each walk all
+//! `plane_topk_insert`, `plane_topk_merge` and `TopK::finalize_*` each walk all
 //! `k` accumulator slots for each of their `k` candidates. Both levels used to
 //! be unrolled unconditionally, so the emitted kernel grew with `k²`: the
 //! `topk(300)` an object-detection head asks for expanded to ~90k copies of the
@@ -111,7 +111,7 @@ fn plane_lazy_topk_past_unroll_limit() {
 }
 
 // Output vectorization is what routes the accumulator out through
-// `topk_finalize_with_coords` / `topk_finalize_values`, whose `k`-by-`k` nest
+// `TopK::finalize_with_coords` / `TopK::finalize_values`, whose `k`-by-`k` nest
 // runs once more per lane of the vector.
 #[test]
 fn vectorized_topk_with_indices_past_unroll_limit() {
