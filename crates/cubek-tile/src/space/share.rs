@@ -73,7 +73,7 @@ pub enum LaneWork {
 /// many hold it ([`LaneWork`]). Two answers to one question, derived from the same space and read
 /// together on drain, where neither settles who writes on its own.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Lanes {
+pub struct LaneRoles {
     pub share: LaneShare,
     pub work: LaneWork,
 }

@@ -420,13 +420,13 @@ impl<T: Numeric> Tile<T> {
                     storage: spec.storage,
                     delivery: spec.delivery,
                 }),
-                lanes: comptime!(Lanes {
+                lanes: comptime!(LaneRoles {
                     share: LaneShare::Whole,
                     work: lane_work,
                 }),
                 split_share,
                 init_from: comptime!(InitFrom::Cell),
-                landing: ComptimeOption::new_None(),
+                lands: false,
             }),
             space: comptime!(space),
             depth: comptime!(0usize),

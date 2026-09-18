@@ -11,7 +11,7 @@
 //! through the builder like everything else.
 
 use super::{ComputeScope, CubeAxis, Distribution, Spread};
-use crate::{Axis, ByAxis, Extent, LaneShare, Space, SplitShare, Tiling};
+use crate::{Axis, ByAxis, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
 
 /// How many tiles a level takes along one of its axes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -414,19 +414,21 @@ impl Level {
     /// (batch) axes must hand out one tile. Valid only on a [`Partition`](LevelRole::Partition)
     /// level; the role says whether it applies, this only reads the counts.
     pub(crate) fn partition_grid(&self, space: &Space) -> (usize, usize) {
-        let rank = space.rank();
+        let edges = MatrixAxes::edges(space);
         for (p, axis) in space.axes().enumerate() {
             let tiles = self
                 .tiles_const(space, axis)
                 .expect("plane partition level: tile counts must be comptime");
             assert!(
-                p >= rank - 2 || tiles == 1,
+                p == edges.row_split || p == edges.col_split || tiles == 1,
                 "plane partition level: leading (batch) axes must hand out one tile"
             );
         }
         (
-            self.tiles_const(space, space.axis_at(rank - 2)).unwrap(),
-            self.tiles_const(space, space.axis_at(rank - 1)).unwrap(),
+            self.tiles_const(space, space.axis_at(edges.row_split))
+                .unwrap(),
+            self.tiles_const(space, space.axis_at(edges.col_split))
+                .unwrap(),
         )
     }
 

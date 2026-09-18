@@ -73,6 +73,27 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
+        match comptime!(storage.clone()) {
+            // The lanes are not memory: the plane holds them, at the depth one region of
+            // `level` sits, so the regions below the level window them as they window the
+            // operand.
+            StageStorage::Lanes => Tile::<T> {
+                tile_kind: TileKind::new_Lanes(Lanes::<T>::new(operand, comptime!(level.clone()))),
+                space: comptime!(level.child(&operand.space)),
+                depth: comptime!(operand.depth + 1),
+                levels: comptime!(operand.levels.clone()),
+            },
+            _ => MemData::<T>::stage_memory(operand, level, storage, width),
+        }
+    }
+
+    /// [`stage`](MemData::stage) in shared memory.
+    fn stage_memory(
+        operand: &Tile<T>,
+        #[comptime] level: Level,
+        #[comptime] storage: StageStorage,
+        #[comptime] width: Option<usize>,
+    ) -> Tile<T> {
         let dequant_at = operand.dequant_at();
         match comptime!(dequant_at) {
             DequantAt::Load => {
@@ -153,8 +174,14 @@ impl<T: Numeric> MemData<T> {
             TileKind::Gmem(g) | TileKind::Smem(g) => {
                 #[comptime]
                 match &g.store.quant {
-                    // Served == stored, so this is a plain stage.
-                    ComptimeOption::None => MemData::smem(space, vector_size, storage, units),
+                    // No scheme: the words as they lie where the operand is packed, which is
+                    // the only stored form a scheme-less operand has, else a plain stage.
+                    ComptimeOption::None => match comptime!(g.store.packing) {
+                        Packing::Plain => MemData::smem(space, vector_size, storage, units),
+                        packing => {
+                            MemData::smem_packed(space, vector_size, storage, units, packing)
+                        }
+                    },
                     ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
                         QuantStore::Native => match comptime!(info.scheme.value) {
                             QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
@@ -192,8 +219,10 @@ impl<T: Numeric> MemData<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("MemData::smem_stored: a fragment is not a stage source")
             }
-            TileKind::Procedural(_) => {
-                panic!("MemData::smem_stored: a procedural tile is not a stage source")
+            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+                panic!(
+                    "MemData::smem_stored: a procedural tile and the plane's lanes are not a stage source"
+                )
             }
         }
     }
@@ -316,6 +345,39 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
+    /// [`smem`](MemData::smem) over the words a [`packed`](Packing::Packed) operand is stored in:
+    /// the line narrows by the packing's factor and the buffer keeps `packing`, so every read
+    /// through it unpacks as a read of the global window does. No scales ride along — a packed
+    /// operand's scales are an operand of their own, staged on their own.
+    pub(crate) fn smem_packed(
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] storage: StageStorage,
+        #[comptime] units: usize,
+        #[comptime] packing: Packing,
+    ) -> Tile<T> {
+        // The word the packed line is stored in, which is what the stage's rows are pitched in.
+        let stored_bytes = comptime!(packing.physical(vector_size) * size_of::<u32>());
+        let form = comptime!(StageForm::dense(&space, vector_size, storage, stored_bytes));
+        let size!(WP) = comptime!(packing.physical(vector_size));
+        let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            vector_size,
+            units,
+        });
+        MemData::smem_over(
+            meta,
+            &smem,
+            ComptimeOption::new_None(),
+            comptime!(packing),
+            form,
+            map,
+            ComptimeOption::new_None(),
+        )
+    }
+
     /// [`smem`](MemData::smem) staging the element an operand is *stored* in rather than the one it
     /// serves: `I` is that element (`i8`, or `u32` when the scheme packs several values per word)
     /// and the line narrows to `vector_size / pack`, so the stage is that much smaller and a leaf
@@ -417,19 +479,60 @@ impl<T: Numeric> MemData<T> {
                     // already on chip: `cp.async` is global→shared only.
                     delivery: Delivery::Copy,
                 }),
-                lanes: comptime!(Lanes {
+                lanes: comptime!(LaneRoles {
                     share: LaneShare::Whole,
                     work: LaneWork::Repeated,
                 }),
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
-                landing: ComptimeOption::new_None(),
+                lands: false,
             }),
             space: comptime!(meta.space),
             depth: comptime!(0usize),
             levels: comptime!(Vec::new()),
         }
+    }
+
+    /// One plane's landing: a dense, scalar stage over `space`, one window per plane of the
+    /// cube in one shared buffer, this plane's found by the walk's own decode of the hardware
+    /// position. The buffer comes back beside the tile, for the lanes that fill it.
+    pub(crate) fn landing(
+        #[comptime] space: Space,
+        #[comptime] units: usize,
+        #[comptime] planes: usize,
+    ) -> (Tile<T>, Shared<[T]>) {
+        let cells = comptime!(
+            (0..space.rank())
+                .map(|p| space.extent_at(p))
+                .product::<usize>()
+        );
+        let start = hardware_pos(ComputeScope::Plane) * cells;
+        let end = start + cells;
+        let window =
+            Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);
+        let form = comptime!(StageForm::dense(
+            &space,
+            1,
+            StageStorage::Strided,
+            elem_type_of::<T>().size()
+        ));
+        let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
+        let meta = comptime!(StageMeta {
+            space,
+            vector_size: 1,
+            units,
+        });
+        let tile = MemData::smem_over(
+            meta,
+            &window,
+            ComptimeOption::new_None(),
+            comptime!(Packing::Plain),
+            form,
+            map,
+            ComptimeOption::new_None(),
+        );
+        (tile, window)
     }
 
     /// An unfilled [`SourceWindow`] for a gathered stage: the comptime geometry is the stage's own,
@@ -572,6 +675,12 @@ pub(crate) fn stage_compaction(
     // tiling has already folded back into the one coordinate its fragments are digits of. Direct
     // there is exactly "no gather", so a tiled buffer takes this early return like any other.
     if src.is_direct() && dst.is_direct() {
+        return None;
+    }
+    // A partition is not a gather: nothing aliases and every window is a box, so its stage is
+    // the dense copy of the logical tile a direct operand's is, and the fill reads the source
+    // box straight through its own digits.
+    if src.composition() == Composition::Disjoint && dst.is_direct() {
         return None;
     }
     let compaction = Compaction::of(src, vector_size, |axis| space.extent(axis));
@@ -784,6 +893,9 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
+            StageStorage::Lanes => {
+                panic!("StageStorage::Lanes: the plane's lanes are not shared memory")
+            }
             StageStorage::Tiled { block, .. } => {
                 let nested = Space::new(
                     &space

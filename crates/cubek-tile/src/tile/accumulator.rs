@@ -143,6 +143,30 @@ impl Resident {
     }
 }
 
+/// The planes `levels` deal `space` across: the product, over every level dealt on the cube's
+/// planes, of the instances its plane-dealt axes take. One where no level rides the planes.
+///
+/// Each level's count is read against the space its parents hand it, so a count that is
+/// only known at runtime is refused here rather than read as one.
+pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
+    let mut handed = space.clone();
+    let mut planes = 1;
+    for level in levels {
+        for axis in level.axes() {
+            if level.distribution(axis).scope() == Some(ComputeScope::Plane) {
+                planes *= level.instances_along(&handed, axis).unwrap_or_else(|| {
+                    panic!(
+                        "Tile::with_landing: {axis:?} is dealt across the cube's planes at a \
+                         count only the launch knows, so the landing cannot be sized"
+                    )
+                });
+            }
+        }
+        handed = level.child(&handed);
+    }
+    planes
+}
+
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// What one plane sums into, in the form `instruction` names.
@@ -334,7 +358,8 @@ impl<Acc: Numeric> Tile<Acc> {
             | TileKind::Smem(_)
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
+            | TileKind::Procedural(_)
+            | TileKind::Lanes(_) => {
                 panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
             }
         }
@@ -348,43 +373,58 @@ impl<Acc: Numeric> Tile<Acc> {
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => comptime!(false),
+            | TileKind::Procedural(_)
+            | TileKind::Lanes(_) => comptime!(false),
         }
     }
 
-    /// This operand with a landing: `planes` windows of shared memory, one per plane of `lanes`
-    /// units, each one leaf window of this operand wide, that the fragment leaf lands the
-    /// operand's `values ⊗ scales` in before loading them as a fragment
-    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator). Stated where the operand is
-    /// opened, since the landing is part of its residence, like [`with_scratch`](Tile::with_scratch).
-    pub fn with_landing(self, #[comptime] planes: usize, #[comptime] lanes: usize) -> Tile<Acc> {
-        let cells = comptime!({
-            let leaf = self.space.leaf(&self.levels);
-            (0..leaf.rank())
-                .map(|p| leaf.extent_at(p))
-                .product::<usize>()
-        });
+    /// This operand with a landing: a window of shared memory the plane owns, that the fragment
+    /// leaf lands the operand's `values ⊗ scales` in before loading them as fragments
+    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator, or [`Scaled::landed`] where
+    /// the kernel lands a step whole). Stated where the operand is opened, since the landing is
+    /// part of its residence, like [`with_scratch`](Tile::with_scratch); sized where it lands,
+    /// by the window landed, one per plane of the cube.
+    ///
+    /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
+    /// lands them the way a packed global window does, which is what keeps a deep stage the
+    /// size of the words rather than of the values they unpack to.
+    pub fn with_landing(self) -> Tile<Acc> {
         let space = comptime!(self.space.clone());
         let depth = comptime!(self.depth);
         let levels = comptime!(self.levels.clone());
-        let start = (UNIT_POS as usize / lanes) * cells;
-        let end = start + cells;
-        let landing = Shared::<[Acc]>::new_slice(comptime!(cells * planes))
-            .map(|landing| &landing[start..end]);
         match self.tile_kind {
             TileKind::Gmem(g) => Tile::<Acc> {
-                tile_kind: TileKind::new_Gmem(g.with_landing(landing)),
+                tile_kind: TileKind::new_Gmem(g.with_landing()),
                 space,
                 depth,
                 levels,
             },
-            TileKind::Smem(_)
-            | TileKind::PlaneTile(_)
+            TileKind::Smem(g) => Tile::<Acc> {
+                tile_kind: TileKind::new_Smem(g.with_landing()),
+                space,
+                depth,
+                levels,
+            },
+            TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Procedural(_) => {
-                panic!("Tile::with_landing: a landing takes a global-memory operand to a fragment")
+            | TileKind::Procedural(_)
+            | TileKind::Lanes(_) => {
+                panic!("Tile::with_landing: a landing takes a memory operand to a fragment")
             }
+        }
+    }
+
+    /// This operand landed where `instruction` needs it, and untouched where it does not.
+    ///
+    /// A fragment loads a window as it lies, so a factor reaching one lands first
+    /// ([`with_landing`](Tile::with_landing)); a register block reads its operand through its
+    /// layout and lands nothing. Which instructions want a landing is this crate's to know, so
+    /// a kernel that serves both arms opens its operands once instead of branching per operand.
+    pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<Acc> {
+        match comptime!(instruction) {
+            Instruction::Registers { .. } => self,
+            Instruction::Cmma | Instruction::Mma { .. } => self.with_landing(),
         }
     }
 

@@ -1,4 +1,4 @@
-//! How a shared-memory stage lays its buffer out ([`StageStorage`]) and what it leaves between
+//! Where a stage lives, how it lays its cells out ([`StageStorage`]) and what it leaves between
 //! its fragment rows ([`Pitch`]).
 
 use crate::{Axis, Space, StageForm};
@@ -12,9 +12,10 @@ const PHASE_ROWS: usize = 8;
 /// The chunk a pitch is counted in: a bank line over the rows one phase reads.
 const PITCH_CHUNK_BYTES: usize = BANK_LINE_BYTES / PHASE_ROWS;
 
-/// How a shared-memory stage lays out its buffer: storage-tiled at a stated block (one contiguous
-/// block per fragment, what a cmma transaction wants) or plain strided rows. Stated by the kernel
-/// where it allocates the stage ([`Ring::smem`](crate::Ring::smem)).
+/// Where a stage lives and how it lays its cells out: shared memory, storage-tiled at a stated
+/// block (one contiguous block per fragment, what a cmma transaction wants) or in plain strided
+/// rows; or the plane's own lanes, which is no buffer at all. Stated by the kernel where it
+/// allocates the stage ([`Ring::smem`](crate::Ring::smem)).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum StageStorage {
     /// Grouped into `block`-sized tiles, the fragment the instruction reads: one edge per axis of
@@ -24,6 +25,9 @@ pub enum StageStorage {
         pitch: Pitch,
     },
     Strided,
+    /// Not shared memory at all: the plane holds the lines in its lanes, one to a lane, and
+    /// shares them by shuffle ([`Lanes`](crate::Lanes)).
+    Lanes,
 }
 
 /// The pitch between a tiled stage's fragment rows: what one row starts after the row above it.
@@ -71,6 +75,9 @@ impl StageStorage {
         match self {
             StageStorage::Tiled { pitch, .. } => *pitch,
             StageStorage::Strided => Pitch::Dense,
+            StageStorage::Lanes => {
+                panic!("StageStorage::Lanes: the plane's lanes are not shared memory")
+            }
         }
     }
 
