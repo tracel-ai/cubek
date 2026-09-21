@@ -136,7 +136,7 @@ impl<T: Numeric> Lanes<T> {
         register_line_words(words);
         // One window per plane of the cube, this plane's found by the walk's own decode of the
         // hardware position, as a landing is.
-        let window = match comptime!(reach.clone()) {
+        let window = match comptime!(reach) {
             Reach::Shuffle => ComptimeOption::new_None(),
             Reach::Window => {
                 let planes = comptime!(plane_windows(&operand.space, &operand.levels));
@@ -144,7 +144,8 @@ impl<T: Numeric> Lanes<T> {
                 let start = hardware_pos(ComputeScope::Plane) * cells;
                 let end = start + cells;
                 ComptimeOption::new_Some(
-                    Shared::<[u32]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]),
+                    Shared::<[u32]>::new_slice(comptime!(cells * planes))
+                        .map(|all| &all[start..end]),
                 )
             }
         };
@@ -251,11 +252,12 @@ impl<T: Numeric> Lanes<T> {
                 }
             }
         }
-        match comptime!(self.reach.clone()) {
+        match comptime!(self.reach) {
             // The lines stay where they were loaded; every read reaches them by shuffle.
             Reach::Shuffle => self.lanes[0usize] = held,
             // Written once, read by index for the rest of the region, at one plane barrier.
-            Reach::Window => {
+            Reach::Window =>
+            {
                 #[comptime]
                 match &mut self.window {
                     ComptimeOption::Some(window) => {
@@ -299,7 +301,7 @@ impl<T: Numeric> Lanes<T> {
             projection: comptime!(self.projection.clone()),
             field: comptime!(self.field),
             words: comptime!(self.words),
-            reach: comptime!(self.reach.clone()),
+            reach: comptime!(self.reach),
             _served: PhantomData,
         }
     }
@@ -324,7 +326,7 @@ impl<T: Numeric> Lanes<T> {
         let words = comptime!(self.words);
         let word = byte.fdiv(comptime!(per_word as u32));
         let field = byte.frem(comptime!(per_word as u32));
-        let held = match comptime!(self.reach.clone()) {
+        let held = match comptime!(self.reach) {
             Reach::Shuffle => {
                 // Every lane offers its word `j`; the lane that asked receives line `line`'s.
                 // Which word is wanted is a runtime coordinate, so all of them are fetched and

@@ -1896,9 +1896,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Lanes {
-                    reach: reach.clone()
-                }),
+                comptime!(StageStorage::Lanes { reach }),
                 comptime!(None),
             );
             let mut sum = c_plane.accumulator::<E, E, E>(
@@ -2251,7 +2249,7 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
         launcher.partitioning_arg(),
         instruction,
         chunks_level,
-        reach.clone(),
+        reach,
         cells,
         [dtype, dtype, stored],
     );
@@ -2326,9 +2324,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = MemData::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Lanes {
-                    reach: reach.clone()
-                }),
+                comptime!(StageStorage::Lanes { reach }),
                 comptime!(None),
             );
             let mut sum = c_plane.cmma_accumulator::<E, E>(
@@ -2413,7 +2409,7 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
         chunks_level,
-        reach.clone(),
+        reach,
         grid,
         [dtype, dtype, stored],
     );
