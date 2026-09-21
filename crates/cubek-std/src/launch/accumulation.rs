@@ -1,4 +1,7 @@
-use cubecl::{ir::FloatKind, prelude::*};
+use cubecl::{
+    ir::{FloatKind, VectorRegisters},
+    prelude::*,
+};
 
 /// A loop that folds one running value per vector lane, and the vector sizes worth building it at.
 ///
@@ -21,7 +24,7 @@ impl Accumulation<'_> {
         client: &Client,
     ) -> impl Iterator<Item = VectorSize> + Clone + use<> {
         let hardware = &client.properties().hardware;
-        let widest = match hardware.vector_registers(self.lane_size()) {
+        let widest = match VectorRegisters::of(hardware, self.lane_size()) {
             Some(registers) => registers.widest_lanes(self.live_vectors),
             None => client
                 .io_optimized_vector_sizes(self.load.size())

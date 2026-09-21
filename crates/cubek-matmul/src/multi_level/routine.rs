@@ -1,4 +1,4 @@
-use cubecl::ir::HardwareProperties;
+use cubecl::ir::{HardwareProperties, VectorRegisters};
 use cubecl::prelude::*;
 use cubek_std::cube_count::CubeCountPlan;
 
@@ -156,7 +156,7 @@ pub(crate) fn outer_product_accumulators(
     vector_size: usize,
     extent: usize,
 ) -> usize {
-    let Some(registers) = hardware.vector_registers(dtypes.acc_register.size()) else {
+    let Some(registers) = VectorRegisters::of(hardware, dtypes.acc_register.size()) else {
         return 1;
     };
     let reserved = OUTER_OPERAND_VECTORS * registers.registers_for(vector_size);

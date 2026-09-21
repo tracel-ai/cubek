@@ -391,8 +391,7 @@ pub fn launch_direct<const N: usize>(
     // Only a single-unit plane pays the dependency chain in full; a wide plane hides it and is
     // left with the extra input read per output channel. One lane is exactly as serial as `sum`,
     // and a channel loop of one step has nothing to amortize the fold over.
-    let blocks = hardware
-        .vector_registers(lane_size(dtype))
+    let blocks = VectorRegisters::of(hardware, lane_size(dtype))
         .filter(|_| {
             hardware.plane_size_max == 1
                 && vector_size_in > 1
@@ -523,10 +522,9 @@ mod tests {
     use super::*;
 
     fn registers(load_width: u32, count: u32, elem_size: usize) -> VectorRegisters {
-        HardwareProperties {
+        let hardware = HardwareProperties {
             load_width,
             vector_register_count: Some(count),
-            io_width: 512,
             plane_size_min: 1,
             plane_size_max: 1,
             max_bindings: u32::MAX,
@@ -541,9 +539,8 @@ mod tests {
             min_tensor_cores_dim: None,
             max_vector_size: usize::MAX,
             cube_mma_reserved_shared_memory: 0,
-        }
-        .vector_registers(elem_size)
-        .unwrap()
+        };
+        VectorRegisters::of(&hardware, elem_size).unwrap()
     }
 
     fn avx2(elem_size: usize) -> VectorRegisters {

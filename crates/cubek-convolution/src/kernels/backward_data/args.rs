@@ -56,7 +56,7 @@ impl<A: BatchMatmulRoutine<RuntimeArgs>> ConcreteArgs<A> for TensorArgs<RuntimeA
         _blueprint: &A::Blueprint,
         dtypes: &MatmulElems,
     ) -> ConvolutionProblem {
-        let io_width = client.properties().hardware.io_width;
+        let io_width = client.properties().io_width;
         let channel_align = io_width as usize / dtypes.lhs_global.size_bits();
         let padded_channels = problem.out_channels.next_multiple_of(channel_align);
         let shape_k = problem.kernel_size.iter().product::<u32>() as usize * padded_channels;

@@ -3,7 +3,7 @@
 //! kernel-form one, so geometry and divisibility are always read off real extents and no call
 //! site can consume the space too early.
 
-use cubecl::ir::OpaqueType;
+use cubecl::ir::{OpaqueType, VectorRegisters};
 use cubecl::prelude::*;
 
 use crate::{
@@ -266,12 +266,7 @@ impl Launcher {
         type_size: usize,
         live: usize,
     ) -> usize {
-        match self
-            .client
-            .properties()
-            .hardware
-            .vector_registers(type_size)
-        {
+        match VectorRegisters::of(&self.client.properties().hardware, type_size) {
             Some(registers) => {
                 let lanes = registers.widest_lanes(live);
                 self.widest_vector_size(axis, operands, (0..=lanes.ilog2()).map(|p| 1 << p))

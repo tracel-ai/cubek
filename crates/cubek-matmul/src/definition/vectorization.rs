@@ -1,7 +1,7 @@
 use cubecl::{
     VectorizationError,
     client::Client,
-    ir::{HardwareProperties, VectorSize},
+    ir::{HardwareProperties, VectorRegisters, VectorSize},
     tensor_vector_size_parallel,
     zspace::{Shape, Strides},
 };
@@ -18,7 +18,7 @@ const LINE_OPERAND_VECTORS: usize = 2;
 /// The widest lanes an accumulator line keeps in registers beside its operands, or `None` where the
 /// device has no register set to count.
 pub fn register_lanes(hardware: &HardwareProperties, dtypes: &MatmulElems) -> Option<usize> {
-    let registers = hardware.vector_registers(dtypes.acc_register.size())?;
+    let registers = VectorRegisters::of(hardware, dtypes.acc_register.size())?;
     Some(registers.widest_lanes(1 + LINE_OPERAND_VECTORS))
 }
 
