@@ -138,10 +138,11 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
         let plane_id = UNIT_POS_Y;
         let unit_id = UNIT_POS_X;
 
+        let accumulators = config.accumulators;
         let tile_size = plane_dim * vector_size;
         let absolute_plane_id = n_cube_id * num_planes + plane_id;
         let unit_pos_n = absolute_plane_id * plane_dim + unit_id;
-        let vectorized_pos_n = unit_pos_n * vector_size;
+        let vectorized_pos_n = unit_pos_n * vector_size * accumulators;
 
         // The first if statement is running at comptime.
         if comptime!(matches!(check_bounds, CheckBounds::Terminate)) {
@@ -158,7 +159,14 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
             k / tile_size
         };
 
-        let mut acc = Vector::<AccRE<MP>, NA>::zero();
+        let mut acc = Sequence::<Vector<AccRE<MP>, NA>>::new();
+        #[unroll]
+        for _ in 0..accumulators {
+            acc.push(Vector::<AccRE<MP>, NA>::zero());
+        }
+        // Rebinding as `mut` turns every accumulator into a mutable local.
+        #[allow(clippy::redundant_locals)]
+        let mut acc = acc;
 
         for tile_index in 0..num_tiles {
             let swizzled_tile_index = (tile_index + plane_id) % num_tiles;
@@ -176,21 +184,31 @@ impl<MP: MatmulTypes> BatchMatmul<(), MP> for VecMatUnitPerpendicular<MP> {
 
                 #[unroll]
                 for vec_iter in 0..NA::value().comptime() as u32 {
-                    let lhs_scalar = lhs_vec.extract(vec_iter as usize);
-                    let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
-                        rhs.read_checked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
-                    } else {
-                        rhs.read_unchecked((rhs_k_vec_base + vec_iter, vectorized_pos_n))
-                    };
-                    acc += Vector::cast_from(lhs_scalar) * Vector::cast_from(rhs_vec);
+                    let lhs_scalar =
+                        Vector::<AccRE<MP>, NA>::cast_from(lhs_vec.extract(vec_iter as usize));
+                    #[unroll]
+                    for j in 0..accumulators {
+                        let pos_n = vectorized_pos_n + j * vector_size;
+                        let rhs_vec = if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                            rhs.read_checked((rhs_k_vec_base + vec_iter, pos_n))
+                        } else {
+                            rhs.read_unchecked((rhs_k_vec_base + vec_iter, pos_n))
+                        };
+                        *acc.index_mut(j as usize) += lhs_scalar * Vector::cast_from(rhs_vec);
+                    }
                 }
             }
         }
 
-        if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
-            out.write_checked((0, vectorized_pos_n), Vector::cast_from(acc));
-        } else {
-            out.write((0, vectorized_pos_n), Vector::cast_from(acc));
+        #[unroll]
+        for j in 0..accumulators {
+            let pos_n = vectorized_pos_n + j * vector_size;
+            let value = Vector::cast_from(*acc.index(j as usize));
+            if comptime!(matches!(check_bounds, CheckBounds::Checked)) {
+                out.write_checked((0, pos_n), value);
+            } else {
+                out.write((0, pos_n), value);
+            }
         }
     }
 }

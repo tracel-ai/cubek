@@ -13,6 +13,7 @@ use cubecl::{
     std::tensor::ViewMut,
     tensor_vector_size_parallel,
 };
+use cubek_std::launch::Accumulation;
 
 struct MaxPoolStrategy;
 struct MaxPoolWithIndicesStrategy;
@@ -118,7 +119,12 @@ pub(crate) fn max_pool2d_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype],
+            live_vectors: 2,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -171,7 +177,13 @@ pub(crate) fn max_pool2d_with_indices_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype, i32::elem_type_native()],
+            // The value and index held, the tap and its index, and the comparison mask.
+            live_vectors: 5,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

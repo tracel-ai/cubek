@@ -10,6 +10,7 @@ use cubecl::{
 };
 
 use crate::ReduceError;
+use cubek_std::launch::Accumulation;
 
 /// Sum all the elements of the input tensor distributed over `cube_count` cubes.
 ///
@@ -79,16 +80,20 @@ pub fn shared_sum(
     let contiguous_buffer = input_len * input_elem.size() == input.handle.size_in_used() as usize
         && is_dense(&input.shape, &input.strides);
 
-    // Compute the optimal vector size.
+    let vector_sizes = Accumulation {
+        load: input_elem,
+        live_elems: &[input_elem],
+        live_vectors: 2,
+    }
+    .vector_sizes(client);
     let vector_size = if contiguous_buffer {
-        client
-            .io_optimized_vector_sizes(input_elem.size())
+        vector_sizes
             .filter(|vector_size| input_len.is_multiple_of(*vector_size))
             .max()
             .unwrap_or(1)
     } else {
         tensor_vector_size_parallel(
-            client.io_optimized_vector_sizes(input_elem.size()),
+            vector_sizes,
             &input.shape,
             &input.strides,
             input.shape.len() - 1,
@@ -138,6 +143,7 @@ pub fn shared_sum(
             output.into_tensor_arg(),
             cube_dim.num_elems() as usize,
             num_vectors_per_unit,
+            client.properties().hardware.vector_register_count.is_some(),
             input_elem,
         )
     };
@@ -170,10 +176,13 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     output: &mut Tensor<Atomic<T>>,
     #[comptime] shared_memory_size: usize,
     #[comptime] num_vectors_per_unit: usize,
+    #[comptime] sum_in_register: bool,
     #[define(T)] _dtype: ElemType,
 ) {
     let mut shared_memory = Shared::new_slice(shared_memory_size);
-    shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
+    if !sum_in_register {
+        shared_memory[UNIT_POS as usize] = Vector::empty().fill(T::from_int(0));
+    }
 
     // Each unit reduce `num_vectors_per_unit` vectors.
     let start = ABSOLUTE_POS * num_vectors_per_unit;
@@ -183,9 +192,17 @@ fn shared_sum_kernel<T: Numeric, N: Size>(
     let start = select(start < input.shape(), start, input.shape());
     let end = select(end < input.shape(), end, input.shape());
 
-    // Each unit sum its vectors.
-    for k in start..end {
-        shared_memory[UNIT_POS as usize] += input.read(k);
+    // Shared memory may live outside a register, which would make every step a load and a store.
+    if sum_in_register {
+        let mut unit_sum = Vector::empty().fill(T::from_int(0));
+        for k in start..end {
+            unit_sum += input.read(k);
+        }
+        shared_memory[UNIT_POS as usize] = unit_sum;
+    } else {
+        for k in start..end {
+            shared_memory[UNIT_POS as usize] += input.read(k);
+        }
     }
 
     // Sum all vectors within the shared_memory to a single vector.

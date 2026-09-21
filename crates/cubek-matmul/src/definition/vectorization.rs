@@ -1,7 +1,7 @@
 use cubecl::{
     VectorizationError,
     client::Client,
-    ir::VectorSize,
+    ir::{HardwareProperties, VectorRegisters, VectorSize},
     tensor_vector_size_parallel,
     zspace::{Shape, Strides},
 };
@@ -9,7 +9,18 @@ use cubek_std::MatrixLayout;
 
 use std::fmt::Debug;
 
-use crate::definition::error::MatmulSetupError;
+use crate::definition::{MatmulElems, error::MatmulSetupError};
+
+/// The lhs and rhs lines a register product holds beside an accumulator line; the product itself
+/// fuses into the add.
+const LINE_OPERAND_VECTORS: usize = 2;
+
+/// The widest lanes an accumulator line keeps in registers beside its operands, or `None` where the
+/// device has no register set to count.
+pub fn register_lanes(hardware: &HardwareProperties, dtypes: &MatmulElems) -> Option<usize> {
+    let registers = VectorRegisters::of(hardware, dtypes.acc_register.size())?;
+    Some(registers.widest_lanes(1 + LINE_OPERAND_VECTORS))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 /// Vector size used for each tensor in global memory accesses.
@@ -18,6 +29,17 @@ pub struct MatmulVectorSizes {
     pub lhs: VectorSize,
     pub rhs: VectorSize,
     pub out: VectorSize,
+}
+
+impl MatmulVectorSizes {
+    /// Every size halved, down to one.
+    pub fn halved(self) -> Self {
+        Self {
+            lhs: (self.lhs / 2).max(1),
+            rhs: (self.rhs / 2).max(1),
+            out: (self.out / 2).max(1),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +54,16 @@ pub struct AvailableVectorSizes {
 }
 
 impl AvailableVectorSizes {
+    /// Every power of two up to `lanes`, for each tensor.
+    pub fn up_to_lanes(lanes: usize) -> Self {
+        let sizes: Vec<VectorSize> = (0..=lanes.ilog2()).rev().map(|power| 1 << power).collect();
+        AvailableVectorSizes {
+            lhs: sizes.clone(),
+            rhs: sizes.clone(),
+            out: sizes,
+        }
+    }
+
     pub fn from_type_size_tma(client: &Client, elem_out: usize) -> Self {
         // TMA requires vector size 1 for inputs
         AvailableVectorSizes {

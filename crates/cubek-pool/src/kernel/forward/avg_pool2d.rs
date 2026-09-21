@@ -13,6 +13,7 @@ use cubecl::{
     std::tensor::ViewMut,
     tensor_vector_size_parallel,
 };
+use cubek_std::launch::Accumulation;
 
 struct AvgPoolStrategy;
 
@@ -100,7 +101,12 @@ pub(crate) fn avg_pool2d_launch(
     let dilation = 1;
 
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        Accumulation {
+            load: dtype,
+            live_elems: &[dtype],
+            live_vectors: 2,
+        }
+        .vector_sizes(client),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,

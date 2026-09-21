@@ -1,6 +1,7 @@
 use crate::{
     definition::{
-        AvailableVectorSizes, MatmulAvailabilityError, MatmulElems, MatmulProblem, MatmulSetupError,
+        AvailableVectorSizes, MatmulAvailabilityError, MatmulElems, MatmulProblem,
+        MatmulSetupError, register_lanes,
     },
     multi_level::{
         BatchMatmulRoutine,
@@ -36,12 +37,15 @@ pub fn launch_ref<A: BatchMatmulRoutine<()>>(
     let lhs = into_contiguous_if_highly_permuted(client, lhs)?;
     let rhs = into_contiguous_if_highly_permuted(client, rhs)?;
 
-    let vector_sizes = AvailableVectorSizes::from_type_sizes(
-        client,
-        lhs.data_elem_size(),
-        rhs.data_elem_size(),
-        dtypes.acc_global.size(),
-    );
+    let vector_sizes = match inferred_load_lanes(client, blueprint_strategy, dtypes) {
+        Some(lanes) => AvailableVectorSizes::up_to_lanes(lanes),
+        None => AvailableVectorSizes::from_type_sizes(
+            client,
+            lhs.data_elem_size(),
+            rhs.data_elem_size(),
+            dtypes.acc_global.size(),
+        ),
+    };
     launch_inner_ref::<TensorArgs, A>(
         client,
         lhs,
@@ -183,14 +187,50 @@ where
         vector_sizes.rhs = 1;
     }
 
-    launch_kernel_concrete::<MA, A>(
-        client,
-        lhs,
-        rhs,
-        out,
-        problem,
-        vector_sizes,
-        blueprint_strategy,
-        dtypes,
-    )
+    if inferred_load_lanes(client, blueprint_strategy, dtypes).is_none() {
+        return launch_kernel_concrete::<MA, A>(
+            client,
+            lhs,
+            rhs,
+            out,
+            problem,
+            vector_sizes,
+            blueprint_strategy,
+            dtypes,
+        );
+    }
+    loop {
+        let launched = launch_kernel_concrete::<MA, A>(
+            client,
+            lhs.clone(),
+            rhs.clone(),
+            out.clone(),
+            problem.clone(),
+            vector_sizes,
+            blueprint_strategy,
+            dtypes,
+        );
+        let narrower = vector_sizes.halved();
+        match launched {
+            // The stage is checked against shared memory before anything launches.
+            Err(MatmulSetupError::Unavailable(MatmulAvailabilityError::SharedMemoryTooBig {
+                ..
+            })) if narrower != vector_sizes => vector_sizes = narrower,
+            launched => return launched,
+        }
+    }
+}
+
+/// The lanes an inferred blueprint loads at, as wide as an accumulator row keeps in registers: a
+/// load wider than one register feeds more of the row per step.
+fn inferred_load_lanes<A: BatchMatmulRoutine<()>>(
+    client: &Client,
+    strategy: &BlueprintStrategy<(), A>,
+    dtypes: &MatmulElems,
+) -> Option<usize> {
+    match strategy {
+        BlueprintStrategy::Inferred(_) => register_lanes(&client.properties().hardware, dtypes),
+        // Its tile was sized for loads at the load width.
+        BlueprintStrategy::Forced(_) => None,
+    }
 }

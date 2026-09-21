@@ -43,6 +43,8 @@ pub struct GemmBlueprint {
     pub hypercube_blueprint: HypercubeBlueprint,
     pub variant: Variant,
     pub planes_split: PlanesSplit,
+    /// Accumulators each plane keeps, side by side along its block axis.
+    pub accumulators: usize,
     pub check_bounds: CheckBounds,
 }
 
@@ -96,6 +98,7 @@ impl BatchMatmulFamily<()> for GemmFamily {
             num_planes: blueprint.num_planes as u32,
             variant: blueprint.variant,
             planes_split: blueprint.planes_split,
+            accumulators: blueprint.accumulators as u32,
             check_bounds: blueprint.check_bounds,
         })
     }
@@ -168,6 +171,18 @@ impl BatchMatmulFamily<()> for GemmFamily {
         }
 
         let vs = vector_sizes.lhs;
+        let accumulators = blueprint.accumulators;
+
+        if accumulators == 0 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(
+                "Gemm needs at least one accumulator per plane".to_string(),
+            )));
+        }
+        if blueprint.variant == Variant::Dot && accumulators != 1 {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Dot variant keeps one accumulator per plane, got {accumulators}"
+            ))));
+        }
 
         // Per-variant constraints. Dot supports plane-cooperative K reduction;
         // OuterM/OuterN are CPU-only because they don't reduce across units.
@@ -221,6 +236,19 @@ impl BatchMatmulFamily<()> for GemmFamily {
                     ))));
                 }
             }
+        }
+
+        // A block overhanging its axis would write past the output.
+        let block = blueprint.variant.cells_per_accumulator(vs) * accumulators;
+        let (axis, extent) = match blueprint.variant.block_axis(blueprint.planes_split) {
+            PlanesSplit::M => ("m", problem.m),
+            PlanesSplit::N => ("n", problem.n),
+        };
+        if !extent.is_multiple_of(block) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "{:?} variant needs {axis} ({extent}) divisible by its block of {accumulators} accumulators ({block} cells)",
+                blueprint.variant,
+            ))));
         }
 
         let derived = MatmulOperandLayouts::from_problem(problem)?.variant()?;

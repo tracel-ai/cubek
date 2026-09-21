@@ -1,4 +1,4 @@
-use cubecl::ir::HardwareProperties;
+use cubecl::ir::{HardwareProperties, VectorRegisters};
 use cubecl::prelude::*;
 use cubek_std::cube_count::CubeCountPlan;
 
@@ -140,4 +140,31 @@ pub(crate) fn num_concurrent_planes(properties: &HardwareProperties) -> usize {
         // per CU on AMD.
         None => 4,
     }
+}
+
+/// The K-vector, its broadcast scalar and the accumulator's line an outer product holds in
+/// registers beside its accumulators.
+const OUTER_OPERAND_VECTORS: usize = 3;
+
+/// How many `vector_size`-wide accumulators an outer-product plane keeps side by side along an
+/// output axis of `extent` cells: as many as fit the registers beside the operands, as a power of
+/// two whose block tiles the axis. Each is an independent latency chain, and all of them read
+/// adjacent segments of one line, so throughput grows with the count until they spill.
+pub(crate) fn outer_product_accumulators(
+    hardware: &HardwareProperties,
+    dtypes: &MatmulElems,
+    vector_size: usize,
+    extent: usize,
+) -> usize {
+    let Some(registers) = VectorRegisters::of(hardware, dtypes.acc_register.size()) else {
+        return 1;
+    };
+    let reserved = OUTER_OPERAND_VECTORS * registers.registers_for(vector_size);
+    let fitting = registers.vectors_fitting(vector_size, reserved).max(1);
+
+    let mut accumulators = 1 << fitting.ilog2();
+    while accumulators > 1 && !extent.is_multiple_of(accumulators * vector_size) {
+        accumulators /= 2;
+    }
+    accumulators
 }

@@ -3,7 +3,7 @@
 //! kernel-form one, so geometry and divisibility are always read off real extents and no call
 //! site can consume the space too early.
 
-use cubecl::ir::OpaqueType;
+use cubecl::ir::{OpaqueType, VectorRegisters};
 use cubecl::prelude::*;
 
 use crate::{
@@ -251,6 +251,38 @@ impl Launcher {
         operands: &[(&Geometry, &[Axis])],
         type_size: usize,
     ) -> usize {
+        let sizes = self.client.io_optimized_vector_sizes(type_size);
+        self.widest_vector_size(axis, operands, sizes)
+    }
+
+    /// [`vector_size`](Self::vector_size) at the widest line keeping `live` vectors of
+    /// `type_size`-byte elements in registers. A load spanning several registers costs nothing
+    /// until the vectors a step holds outnumber them, which the device's load width alone
+    /// underestimates; a device with no register set keeps its load widths.
+    pub fn register_vector_size(
+        &self,
+        axis: Axis,
+        operands: &[(&Geometry, &[Axis])],
+        type_size: usize,
+        live: usize,
+    ) -> usize {
+        match VectorRegisters::of(&self.client.properties().hardware, type_size) {
+            Some(registers) => {
+                let lanes = registers.widest_lanes(live);
+                self.widest_vector_size(axis, operands, (0..=lanes.ilog2()).map(|p| 1 << p))
+            }
+            None => self.vector_size(axis, operands, type_size),
+        }
+    }
+
+    /// [`vector_size`](Self::vector_size) chosen among `sizes` rather than the device's load
+    /// widths.
+    pub fn widest_vector_size(
+        &self,
+        axis: Axis,
+        operands: &[(&Geometry, &[Axis])],
+        sizes: impl IntoIterator<Item = usize>,
+    ) -> usize {
         // The width gates below test the physical innermost dim, so `axis` must be the label
         // of every operand's innermost buffer dim (`subspace` labels repeat level-major).
         for (_, subspace) in operands {
@@ -270,8 +302,8 @@ impl Launcher {
             return 1;
         }
         let leaf = self.leaf_edge(axis);
-        self.client
-            .io_optimized_vector_sizes(type_size)
+        sizes
+            .into_iter()
             .filter(|&v| {
                 leaf.is_multiple_of(v)
                     // The same gates `Geometry::serves_lines` refuses a stated width on: the
