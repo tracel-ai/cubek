@@ -8,12 +8,15 @@ use super::{
 use crate::definition::{AdaptiveAvgPoolOptions, PoolError};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
+    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
     tensor_vector_size_parallel,
 };
 
+/// One over the sum and its tap: the read is memory bound, wider lanes measured slower.
+const LIVE_VECTORS: usize = 3;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool2d_direct<E: Numeric, EA: Numeric, N: Size>(
     input: &Tensor<Vector<E, N>>,
@@ -70,7 +73,7 @@ pub(crate) fn adaptive_avg_pool2d_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        VectorRegisters::vector_sizes(client.properties(), acc_dtype.size(), LIVE_VECTORS),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
