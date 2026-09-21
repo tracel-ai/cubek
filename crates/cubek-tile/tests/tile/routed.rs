@@ -4,10 +4,11 @@
 //! one step along the expert axis at that value, so the axis keeps the extent it truly has (three
 //! experts, three experts) while the walk visits one of them. Everything below reads the ordinary
 //! coordinate it is: the weights operand carries nothing, and `at` is the same call it is
-//! everywhere else.
+//! everywhere else. The leaf sees one value of the axis, so it contracts nothing, and the block it
+//! opens folds along `K` exactly as an unrouted one does.
 #![allow(non_snake_case)]
 
-use cubecl::{prelude::*, zspace::Shape};
+use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
 
@@ -23,6 +24,10 @@ const EXPERT: Axis = Axis(3);
 const TOKENS: usize = 4;
 const FEATURES: usize = 4;
 const EXPERTS: usize = 3;
+/// The contraction the folded leaf walks: two lines rather than one, so the walk has steps.
+const DEPTH: usize = 8;
+/// The line a folded step serves off each operand.
+const LINE: usize = 4;
 
 /// Which expert each token routes to. Distinct enough that reusing one token's expert for
 /// another cannot land on the right answer.
@@ -30,9 +35,89 @@ const ROUTES: [u32; TOKENS] = [2, 0, 2, 1];
 
 const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(16);
 
+/// `x[m, k]`.
+fn activations(depth: usize) -> Vec<f32> {
+    (0..TOKENS * depth).map(|i| (i % 5) as f32).collect()
+}
+
+/// `w[e, k, n]`. Each expert's weights are its own: expert `e` scales by `e + 1`, so contracting a
+/// token against the wrong slab is off by a whole factor.
+fn weights(depth: usize) -> Vec<f32> {
+    (0..EXPERTS * depth * FEATURES)
+        .map(|i| {
+            let e = i / (depth * FEATURES);
+            let rest = i % (depth * FEATURES);
+            ((e + 1) * (rest % 3 + 1)) as f32
+        })
+        .collect()
+}
+
+/// [`weights`] with each slab transposed to `w[e, n, k]`, which is how an operand lined along the
+/// contraction stores them.
+fn weights_lined_along_k(depth: usize) -> Vec<f32> {
+    let along_n = weights(depth);
+    let mut along_k = vec![0.0; along_n.len()];
+    for e in 0..EXPERTS {
+        for k in 0..depth {
+            for n in 0..FEATURES {
+                along_k[(e * FEATURES + n) * depth + k] = along_n[(e * depth + k) * FEATURES + n];
+            }
+        }
+    }
+    along_k
+}
+
+/// Each token against its own expert, folded on the host.
+fn expected(routes: &[u32], depth: usize) -> Vec<Vec<f32>> {
+    let (x, w) = (activations(depth), weights(depth));
+    (0..TOKENS)
+        .map(|m| {
+            let e = routes[m] as usize;
+            (0..FEATURES)
+                .map(|n| {
+                    (0..depth)
+                        .map(|k| x[m * depth + k] * w[(e * depth + k) * FEATURES + n])
+                        .sum()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Every cell against the host's own fold, under the table the launch was given.
+fn assert_routed(got: &HostData, routes: &[u32], depth: usize) {
+    for (m, row) in expected(routes, depth).iter().enumerate() {
+        for (n, cell) in row.iter().enumerate() {
+            assert_eq!(
+                got.get_f32(&[m, n]),
+                *cell,
+                "token {m} feature {n}: expert {}",
+                routes[m]
+            );
+        }
+    }
+}
+
+/// The table, one `u32` expert per token.
+fn routing_table(client: &Client, routes: &[u32]) -> TensorHandle {
+    TestInput::builder(client.clone(), Shape::new([TOKENS]))
+        .dtype(u32::elem_type_native())
+        .custom(routes.iter().map(|&r| r as f32).collect())
+        .generate_without_host_data()
+}
+
+/// The output, filled with a value no product lands on, so a launch that never ran fails here
+/// rather than passing.
+fn unwritten_output(client: &Client) -> TensorHandle {
+    TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+        .dtype(f32::elem_type_native())
+        .custom(vec![-1.0; TOKENS * FEATURES])
+        .generate_without_host_data()
+}
+
 /// `out[m] = x[m] · W[routes[m]]`: one token per step, its expert's slab picked by the table.
 #[cube(launch)]
-fn moe_kernel<E: Numeric>(
+fn routed_matmul_kernel<E: Numeric>(
     x: &TileArg<'_, E, Const<1>>,
     w: &TileArg<'_, E, Const<1>>,
     out: &TileArg<'_, E, Const<1>>,
@@ -62,32 +147,46 @@ fn moe_kernel<E: Numeric>(
     }
 }
 
-fn x_values() -> Vec<f32> {
-    (0..TOKENS * FEATURES).map(|i| (i % 5) as f32).collect()
+/// The routed weights staged in shared memory rather than read where they lie: the ring is built
+/// over the routed walk, so what it fills is the expert the table named.
+#[cube(launch)]
+fn routed_staged_matmul_kernel<E: Numeric>(
+    x: &TileArg<'_, E, Const<1>>,
+    w: &TileArg<'_, E, Const<1>>,
+    out: &TileArg<'_, E, Const<1>>,
+    routes: &Tensor<u32>,
+    space: Partitioning,
+    #[comptime] token: Level,
+    #[comptime] expert: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+
+    for tok in space.over(&token) {
+        let e = routes[tok.coord(M)] as usize;
+        let experts = tok.over(&expert).routed(EXPERT, e);
+
+        let mut ring = Ring::smem_single(&experts, &w, StageStorage::Strided, 1usize);
+        pipelined(experts, &mut ring, |slot, slab| {
+            let mut o = out.at(slab);
+            slot.consume(|w_s| {
+                o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
+            });
+        });
+    }
 }
 
-/// Each expert's weights are its own: expert `e` scales by `e + 1`, so contracting a token
-/// against the wrong slab is off by a whole factor.
-fn w_values() -> Vec<f32> {
-    (0..EXPERTS * FEATURES * FEATURES)
-        .map(|i| {
-            let e = i / (FEATURES * FEATURES);
-            let rest = i % (FEATURES * FEATURES);
-            ((e + 1) * (rest % 3 + 1)) as f32
-        })
-        .collect()
-}
-
-fn run(routes: &[u32]) -> HostData {
-    let client = cubecl::test_device().client();
+/// What the token-per-step kernels above launch with: one token and one expert per leaf, the
+/// expert axis at its true extent, and the weights stored `[e, k, n]`.
+///
+/// Nothing here says a token uses one expert; the walk does.
+fn per_token_operands(client: &Client) -> (Launcher, TensorHandle, TensorHandle) {
     let f32_ty = f32::elem_type_native();
-    let u32_ty = u32::elem_type_native();
-
     let launcher = Launcher::implied(
-        &client,
+        client,
         Partitioning::new(
-            // EXPERT at its true extent: the walk visits one of the three, the space still holds
-            // three. Nothing here says a token uses one expert; the walk does.
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
             Tiling::leaf(&[(M, 1), (EXPERT, 1)])
                 .walk_every(&[EXPERT])
@@ -97,87 +196,214 @@ fn run(routes: &[u32]) -> HostData {
         KernelForm::Static,
     );
 
-    let (x_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+    let (x, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
         .dtype(f32_ty)
-        .custom(x_values())
+        .custom(activations(FEATURES))
         .generate_with_f32_host_data();
-    let (w_handle, _) =
-        TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
-            .dtype(f32_ty)
-            .custom(w_values())
-            .generate_with_f32_host_data();
-    let routes_handle = TestInput::builder(client.clone(), Shape::new([TOKENS]))
-        .dtype(u32_ty)
-        .custom(routes.iter().map(|&r| r as f32).collect())
-        .generate_without_host_data();
-    let out_handle = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
+    let (w, _) = TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
         .dtype(f32_ty)
-        .custom(vec![-1.0; TOKENS * FEATURES])
-        .generate_without_host_data();
+        .custom(weights(FEATURES))
+        .generate_with_f32_host_data();
 
-    moe_kernel::launch(
+    (launcher, x, w)
+}
+
+fn run(routes: &[u32]) -> HostData {
+    let client = cubecl::test_device().client();
+    let (launcher, x, w) = per_token_operands(&client);
+    let table = routing_table(&client, routes);
+    let out = unwritten_output(&client);
+
+    routed_matmul_kernel::launch(
         &client,
         launcher.cube_count(),
         launcher.cube_dim(),
+        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
         TileArgLaunch::new(
-            x_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
-        ),
-        TileArgLaunch::new(
-            w_handle.binding().into_tensor_arg(),
+            w.binding().into_tensor_arg(),
             TileSpec::direct(&[EXPERT, K, N]),
         ),
         TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
+            out.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[M, N]),
         ),
-        routes_handle.binding().into_tensor_arg(),
+        table.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
         launcher.level(0),
         launcher.level(1),
-        f32_ty,
+        f32::elem_type_native(),
     );
 
-    HostData::from_tensor_handle(&client, out_handle, HostDataType::F32)
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
 }
 
-/// The reference: each token against its own expert, folded on the host.
-fn expected(routes: &[u32]) -> Vec<Vec<f32>> {
-    let (x, w) = (x_values(), w_values());
-    (0..TOKENS)
-        .map(|m| {
-            let e = routes[m] as usize;
-            (0..FEATURES)
-                .map(|n| {
-                    (0..FEATURES)
-                        .map(|k| {
-                            x[m * FEATURES + k] * w[e * FEATURES * FEATURES + k * FEATURES + n]
-                        })
-                        .sum()
-                })
-                .collect()
-        })
-        .collect()
+fn run_staged(routes: &[u32]) -> HostData {
+    let client = cubecl::test_device().client();
+    let (launcher, x, w) = per_token_operands(&client);
+    let table = routing_table(&client, routes);
+    let out = unwritten_output(&client);
+
+    routed_staged_matmul_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(
+            w.binding().into_tensor_arg(),
+            TileSpec::direct(&[EXPERT, K, N]),
+        ),
+        TileArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        table.binding().into_tensor_arg(),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        f32::elem_type_native(),
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
 }
 
-/// Two tables over the same weights: the answer follows the table. A route that did nothing
-/// could not, since it would fold every expert under both of them.
+/// Two tables over the same weights: the answer follows the table. A route that did nothing could
+/// not, since it would fold every expert under both of them.
 #[test]
 fn a_routed_walk_contracts_each_token_against_the_expert_its_table_names() {
     for routes in [ROUTES, [0, 0, 0, 0]] {
-        let got = run(&routes);
-        let want = expected(&routes);
-        for (m, row) in want.iter().enumerate() {
-            for (n, cell) in row.iter().enumerate() {
-                assert_eq!(
-                    got.get_f32(&[m, n]),
-                    *cell,
-                    "token {m} feature {n}: expert {}",
-                    routes[m]
-                );
+        assert_routed(&run(&routes), &routes, FEATURES);
+    }
+}
+
+/// Staging under a routed coordinate: the stage is filled from the expert the route named, not
+/// from the first one and then reused. A window displacement that lived on the operand would owe a
+/// refusal here, because a staged operand would inherit it; here the coordinate is the walk's, and
+/// the stage is filled per region like any other.
+#[test]
+fn a_routed_operand_stages_the_expert_the_table_named() {
+    assert_routed(&run_staged(&ROUTES), &ROUTES, FEATURES);
+}
+
+/// A routing table names a tile the axis does not have. The coordinate came from data, so this is
+/// not a mistake the caller can be told about: a refusal inside a cube verb dies on a worker
+/// thread. The walk clamps instead, so the read stays inside the weights and lands on the last
+/// expert rather than past the buffer.
+#[test]
+fn a_route_past_the_last_expert_clamps_to_it() {
+    const OVER: [u32; TOKENS] = [99, 0, 2, 1];
+    const CLAMPED: [u32; TOKENS] = [(EXPERTS - 1) as u32, 0, 2, 1];
+    assert_routed(&run(&OVER), &CLAMPED, FEATURES);
+}
+
+/// `out[m] = x[m] · W[routes[m]]` with the partials in registers for the whole `K` walk: the block
+/// is opened inside the route, so everything it reads is already the one expert the table named.
+#[cube(launch)]
+fn routed_block_matmul_kernel<E: Numeric>(
+    x: &TileArg<'_, E, Const<4>>,
+    w: &TileArg<'_, E, Const<4>>,
+    out: &TileArg<'_, E, Const<1>>,
+    routes: &Tensor<u32>,
+    space: Partitioning,
+    #[comptime] token: Level,
+    #[comptime] expert: Level,
+    #[comptime] depth: Level,
+    #[define(E)] _dtype: ElemType,
+) {
+    let x = x.tile(comptime!(space.clone()));
+    let w = w.tile(comptime!(space.clone()));
+    let out = out.tile(comptime!(space.clone()));
+
+    for tok in space.over(&token) {
+        let e = routes[tok.coord(M)] as usize;
+
+        for slab in tok.over(&expert).routed(EXPERT, e) {
+            let out_s = out.at(&slab);
+            let x_s = x.at(&slab);
+            let w_s = w.at(&slab);
+            let mut acc = out_s.block_accumulator::<E, E, E>(
+                &x_s,
+                &w_s,
+                comptime!(Fragments::below(&out_s, &x_s)),
+                REGISTER_BLOCK,
+                Monoid::Sum,
+            );
+            acc.zero();
+            for step in slab.over(&depth) {
+                let mut acc_s = acc.at(&step);
+                acc_s.mma(&x_s.at(&step), &w_s.at(&step), Semiring::SUM_PROD);
+            }
+            for cell in out_s.walk().unrolled() {
+                let mut o = out_s.at(&cell);
+                o.copy_cast_from(&acc.at(&cell));
             }
         }
     }
+}
+
+fn run_block(routes: &[u32]) -> HostData {
+    let client = cubecl::test_device().client();
+    let f32_ty = f32::elem_type_native();
+
+    let launcher = Launcher::implied(
+        &client,
+        Partitioning::new(
+            Space::new(&[(M, TOKENS), (N, FEATURES), (K, DEPTH), (EXPERT, EXPERTS)]),
+            Tiling::leaf(&[(M, 1), (EXPERT, 1), (K, LINE)])
+                .walk_every(&[K])
+                .walk_every(&[EXPERT])
+                .walk_every(&[M])
+                .levels(),
+        ),
+        KernelForm::Static,
+    );
+
+    let (x, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, DEPTH]))
+        .dtype(f32_ty)
+        .custom(activations(DEPTH))
+        .generate_with_f32_host_data();
+    let (w, _) = TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, DEPTH]))
+        .dtype(f32_ty)
+        .custom(weights_lined_along_k(DEPTH))
+        .generate_with_f32_host_data();
+    let table = routing_table(&client, routes);
+    let out = unwritten_output(&client);
+
+    routed_block_matmul_kernel::launch(
+        &client,
+        launcher.cube_count(),
+        launcher.cube_dim(),
+        TileArgLaunch::new(x.binding().into_tensor_arg(), TileSpec::direct(&[M, K])),
+        TileArgLaunch::new(
+            w.binding().into_tensor_arg(),
+            TileSpec::direct(&[EXPERT, N, K]),
+        ),
+        TileArgLaunch::new(
+            out.clone().binding().into_tensor_arg(),
+            TileSpec::direct(&[M, N]),
+        ),
+        table.binding().into_tensor_arg(),
+        launcher.partitioning_arg(),
+        launcher.level(0),
+        launcher.level(1),
+        launcher.level(2),
+        f32_ty,
+    );
+
+    HostData::from_tensor_handle(&client, out, HostDataType::F32)
+}
+
+/// A routed walk contracting in a register block at a folded step: the weights line along `K`, so
+/// a step consumes a whole line of each operand and the block's lanes are one cell's partials.
+///
+/// The expert axis holds one value under the route, so it contracts nothing. Counted as a
+/// contracted axis it becomes the fastest one, which is then not the axis the operands line along,
+/// and the fold every `K`-stored weight needs is off the table: a route could only run one scalar
+/// cell at a time, which no vectorization reaches. A refusal inside a cube verb dies on the
+/// expansion worker, so a regression here reads as the output keeping its fill value rather than
+/// as a message.
+#[test]
+fn a_routed_walk_folds_its_contraction_into_a_register_block() {
+    assert_routed(&run_block(&ROUTES), &ROUTES, DEPTH);
 }
 
 /// Counts the steps of a walk routed on `axis`, which the refusal test hands an axis the space
@@ -246,23 +472,6 @@ fn routing_an_axis_of_the_space_is_the_only_case_checked_here() {
     assert_eq!(launch_routed_on(EXPERT), 1.0);
 }
 
-/// A routing table names a tile the axis does not have. The coordinate came from data, so this is
-/// not a mistake the caller can be told about: a refusal inside a cube verb dies on a worker
-/// thread. The walk clamps instead, so the read stays inside the weights and lands on the last
-/// expert rather than past the buffer.
-#[test]
-fn a_route_past_the_last_expert_clamps_to_it() {
-    const OVER: [u32; TOKENS] = [99, 0, 2, 1];
-    const CLAMPED: [u32; TOKENS] = [(EXPERTS - 1) as u32, 0, 2, 1];
-    let got = run(&OVER);
-    let want = expected(&CLAMPED);
-    for (m, row) in want.iter().enumerate() {
-        for (n, cell) in row.iter().enumerate() {
-            assert_eq!(got.get_f32(&[m, n]), *cell, "token {m} feature {n}");
-        }
-    }
-}
-
 /// Each lane writes the expert coordinate its region carried, so a walk that folds the lane's own
 /// position into a routed axis is visible as lanes disagreeing.
 #[cube(launch)]
@@ -324,112 +533,5 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
             target as f32,
             "lane {lane} read a different expert than the one the route named"
         );
-    }
-}
-
-/// The routed weights staged in shared memory rather than read where they lie: the ring is built
-/// over the routed walk, so what it fills is the expert the table named.
-#[cube(launch)]
-fn moe_staged_kernel<E: Numeric>(
-    x: &TileArg<'_, E, Const<1>>,
-    w: &TileArg<'_, E, Const<1>>,
-    out: &TileArg<'_, E, Const<1>>,
-    routes: &Tensor<u32>,
-    space: Partitioning,
-    #[comptime] token: Level,
-    #[comptime] expert: Level,
-    #[define(E)] _dtype: ElemType,
-) {
-    let x = x.tile(comptime!(space.clone()));
-    let w = w.tile(comptime!(space.clone()));
-    let out = out.tile(comptime!(space.clone()));
-
-    for tok in space.over(&token) {
-        let e = routes[tok.coord(M)] as usize;
-        let experts = tok.over(&expert).routed(EXPERT, e);
-
-        let mut ring = Ring::smem_single(&experts, &w, StageStorage::Strided, 1usize);
-        pipelined(experts, &mut ring, |slot, slab| {
-            let mut o = out.at(slab);
-            slot.consume(|w_s| {
-                o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
-            });
-        });
-    }
-}
-
-/// Staging under a routed coordinate: the stage is filled from the expert the route named, not
-/// from the first one and then reused. Samuel's design owed a refusal here, because its window
-/// displacement lived on the operand and a staged operand inherited it; here the coordinate is
-/// the walk's, and the stage is filled per region like any other.
-#[test]
-fn a_routed_operand_stages_the_expert_the_table_named() {
-    let client = cubecl::test_device().client();
-    let f32_ty = f32::elem_type_native();
-
-    let launcher = Launcher::implied(
-        &client,
-        Partitioning::new(
-            Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
-            Tiling::leaf(&[(M, 1), (EXPERT, 1)])
-                .walk_every(&[EXPERT])
-                .walk_every(&[M])
-                .levels(),
-        ),
-        KernelForm::Static,
-    );
-
-    let (x_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
-        .dtype(f32_ty)
-        .custom(x_values())
-        .generate_with_f32_host_data();
-    let (w_handle, _) =
-        TestInput::builder(client.clone(), Shape::new([EXPERTS, FEATURES, FEATURES]))
-            .dtype(f32_ty)
-            .custom(w_values())
-            .generate_with_f32_host_data();
-    let routes_handle = TestInput::builder(client.clone(), Shape::new([TOKENS]))
-        .dtype(u32::elem_type_native())
-        .custom(ROUTES.iter().map(|&r| r as f32).collect())
-        .generate_without_host_data();
-    let out_handle = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
-        .dtype(f32_ty)
-        .custom(vec![-1.0; TOKENS * FEATURES])
-        .generate_without_host_data();
-
-    moe_staged_kernel::launch(
-        &client,
-        launcher.cube_count(),
-        launcher.cube_dim(),
-        TileArgLaunch::new(
-            x_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[M, K]),
-        ),
-        TileArgLaunch::new(
-            w_handle.binding().into_tensor_arg(),
-            TileSpec::direct(&[EXPERT, K, N]),
-        ),
-        TileArgLaunch::new(
-            out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[M, N]),
-        ),
-        routes_handle.binding().into_tensor_arg(),
-        launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
-        f32_ty,
-    );
-
-    let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
-    let want = expected(&ROUTES);
-    for (m, row) in want.iter().enumerate() {
-        for (n, cell) in row.iter().enumerate() {
-            assert_eq!(
-                got.get_f32(&[m, n]),
-                *cell,
-                "token {m} feature {n}: expert {}",
-                ROUTES[m]
-            );
-        }
     }
 }
