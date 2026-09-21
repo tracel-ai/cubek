@@ -167,8 +167,8 @@ pub fn cfft_launch_any_size(
         fft_mode,
     };
 
-    if n_fft <= max_shared_fft_n(client) {
-        cfft_shared_launch(client, bindings, plan)
+    if n_fft <= max_shared_fft_n(client, dtype) {
+        cfft_shared_launch(client, bindings, dtype, plan)
     } else {
         cfft_four_step_launch(client, bindings, dtype, plan)
     }
@@ -177,6 +177,7 @@ pub fn cfft_launch_any_size(
 fn cfft_shared_launch(
     client: &Client,
     bindings: CfftBindings,
+    dtype: ElemType,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
     let log2_n = plan.n_fft.trailing_zeros() as usize;
@@ -185,7 +186,7 @@ fn cfft_shared_launch(
     let cube_count =
         cubecl::calculate_cube_count_elemwise(client, plan.count, CubeDim::new_single());
 
-    cfft_shared_kernel::launch::<f32>(
+    cfft_shared_kernel::launch(
         client,
         cube_count,
         cube_dim,
@@ -199,6 +200,7 @@ fn cfft_shared_launch(
         threads_per_cube,
         plan.dim,
         plan.fft_mode,
+        dtype,
     );
     Ok(())
 }
@@ -215,6 +217,7 @@ fn cfft_shared_kernel<F: Float>(
     #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
     #[comptime] fft_mode: FftMode,
+    #[define(F)] _dtype: ElemType,
 ) {
     let window_index = CUBE_POS;
     if (window_index as u32) >= num_windows {
@@ -262,7 +265,7 @@ fn cfft_shared_kernel<F: Float>(
 
 // --- Four-step path ----------------------------------------------------
 
-/// Four-step complex FFT for `n_fft > max_shared_fft_n(client)`.
+/// Four-step complex FFT for `n_fft > max_shared_fft_n(client, dtype)`.
 ///
 /// Layout convention: each window's `n_fft` axis is viewed as
 /// `(N1, N2)` row-major with the flat index `n = n1 * N2 + n2`. After the
@@ -275,7 +278,7 @@ fn cfft_four_step_launch(
     dtype: ElemType,
     plan: CfftPlan,
 ) -> Result<(), LaunchError> {
-    let max_n = max_shared_fft_n(client);
+    let max_n = max_shared_fft_n(client, dtype);
     let max_units = max_units_per_cube(client);
     let (n1, n2) = factor_four_step(plan.n_fft, max_n);
 
@@ -304,7 +307,7 @@ fn cfft_four_step_launch(
         let cube_count =
             cubecl::calculate_cube_count_elemwise(client, plan.count * n2, CubeDim::new_single());
 
-        cfft_four_step_radix1_kernel::launch::<f32>(
+        cfft_four_step_radix1_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -319,6 +322,7 @@ fn cfft_four_step_launch(
             threads_per_cube,
             plan.dim,
             plan.fft_mode,
+            dtype,
         );
     }
 
@@ -331,7 +335,7 @@ fn cfft_four_step_launch(
         let cube_count =
             cubecl::calculate_cube_count_elemwise(client, plan.count * n1, CubeDim::new_single());
 
-        cfft_four_step_radix2_kernel::launch::<f32>(
+        cfft_four_step_radix2_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -344,6 +348,7 @@ fn cfft_four_step_launch(
             threads_per_cube,
             plan.dim,
             plan.fft_mode,
+            dtype,
         );
     }
 
@@ -353,7 +358,7 @@ fn cfft_four_step_launch(
         let cube_dim = CubeDim::new_1d(256);
         let cube_count = cubecl::calculate_cube_count_elemwise(client, total, cube_dim);
 
-        cfft_four_step_transpose_kernel::launch::<f32>(
+        cfft_four_step_transpose_kernel::launch(
             client,
             cube_count,
             cube_dim,
@@ -365,6 +370,7 @@ fn cfft_four_step_launch(
             n1,
             n2,
             plan.dim,
+            dtype,
         );
     }
 
@@ -388,6 +394,7 @@ fn cfft_four_step_radix1_kernel<F: Float>(
     #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
     #[comptime] fft_mode: FftMode,
+    #[define(F)] _dtype: ElemType,
 ) {
     let cube_pos = CUBE_POS;
     if cube_pos >= num_cubes as usize {
@@ -463,6 +470,7 @@ fn cfft_four_step_radix2_kernel<F: Float>(
     #[comptime] threads_per_cube: usize,
     #[comptime] dim: usize,
     #[comptime] fft_mode: FftMode,
+    #[define(F)] _dtype: ElemType,
 ) {
     let cube_pos = CUBE_POS;
     if cube_pos >= num_cubes as usize {
@@ -523,6 +531,7 @@ fn cfft_four_step_transpose_kernel<F: Float>(
     #[comptime] n1: usize,
     #[comptime] n2: usize,
     #[comptime] dim: usize,
+    #[define(F)] _dtype: ElemType,
 ) {
     let pos = ABSOLUTE_POS;
     if pos >= total as usize {

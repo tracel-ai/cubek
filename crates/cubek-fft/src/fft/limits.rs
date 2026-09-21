@@ -3,16 +3,15 @@
 use cubecl::prelude::*;
 
 /// Largest power-of-two `n_fft` such that a shared-memory radix-2 butterfly
-/// over `f32` fits in this device's per-cube shared memory.
+/// over `dtype` fits in this device's per-cube shared memory.
 ///
-/// Every shared-memory FFT kernel in this crate allocates two
-/// `SharedMemory<f32>::new(n_fft)` buffers (one for the real part, one for
-/// the imaginary part), so the byte budget is
-/// `2 * size_of::<f32>() * n_fft <= hardware.max_shared_memory_size`.
+/// Every shared-memory FFT kernel in this crate allocates two shared buffers of
+/// `n_fft` elements (one for the real part, one for the imaginary part), so the
+/// byte budget is `2 * dtype.size() * n_fft <= hardware.max_shared_memory_size`.
 /// We floor to a power of two because the butterfly requires it.
-pub(crate) fn max_shared_fft_n(client: &Client) -> usize {
+pub(crate) fn max_shared_fft_n(client: &Client, dtype: ElemType) -> usize {
     let max_smem = client.properties().hardware.max_shared_memory_size;
-    let max_elems = max_smem / (2 * core::mem::size_of::<f32>());
+    let max_elems = max_smem / (2 * dtype.size());
     floor_power_of_two(max_elems)
 }
 
