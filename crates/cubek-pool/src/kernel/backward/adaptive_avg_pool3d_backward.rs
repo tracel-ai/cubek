@@ -6,12 +6,15 @@ use crate::definition::PoolError;
 use crate::kernel::forward::{Position3d, view5d};
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
+    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::{FastDivmod, tensor::ViewMut},
     tensor_vector_size_parallel,
 };
 
+/// The gradient sum and the scaled tap: the divisor is one splat shared by every lane.
+const LIVE_VECTORS: usize = 2;
 #[cube(launch, address_type = "dynamic")]
 fn adaptive_avg_pool3d_backward_direct<EI: Float, EA: Float, N: Size>(
     grad: &Tensor<Vector<EI, N>>,
@@ -81,13 +84,13 @@ pub(crate) fn adaptive_avg_pool3d_backward_launch(
 ) -> Result<(), PoolError> {
     let acc_dtype = accumulator_dtype(dtype);
     let grad_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        VectorRegisters::vector_sizes(client.properties(), acc_dtype.size(), LIVE_VECTORS),
         &out_grad.shape,
         &out_grad.strides,
         out_grad.shape.len() - 1,
     );
     let output_vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        VectorRegisters::vector_sizes(client.properties(), acc_dtype.size(), LIVE_VECTORS),
         &output.shape,
         &output.strides,
         output.shape.len() - 1,

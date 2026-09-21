@@ -6,14 +6,21 @@ use super::{
     },
 };
 use crate::definition::{MaxPoolOptions, PoolError};
+use crate::kernel::accumulator_dtype;
 use cubecl::{
     CubeDim, calculate_cube_count_elemwise,
+    ir::VectorRegisters,
     num_traits::Zero,
     prelude::{TensorBinding, *},
     std::tensor::ViewMut,
     tensor_vector_size_parallel,
 };
 
+/// The running maximum and the tap it compares against.
+const LIVE_VECTORS: usize = 2;
+
+/// The value and index held, the tap and its index, and the comparison mask.
+const LIVE_VECTORS_WITH_INDICES: usize = 5;
 struct MaxPoolStrategy;
 struct MaxPoolWithIndicesStrategy;
 
@@ -118,7 +125,11 @@ pub(crate) fn max_pool2d_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        VectorRegisters::vector_sizes(
+            client.properties(),
+            accumulator_dtype(dtype).size(),
+            LIVE_VECTORS,
+        ),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
@@ -171,7 +182,13 @@ pub(crate) fn max_pool2d_with_indices_launch(
     dtype: ElemType,
 ) -> Result<(), PoolError> {
     let vector_size = tensor_vector_size_parallel(
-        client.io_optimized_vector_sizes(dtype.size()),
+        VectorRegisters::vector_sizes(
+            client.properties(),
+            accumulator_dtype(dtype)
+                .size()
+                .max(i32::elem_type_native().size()),
+            LIVE_VECTORS_WITH_INDICES,
+        ),
         &input.shape,
         &input.strides,
         input.shape.len() - 1,
