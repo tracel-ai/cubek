@@ -27,7 +27,7 @@ use crate::{
 };
 
 use super::level::Grid;
-use super::walk_order::walk_index;
+use super::walk_order::{cube_positions, walk_index};
 use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
@@ -148,6 +148,21 @@ impl Walk {
             }
         }
 
+        // A cube level dealing its boxes in an order other than the grid's own decodes its two
+        // in-plane axes *together*, from the flat dispatch index, because a swizzle is a joint
+        // permutation and the loop below reads one hardware dimension per axis.
+        let swizzled = swizzled_positions(
+            comptime!(space.clone()),
+            comptime!(level.clone()),
+            &instances,
+        );
+        let in_plane = comptime!(
+            level
+                .order()
+                .swizzles()
+                .then(|| in_plane_axes(&space, &level))
+        );
+
         #[unroll]
         for p in 0..rank {
             let axis = comptime!(space.axis_at(p));
@@ -170,9 +185,15 @@ impl Walk {
                 );
                 let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
                 let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
-                let position = hardware_pos(comptime!(dist.scope_unchecked()))
-                    .fdiv(inner_weight)
-                    .frem(instances.at(p));
+                let position = if comptime!(in_plane.is_some_and(|(x, _)| x == p)) {
+                    swizzled.at(0)
+                } else if comptime!(in_plane.is_some_and(|(_, y)| y == p)) {
+                    swizzled.at(1)
+                } else {
+                    hardware_pos(comptime!(dist.scope_unchecked()))
+                        .fdiv(inner_weight)
+                        .frem(instances.at(p))
+                };
                 // One tile a worker, or this worker's run of a grid dealt across them, cut short
                 // where the grid does not divide.
                 let run = match comptime!(level.count(axis).unwrap()) {
@@ -531,6 +552,69 @@ impl Iterable for WalkExpand {
     fn const_len(&self) -> Option<usize> {
         crate::fold::constant(&self.steps).map(|n| n as usize)
     }
+}
+
+/// The two in-plane positions of a cube level that deals its boxes in an order other than the
+/// grid's own, decoded together from the flat dispatch index ([`CubeOrder`]).
+///
+/// Zeros where no order is stated, which is every other level and every walk: the branch is
+/// comptime, so nothing of this reaches a kernel that did not ask for it.
+#[cube]
+fn swizzled_positions(
+    #[comptime] space: Space,
+    #[comptime] level: Level,
+    instances: &Coords<usize>,
+) -> Coords<usize> {
+    let mut out = Coords::<usize>::new();
+    if comptime!(level.order().swizzles()) {
+        let (x_at, y_at) = comptime!(in_plane_axes(&space, &level));
+        let (count_x, count_y) = (instances.at(x_at), instances.at(y_at));
+        // The grid's own linear order, which is the order the hardware starts cubes in and so
+        // the one a permutation of it can say anything about.
+        let flat = hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X)))
+            .fadd(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).fmul(count_x));
+        let (x, y) = cube_positions(flat, (count_x, count_y), comptime!(level.order()));
+        out.push(x);
+        out.push(y);
+    } else {
+        out.push(0usize);
+        out.push(0usize);
+    }
+    out
+}
+
+/// Where this space holds the cube level's two in-plane axes, `(x, y)`.
+///
+/// Refuses what the joint decode cannot state: an axis that does not own its whole grid
+/// dimension. A swizzle permutes the grid, and a dimension several axes share carries digits
+/// this has no way to put back — which is what [`Level::shared_by`] and a batch axis folded
+/// onto an in-plane dimension produce.
+fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
+    let at = |wanted: CubeAxis| {
+        let found: Vec<usize> = (0..space.rank())
+            .filter(|&p| {
+                level.distribution(space.axis_at(p)).scope() == Some(ComputeScope::Cube(wanted))
+            })
+            .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "Walk: a {:?} cube level deals the grid's {wanted:?} dimension to {} of its axes, \
+             and a swizzle can put back only an axis that owns a whole dimension",
+            level.order(),
+            found.len()
+        );
+        let p = found[0];
+        assert_eq!(
+            level.inner_weight_unspanned(space, space.axis_at(p)),
+            1,
+            "Walk: a {:?} cube level shares the grid's {wanted:?} dimension with an axis this \
+             space does not span, whose digit a swizzle has no way to put back",
+            level.order()
+        );
+        p
+    };
+    (at(CubeAxis::X), at(CubeAxis::Y))
 }
 
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds

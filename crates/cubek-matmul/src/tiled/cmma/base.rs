@@ -19,6 +19,7 @@ use std::fmt::Display;
 
 use cubecl::features::MmaConfig;
 use cubecl::{features::Tma as TmaFeature, ir::ElemType};
+use cubek_tile::CubeOrder;
 
 use crate::{
     definition::{MatmulAvailabilityError, MatmulProblem, MatmulSetupError},
@@ -44,6 +45,14 @@ const MAX_UNITS_PER_CUBE: usize = 256;
 /// A budget and not a count, because a count means a different thing at each instruction: the
 /// same 16 fragments are 512 bytes a lane at `16x16` accumulating in `f32` and 128 at `8x8`.
 const ACCUMULATOR_LANE_BYTES: usize = 512;
+
+/// The widest strip a swizzled cube order is given.
+///
+/// A wave of `W` cubes running together touches `width` boxes along `m` and `W / width` along
+/// `n`, so the operand rows and columns it reads are fewest at `width` near the square root of
+/// the wave — about eight on the devices this runs on, where a wave is a few dozen cubes. Past
+/// that the strip is taller than the wave and the second half of the trade stops paying.
+const MAX_SWIZZLE_WIDTH: usize = 8;
 
 /// Cubes a stage has to leave per streaming multiprocessor before it is worth its edges.
 ///
@@ -110,6 +119,10 @@ pub struct CmmaBlueprint {
     pub buffering: usize,
     /// Launch-time transport for both inputs (the output always uses a regular buffer copy).
     pub delivery: CmmaDelivery,
+    /// The order the cubes take the output's boxes in. A wave of cubes reads one band of each
+    /// operand, and a swizzle folds that band into a patch, so what the wave touches fits a
+    /// cache it would otherwise stream past.
+    pub order: CubeOrder,
 }
 
 impl CmmaBlueprint {
@@ -153,6 +166,18 @@ impl CmmaBlueprint {
                 "Cmma requires a shape divisible by the stage: \
                  {}x{}x{} vs stage {stage_m}x{stage_n}x{} (stage_k {})",
                 problem.m, problem.n, problem.k, i.k, self.stage_k
+            ))));
+        }
+        // A swizzle starts a strip every `width` boxes, so a width that does not divide the
+        // grid runs the last strip past it and two boxes answer to one cube. The kernel cannot
+        // check it — a `Space` carries its extents as runtime values — so it is checked here,
+        // where the shape is known.
+        let (stages_m, stages_n) = (problem.m / stage_m, problem.n / stage_n);
+        if !self.order.divides((stages_m, stages_n)) {
+            return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
+                "Cmma: a {:?} cube order strips a grid of {stages_m}x{stages_n} boxes into \
+                 widths that do not divide it, so two boxes would answer to one cube",
+                self.order
             ))));
         }
         // The bulk-copy box is the stage; TMA owns which boxes it can encode.
@@ -623,6 +648,19 @@ impl CmmaRoutine {
                 .unwrap_or(ik),
         };
 
+        // The order the cubes take the boxes in. The strip is the widest power of two the grid
+        // divides, up to [`MAX_SWIZZLE_WIDTH`]: a width the grid does not divide is refused by
+        // `validate`, so the pick is made among the ones that are whole.
+        let stage_m = planes_m * part_m * im;
+        let stages_m = problem.m.checked_div(stage_m).unwrap_or(0);
+        let order = match (1..=MAX_SWIZZLE_WIDTH)
+            .rev()
+            .find(|w| w.is_power_of_two() && stages_m != 0 && stages_m.is_multiple_of(*w))
+        {
+            Some(width) => CubeOrder::SwizzleRow(width).canonicalize(),
+            None => CubeOrder::RowMajor,
+        };
+
         Ok(CmmaBlueprint {
             instruction: InstructionShape {
                 m: im,
@@ -639,6 +677,7 @@ impl CmmaRoutine {
             },
             stage_k,
             buffering: BUFFERING,
+            order,
             delivery,
         })
     }

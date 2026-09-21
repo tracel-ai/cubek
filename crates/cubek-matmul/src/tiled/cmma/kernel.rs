@@ -33,8 +33,10 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
         .planes(&[(M, p.m), (N, p.n)])
         // The cube's box walked through `K` one stage at a time.
         .walk_every(&[K])
-        // A box of the output per cube, one of every batch axis.
+        // A box of the output per cube, one of every batch axis, taken in the order the
+        // blueprint states.
         .cubes(&[M, N])
+        .ordered(bp.order)
         .batches(batch)
         .levels()
 }
@@ -201,6 +203,7 @@ mod tests {
             stage_k: 32,
             buffering: 2,
             delivery: CmmaDelivery::Copy,
+            order: cubek_tile::CubeOrder::RowMajor,
         }
     }
 
@@ -219,6 +222,7 @@ mod tests {
                 stage_k,
                 buffering: 2,
                 delivery: CmmaDelivery::Copy,
+                order: cubek_tile::CubeOrder::RowMajor,
             };
             let partitioning = bp.partitioning(&space, &[]);
             let (count, dim) = bp.grid(&space, &[], 32);

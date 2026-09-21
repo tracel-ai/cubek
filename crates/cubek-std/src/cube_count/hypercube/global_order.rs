@@ -1,4 +1,7 @@
-use cubecl::{prelude::*, std::tensor::layout::Coords2d};
+/// The zigzag a swizzled order walks, which is a walk's own arithmetic and lives with the
+/// walk ([`cubek_tile::swizzle`]). Re-exported here because [`GlobalOrder`]'s swizzle arms
+/// are its one caller in this crate.
+pub use cubek_tile::swizzle;
 
 #[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 /// Describes the global traversal order as flattened cube position increases.
@@ -33,52 +36,4 @@ impl GlobalOrder {
             _ => self,
         }
     }
-}
-
-#[cube]
-/// Maps a linear `index` to 2D zigzag coordinates `(x, y)` within horizontal or vertical strips.
-///
-/// Each strip is made of `num_steps` steps, each of length `step_length`.
-/// Strips alternate direction: even strips go top-down, odd strips bottom-up.
-/// Steps alternate direction: even steps go left-to-right, odd steps right-to-left.
-///
-/// - Prefer **odd `num_steps`** for smoother transitions between strips.
-/// - Prefer **power-of-two `step_length`** for better performance.
-///
-/// # Parameters
-/// - `index`: linear input index
-/// - `num_steps`: number of snaking steps in a strip
-/// - `step_length`: number of elements in each step (must be > 0)
-///
-/// # Returns
-/// `(x, y)` coordinates after swizzling
-pub fn swizzle(index: usize, num_steps: usize, #[comptime] step_length: u32) -> Coords2d {
-    comptime!(assert!(step_length > 0));
-
-    let num_elements_per_strip = num_steps * step_length as usize;
-    let strip_index = (index / num_elements_per_strip) as u32;
-    let pos_in_strip = (index % num_elements_per_strip) as u32;
-    let strip_offset = step_length * strip_index;
-
-    // Indices without regards to direction
-    let abs_step_index = pos_in_strip / step_length;
-    let abs_pos_in_step = pos_in_strip % step_length;
-
-    // Top-down (0) or Bottom-up (1)
-    let strip_direction = strip_index % 2;
-    // Left-right (0) or Right-left (1)
-    let step_direction = abs_step_index % 2;
-
-    // Update indices with direction
-    let step_index = strip_direction * (num_steps as u32 - abs_step_index - 1)
-        + (1 - strip_direction) * abs_step_index;
-
-    let pos_in_step = if step_length & (step_length - 1) == 0 {
-        abs_pos_in_step ^ (step_direction * (step_length - 1))
-    } else {
-        step_direction * (step_length - abs_pos_in_step - 1)
-            + (1 - step_direction) * abs_pos_in_step
-    };
-
-    (step_index, pos_in_step + strip_offset)
 }

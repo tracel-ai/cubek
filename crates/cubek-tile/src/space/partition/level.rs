@@ -10,7 +10,7 @@
 //! handed down whole. [`Level::every`] is the one-liner for a walk over a region, and it goes
 //! through the builder like everything else.
 
-use super::{ComputeScope, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
 
 /// How many tiles a level takes along one of its axes.
@@ -91,6 +91,10 @@ pub struct Level {
     /// Planes that fill this walk's stages and take no tile of any level
     /// ([`filled_by`](Level::filled_by)).
     fillers: usize,
+    /// The order a cube level deals its boxes to the grid ([`ordered`](Level::ordered)).
+    /// [`RowMajor`](CubeOrder::RowMajor) everywhere else, which is what every level that
+    /// states nothing gets.
+    order: CubeOrder,
 }
 
 impl Level {
@@ -159,6 +163,7 @@ impl Level {
             scope,
             work: None,
             fillers: 0,
+            order: CubeOrder::RowMajor,
         }
     }
 
@@ -256,6 +261,22 @@ impl Level {
         self
     }
 
+    /// The order this cube level deals its boxes to the grid ([`CubeOrder`]).
+    ///
+    /// Only cubes take one: the order permutes which *instance* holds which box, and the
+    /// grid is the one place instances are handed out by hardware position rather than by a
+    /// loop the kernel writes.
+    pub(crate) fn ordered(mut self, order: CubeOrder) -> Level {
+        assert!(
+            self.scope == LevelScope::Cubes,
+            "Level::ordered: only a cube level is dealt to a grid, and this level deals its \
+             tiles to {:?}",
+            self.scope
+        );
+        self.order = order.canonicalize();
+        self
+    }
+
     fn push(&mut self, axis: Axis, entry: Entry) {
         assert!(
             !self.entries.contains(axis),
@@ -328,6 +349,11 @@ impl Level {
     /// ([`filled_by`](Level::filled_by)).
     pub fn fillers(&self) -> usize {
         self.fillers
+    }
+
+    /// The order this level deals its boxes to the grid, which only a cube level ever states.
+    pub fn order(&self) -> CubeOrder {
+        self.order
     }
 
     /// The space one region of this level covers: every axis of `space` cut to its tile (static,

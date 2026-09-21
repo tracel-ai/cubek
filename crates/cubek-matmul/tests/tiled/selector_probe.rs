@@ -49,3 +49,58 @@ fn selector_vs_multi_level() {
         }
     }
 }
+
+/// What strip width is worth, at the shapes big enough for a band to miss the cache.
+#[test]
+#[ignore = "timing probe, run manually"]
+fn swizzle_width_probe() {
+    use cubek_matmul::{
+        routine::BlueprintStrategy,
+        tiled::{
+            Strategy as Tiled,
+            cmma::{CmmaBlueprint, CmmaDelivery, Partition},
+            cpu_gemm::{InstructionShape, PlaneGrid},
+        },
+    };
+    use cubek_tile::CubeOrder;
+
+    for id in [
+        "square_1x8192_rr_f16",
+        "square_1x6144_rr_f16",
+        "square_2x4096_rr_f16",
+    ] {
+        let problem: GemmProblem = match problems().into_iter().find(|e| e.id == id) {
+            Some(e) => e.value,
+            None => continue,
+        };
+        println!("\n## {id}");
+        for order in [
+            CubeOrder::RowMajor,
+            CubeOrder::SwizzleRow(2),
+            CubeOrder::SwizzleRow(4),
+            CubeOrder::SwizzleRow(8),
+            CubeOrder::SwizzleRow(16),
+            CubeOrder::SwizzleCol(4),
+            CubeOrder::SwizzleCol(8),
+        ] {
+            let strategy = Tiled::Cmma(BlueprintStrategy::Forced(CmmaBlueprint {
+                instruction: InstructionShape {
+                    m: 16,
+                    n: 16,
+                    k: 16,
+                },
+                partition: Partition { m: 4, n: 4 },
+                planes: PlaneGrid { m: 4, n: 2 },
+                stage_k: 64,
+                buffering: 2,
+                delivery: CmmaDelivery::Copy,
+                order,
+            }))
+            .into();
+            match median_ms(&strategy, &problem) {
+                Some(t) => println!("  {order:?} : {t:.3} ms"),
+                None => println!("  {order:?} : declined"),
+            }
+        }
+    }
+}

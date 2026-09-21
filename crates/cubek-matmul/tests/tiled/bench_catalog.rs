@@ -78,6 +78,7 @@ fn gemm_cyclic_cmma_forced_point_correctness() {
         stage_k: 32,
         buffering: 2,
         delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+        order: cubek_tile::CubeOrder::RowMajor,
     }))
     .into();
     let actual = GemmCorrectness

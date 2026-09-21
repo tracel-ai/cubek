@@ -79,6 +79,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
         stage_k: 32,
         buffering: 2,
         delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+        order: cubek_tile::CubeOrder::RowMajor,
     }))
     .into();
 
@@ -151,6 +152,7 @@ fn gemm_cyclic_cmma_crosspoint_timing() {
             stage_k,
             buffering: 2,
             delivery: cubek_matmul::tiled::cmma::CmmaDelivery::Copy,
+            order: cubek_tile::CubeOrder::RowMajor,
         }))
         .into()
     };

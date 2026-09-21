@@ -1176,6 +1176,7 @@ dependencies = [
  "cubecl",
  "cubecl-common",
  "cubek-test-utils",
+ "cubek-tile",
 ]
 
 [[package]]

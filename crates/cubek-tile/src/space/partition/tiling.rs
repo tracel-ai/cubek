@@ -44,7 +44,7 @@
 //! first, so [`levels`](Tiling::levels) reverses. That is the only place the two directions meet.
 
 use super::level::LevelScope;
-use super::{ComputeScope, CubeAxis, Distribution, Spread};
+use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
 use crate::{Axis, Count, Level};
 
 /// One level, as the builder holds it before it is a [`Level`]: the axes it names with the tile
@@ -72,6 +72,8 @@ struct Stated {
     /// Axes a level below already took whole, which this cube level names again — legal only to
     /// deal them across cubes, checked when the levels are built.
     reopened: Vec<Axis>,
+    /// The order a cube level deals its boxes to the grid ([`Tiling::ordered`]).
+    order: CubeOrder,
 }
 
 /// A partitioning stated from the leaf up. See the module docs.
@@ -155,6 +157,21 @@ impl Tiling {
     /// the whole rather than a box of it. Stream-K.
     pub fn shared_by(mut self, cubes: usize) -> Self {
         self.last("shared_by").shared_by = Some(cubes);
+        self
+    }
+
+    /// The order the cube level just stated deals its boxes to the grid ([`CubeOrder`]).
+    ///
+    /// The grid's own order unless this is said, so every tiling that says nothing is the
+    /// tiling it was.
+    pub fn ordered(mut self, order: CubeOrder) -> Self {
+        let stated = self.last("ordered");
+        assert!(
+            stated.takers == LevelScope::Cubes,
+            "Tiling::ordered: only cubes are dealt to a grid; the level just stated is a {}",
+            stated.takers.verb()
+        );
+        stated.order = order.canonicalize();
         self
     }
 
@@ -280,6 +297,7 @@ impl Stated {
             batches: Vec::new(),
             interleaved: Vec::new(),
             reopened: Vec::new(),
+            order: CubeOrder::RowMajor,
         }
     }
 
@@ -331,6 +349,10 @@ impl Stated {
         let level = match self.fillers {
             0 => level,
             n => level.filled_by(n),
+        };
+        let level = match self.order.swizzles() {
+            false => level,
+            true => level.ordered(self.order),
         };
         match self.shared_by {
             None => level,
