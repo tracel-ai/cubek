@@ -10,6 +10,9 @@ const N: Axis = Axis(1);
 const K: Axis = Axis(2);
 const B0: Axis = Axis(3);
 const B1: Axis = Axis(4);
+// A second contracted axis (a partitioned `K`), and one a walk routes.
+const K2: Axis = Axis(5);
+const EXPERT: Axis = Axis(6);
 
 // ---- Space ----------------------------------------------------------------
 
@@ -116,6 +119,56 @@ fn levels_chain_into_a_multi_level_scheme() {
     assert_eq!(level2.extent(M), 4);
     assert_eq!(level2.extent(N), 4);
     assert_eq!(Partitioning::new(space.clone(), levels).leaf(), level2);
+}
+
+// ---- contracting ----------------------------------------------------------
+
+/// A routed axis, as the leaf sees it: it holds one value, only the rhs spans it, and the output
+/// does not carry it. It pairs with nothing and contracts nothing, so it is not one of the
+/// contracted axes, and the fastest one is the one both operands line along.
+#[test]
+fn a_routed_axis_is_not_contracted() {
+    let lhs = Space::new(&[(M, 1), (K, 8)]);
+    let rhs = Space::new(&[(EXPERT, 1), (N, 4), (K, 8)]);
+    let out = Space::new(&[(M, 1), (N, 4)]);
+    assert_eq!(&Space::contracted(&[&lhs, &rhs], &out)[..], &[K]);
+}
+
+/// An rhs-only axis holding more than one value is a contraction the walk has to step, and
+/// stays.
+#[test]
+fn an_axis_one_operand_spans_is_contracted_while_it_varies() {
+    let lhs = Space::new(&[(M, 1), (K, 8)]);
+    let rhs = Space::new(&[(EXPERT, 3), (N, 4), (K, 8)]);
+    let out = Space::new(&[(M, 1), (N, 4)]);
+    assert_eq!(&Space::contracted(&[&lhs, &rhs], &out)[..], &[K, EXPERT]);
+}
+
+/// A one-tap window on both axes of a separable filter, as nearest interpolation contracts: every
+/// operand spans both axes, so both stay, and each factor keeps the axis it names by position.
+#[test]
+fn a_one_value_axis_every_operand_spans_is_contracted() {
+    let weights = Space::new(&[(M, 4), (K, 1), (K2, 1)]);
+    let input = Space::new(&[(M, 4), (K, 1), (K2, 1), (N, 4)]);
+    let out = Space::new(&[(M, 4), (N, 4)]);
+    assert_eq!(&Space::contracted(&[&weights, &input], &out)[..], &[K, K2]);
+}
+
+/// A partitioned contraction keeps its axes in the space's own order, which is what an operand
+/// carrying them as one run reads as a single `k` edge.
+#[test]
+fn a_partitioned_contraction_keeps_its_axes() {
+    let lhs = Space::new(&[(M, 4), (K, 2), (K2, 4)]);
+    let out = Space::new(&[(M, 4), (N, 4)]);
+    assert_eq!(&lhs.contracting(&out)[..], &[K, K2]);
+}
+
+/// An operand the output spans whole contracts nothing.
+#[test]
+fn an_operand_the_output_spans_contracts_nothing() {
+    let lhs = Space::new(&[(M, 4), (N, 4)]);
+    let out = Space::new(&[(M, 4), (N, 4)]);
+    assert!(lhs.contracting(&out).is_empty());
 }
 
 // ---- overhangs -------------------------------------------------------------

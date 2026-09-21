@@ -117,8 +117,8 @@ pub(crate) fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
 }
 
 /// The coordinate `operand` is read at, one entry per axis of its own space: an axis present in
-/// `acc` takes its coordinate from `acc_coords`, everything else (contracted by definition, since
-/// every operand axis falls in one or the other) comes from `reduce_coords`.
+/// `acc` takes its coordinate from `acc_coords`, a contracted one from `reduce_coords`. An axis in
+/// neither is a routed one, which [`Space::contracted`] leaves out, so its one value sits at zero.
 ///
 /// `acc_coords` is indexed by `acc.position(axis)`, so it holds one entry per axis of the
 /// accumulator's *space*, in that space's order — not one per edge of whatever matrix a caller
@@ -153,8 +153,10 @@ pub(crate) fn resolve_nd_coords(
             let pos = comptime!(acc.position(axis));
             acc_coords.at(comptime!(pos))
         } else {
-            let pos = comptime!(reduce.iter().position(|&r| r == axis).unwrap());
-            reduce_coords.at(comptime!(pos))
+            match comptime!(reduce.iter().position(|&r| r == axis)) {
+                Some(pos) => reduce_coords.at(comptime!(pos)),
+                None => 0u32,
+            }
         };
         let divides =
             comptime!(p == operand_rank - 1 && width > 1 && (scale_acc_branch || !in_acc));
