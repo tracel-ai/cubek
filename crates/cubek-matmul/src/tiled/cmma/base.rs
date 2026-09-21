@@ -30,6 +30,36 @@ use crate::{
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
 
+/// Stages the ring keeps in flight: one filling while the one before it contracts.
+const BUFFERING: usize = 2;
+
+/// Units a cube runs, whatever the device would allow beyond it: past this a cube's planes
+/// contend for one register file and the stage stops paying for the planes that fill it.
+const MAX_UNITS_PER_CUBE: usize = 256;
+
+/// Accumulator bytes one lane holds, where the device reports a register file this family's
+/// size ([`reuse`]). Half of 256 32-bit registers a lane, the other half left to the operand
+/// fragments, the addresses and the fill.
+///
+/// A budget and not a count, because a count means a different thing at each instruction: the
+/// same 16 fragments are 512 bytes a lane at `16x16` accumulating in `f32` and 128 at `8x8`.
+const ACCUMULATOR_LANE_BYTES: usize = 512;
+
+/// Cubes a stage has to leave per streaming multiprocessor before it is worth its edges.
+///
+/// A cube runs to completion on one SM, so a grid that is not a whole number of waves pays for
+/// a last one that is mostly idle, and the fewer waves there are the more of the run that is.
+/// Measured on an L4 (58 SMs, f16): at 1024³ the widest stage leaves 1.1 waves and runs 0.177 ms
+/// where a quarter of it leaves 4.4 and runs 0.152; at 1536³, 1.2 waves and 0.235 ms against 2.5
+/// and 0.222. Past about three cubes an SM the tail stops showing and the wider stage wins on
+/// bytes alone — 4096³ runs 6.09 ms at 17.7 waves against 7.32 at 70.6.
+const CUBES_PER_SM_FLOOR: usize = 3;
+
+/// Instruction tiles one cube's stage spans on one axis, at most. The stage is what the fill
+/// moves per `K` step, and one too wide leaves fewer cubes than the device has places to run
+/// them.
+const MAX_TILES_PER_AXIS: usize = 32;
+
 /// The CMMA routine's launch-time input transport choice. This is deliberately separate from
 /// [`cubek_tile::Delivery`], which describes an already-constructed tile's staging behavior.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -207,6 +237,134 @@ fn divisor_at_most(g: usize, cap: usize) -> usize {
     (1..=cap).rev().find(|d| g.is_multiple_of(*d)).unwrap_or(1)
 }
 
+/// What the device has to keep busy: the cubes one launch of this problem runs, over the
+/// places it has to run them. `None` where the runtime reports no SM count, which is every
+/// backend but CUDA — there a stage is sized on bytes alone, as it was.
+#[derive(Clone, Copy, Debug)]
+struct Machine {
+    sms: Option<usize>,
+    boxes: usize,
+}
+
+impl Machine {
+    /// Whether a `stages_m x stages_n` grid of cubes, one per box, keeps this machine busy.
+    fn fills(&self, stages_m: usize, stages_n: usize) -> bool {
+        match self.sms {
+            Some(sms) => stages_m * stages_n * self.boxes >= sms * CUBES_PER_SM_FLOOR,
+            None => true,
+        }
+    }
+}
+
+/// The instruction tiles a stage spans, grown onto whichever axis is currently the shorter so
+/// the stage comes out as square as the two grids admit, and never past what `tiles` allows or
+/// what the grid divides.
+fn grow(tiles: usize, grid: (usize, usize)) -> (usize, usize) {
+    let (grid_m, grid_n) = grid;
+    let (mut tiles_m, mut tiles_n) = (1usize, 1usize);
+    while tiles_m * tiles_n < tiles {
+        let shorter_first = tiles_m <= tiles_n;
+        let mut grew = false;
+        for on_m in [shorter_first, !shorter_first] {
+            let (own, other, edge) = match on_m {
+                true => (tiles_m, tiles_n, grid_m),
+                false => (tiles_n, tiles_m, grid_n),
+            };
+            let doubled = own * 2;
+            if doubled > MAX_TILES_PER_AXIS
+                || !edge.is_multiple_of(doubled)
+                || doubled * other > tiles
+            {
+                continue;
+            }
+            match on_m {
+                true => tiles_m = doubled,
+                false => tiles_n = doubled,
+            }
+            grew = true;
+            break;
+        }
+        if !grew {
+            break;
+        }
+    }
+    (tiles_m, tiles_n)
+}
+
+/// The plan for a device that pays for per-plane reuse: `(part_m, part_n, planes_m, planes_n)`.
+///
+/// Two counts decide it and the rest is arithmetic. **The fragments a plane holds** is
+/// [`ACCUMULATOR_LANE_BYTES`] over what one fragment costs a lane, since the accumulator is
+/// resident across the whole `K` walk and a plane that spills reads its own sums back from
+/// memory. **The planes a cube runs** is `budget`, the units it is given over a plane's width.
+///
+/// Their product is the instruction tiles the stage spans, and it is grown one doubling at a
+/// time onto whichever axis is currently the shorter, so the stage comes out as square as the
+/// two grids admit — a square stage is the one that reads fewest bytes for the products it
+/// makes. Only then is it cut into planes and fragments, the planes taking the coarser cut,
+/// which is what leaves each plane a rectangle of fragments rather than a row.
+fn reuse(
+    instruction: (usize, usize),
+    acc: ElemType,
+    plane_dim: usize,
+    budget: usize,
+    grid: (usize, usize),
+    machine: Machine,
+) -> (usize, usize, usize, usize) {
+    let ((im, inn), (grid_m, grid_n)) = (instruction, grid);
+    let fragment_lane_bytes = (im * inn * acc.size()).div_ceil(plane_dim).max(1);
+    let fragments = (ACCUMULATOR_LANE_BYTES / fragment_lane_bytes).max(1);
+    let planes = budget.max(1);
+
+    // Grow the stage by doubling the shorter axis, skipping a doubling the grid does not
+    // divide: a stage that does not divide the problem is one this routine cannot mask.
+    //
+    // Then, where the machine's width is known, give the budget back a halving at a time while
+    // the stage leaves too few cubes to fill it ([`CUBES_PER_SM_FLOOR`]): a stage is only worth
+    // its bytes if there are enough of them to keep every SM busy to the end.
+    //
+    // Never below one fragment a plane, which is where there is no reuse left to give: a shape
+    // small enough to want that has already given back everything the guard is for, and a stage
+    // of one instruction is not a stage this routine can descend.
+    let mut tiles = fragments * planes;
+    let (tiles_m, tiles_n) = loop {
+        let (tiles_m, tiles_n) = grow(tiles, (grid_m, grid_n));
+        if tiles <= planes || machine.fills(grid_m / tiles_m, grid_n / tiles_n) {
+            break (tiles_m, tiles_n);
+        }
+        tiles /= 2;
+    };
+
+    // Cut the tiles into planes and fragments, the planes taking the coarser cut: a plane
+    // per rectangle of the stage, and the rectangle is what its fragments cover.
+    let (mut planes_m, mut planes_n) = (1usize, 1usize);
+    while planes_m * planes_n < planes {
+        let coarser_first = tiles_m / planes_m >= tiles_n / planes_n;
+        let mut grew = false;
+        for on_m in [coarser_first, !coarser_first] {
+            let (own, tiles_here) = match on_m {
+                true => (planes_m, tiles_m),
+                false => (planes_n, tiles_n),
+            };
+            let doubled = own * 2;
+            if doubled > MAX_PLANES_PER_AXIS || !tiles_here.is_multiple_of(doubled) {
+                continue;
+            }
+            match on_m {
+                true => planes_m = doubled,
+                false => planes_n = doubled,
+            }
+            grew = true;
+            break;
+        }
+        if !grew {
+            break;
+        }
+    }
+
+    (tiles_m / planes_m, tiles_n / planes_n, planes_m, planes_n)
+}
+
 impl CmmaRoutine {
     /// Resolve `strategy` into a validated plan for `problem` on this device. `acc` is the
     /// register accumulate type (e.g. `f32` under an `f16` output); the selected
@@ -352,24 +510,77 @@ impl CmmaRoutine {
                 MatmulAvailabilityError::TileSizeNotFound,
             ))?;
 
-        // The thin shape (single-row partitions, planes along `m`, small stages): high
-        // threadgroup residency beats per-plane reuse on Metal. Cross-point measured
-        // 5.2 vs 3.6 TFLOPS against the old fat 2x8 selection on square_4096 f16.
+        // What a plane keeps resident and how many planes tile the cube's stage — the one
+        // trade this routine makes, and a trade whose answer is the device's.
+        //
+        // A plane's accumulator lives in its lanes' registers, so how many fragments are
+        // worth holding is a register budget: inside one, each lhs fragment is read `part_n`
+        // times and each rhs fragment `part_m` times before it is dropped, and the stage
+        // those counts build reads that many fewer bytes per product. Where the device
+        // reports a register file this family's size, that is what [`reuse`] spends.
+        //
+        // Where it does not, the plan stays the one an Apple GPU measured — a single row of
+        // fragments, planes spread along `m` — because there threadgroup residency beat
+        // per-plane reuse (cross-point 5.2 vs 3.6 TFLOPS against a 2x8 partition on
+        // square_4096 f16). Two arms and not one derivation, since nothing measured says the
+        // two families sit on one curve.
         let (grid_m, grid_n) = (problem.m / im.max(1), problem.n / inn.max(1));
-        let max_units = (client.properties().hardware.max_units_per_cube as usize).min(256);
+        let max_units =
+            (client.properties().hardware.max_units_per_cube as usize).min(MAX_UNITS_PER_CUBE);
         let budget = (max_units / plane_dim).max(1);
-        let rows = (budget / inn.div_ceil(4).max(1)).max(1);
+        let reuses = client.properties().hardware.num_tensor_cores.is_some();
 
-        let part_m = 1;
-        let part_n = match fixed_n {
-            Some(stage_n) => stage_n / inn,
-            None => divisor_at_most(grid_n.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+        let (part_m, part_n, planes_m, planes_n) = if reuses {
+            reuse(
+                (im, inn),
+                acc,
+                plane_dim,
+                budget,
+                (grid_m, grid_n),
+                Machine {
+                    sms: client
+                        .properties()
+                        .hardware
+                        .num_streaming_multiprocessors
+                        .map(|sms| sms as usize),
+                    boxes: problem.out_batches.iter().product::<usize>().max(1),
+                },
+            )
+        } else {
+            let rows = (budget / inn.div_ceil(4).max(1)).max(1);
+            (
+                1,
+                divisor_at_most(grid_n.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+                divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+                1,
+            )
         };
-        let planes_m = match fixed_m {
-            Some(stage_m) => stage_m / im,
-            None => divisor_at_most(grid_m.max(1), rows.min(MAX_PLANES_PER_AXIS)),
+        // A stored operand names the stage on its axes, whatever the plan would have picked:
+        // the tiles are then the storage tile's, and only how they are cut into planes and
+        // fragments is still this plan's to say.
+        //
+        // A reuse plan cuts them so the two multiply back exactly — a stage that lost a tile
+        // to a rounded division is not the tile the weight was packed to. The other arm hands
+        // every tile to a plane, as it did before there was a partition to give them to, and
+        // the budget check below is what catches a weight too tall for one cube.
+        let (part_n, planes_n) = match (fixed_n, reuses) {
+            (Some(stage_n), true) => {
+                let tiles = (stage_n / inn).max(1);
+                let planes_n = divisor_at_most(tiles, planes_n.min(MAX_PLANES_PER_AXIS));
+                (tiles / planes_n, planes_n)
+            }
+            (Some(stage_n), false) => (stage_n / inn, planes_n),
+            (None, _) => (part_n, planes_n),
         };
-        let planes_n = 1;
+        let (part_m, planes_m) = match (fixed_m, reuses) {
+            (Some(stage_m), true) => {
+                let tiles = (stage_m / im).max(1);
+                let planes_m = divisor_at_most(tiles, planes_m.min(MAX_PLANES_PER_AXIS));
+                (tiles / planes_m, planes_m)
+            }
+            (Some(stage_m), false) => (part_m, stage_m / im),
+            (None, _) => (part_m, planes_m),
+        };
         if planes_m * planes_n > budget {
             return Err(MatmulSetupError::InvalidConfig(Box::new(format!(
                 "Cmma: lhs is stored in storage tiles {} rows tall, {planes_m} planes of the \
@@ -378,16 +589,31 @@ impl CmmaRoutine {
             ))));
         }
 
-        // Stage depth, snapped down to the deepest `d·ik` dividing `k`. The knee is set by
-        // the double-buffered smem the cooperative fill must keep resident, so it scales by
-        // a *byte* budget: an `f32` operand's stage is twice an `f16`'s at equal depth. An
-        // `f32` accumulator (always now, since tensor cores accumulate in `f32`) also spends
-        // twice the registers, tightening the budget vs the old `f16` accumulate. Measured
-        // on square_4096 (f32 acc): f16 operands peak at sk32 (4.71 vs 4.53 at 64), f32 at
-        // sk16 (3.67 vs 3.26 at 32, 2.31 at 64): both ~64 stage-K bytes per row. The old
-        // f16-accumulate wanted twice that (sk64 at 4.87).
-        let stage_k_bytes = if acc.size() >= 4 { 64 } else { 128 };
-        let cap = (stage_k_bytes / d.lhs.size().max(1)).max(ik);
+        // Stage depth, snapped down to the deepest `d·ik` dividing `k`.
+        //
+        // Where the stage was cut for reuse it is deep enough to spend the shared memory the
+        // device has and no deeper: the `K` a buffered stage of these edges holds. That is one
+        // number rather than a knee, because the edges are already the ones the register budget
+        // asked for, and what is left to decide is how much of the fill's own memory to use.
+        //
+        // Where it was not, the knee is the byte budget the Apple cross-point measured: an
+        // `f32` operand's stage is twice an `f16`'s at equal depth, and an `f32` accumulator
+        // spends twice the registers. On square_4096 (f32 acc) f16 operands peaked at sk32
+        // (4.71 vs 4.53 at 64) and f32 at sk16 (3.67 vs 3.26 at 32, 2.31 at 64): both ~64
+        // stage-K bytes per row. The old f16-accumulate wanted twice that (sk64 at 4.87).
+        let cap = if reuses {
+            let (stage_m, stage_n) = (planes_m * part_m * im, planes_n * part_n * inn);
+            let row_bytes = (stage_m * d.lhs.size() + stage_n * d.rhs.size()).max(1);
+            let smem = client.properties().hardware.max_shared_memory_size;
+            // And never deeper than leaves the ring a region per slot: a stage that swallows
+            // the whole `K` walk is one region, which is a pipeline with nothing in flight.
+            (smem / BUFFERING / row_bytes)
+                .min(problem.k / BUFFERING)
+                .max(ik)
+        } else {
+            let stage_k_bytes = if acc.size() >= 4 { 64 } else { 128 };
+            (stage_k_bytes / d.lhs.size().max(1)).max(ik)
+        };
         let stage_k = match fixed_k {
             Some(stage_k) => stage_k,
             None => (1..=(cap / ik).max(1))
@@ -412,8 +638,126 @@ impl CmmaRoutine {
                 n: planes_n,
             },
             stage_k,
-            buffering: 2,
+            buffering: BUFFERING,
             delivery,
         })
+    }
+}
+
+/// [`reuse`] is host arithmetic over the device's own numbers, so what it decides is testable
+/// without one. The cases are the ones the L4 sweep turned on.
+#[cfg(test)]
+mod reuse_tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// A machine wide enough that no stage is ever shrunk for it: the wave floor is its own
+    /// test, and these cases are about the budgets.
+    const ROOMY: Machine = Machine {
+        sms: None,
+        boxes: 1,
+    };
+
+    /// An L4: a `16x16` instruction accumulating in `f32` over 32-lane planes, eight planes a
+    /// cube, a square grid wide enough to take any stage. The sweep's winner on every shape
+    /// it ran — `4x4` fragments a plane over a `4x2` plane grid, a 256x128 stage — falls out
+    /// of the two budgets and nothing else.
+    #[test]
+    fn a_large_register_file_buys_a_square_stage_of_rectangular_partitions() {
+        assert_eq!(reuse((16, 16), F32, 32, 8, (256, 256), ROOMY), (4, 4, 4, 2));
+    }
+
+    /// The accumulator is budgeted in bytes a lane, not in fragments: the same budget holds
+    /// four times as many `8x8` fragments as `16x16` ones, because one costs a quarter as
+    /// much. A count stated here would mean a different register load at each instruction.
+    #[test]
+    fn the_budget_is_bytes_a_lane_so_a_smaller_instruction_holds_more_of_them() {
+        let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (256, 256), ROOMY);
+        let (qm, qn, hm, hn) = reuse((8, 8), F32, 32, 8, (256, 256), ROOMY);
+        assert_eq!(
+            pm * pn * 4,
+            qm * qn,
+            "a quarter the bytes, four times the count"
+        );
+        assert_eq!(
+            (gm * gn, hm * hn),
+            (8, 8),
+            "the plane count is the cube's either way"
+        );
+    }
+
+    /// Every stage it states divides the grid it was given, on both axes: this routine cannot
+    /// mask an overhang, so a stage that does not divide is a plan that cannot run.
+    #[test]
+    fn the_stage_divides_the_grid_it_was_cut_from() {
+        for grid_m in [1usize, 2, 3, 5, 12, 64, 256] {
+            for grid_n in [1usize, 2, 3, 5, 12, 64, 256] {
+                let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (grid_m, grid_n), ROOMY);
+                assert!(grid_m.is_multiple_of(pm * gm), "{grid_m} / {pm}x{gm}");
+                assert!(grid_n.is_multiple_of(pn * gn), "{grid_n} / {pn}x{gn}");
+                assert!(gm * gn <= 8, "no more planes than the cube holds");
+                assert!(gm <= MAX_PLANES_PER_AXIS && gn <= MAX_PLANES_PER_AXIS);
+            }
+        }
+    }
+
+    /// A grid that divides on one axis only puts its tiles there, rather than giving up the
+    /// stage: a prime `n` is a shape, not a reason to read four times the bytes.
+    #[test]
+    fn a_grid_that_divides_on_one_axis_only_grows_along_it() {
+        let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (32, 1), ROOMY);
+        assert_eq!((pn, gn), (1, 1), "nothing divides along n");
+        assert!(pm * gm > 1, "so the tiles went to m: {pm}x{gm}");
+    }
+}
+
+/// The wave floor, which is the one thing [`Machine`] decides: a stage is given back a halving
+/// at a time while the cubes it leaves would not fill the device.
+#[cfg(test)]
+mod machine_tests {
+    use super::*;
+    use cubecl::ir::{ElemType, FloatKind};
+
+    const F32: ElemType = ElemType::Float(FloatKind::F32);
+
+    /// An L4's 58 SMs against the three square shapes measured on it. The widest stage is 16x8
+    /// tiles (256x128); at 4096 it stands, and the two small shapes give back two halvings.
+    ///
+    /// The floor is three cubes an SM and not two because of what the two cost each other:
+    /// at three, 1024³ lands on the stage it measured fastest at (0.152 ms, against 0.166 for
+    /// one halving and 0.177 for none) and 1536³ lands one halving past its own (0.230 against
+    /// 0.222); at two, 1536³ is exact and 1024³ is 9% off instead of 3.6%. A floor is one
+    /// number for every shape, so it is the worse of the two misses that picks it.
+    #[test]
+    fn a_narrow_grid_gives_the_stage_back_until_it_fills_the_device() {
+        let l4 = |boxes| Machine {
+            sms: Some(58),
+            boxes,
+        };
+        let tiles = |grid: usize, boxes| {
+            let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (grid, grid), l4(boxes));
+            (pm * gm * 16, pn * gn * 16)
+        };
+        assert_eq!(
+            tiles(256, 2),
+            (256, 128),
+            "4096³: 17.7 waves, nothing given back"
+        );
+        assert_eq!(tiles(96, 1), (128, 64), "1536³");
+        assert_eq!(tiles(64, 2), (128, 64), "1024³");
+    }
+
+    /// A device that reports no SM count is one this has nothing to say about, so the stage is
+    /// sized on its bytes alone — which is every backend but CUDA today.
+    #[test]
+    fn a_machine_of_unknown_width_never_shrinks_a_stage() {
+        let unknown = Machine {
+            sms: None,
+            boxes: 1,
+        };
+        let (pm, pn, gm, gn) = reuse((16, 16), F32, 32, 8, (64, 64), unknown);
+        assert_eq!((pm * gm * 16, pn * gn * 16), (256, 128));
     }
 }
