@@ -37,8 +37,12 @@ fn register_line_words(#[comptime] words: usize) {
 #[expand(derive(Clone))]
 pub struct Lanes<T: Numeric> {
     /// This lane's line, as the words it lies in: lane `t` holds line `t`. One entry, held in an
-    /// array so a load can replace it.
+    /// array so a load can replace it. Filled under [`Reach::Shuffle`], where the lanes are
+    /// where the lines stay.
     lanes: Array<Vector<u32, LW>>,
+    /// Every line one after the other, in a window of shared memory this plane owns. Filled
+    /// under [`Reach::Window`], absent otherwise.
+    window: ComptimeOption<Shared<[u32]>>,
     /// Where this window starts inside the box, in scalars, one entry per axis of it.
     origin: Coords<u32>,
     /// The box the lines were loaded as: the lines' axes, then the line's. The tile's own space
@@ -63,6 +67,9 @@ pub struct Lanes<T: Numeric> {
     /// Words one line holds.
     #[cube(comptime)]
     words: usize,
+    /// How a value gets from the lane that loaded its line to the lane that asks.
+    #[cube(comptime)]
+    reach: Reach,
     #[cube(comptime)]
     _served: PhantomData<T>,
 }
@@ -91,7 +98,11 @@ impl<T: Numeric> Lanes<T> {
 impl<T: Numeric> Lanes<T> {
     /// The box one region of `level` over `operand` fills, held one line to a lane, empty until
     /// [`load`](Self::load).
-    pub(crate) fn new(operand: &Tile<T>, #[comptime] level: Level) -> Lanes<T> {
+    pub(crate) fn new(
+        operand: &Tile<T>,
+        #[comptime] level: Level,
+        #[comptime] reach: Reach,
+    ) -> Lanes<T> {
         let loaded = comptime!(level.child(&operand.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
@@ -123,6 +134,20 @@ impl<T: Numeric> Lanes<T> {
         ));
         let words = comptime!(line / per_word);
         register_line_words(words);
+        // One window per plane of the cube, this plane's found by the walk's own decode of the
+        // hardware position, as a landing is.
+        let window = match comptime!(reach.clone()) {
+            Reach::Shuffle => ComptimeOption::new_None(),
+            Reach::Window => {
+                let planes = comptime!(plane_windows(&operand.space, &operand.levels));
+                let cells = comptime!(lines * words);
+                let start = hardware_pos(ComputeScope::Plane) * cells;
+                let end = start + cells;
+                ComptimeOption::new_Some(
+                    Shared::<[u32]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]),
+                )
+            }
+        };
         let mut origin = Coords::<u32>::new();
         #[unroll]
         for _axis in 0..rank {
@@ -130,6 +155,7 @@ impl<T: Numeric> Lanes<T> {
         }
         Lanes::<T> {
             lanes: Array::<Vector<u32, LW>>::new(1usize),
+            window,
             origin,
             loaded,
             strides,
@@ -137,6 +163,7 @@ impl<T: Numeric> Lanes<T> {
             projection,
             field,
             words,
+            reach,
             _served: PhantomData,
         }
     }
@@ -224,7 +251,27 @@ impl<T: Numeric> Lanes<T> {
                 }
             }
         }
-        self.lanes[0usize] = held;
+        match comptime!(self.reach.clone()) {
+            // The lines stay where they were loaded; every read reaches them by shuffle.
+            Reach::Shuffle => self.lanes[0usize] = held,
+            // Written once, read by index for the rest of the region, at one plane barrier.
+            Reach::Window => {
+                #[comptime]
+                match &mut self.window {
+                    ComptimeOption::Some(window) => {
+                        if lane < comptime!(lines as u32) {
+                            let base = (lane * comptime!(words as u32)) as usize;
+                            #[unroll]
+                            for j in 0..words {
+                                window[base + j] = held.extract(j);
+                            }
+                        }
+                        sync_plane();
+                    }
+                    ComptimeOption::None => {}
+                }
+            }
+        }
     }
 
     /// This window one level down, to `step`'s box: the origin moves, in scalars, and nothing is
@@ -244,6 +291,7 @@ impl<T: Numeric> Lanes<T> {
         }
         Lanes::<T> {
             lanes: self.lanes,
+            window: self.window.clone(),
             origin,
             loaded: comptime!(self.loaded.clone()),
             strides: comptime!(self.strides.clone()),
@@ -251,6 +299,7 @@ impl<T: Numeric> Lanes<T> {
             projection: comptime!(self.projection.clone()),
             field: comptime!(self.field),
             words: comptime!(self.words),
+            reach: comptime!(self.reach.clone()),
             _served: PhantomData,
         }
     }
@@ -275,27 +324,47 @@ impl<T: Numeric> Lanes<T> {
         let words = comptime!(self.words);
         let word = byte.fdiv(comptime!(per_word as u32));
         let field = byte.frem(comptime!(per_word as u32));
-        // Every lane offers its word `j`; the lane that asked receives line `line`'s.
-        let mine = self.lanes[0usize];
-        let mut got = Vector::<u32, LW>::empty();
-        #[unroll]
-        for j in 0..words {
-            got.insert(j, plane_shuffle(mine.extract(j), line));
-        }
-        let held = if comptime!(words > 1) {
-            got.extract_dynamic(word.fcast::<usize>())
-        } else {
-            got.extract(0usize)
+        let held = match comptime!(self.reach.clone()) {
+            Reach::Shuffle => {
+                // Every lane offers its word `j`; the lane that asked receives line `line`'s.
+                // Which word is wanted is a runtime coordinate, so all of them are fetched and
+                // one is kept — `words` shuffles for the one word a value sits in.
+                let mine = self.lanes[0usize];
+                let mut got = Vector::<u32, LW>::empty();
+                #[unroll]
+                for j in 0..words {
+                    got.insert(j, plane_shuffle(mine.extract(j), line));
+                }
+                if comptime!(words > 1) {
+                    got.extract_dynamic(word.fcast::<usize>())
+                } else {
+                    got.extract(0usize)
+                }
+            }
+            Reach::Window =>
+            {
+                #[comptime]
+                match &self.window {
+                    ComptimeOption::Some(window) => {
+                        window[(line.fmul(comptime!(words as u32)).fadd(word)) as usize]
+                    }
+                    ComptimeOption::None => panic!("Lanes: no window was opened"),
+                }
+            }
         };
-        let size!(PW) = per_word;
-        let unpacked = unpack_line::<T, Const<1>, PW>(
-            Vector::<u32, Const<1>>::new(held),
+        // **One field, not the word it sits in.** Decoding the whole word and keeping one of its
+        // values costs `per_word` decodes to use a single one, and a minifloat decode is around
+        // twenty integer operations — so a `ue4m3` scale was paying about eighty to deliver one.
+        // Shifting the wanted field down first leaves exactly one to decode.
+        let bits = comptime!(self.field.size_bits() as u32);
+        let only = match comptime!(per_word > 1) {
+            true => held >> field.fmul(bits),
+            false => held,
+        };
+        unpack_line::<T, Const<1>, Const<1>>(
+            Vector::<u32, Const<1>>::new(only),
             comptime!(self.field),
-        );
-        if comptime!(per_word > 1) {
-            unpacked.extract_dynamic(field.fcast::<usize>())
-        } else {
-            unpacked.extract(0usize)
-        }
+        )
+        .extract(0usize)
     }
 }

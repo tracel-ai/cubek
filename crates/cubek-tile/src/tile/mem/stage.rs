@@ -77,8 +77,12 @@ impl<T: Numeric> MemData<T> {
             // The lanes are not memory: the plane holds them, at the depth one region of
             // `level` sits, so the regions below the level window them as they window the
             // operand.
-            StageStorage::Lanes => Tile::<T> {
-                tile_kind: TileKind::new_Lanes(Lanes::<T>::new(operand, comptime!(level.clone()))),
+            StageStorage::Lanes { reach } => Tile::<T> {
+                tile_kind: TileKind::new_Lanes(Lanes::<T>::new(
+                    operand,
+                    comptime!(level.clone()),
+                    comptime!(reach.clone()),
+                )),
                 space: comptime!(level.child(&operand.space)),
                 depth: comptime!(operand.depth + 1),
                 levels: comptime!(operand.levels.clone()),
@@ -811,7 +815,7 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
-            StageStorage::Lanes => {
+            StageStorage::Lanes { .. } => {
                 panic!("StageStorage::Lanes: the plane's lanes are not shared memory")
             }
             StageStorage::Tiled { block } => {
