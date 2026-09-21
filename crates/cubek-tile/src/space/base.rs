@@ -400,8 +400,21 @@ impl Space {
     /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
     /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`
     /// shape asks here rather than reading an operand's rank.
+    ///
+    /// An axis is kept if it varies or every operand shares it. One that does neither, as a routed
+    /// axis ([`Walk::routed`](crate::Walk::routed)) leaves, is a fixed coordinate, not a sum. A
+    /// shared axis stays even at one value, since separable factors are named by contracted
+    /// position.
     pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
-        Space::merge(operands).contracting(output)
+        let merged = Space::merge(operands);
+        // Read raw: a `Dynamic` extent is not known to be one, and asking its comptime size panics.
+        let varies = |axis: Axis| merged.extent_raw(axis) != Extent::Static(1);
+        let shared = |axis: Axis| operands.iter().all(|operand| operand.contains(axis));
+        merged
+            .contracting(output)
+            .into_iter()
+            .filter(|&axis| varies(axis) || shared(axis))
+            .collect()
     }
 
     /// The `k` edge this operand contracts over against `output`: the product of every
@@ -423,8 +436,20 @@ impl Space {
     /// two operands listing the same axes in different orders contract mismatched positions with
     /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
     /// axis list, which is stated per operand, so nothing upstream forces them to agree.
+    ///
+    /// A routed axis sits in one operand's list only, so each list is narrowed to the joint
+    /// [`contracted`](Space::contracted) axes first. Compared raw, every routed contraction would
+    /// read as a disagreement.
     pub(crate) fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
-        lhs.contracting(output) == rhs.contracting(output)
+        let joint = Space::contracted(&[lhs, rhs], output);
+        let listed = |operand: &Space| -> SmallVec<[Axis; MAX_AXES]> {
+            operand
+                .contracting(output)
+                .into_iter()
+                .filter(|axis| joint.contains(axis))
+                .collect()
+        };
+        listed(lhs) == listed(rhs)
     }
 
     /// The single axis this operand contracts against `output`:
