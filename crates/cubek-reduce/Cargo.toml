@@ -40,7 +40,8 @@ half = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-cubek-reduce = { workspace = true, features = ["cpu-reference"] }
+# Enable reference helpers for tests without publishing a versioned self-dependency.
+cubek-reduce = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }
 
 cubecl = { workspace = true, features = ["test-runtime"] }

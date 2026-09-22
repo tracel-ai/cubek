@@ -42,7 +42,8 @@ half = { workspace = true, features = ["bytemuck"] }
 serde = { workspace = true }
 
 [dev-dependencies]
-cubek-matmul = { workspace = true, features = ["cpu-reference"] }
+# Enable reference helpers for tests without publishing a versioned self-dependency.
+cubek-matmul = { path = ".", default-features = false, features = ["cpu-reference"] }
 cubek-test-utils = { workspace = true }
 cubek-quant = { workspace = true, features = ["kernels"] }
 
