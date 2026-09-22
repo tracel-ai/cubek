@@ -6,9 +6,13 @@ use cubecl::{
     zspace::Tiling,
 };
 use cubek_tile::{
-    Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, Launcher, Level, Offset,
+    Axis, Boundary, DequantAt, Divisor, Geometry, KernelForm, LaunchPlan, Level, Offset,
     Partitioning, PhysicalAxisMap, Projection, Scale, Space, Storage, StorageTiling, TileSpec,
 };
+
+/// The plane width these tests reason on. Stated, not read off a device: nothing here
+/// launches, and a launch's geometry is the same arithmetic whatever plane runs it.
+const PLANE: u32 = 32;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -16,14 +20,9 @@ const K: Axis = Axis(2);
 
 #[test]
 fn launcher_geometry_matches_concrete_space() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // X: 64/16 cube tiles, Y: 64/32, nothing on Z.
@@ -32,20 +31,14 @@ fn launcher_geometry_matches_concrete_space() {
         _ => panic!("launcher geometry should be static"),
     }
     // Planes: within a 16×32 cube tile, 2×4 leaves of 8×8.
-    let plane_size = client.properties().hardware.plane_size_max;
-    assert_eq!(launch.cube_dim(), CubeDim::new_2d(plane_size, 8));
+    assert_eq!(launch.cube_dim(), CubeDim::new_2d(PLANE, 8));
 }
 
 #[test]
 fn launcher_kernel_space_is_dynamic_concrete_is_not() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     for axis in [M, N, K] {
@@ -57,12 +50,11 @@ fn launcher_kernel_space_is_dynamic_concrete_is_not() {
 
 #[test]
 fn dynamic_along_frees_only_the_listed_axes() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[M, K]),
         )
     };
@@ -77,11 +69,10 @@ fn dynamic_along_frees_only_the_listed_axes() {
 #[test]
 #[should_panic(expected = "is not an axis of this space")]
 fn dynamic_along_unknown_axis_panics() {
-    let client = cubecl::test_device().client();
     let (space, levels) = batched_space(1, 1, 64, 64, 16);
-    let _ = Launcher::implied(
-        &client,
+    let _ = LaunchPlan::implied(
         Partitioning::new(space, levels),
+        PLANE,
         KernelForm::DynamicAlong(&[Axis(9)]),
     );
 }
@@ -92,9 +83,9 @@ fn dynamic_along_unknown_axis_panics() {
 #[should_panic(expected = "Dynamic")]
 fn geometry_after_dynamic_panics() {
     let (space, levels) = batched_space(1, 1, 64, 64, 16);
-    let _ = Launcher::implied(
-        &cubecl::test_device().client(),
+    let _ = LaunchPlan::implied(
         Partitioning::new(space.all_dynamic(), levels),
+        PLANE,
         KernelForm::Static,
     )
     .cube_count();
@@ -139,11 +130,7 @@ fn arg_derives_check_from_subspace_overhang() {
     // k = 18 overhangs its leaf (4); M and N divide everywhere.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     let touches_k = launch
@@ -184,11 +171,7 @@ fn arg_sizes_boundaries_by_coordinate_rank_under_storage_tiling() {
     // k = 18 overhangs its leaf (4), so K's coordinate is the one that needs the mode.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // 2 coordinate axes (M, K), tiled into 4 physical buffer dims: 8*8 = 64 and 5*4 = 20, the
@@ -216,11 +199,7 @@ fn arg_reads_the_storage_tiling_off_the_binding() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // The buffer says for itself that both its dims are stored two fragments deep.
@@ -242,11 +221,7 @@ fn arg_matches_a_storage_tile_to_the_level_it_is() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // Storage of (8, 4) are the leaf, the third level's tile.
@@ -278,11 +253,7 @@ fn arg_refuses_a_storage_tile_that_is_no_level() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 8);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let mut tiled = binding(&client, &[4, 2, 16, 4]);
     tiled.tiling = Tiling::new(&[2, 2]).unwrap();
@@ -297,11 +268,7 @@ fn arg_reads_a_tiling_stated_over_batch_dims_too() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(3, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     let mut tiled = binding(&client, &[3, 8, 5, 8, 4]);
@@ -322,11 +289,7 @@ fn arg_right_aligns_batches_and_drops_size_one() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(4, 3, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // One leading dim: right-aligns to B1 (the trailing axis of the full list).
@@ -359,11 +322,7 @@ fn spec_derives_what_a_bound_operand_derives() {
     // k = 18 overhangs its leaf (4), so the derivation has a check to arm and something to say.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
 
@@ -388,15 +347,10 @@ fn spec_derives_what_a_bound_operand_derives() {
 /// states it *on* the derivation; a spec hand-built beside it is the drift `build_spec` removes.
 #[test]
 fn spec_tunes_what_a_bound_operand_tunes() {
-    let client = cubecl::test_device().client();
     // k = 18 overhangs its leaf (4), so the derivation arms a check there is something to disarm.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let geometry = Geometry::of_dims(&[(64, 18), (18, 1)]);
 
@@ -423,14 +377,9 @@ fn spec_tunes_what_a_bound_operand_tunes() {
 /// See [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
 #[test]
 fn spec_returns_the_geometry_it_settled_on() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     let derived = launch
@@ -453,14 +402,9 @@ fn spec_returns_the_geometry_it_settled_on() {
 #[test]
 #[should_panic(expected = "batch dims but only 0 batch axes given")]
 fn spec_refuses_a_dim_it_cannot_label() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     let _ = launch
@@ -478,14 +422,9 @@ fn spec_refuses_a_dim_it_cannot_label() {
 /// the *stated* geometry would address a rank the projection lost; the settled one is returned.
 #[test]
 fn spec_settles_a_broadcast_batch_dim_away() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(4, 3, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // Three dims stated, the leading one broadcast over B1.
@@ -513,14 +452,9 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 #[test]
 #[should_panic(expected = "cannot be served 2 wide")]
 fn spec_refuses_a_width_the_geometry_cannot_serve() {
-    let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     // Row stride 17: an odd number of scalars, so no whole number of 2-wide lines steps a row.
@@ -553,9 +487,9 @@ fn arg_gathered_states_its_own_mapping() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -580,9 +514,9 @@ fn arg_gathered_derives_check_from_overhang() {
     // k = 18 overhangs its leaf (4).
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -614,9 +548,9 @@ fn arg_gathered_derives_check_from_underflow() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -655,9 +589,9 @@ fn arg_gathered_alongside_a_subspace_panics() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -676,9 +610,9 @@ fn arg_gathered_rank_mismatch_panics() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -696,9 +630,9 @@ fn arg_gathered_validates_the_innermost_dim() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[M]),
         )
     };
@@ -725,9 +659,9 @@ fn arg_gathered_dynamic_axis_is_accepted() {
     // `K` shares the gathered dim with `M`, so neither reads an extent off *this* operand.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N, K]),
         )
     };
@@ -744,9 +678,9 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -765,14 +699,14 @@ fn arg_gathered_identity_axis_may_stay_dynamic() {
 #[test]
 fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Launcher::implied(
-        &client,
+    let staged = LaunchPlan::implied(
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
             cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .levels(),
         ),
+        PLANE,
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -794,14 +728,14 @@ fn arg_gathered_dynamic_coefficient_stages_to_its_bound() {
 #[test]
 fn arg_gathered_rational_stages() {
     let client = cubecl::test_device().client();
-    let staged = Launcher::implied(
-        &client,
+    let staged = LaunchPlan::implied(
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
             cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .levels(),
         ),
+        PLANE,
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -821,14 +755,14 @@ fn arg_gathered_rational_stages() {
 #[test]
 fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
     let client = cubecl::test_device().client();
-    let staged = Launcher::implied(
-        &client,
+    let staged = LaunchPlan::implied(
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
             cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .levels(),
         ),
+        PLANE,
         KernelForm::DynamicAlong(&[N]),
     );
     let _ = staged
@@ -848,14 +782,14 @@ fn arg_gathered_dynamic_divisor_stages_to_its_bound() {
 #[test]
 fn arg_gathered_cancelling_divisor_stages() {
     let client = cubecl::test_device().client();
-    let staged = Launcher::implied(
-        &client,
+    let staged = LaunchPlan::implied(
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
             cubek_tile::Tiling::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .levels(),
         ),
+        PLANE,
         KernelForm::DynamicAlong(&[N]),
     );
     let projection = Projection::new(
@@ -880,18 +814,19 @@ fn vector_size_picks_widest_qualifying_line() {
     // Everything divides: N's leaf edge is 8, both inner extents are 64.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     // Off real bindings, not hand-written dims: the strides are the allocator's, so a pitched
     // one that padded a row is what the gate sees.
     let rhs = Geometry::from(&binding(&client, &[16, 64]));
     let out = Geometry::from(&binding(&client, &[64, 64]));
 
-    let v = launch.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>());
+    let v = launch.vector_size(
+        &client,
+        N,
+        &[(&rhs, &[K, N]), (&out, &[M, N])],
+        size_of::<f32>(),
+    );
     // The gate passed, so the pick is the hardware's widest line fitting the leaf edge (8).
     let expected = client
         .io_optimized_vector_sizes(size_of::<f32>())
@@ -908,11 +843,7 @@ fn vector_size_falls_back_to_scalar() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let out = Geometry::from(&binding(&client, &[64, 64]));
 
@@ -920,15 +851,16 @@ fn vector_size_falls_back_to_scalar() {
     // their length in lines and would wrongly clip.
     let overhang = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let rhs = Geometry::from(&binding(&client, &[18, 64]));
     assert_eq!(
-        overhang.vector_size(N, &[(&rhs, &[K, N]), (&out, &[M, N])], size_of::<f32>()),
+        overhang.vector_size(
+            &client,
+            N,
+            &[(&rhs, &[K, N]), (&out, &[M, N])],
+            size_of::<f32>()
+        ),
         1
     );
 
@@ -936,6 +868,7 @@ fn vector_size_falls_back_to_scalar() {
     let col_major = Geometry::of_dims(&[(16, 1), (64, 16)]);
     assert_eq!(
         launch.vector_size(
+            &client,
             N,
             &[(&col_major, &[K, N]), (&out, &[M, N])],
             size_of::<f32>()
@@ -946,7 +879,7 @@ fn vector_size_falls_back_to_scalar() {
     // An inner extent no width divides (63) blocks every line size.
     let odd = Geometry::from(&binding(&client, &[16, 63]));
     assert_eq!(
-        launch.vector_size(N, &[(&odd, &[K, N])], size_of::<f32>()),
+        launch.vector_size(&client, N, &[(&odd, &[K, N])], size_of::<f32>()),
         1
     );
 }
@@ -962,11 +895,7 @@ fn arg_checked_and_vectorized_panics() {
     // the bounds question. 18 is a whole number of 2-wide lines and still overhangs.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let _ = launch
         .arg(binding(&client, &[64, 18]))
@@ -981,11 +910,7 @@ fn arg_vectorized_with_outer_axis_overhang_succeeds() {
     // M = 63 overhangs its leaf (8); N = 64 divides cleanly.
     let launch = {
         let (space, levels) = batched_space(1, 1, 63, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let arg = launch
         .arg(binding(&client, &[63, 64]))
@@ -1008,11 +933,7 @@ fn arg_explicit_check_still_narrows_to_the_unsettled_axes() {
     // k = 18 overhangs its leaf (4); M divides, so no override can put a mask on it.
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 18);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
 
     let forced = launch
@@ -1039,9 +960,9 @@ fn arg_gathered_clamp_vectorized_exemption() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
+        LaunchPlan::implied(
             Partitioning::new(space, levels),
+            PLANE,
             KernelForm::DynamicAlong(&[N]),
         )
     };
@@ -1066,15 +987,16 @@ fn vector_size_axis_must_label_innermost() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let lhs = binding(&client, &[64, 16]);
     // lhs's innermost dim is K, not N: asking for N-lines over it is a labeling bug.
-    let _ = launch.vector_size(N, &[(&Geometry::from(&lhs), &[M, K])], size_of::<f32>());
+    let _ = launch.vector_size(
+        &client,
+        N,
+        &[(&Geometry::from(&lhs), &[M, K])],
+        size_of::<f32>(),
+    );
 }
 
 #[test]
@@ -1083,11 +1005,7 @@ fn arg_more_batch_dims_than_axes_panics() {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(4, 3, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let _ = launch
         .arg(binding(&client, &[4, 3, 64, 16]))
@@ -1105,11 +1023,7 @@ fn quantize(v: usize, scheme: QuantScheme) {
     let client = cubecl::test_device().client();
     let launch = {
         let (space, levels) = batched_space(1, 1, 64, 64, 16);
-        Launcher::implied(
-            &client,
-            Partitioning::new(space, levels),
-            KernelForm::Dynamic,
-        )
+        LaunchPlan::implied(Partitioning::new(space, levels), PLANE, KernelForm::Dynamic)
     };
     let _ = launch
         .arg(binding(&client, &[64, 16]))

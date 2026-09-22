@@ -20,7 +20,7 @@ use cubecl::{
     zspace::shape,
 };
 use cubecl_common::{e2m1, e4m3};
-use cubek_test_utils::{HostData, HostDataType, TestInput};
+use cubek_test_utils::{HostData, HostDataType, TestInput, skip_unless_plane_holds};
 use cubek_tile::*;
 use half::f16;
 
@@ -2188,6 +2188,10 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
     if matches!(arm, Arm::Landing) && !require_cmma_8x8x8_f32(&client) {
+        return;
+    }
+    // The register arm deals a tile's columns by two blocks to the plane's lanes.
+    if matches!(arm, Arm::Registers) && skip_unless_plane_holds(&client, (w.tile * 2) as u32) {
         return;
     }
     let dtype = f32::elem_type_native();

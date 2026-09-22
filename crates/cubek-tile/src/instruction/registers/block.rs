@@ -185,20 +185,24 @@ fn rank1_update<
         #[unroll(unroll)]
         for n in 0..nr {
             let pos = (n as u32, k_line);
-            b[n] = Vector::<E, V>::cast_from(rhs_scales.apply::<ER, V>(rhs.read(pos), pos));
+            // The value promotes to the accumulator's element before its scale folds in: a
+            // scale is a factor of the term, and a term is formed in `E`. Folding it in the
+            // operand's own element would round the scale to that element (an `i8` store
+            // would see `0.5` as `0`) and wrap the product it forms.
+            b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(rhs.read(pos)), pos);
         }
     } else {
         // The rhs lines along the accumulator.
         #[unroll(unroll)]
         for n in 0..nr {
             let pos = (k as u32, n as u32);
-            b[n] = Vector::<E, V>::cast_from(rhs_scales.apply::<ER, V>(rhs.read(pos), pos));
+            b[n] = rhs_scales.apply::<E, V>(Vector::<E, V>::cast_from(rhs.read(pos)), pos);
         }
     }
     #[unroll(unroll)]
     for i in 0..mr {
         let pos = (i as u32, k_line);
-        let line = lhs_scales.apply::<EL, L>(lhs.read(pos), pos);
+        let line = lhs_scales.apply::<E, L>(Vector::<E, L>::cast_from(lhs.read(pos)), pos);
         let a = if comptime!(contracted_per_step > 1) {
             Vector::<E, V>::cast_from(line)
         } else if comptime!(fixed.is_some()) {

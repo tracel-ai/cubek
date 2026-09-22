@@ -14,7 +14,7 @@ use cubecl::{
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
-    assert_equals_approx,
+    assert_equals_approx, skip_unless_plane_holds,
 };
 
 use cubek_tile::*;
@@ -3698,6 +3698,10 @@ fn register_matmul_lane_group_fold() {
     let client = cubecl::test_device().client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over lane groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_lanes as u32) {
+        return;
+    }
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
     let m = groups;
     let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
@@ -3746,6 +3750,10 @@ fn register_matmul_promoted_lane_group_fold() {
     let client = cubecl::test_device().client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over lane groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_lanes as u32) {
+        return;
+    }
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
     let (m, dtype) = (groups, f32::elem_type_native());
     let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);
@@ -3791,6 +3799,10 @@ fn register_matmul_promoted_folded_step_lane_group_fold() {
     let client = cubecl::test_device().client();
     let lanes = client.properties().hardware.plane_size_max as usize;
     let (group_lanes, edge, n) = (8usize, 4usize, 1usize);
+    // A fold over lane groups needs a plane that holds at least one whole group.
+    if skip_unless_plane_holds(&client, group_lanes as u32) {
+        return;
+    }
     let (groups, k) = (lanes / group_lanes, group_lanes * edge);
     let (m, dtype) = (groups, f32::elem_type_native());
     let launcher = lane_group_fold_space(lanes, group_lanes, edge, n);

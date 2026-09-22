@@ -1,6 +1,11 @@
-//! One kernel launch: the [`Launcher`] binds a space, the grid the selector chose and the tiles
-//! its operands are cut to to a client, keeping the concrete (real-extent) space beside the
-//! kernel-form one: geometry and divisibility read off real extents, and nothing consumes it early.
+//! One kernel launch, in two halves. A [`LaunchPlan`] is the geometry: the space, the grid the
+//! selector chose and the tiles its operands are cut to, and every question that is arithmetic
+//! over them. A [`Launcher`] is that plan bound to a client, which is where the device enters and
+//! where a cube the device cannot hold is refused.
+//!
+//! The split is what lets a caller reason about a launch without launching it: a test, a selector
+//! weighing two grids, a benchmark mapping. None of them has a kernel to dispatch, and none of
+//! them should have to satisfy a device to ask what a launch's geometry would be.
 
 use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
@@ -10,9 +15,10 @@ use crate::{
     StridedTileSource, Unset,
 };
 
-/// Which extents the compiled kernel reads at runtime. `Dynamic` (all) makes one compiled kernel
-/// serve every shape; `Static` (none) specializes it to this launch's extents; `DynamicAlong` frees
-/// only the listed axes, e.g. one no operand sizes ([`Tile::witnesses`](crate::Tile::witnesses)).
+/// Which extents the compiled kernel reads at runtime. Every one (`Dynamic`) makes one compiled
+/// kernel serve every shape; none (`Static`) specializes the kernel to this launch's extents;
+/// `DynamicAlong` frees only the listed axes, which specializes the loops along the others and
+/// serves an axis no operand can state the size of ([`Tile::witnesses`](crate::Tile::witnesses)).
 #[derive(Clone, Copy, Debug)]
 pub enum KernelForm<'a> {
     Dynamic,
@@ -20,16 +26,18 @@ pub enum KernelForm<'a> {
     DynamicAlong(&'a [Axis]),
 }
 
-/// One launch: a space, the grid the selector chose, the tiles the operands are cut to and the
-/// axes that overhang, bound to a client; each is the blueprint's statement. Geometry and
-/// divisibility read off the concrete (real-extent) space, tile arguments off the kernel-form one.
+/// A launch's geometry, with no device attached: a space, the grid the selector chose, the tiles
+/// the operands are cut to and the axes that overhang. Every one of those is the blueprint's
+/// statement, and every question here is arithmetic over them.
 ///
-/// A launch stating its levels ([`partitioned`](Launcher::partitioned)) can bind a storage-tiled
-/// operand: its storage tile must be one of their tiles ([`Storage`](crate::Storage)). A kernel
-/// with no blueprint (a test) is [`implied`](Launcher::implied) by its levels, kept for its loops.
+/// Geometry and divisibility are read off the concrete (real-extent) space, and tile arguments
+/// project from the kernel-form one.
+///
+/// Nothing here reads a device. Where a plan needs a device fact it is handed one — a plane size
+/// to [`implied`](LaunchPlan::implied), a client to [`vector_size`](LaunchPlan::vector_size) —
+/// rather than carrying a client of its own. Bind it with [`Launcher::bind`] to launch it.
 #[derive(Clone)]
-pub struct Launcher {
-    client: Client,
+pub struct LaunchPlan {
     concrete: Space,
     kernel: Space,
     cube_count: CubeCount,
@@ -43,22 +51,12 @@ pub struct Launcher {
     levels: Vec<Level>,
 }
 
-impl Launcher {
+impl LaunchPlan {
     /// `space` on `grid`, its extents this launch's real ones, in kernel `form`, cut by no level
-    /// and overhanging nowhere. Refuses a cube the device cannot hold.
-    pub fn new(
-        client: &Client,
-        space: Space,
-        grid: (CubeCount, CubeDim),
-        form: KernelForm<'_>,
-    ) -> Self {
+    /// and overhanging nowhere. [`partitioned`](LaunchPlan::partitioned) states both off a
+    /// partitioning's levels.
+    pub fn new(space: Space, grid: (CubeCount, CubeDim), form: KernelForm<'_>) -> Self {
         let (cube_count, cube_dim) = grid;
-        let max_units = client.properties().hardware.max_units_per_cube;
-        assert!(
-            cube_dim.num_elems() <= max_units,
-            "Launcher::new: a cube of {} units, but the device holds at most {max_units}",
-            cube_dim.num_elems()
-        );
         let kernel = match form {
             KernelForm::Dynamic => space.clone().all_dynamic(),
             KernelForm::Static => space.clone(),
@@ -68,14 +66,13 @@ impl Launcher {
                 for &axis in axes {
                     assert!(
                         space.contains(axis),
-                        "Launcher::new: {axis:?} is not an axis of this space"
+                        "LaunchPlan::new: {axis:?} is not an axis of this space"
                     );
                 }
                 space.clone().with_dynamic(axes)
             }
         };
-        Launcher {
-            client: client.clone(),
+        LaunchPlan {
             concrete: space,
             kernel,
             cube_count,
@@ -86,54 +83,49 @@ impl Launcher {
         }
     }
 
-    /// [`new`](Launcher::new) over the kernel's whole `partitioning`: the leaf and the overhangs
-    /// read off its levels, and the levels kept, which is what lets a storage-tiled operand find
-    /// the level its storage tile is the tile of. The grid is still the blueprint's statement.
+    /// [`new`](LaunchPlan::new) over the kernel's whole `partitioning`: the leaf and the overhangs
+    /// read off its levels rather than stated beside them, and the levels kept, which is what lets
+    /// a storage-tiled operand find the level its storage tile is the tile of. The grid is still
+    /// the blueprint's statement.
     pub fn partitioned(
-        client: &Client,
         partitioning: Partitioning,
         grid: (CubeCount, CubeDim),
         form: KernelForm<'_>,
     ) -> Self {
         let leaf = partitioning.leaf().extents();
         let overhangs = partitioning.overhanging();
-        let fillers = partitioning.fillers();
-        // The two roles meet on a barrier and nowhere else, so a device with no barrier type would
-        // run two loops with no rendezvous. Refused on the host, not where the slot is allocated: a
-        // refusal at expansion fires on a worker thread, unseen, and the launch returns zeros.
-        assert!(
-            fillers == 0
-                || client
-                    .properties()
-                    .features
-                    .types
-                    .opaque
-                    .contains(&OpaqueType::Barrier),
-            "Launcher: {fillers} plane(s) are set aside to fill a walk's stages, and this device \
-             carries no barrier type for the two roles to meet on"
-        );
         let Partitioning { space, levels } = partitioning;
-        Launcher {
+        LaunchPlan {
             leaf,
             overhangs,
             levels,
-            ..Launcher::new(client, space, grid, form)
+            ..LaunchPlan::new(space, grid, form)
         }
     }
 
-    /// The launch `partitioning` implies, for a kernel with no blueprint to state one: as many
-    /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they overhang.
-    /// Reads off the levels what a blueprint would state, for a test or a benchmark mapping only.
-    pub fn implied(client: &Client, partitioning: Partitioning, form: KernelForm<'_>) -> Self {
-        let plane_size = client.properties().hardware.plane_size_max;
+    /// The plan `partitioning` implies, for a kernel with no blueprint to state one: as many
+    /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they
+    /// overhang. A third constructor, not `new`: a launch is stated, and this one reads off the
+    /// levels what a blueprint would have stated, which only a test or a benchmark mapping wants.
+    ///
+    /// `plane_size` is the device's, and is stated rather than read so a caller can ask what this
+    /// partitioning implies on a plane it does not have in front of it.
+    pub fn implied(partitioning: Partitioning, plane_size: u32, form: KernelForm<'_>) -> Self {
         let lanes = partitioning.lanes();
         assert!(
             lanes == 1 || lanes == plane_size,
-            "Launcher::implied: Unit axes must partition exactly plane_size ({plane_size}) lanes, \
-             got {lanes}"
+            "LaunchPlan::implied: Unit axes must partition exactly plane_size ({plane_size}) \
+             lanes, got {lanes}"
         );
         let grid = (partitioning.cube_count(), partitioning.cube_dim(plane_size));
-        Launcher::partitioned(client, partitioning, grid, form)
+        LaunchPlan::partitioned(partitioning, grid, form)
+    }
+
+    /// How many planes this plan sets aside to fill a walk's stages rather than to compute.
+    /// The two roles meet on a barrier, which is a device fact, so it is [`Launcher::bind`] that
+    /// refuses a device carrying no barrier type.
+    fn fillers(&self) -> u32 {
+        self.levels.iter().map(|level| level.fillers() as u32).sum()
     }
 
     pub fn cube_count(&self) -> CubeCount {
@@ -189,7 +181,7 @@ impl Launcher {
         self.levels[i].clone()
     }
 
-    /// Starts configuring a tile operand builder ([`StridedTileSource`]) bound to this launcher's
+    /// Starts configuring a tile operand builder ([`StridedTileSource`]) bound to this plan's
     /// kernel space, with automatic bounds checking derived from the concrete nest's overhang.
     pub fn arg(&self, binding: TensorBinding) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedOperand::source(binding)
@@ -199,13 +191,17 @@ impl Launcher {
             .levels(&self.levels)
     }
 
-    /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor: a fused store's
-    /// destination ([`Tile::of_sink`](crate::Tile::of_sink)) or a fused read's producer
-    /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is what it *would* have had.
+    /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
+    /// tensor: the destination a fused store writes through
+    /// ([`Tile::of_sink`](crate::Tile::of_sink)) or the producer a fused read comes from
+    /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is the physical extents and
+    /// strides the operand *would* have had; everything else is settled exactly as for a bound
+    /// operand, since this is the same builder.
     ///
-    /// The rest is settled as for a bound operand, since this is the same builder. End it with
-    /// [`build_spec`](StridedTileSource::build_spec), not [`build`](StridedTileSource::build):
-    /// no tensor ships, and the *settled* geometry (broadcast batch dims dropped) comes back too.
+    /// End it with [`build_spec`](StridedTileSource::build_spec), not
+    /// [`build`](StridedTileSource::build): there is no tensor to ship, and the *settled* geometry
+    /// comes back beside the spec. The two part company where a broadcast batch dim is dropped,
+    /// which is why the settled one travels rather than the call site reproducing the drop.
     pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedTileSource::<Unset, Unset, Unset>::of_geometry(geometry)
             .space(&self.kernel)
@@ -215,13 +211,17 @@ impl Launcher {
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for
-    /// all, since a kernel reading one operand's lines writes the other's. Takes a [`Geometry`]
-    /// rather than a binding, so an operand with no tensor constrains the width like any other.
+    /// all of them, since a kernel reading one operand's lines writes the other's. Each
+    /// `(geometry, subspace)` must be unchecked and innermost-contiguous, and the width must
+    /// divide each inner extent, every coarser stride and the axis's leaf tile edge; `1`
+    /// otherwise. Takes a [`Geometry`] rather than a binding so an operand with no tensor
+    /// constrains the shared width like any other.
     ///
-    /// `1` unless each `(geometry, subspace)` is unchecked and innermost-contiguous and `v` divides
-    /// each inner extent, every coarser stride and the axis's leaf tile edge.
+    /// `client` is the only device fact this asks for: which line widths its I/O is optimized
+    /// for. Everything else is read off the plan.
     pub fn vector_size(
         &self,
+        client: &Client,
         axis: Axis,
         operands: &[(&Geometry, &[Axis])],
         type_size: usize,
@@ -232,7 +232,7 @@ impl Launcher {
             assert_eq!(
                 subspace.last(),
                 Some(&axis),
-                "Launcher::vector_size: axis {axis:?} must label each operand's innermost dim"
+                "LaunchPlan::vector_size: axis {axis:?} must label each operand's innermost dim"
             );
         }
         // The one gate that is about the tiles rather than the geometry: a masked access reports
@@ -245,7 +245,7 @@ impl Launcher {
             return 1;
         }
         let leaf = self.leaf_edge(axis);
-        self.client
+        client
             .io_optimized_vector_sizes(type_size)
             .filter(|&v| {
                 leaf.is_multiple_of(v)
@@ -256,5 +256,147 @@ impl Launcher {
             })
             .max()
             .unwrap_or(1)
+    }
+}
+
+/// One launch: a [`LaunchPlan`] bound to the client it will run on. Binding is where the device
+/// is first known, so it is where a cube the device cannot hold, and a walk whose two roles have
+/// no barrier to meet on, are refused — on the host, before anything is dispatched.
+///
+/// Every geometry question is the plan's, and delegated to it. A caller that only wants to ask
+/// those questions wants a [`LaunchPlan`] and no client.
+#[derive(Clone)]
+pub struct Launcher {
+    client: Client,
+    plan: LaunchPlan,
+}
+
+impl Launcher {
+    /// `plan` on `client`. Refuses a cube the device cannot hold, and a plan that sets planes
+    /// aside to fill a walk's stages on a device carrying no barrier type.
+    pub fn bind(client: &Client, plan: LaunchPlan) -> Self {
+        let max_units = client.properties().hardware.max_units_per_cube;
+        assert!(
+            plan.cube_dim().num_elems() <= max_units,
+            "Launcher::bind: a cube of {} units, but the device holds at most {max_units}",
+            plan.cube_dim().num_elems()
+        );
+        // The two roles meet on a barrier and nowhere else, so a device that carries no barrier
+        // type would run two loops with no rendezvous between them. Refused here, on the host,
+        // and not where the slot is allocated: a refusal at expansion fires on a worker thread,
+        // where nothing sees it and the launch returns zeros.
+        let fillers = plan.fillers();
+        assert!(
+            fillers == 0
+                || client
+                    .properties()
+                    .features
+                    .types
+                    .opaque
+                    .contains(&OpaqueType::Barrier),
+            "Launcher: {fillers} plane(s) are set aside to fill a walk's stages, and this device \
+             carries no barrier type for the two roles to meet on"
+        );
+        Launcher {
+            client: client.clone(),
+            plan,
+        }
+    }
+
+    /// [`LaunchPlan::new`] bound to `client`.
+    pub fn new(
+        client: &Client,
+        space: Space,
+        grid: (CubeCount, CubeDim),
+        form: KernelForm<'_>,
+    ) -> Self {
+        Launcher::bind(client, LaunchPlan::new(space, grid, form))
+    }
+
+    /// [`LaunchPlan::partitioned`] bound to `client`.
+    pub fn partitioned(
+        client: &Client,
+        partitioning: Partitioning,
+        grid: (CubeCount, CubeDim),
+        form: KernelForm<'_>,
+    ) -> Self {
+        Launcher::bind(client, LaunchPlan::partitioned(partitioning, grid, form))
+    }
+
+    /// [`LaunchPlan::implied`] on `client`'s plane size, bound to it.
+    pub fn implied(client: &Client, partitioning: Partitioning, form: KernelForm<'_>) -> Self {
+        let plane_size = client.properties().hardware.plane_size_max;
+        Launcher::bind(client, LaunchPlan::implied(partitioning, plane_size, form))
+    }
+
+    /// The geometry this launch runs, free of the client it is bound to.
+    pub fn plan(&self) -> &LaunchPlan {
+        &self.plan
+    }
+
+    /// The client this launch runs on.
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    // ---- the plan's questions, asked through the launch it is bound into ----
+
+    pub fn cube_count(&self) -> CubeCount {
+        self.plan.cube_count()
+    }
+
+    pub fn cube_dim(&self) -> CubeDim {
+        self.plan.cube_dim()
+    }
+
+    /// See [`LaunchPlan::space`].
+    pub fn space(&self) -> &Space {
+        self.plan.space()
+    }
+
+    /// See [`LaunchPlan::kernel_space`].
+    pub fn kernel_space(&self) -> &Space {
+        self.plan.kernel_space()
+    }
+
+    /// See [`LaunchPlan::partitioning_arg`].
+    pub fn partitioning_arg(&self) -> PartitioningLaunch {
+        self.plan.partitioning_arg()
+    }
+
+    /// See [`LaunchPlan::levels`].
+    pub fn levels(&self) -> &[Level] {
+        self.plan.levels()
+    }
+
+    /// See [`LaunchPlan::partitioning`].
+    pub fn partitioning(&self) -> Partitioning {
+        self.plan.partitioning()
+    }
+
+    /// See [`LaunchPlan::level`].
+    pub fn level(&self, i: usize) -> Level {
+        self.plan.level(i)
+    }
+
+    /// See [`LaunchPlan::arg`].
+    pub fn arg(&self, binding: TensorBinding) -> StridedTileSource<'_, Set, Unset, Unset> {
+        self.plan.arg(binding)
+    }
+
+    /// See [`LaunchPlan::geometry`].
+    pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
+        self.plan.geometry(geometry)
+    }
+
+    /// See [`LaunchPlan::vector_size`], asked of the client this launch is bound to.
+    pub fn vector_size(
+        &self,
+        axis: Axis,
+        operands: &[(&Geometry, &[Axis])],
+        type_size: usize,
+    ) -> usize {
+        self.plan
+            .vector_size(&self.client, axis, operands, type_size)
     }
 }
