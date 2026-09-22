@@ -48,18 +48,19 @@ impl Layout for GmemLayout {
                 let (finer, modulo) = comptime!(self.projection.digit(pa, term.axis));
                 // Strip the finer digits, then take this one. The outermost fragment of an axis
                 // (and any untiled axis) has no radix and keeps the full quotient.
-                let quot = pos[p].fdiv(self.physical_shape.fproduct(comptime!(finer.to_vec())));
+                let quot =
+                    pos[p].divided_by(self.physical_shape.product(comptime!(finer.to_vec())));
                 let digit = match comptime!(modulo) {
-                    Some(m) => quot.frem(self.physical_shape.at(m)),
+                    Some(m) => quot.remainder(self.physical_shape.at(m)),
                     None => quot,
                 };
-                parts.push(digit.fmul(comptime!(term.scale.get() as u32).runtime()));
+                parts.push(digit.times(comptime!(term.scale.get() as u32).runtime()));
             }
-            terms.push(parts.fsum(picks).fmul(self.physical_strides.at(pa)));
+            terms.push(parts.sum(picks).times(self.physical_strides.at(pa)));
         }
         terms
-            .fsum(comptime!((0..rank).collect::<Vec<_>>()))
-            .fcast::<usize>()
+            .sum(comptime!((0..rank).collect::<Vec<_>>()))
+            .retyped::<usize>()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -102,7 +103,7 @@ pub struct Window {
     /// Per-coordinate-axis boundary handling, same rank as `bound`. `None` means that axis is in
     /// bounds by construction; an empty list makes every axis `None`.
     #[cube(comptime)]
-    pub(crate) boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+    pub(crate) boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
 }
 
 #[cube]
@@ -112,7 +113,7 @@ impl Window {
         extent: Coords<u32>,
         bound: Coords<u32>,
         #[comptime] signed: bool,
-        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
     ) -> Self {
         // Both walks index `origin`, `pos` and `boundaries` by one counter, so a rank slip would
         // apply one axis's mode to another rather than fail. `bound` is left out: a sub-window
@@ -154,11 +155,11 @@ impl Window {
     /// The scalar physical-axis check behind [`axes_in_bounds`](Self::axes_in_bounds).
     pub(crate) fn axis_in_bounds(&self, pos: u32, #[comptime] axis: usize) -> bool {
         if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
-            let abs = self.origin.at(axis).fadd(pos.fcast::<i32>());
+            let abs = self.origin.at(axis).plus(pos.retyped::<i32>());
             if comptime!(self.signed) {
-                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)
+                abs >= 0i32 && abs.retyped::<u32>() < self.bound.at(axis)
             } else {
-                abs.fcast::<u32>() < self.bound.at(axis)
+                abs.retyped::<u32>() < self.bound.at(axis)
             }
         } else {
             true.runtime()
@@ -184,14 +185,14 @@ pub(crate) struct SourceWindow {
     pub(crate) bound: Coords<u32>,
     /// What a stage coordinate is multiplied by to land on the source, per physical axis.
     #[cube(comptime)]
-    pub(crate) steps: SmallVec<[usize; MAX_AXES]>,
+    pub(crate) steps: SmallVec<[usize; Space::MAX_RANK]>,
     /// Whether the source origin can be negative.
     #[cube(comptime)]
     pub(crate) signed: bool,
     /// The source's per-axis boundary handling. Same meaning as [`Window::boundaries`], read off
     /// the operand the stage was filled from rather than the stage's own (empty) list.
     #[cube(comptime)]
-    pub(crate) boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+    pub(crate) boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
 }
 
 #[cube]
@@ -229,12 +230,12 @@ impl SourceWindow {
     ) -> bool {
         if comptime!(self.boundaries.get(axis).copied().flatten() == Some(Boundary::Zero)) {
             let step = comptime!(self.steps.get(axis).copied().unwrap_or(1) as i32);
-            let cell = (stage_origin + pos.fcast::<i32>()) * step;
+            let cell = (stage_origin + pos.retyped::<i32>()) * step;
             let abs = self.origin.at(axis) + cell;
             if comptime!(self.signed) {
-                abs >= 0i32 && abs.fcast::<u32>() < self.bound.at(axis)
+                abs >= 0i32 && abs.retyped::<u32>() < self.bound.at(axis)
             } else {
-                abs.fcast::<u32>() < self.bound.at(axis)
+                abs.retyped::<u32>() < self.bound.at(axis)
             }
         } else {
             true.runtime()
@@ -275,20 +276,20 @@ impl Layout for Window {
 
         #[unroll]
         for i in 0..self.origin.len() {
-            let abs = self.origin.at(i).fadd(pos[i].fcast::<i32>());
+            let abs = self.origin.at(i).plus(pos[i].retyped::<i32>());
             // Clamp negative coordinates to 0 before bounds masking. Branchless: this runs per
             // tap of every gathered read, where a diamond would cost more than the cast it skips.
             let shifted = if comptime!(self.signed) {
-                select(abs >= 0i32, abs.fcast::<u32>(), 0u32)
+                select(abs >= 0i32, abs.retyped::<u32>(), 0u32)
             } else {
-                abs.fcast::<u32>()
+                abs.retyped::<u32>()
             };
             // Under `Clamp`, fold this coordinate onto its axis's edge cell rather than
             // leaving it for the mask.
             let shifted = match comptime!(self.boundaries.get(i).copied().flatten()) {
                 Some(Boundary::Clamp) => {
                     let bound_i = self.bound.at(i);
-                    let edge = select(shifted >= bound_i, bound_i.fsub(1u32), shifted);
+                    let edge = select(shifted >= bound_i, bound_i.minus(1u32), shifted);
                     // A zero-extent axis has no edge cell to fold onto, and the `bound - 1` above
                     // wrapped into a wild line index; both arms evaluate, so it is discarded here
                     // rather than skipped, and the axis folds to `0` like an underflow instead.

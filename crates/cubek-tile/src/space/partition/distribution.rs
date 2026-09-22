@@ -2,7 +2,7 @@
 //! [`Level`](crate::Level) states beside its tile and its [`Count`](crate::Count), read back
 //! per axis.
 
-use crate::{Fold, FoldExpand};
+use crate::{Known, KnownExpand};
 use cubecl::prelude::*;
 
 /// `Sequential` is one instance walking the whole axis. `Spatial` deals it to hardware
@@ -54,14 +54,14 @@ pub(crate) fn instance_tiles(
     } else {
         match spread {
             Spread::Contiguous => {
-                let start = pos.fmul(run);
-                run.fmin(grid.fmax(start).fsub(start))
+                let start = pos.times(run);
+                run.min_with(grid.max_with(start).minus(start))
             }
             Spread::Interleaved => grid
-                .fmax(pos)
-                .fsub(pos)
-                .fadd(instances.fsub(1usize))
-                .fdiv(instances),
+                .max_with(pos)
+                .minus(pos)
+                .plus(instances.minus(1usize))
+                .divided_by(instances),
         }
     }
 }

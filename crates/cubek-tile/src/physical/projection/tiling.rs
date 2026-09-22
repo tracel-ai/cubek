@@ -3,7 +3,7 @@
 
 use cubecl::zspace::{SmallVec, Tiling};
 
-use crate::{Axis, MAX_AXES};
+use crate::{Axis, Space};
 
 /// How many physical fragments each logical axis is split across, in the operand's own axis order.
 /// One fragment is an untiled axis; `n` make a coordinate along it an `n`-digit mixed radix number
@@ -17,7 +17,7 @@ use crate::{Axis, MAX_AXES};
 /// depths needs no new shape of description.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StorageTiling {
-    fragments: SmallVec<[usize; MAX_AXES]>,
+    fragments: SmallVec<[usize; Space::MAX_RANK]>,
 }
 
 impl StorageTiling {

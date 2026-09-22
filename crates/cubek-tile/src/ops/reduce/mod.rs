@@ -4,4 +4,7 @@
 //! its contracted axes into an accumulator tile at a final tile, through the register nest
 //! ([`instruction::registers::reduce`](crate::instruction::registers::reduce)).
 
+mod arrival;
 mod lower;
+
+pub use arrival::Arrival;

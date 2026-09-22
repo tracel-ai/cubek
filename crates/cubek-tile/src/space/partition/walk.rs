@@ -17,8 +17,7 @@ use cubecl::prelude::*;
 use cubecl::unexpanded;
 
 use crate::{
-    Axis, Coords, Count, Fold, FoldExpand, Level, Region, RegionExpand, Space, const_coords,
-    instance_tiles,
+    Axis, Coords, Count, Known, KnownExpand, Level, Region, RegionExpand, Space, instance_tiles,
 };
 
 use super::level::Grid;
@@ -174,23 +173,23 @@ impl Walk {
                         .collect::<Vec<_>>()
                 );
                 let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
-                let inner_weight = instances.fproduct(picks) * comptime!(unspanned).runtime();
+                let inner_weight = instances.product(picks) * comptime!(unspanned).runtime();
                 let position = if comptime!(in_plane.is_some_and(|(x, _)| x == p)) {
                     swizzled.at(0)
                 } else if comptime!(in_plane.is_some_and(|(_, y)| y == p)) {
                     swizzled.at(1)
                 } else {
                     hardware_pos(comptime!(dist.scope_unchecked()))
-                        .fdiv(inner_weight)
-                        .frem(instances.at(p))
+                        .divided_by(inner_weight)
+                        .remainder(instances.at(p))
                 };
                 // One tile a worker, or this worker's run of a grid dealt across them, cut short
                 // where the grid does not divide.
                 let run = match comptime!(level.count(axis).unwrap()) {
                     Count::Across(workers) => grid
                         .at(p)
-                        .fadd(comptime!(workers - 1).runtime())
-                        .fdiv(workers.runtime()),
+                        .plus(comptime!(workers - 1).runtime())
+                        .divided_by(workers.runtime()),
                     Count::Of(_) | Count::Every => 1usize.runtime(),
                 };
                 counts.push(instance_tiles(
@@ -216,13 +215,13 @@ impl Walk {
 
         // Folded, not accumulated: a static walk's total stays a constant, so
         // `#[unroll] for region in walk` can unroll it.
-        let steps = counts.fproduct(comptime!((0..rank).collect::<Vec<_>>()));
+        let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
             counts,
             positions,
             scales,
-            route: const_coords(comptime!(vec![0; rank])),
+            route: Coords::constant(comptime!(vec![0; rank])),
             routed_at: comptime!(Vec::new()),
             base: 0usize,
             steps,
@@ -267,13 +266,13 @@ impl Walk {
                 // instance's share of them and would clamp every lane to its first.
                 let last = comptime!(self.level.tiles(&self.space, axis) - 1).runtime();
                 counts.push(1usize);
-                route.push(coord.fmin(last).fcast::<u32>());
+                route.push(coord.min_with(last).retyped::<u32>());
             } else {
                 counts.push(self.counts.at(p));
                 route.push(self.route.at(p));
             }
         }
-        let steps = counts.fproduct(comptime!((0..rank).collect::<Vec<_>>()));
+        let steps = counts.product(comptime!((0..rank).collect::<Vec<_>>()));
 
         Walk {
             counts,
@@ -304,7 +303,7 @@ impl Walk {
     pub fn region(&self, i: usize) -> Region {
         let idx = self
             .base
-            .fadd(walk_index(i, self.steps, comptime!(self.order)));
+            .plus(walk_index(i, self.steps, comptime!(self.order)));
         self.parent
             .below(self.resolve(idx), comptime!(self.level.clone()))
     }
@@ -320,7 +319,7 @@ impl Walk {
             if comptime!(self.routed_at.contains(&p)) {
                 coords.push(self.route.at(p));
             } else {
-                coords.push(self.fold(self.digit(idx, p), p).fcast::<u32>());
+                coords.push(self.fold(self.digit(idx, p), p).retyped::<u32>());
             }
         }
         coords
@@ -330,9 +329,9 @@ impl Walk {
     /// the later axes' counts, keep the remainder of this one. Constant counts fold.
     fn digit(&self, idx: usize, #[comptime] p: usize) -> usize {
         let rank = comptime!(self.space.rank());
-        let quot = idx.fdiv(
+        let quot = idx.divided_by(
             self.counts
-                .fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
+                .product(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
         );
         // `% count` is a no-op when `idx` has no more significant digit: a range fact that
         // folding (which only sees values) cannot know. Those digits are absent when every earlier
@@ -344,12 +343,12 @@ impl Walk {
         let one = count.constant();
         let earlier = self
             .counts
-            .fproduct(comptime!((0..p).collect::<Vec<_>>()))
+            .product(comptime!((0..p).collect::<Vec<_>>()))
             .constant();
         if comptime!(one != Some(1) && earlier == Some(1)) {
             quot
         } else {
-            quot.frem(count)
+            quot.remainder(count)
         }
     }
 
@@ -361,9 +360,9 @@ impl Walk {
         if comptime!(matches!(dist, Distribution::Sequential)) {
             digit
         } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            digit.fadd(self.positions.at(p).fmul(self.scales.at(p)))
+            digit.plus(self.positions.at(p).times(self.scales.at(p)))
         } else {
-            digit.fmul(self.scales.at(p)).fadd(self.positions.at(p))
+            digit.times(self.scales.at(p)).plus(self.positions.at(p))
         }
     }
 
@@ -466,7 +465,7 @@ impl Iterable for WalkExpand {
     /// drop the loop around a single region: a level that cuts nothing is one region, walked
     /// straight through rather than under a one-trip loop.
     fn const_len(&self) -> Option<usize> {
-        crate::fold::constant(&self.steps).map(|n| n as usize)
+        crate::algebra::constant(&self.steps).map(|n| n as usize)
     }
 }
 
@@ -488,7 +487,7 @@ fn swizzled_positions(
         // The grid's own linear order, which is the order the hardware starts cubes in and so
         // the one a permutation of it can say anything about.
         let flat = hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X)))
-            .fadd(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).fmul(count_x));
+            .plus(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).times(count_x));
         let (x, y) = cube_positions(flat, (count_x, count_y), comptime!(level.order()));
         out.push(x);
         out.push(y);

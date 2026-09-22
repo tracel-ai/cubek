@@ -220,8 +220,8 @@ impl<T: Numeric> Lanes<T> {
                     let stride = comptime!(self.strides[p]);
                     if comptime!(stride > 0) {
                         at.push(
-                            lane.fdiv(comptime!(stride as u32))
-                                .frem(comptime!(self.loaded.extent_at(p) as u32)),
+                            lane.divided_by(comptime!(stride as u32))
+                                .remainder(comptime!(self.loaded.extent_at(p) as u32)),
                         );
                     } else {
                         at.push(0u32.runtime());
@@ -286,7 +286,7 @@ impl<T: Numeric> Lanes<T> {
             origin.push(
                 self.origin
                     .at(p)
-                    .fadd(step.coord(axis).fmul(edge).fcast::<u32>()),
+                    .plus(step.coord(axis).times(edge).retyped::<u32>()),
             );
         }
         Lanes::<T> {
@@ -316,14 +316,14 @@ impl<T: Numeric> Lanes<T> {
         for p in 0..rank - 1 {
             let stride = comptime!(self.strides[p] as u32);
             if comptime!(stride > 0) {
-                line = line.fadd(self.origin.at(p).fadd(coords.at(p)).fmul(stride));
+                line = line.plus(self.origin.at(p).plus(coords.at(p)).times(stride));
             }
         }
-        let byte = self.origin.at(rank - 1).fadd(coords.at(rank - 1));
+        let byte = self.origin.at(rank - 1).plus(coords.at(rank - 1));
         let per_word = comptime!(self.field.per_word());
         let words = comptime!(self.words);
-        let word = byte.fdiv(comptime!(per_word as u32));
-        let field = byte.frem(comptime!(per_word as u32));
+        let word = byte.divided_by(comptime!(per_word as u32));
+        let field = byte.remainder(comptime!(per_word as u32));
         let held = match comptime!(self.reach) {
             Reach::Shuffle => {
                 // Every lane offers its word `j`; the lane that asked receives line `line`'s.
@@ -336,7 +336,7 @@ impl<T: Numeric> Lanes<T> {
                     got.insert(j, plane_shuffle(mine.extract(j), line));
                 }
                 if comptime!(words > 1) {
-                    got.extract_dynamic(word.fcast::<usize>())
+                    got.extract_dynamic(word.retyped::<usize>())
                 } else {
                     got.extract(0usize)
                 }
@@ -346,7 +346,7 @@ impl<T: Numeric> Lanes<T> {
                 #[comptime]
                 match &self.window {
                     ComptimeOption::Some(window) => {
-                        window[(line.fmul(comptime!(words as u32)).fadd(word)) as usize]
+                        window[(line.times(comptime!(words as u32)).plus(word)) as usize]
                     }
                     ComptimeOption::None => panic!("Lanes: no window was opened"),
                 }
@@ -357,7 +357,7 @@ impl<T: Numeric> Lanes<T> {
         // eighty for one `ue4m3` scale). Shifting the wanted field down first leaves one to decode.
         let bits = comptime!(self.field.size_bits() as u32);
         let only = match comptime!(per_word > 1) {
-            true => held >> field.fmul(bits),
+            true => held >> field.times(bits),
             false => held,
         };
         unpack_line::<T, Const<1>, Const<1>>(

@@ -3,7 +3,7 @@
 //! with `at`, applying the steps below its own depth, so the root tile and any window read alike.
 
 use super::{Level, Partitioning, Space};
-use crate::{Axis, Coords, Fold, FoldExpand, MatrixAxes, Walk};
+use crate::{Axis, Coords, Known, KnownExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
 /// One level's cut of one space: the tile coordinates a loop over `level` handed out, and the
@@ -44,7 +44,7 @@ impl Step {
         if comptime!(self.space.contains(axis)) {
             self.coords
                 .at(comptime!(self.space.position(axis)))
-                .fcast::<usize>()
+                .retyped::<usize>()
         } else {
             0usize.runtime()
         }
@@ -124,7 +124,7 @@ impl Region {
     /// The region one level below the root at trailing-two coordinates `(c0, c1)` under `level`,
     /// `0` elsewhere, for a tile at `depth`: what a leaf states to cut an operand its own way.
     ///
-    /// The coordinates carry their own constness ([`fcast`](crate::Fold::fcast) keeps a constant
+    /// The coordinates carry their own constness ([`retyped`](crate::Known::retyped) keeps a constant
     /// constant): comptime ones fold to constants and can select fragments; kernel-computed ones
     /// (the visit a worker picked out of a grid by hardware position) window memory.
     pub fn trailing(
@@ -143,9 +143,9 @@ impl Region {
             // longer select a fragment. `runtime` on the `0` moves the literal into the expand
             // domain and keeps it constant too.
             let c = if comptime!(p == edges.row_split) {
-                c0.fcast::<u32>()
+                c0.retyped::<u32>()
             } else if comptime!(p == edges.col_split) {
-                c1.fcast::<u32>()
+                c1.retyped::<u32>()
             } else {
                 0u32.runtime()
             };

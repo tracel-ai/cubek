@@ -7,7 +7,7 @@
 
 use cubecl::prelude::*;
 
-use super::Monoid;
+use crate::Monoid;
 
 /// The plane instruction itself: fold `val` under `monoid` across the whole plane, leaving every
 /// lane holding the total. Unguarded, for callers that already know the plane carries real lanes.

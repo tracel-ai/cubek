@@ -248,7 +248,7 @@ impl MaskProbe {
     pub fn keys(&self) -> usize {
         let mut keys = self.bound_s;
         if comptime!(self.causal) {
-            keys = keys.fmin(self.origin_q.fadd(comptime!(self.q_rows).runtime()));
+            keys = keys.min_with(self.origin_q.plus(comptime!(self.q_rows).runtime()));
         }
         keys
     }

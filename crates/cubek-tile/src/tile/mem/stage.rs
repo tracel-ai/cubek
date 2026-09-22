@@ -29,7 +29,7 @@ impl<T: Numeric> MemData<T> {
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
-            let pos = unravel(&shape, i.fcast::<u32>());
+            let pos = shape.unravel(i.retyped::<u32>());
             // TODO: staging cannot see its consumer, so this masked fill uses ProceduralData's
             // zero fallback, not every reduction's identity (Max on negatives, Min on positives).
             // A reduction-aware contract must carry validity or the consumer's identity here.
@@ -245,7 +245,7 @@ impl<T: Numeric> MemData<T> {
         #[comptime] projection: Projection,
         map: &RuntimeMap,
         #[comptime] signed: bool,
-        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
     ) -> Tile<T> {
         let form = comptime!(StageForm::gathered(
             &space,
@@ -255,7 +255,7 @@ impl<T: Numeric> MemData<T> {
         ));
         let stage_map = RuntimeMap {
             coefficients: map.coefficients.clone(),
-            residues: const_coords(comptime!(vec![0; form.projection.physical_rank()])),
+            residues: Coords::constant(comptime!(vec![0; form.projection.physical_rank()])),
         };
         let stage_map =
             if comptime!(form.projection.is_rational() || form.projection.has_dynamic_scales()) {
@@ -486,9 +486,9 @@ impl<T: Numeric> MemData<T> {
     /// while the origin and bound are written by each [`fill_from`](MemData::fill_from) from the
     /// operand that fill reads.
     fn pending_source_window(
-        #[comptime] steps: SmallVec<[usize; MAX_AXES]>,
+        #[comptime] steps: SmallVec<[usize; Space::MAX_RANK]>,
         #[comptime] signed: bool,
-        #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+        #[comptime] boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
     ) -> SourceWindow {
         let rank = comptime!(steps.len());
         let mut origin = Coords::<i32>::new();
@@ -648,7 +648,7 @@ pub(crate) struct StageForm {
     projection: Projection,
     /// What a stage coordinate is multiplied by to land on the source, per physical axis. All `1`
     /// for a dense stage, which is a copy of the tile and shares its coordinates.
-    steps: SmallVec<[usize; MAX_AXES]>,
+    steps: SmallVec<[usize; Space::MAX_RANK]>,
 }
 
 impl StageForm {

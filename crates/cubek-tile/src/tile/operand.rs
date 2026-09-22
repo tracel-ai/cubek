@@ -325,15 +325,15 @@ impl<S: Numeric> Tile<S> {
         for p in 0..rank {
             let coord = coords.at(p);
             if comptime!(p == rank - 1 && width > 1) {
-                field = coord.frem(comptime!(width as u32));
-                at.push(coord.fdiv(comptime!(width as u32)));
+                field = coord.remainder(comptime!(width as u32));
+                at.push(coord.divided_by(comptime!(width as u32)));
             } else {
                 at.push(coord);
             }
         }
         let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
         if comptime!(width > 1) {
-            line.extract_dynamic(field.fcast::<usize>())
+            line.extract_dynamic(field.retyped::<usize>())
         } else {
             line.extract(0usize)
         }

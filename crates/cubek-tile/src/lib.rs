@@ -16,9 +16,7 @@
 //! a loop reaches, [`Walk::routed`] gives an axis a table's coordinate (an expert per token,
 //! a page per logical one) and [`Tile::within`] puts a window at an element and bounds its reads.
 
-mod arrival;
-mod axis;
-mod fold;
+mod algebra;
 pub mod instruction;
 mod ops;
 mod physical;
@@ -26,9 +24,7 @@ mod space;
 mod staging;
 mod tile;
 
-pub use arrival::*;
-pub use axis::*;
-pub use fold::*;
+pub use algebra::*;
 pub use instruction::*;
 pub use ops::*;
 pub use physical::*;

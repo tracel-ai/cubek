@@ -62,7 +62,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     );
 
     for mat in 0..matrices {
-        let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
+        let batch =
+            Coords::constant(comptime!(batch_extents.clone())).unravel(mat.retyped::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
@@ -210,10 +211,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
 
                     #[unroll(unroll_taps)]
                     for p in 0..kc {
-                        let reduce_coords = unravel_const(
-                            comptime!(problem.block.reduce_extents.clone()),
-                            p.fcast::<u32>(),
-                        );
+                        let reduce_coords =
+                            Coords::constant(comptime!(problem.block.reduce_extents.clone()))
+                                .unravel(p.retyped::<u32>());
                         let weight = tap_weight::<EL>(
                             &block_weights,
                             &row_weights,
@@ -254,10 +254,9 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                 // here and each tap steps the result.
                 #[unroll(unroll_taps)]
                 for p in 0..kc {
-                    let reduce_coords = unravel_const(
-                        comptime!(problem.block.reduce_extents.clone()),
-                        p.fcast::<u32>(),
-                    );
+                    let reduce_coords =
+                        Coords::constant(comptime!(problem.block.reduce_extents.clone()))
+                            .unravel(p.retyped::<u32>());
                     let weight = Vector::<E, V>::cast_from(row_cached_tap_weight::<EL>(
                         &block_weights,
                         &row_weights,
@@ -523,8 +522,8 @@ fn factor_tap(
 ) -> usize {
     reduce_coords
         .at(factor)
-        .fadd(comptime!(offset as u32))
-        .fcast::<usize>()
+        .plus(comptime!(offset as u32))
+        .retyped::<usize>()
 }
 
 #[cube]

@@ -6,6 +6,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use crate::*;
 
 use super::{GatherProblem, LhsRole};
+use crate::instruction::registers::contract::resolve_nd_coords;
 
 /// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
 /// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
@@ -67,7 +68,7 @@ pub(super) fn offset_last(coords: &CoordsDyn, #[comptime] rank: usize, delta: u3
     #[unroll]
     for p in 0..rank {
         out.push(if comptime!(p == rank - 1) {
-            coords[p].fadd(delta)
+            coords[p].plus(delta)
         } else {
             coords[p]
         });
@@ -100,12 +101,12 @@ fn acc_cell_coords(
     for p in 0..batch.len() {
         out.push(batch.at(p));
     }
-    let rows = unravel_const(comptime!(row_extents.clone()), row);
+    let rows = Coords::constant(comptime!(row_extents.clone())).unravel(row);
     #[unroll]
     for p in 0..rows.len() {
         out.push(rows.at(p));
     }
-    let cols = unravel_const(comptime!(col_extents.clone()), col);
+    let cols = Coords::constant(comptime!(col_extents.clone())).unravel(col);
     #[unroll]
     for p in 0..cols.len() {
         out.push(cols.at(p));

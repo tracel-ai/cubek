@@ -47,7 +47,7 @@ pub struct TileSpec {
     pub projection: Projection,
     /// How each coordinate axis handles out-of-bounds access. `None` is the unchecked fast path;
     /// an empty list means every axis is unchecked.
-    pub boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
+    pub boundaries: SmallVec<[Option<Boundary>; Space::MAX_RANK]>,
     /// The launch's cube size (units per cube), `0` when unknown; carried into every stage
     /// filled from this operand, which emits its fill straight-line when it knows the count.
     pub units: usize,

@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
-const PUB_ITEMS: usize = 750;
+const PUB_ITEMS: usize = 745;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
-const LONG_FNS: usize = 42;
+const LONG_FNS: usize = 41;
 /// Files longer than this, tests included.
 const LONG_FILE_LINES: usize = 500;
 const LONG_FILES: usize = 18;
@@ -21,7 +21,7 @@ const TOO_MANY_ARGUMENTS: usize = 26;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.
-const RETIRED: &[&str] = &[];
+const RETIRED: &[&str] = &["Fold", "FoldSeq", "Foldable", "ByAxis", "MAX_AXES", "const_coords", "last_cube_in", "unravel_const", "concat3", "within_2d"];
 
 #[test]
 fn the_source_stays_under_its_ceilings() {
@@ -79,7 +79,11 @@ impl Census {
         files.sort();
         for path in files {
             let text = fs::read_to_string(&path).expect("a source file reads");
-            let name = path.strip_prefix(src).unwrap_or(&path).display().to_string();
+            let name = path
+                .strip_prefix(src)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
             census.file(&name, &text);
         }
         census
@@ -99,14 +103,15 @@ impl Census {
                 self.too_many_arguments += 1;
             }
             for word in RETIRED {
-                if has_identifier(line, word) {
+                if has_identifier(strip_comment(line), word) {
                     self.retired.push(format!("{name}:{} {word}", i + 1));
                 }
             }
             if let Some(fn_name) = fn_start(trimmed) {
                 let body = body_lines(&lines, i);
                 if body > LONG_FN_LINES {
-                    self.long_fns.push(format!("{name}:{} {fn_name} ({body})", i + 1));
+                    self.long_fns
+                        .push(format!("{name}:{} {fn_name} ({body})", i + 1));
                 }
             }
         }
@@ -116,15 +121,27 @@ impl Census {
 impl std::fmt::Display for Census {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "public items: {}", self.pub_items)?;
-        writeln!(f, "functions over {LONG_FN_LINES} lines: {}", self.long_fns.len())?;
+        writeln!(
+            f,
+            "functions over {LONG_FN_LINES} lines: {}",
+            self.long_fns.len()
+        )?;
         for item in &self.long_fns {
             writeln!(f, "  {item}")?;
         }
-        writeln!(f, "files over {LONG_FILE_LINES} lines: {}", self.long_files.len())?;
+        writeln!(
+            f,
+            "files over {LONG_FILE_LINES} lines: {}",
+            self.long_files.len()
+        )?;
         for item in &self.long_files {
             writeln!(f, "  {item}")?;
         }
-        writeln!(f, "too_many_arguments allowances: {}", self.too_many_arguments)?;
+        writeln!(
+            f,
+            "too_many_arguments allowances: {}",
+            self.too_many_arguments
+        )?;
         writeln!(f, "retired words present: {}", self.retired.len())
     }
 }
@@ -146,7 +163,16 @@ fn is_pub_item(line: &str) -> bool {
         return false;
     };
     [
-        "struct ", "enum ", "trait ", "fn ", "type ", "const ", "static ", "mod ", "use ", "unsafe fn ",
+        "struct ",
+        "enum ",
+        "trait ",
+        "fn ",
+        "type ",
+        "const ",
+        "static ",
+        "mod ",
+        "use ",
+        "unsafe fn ",
     ]
     .iter()
     .any(|kw| rest.starts_with(kw))
@@ -155,7 +181,14 @@ fn is_pub_item(line: &str) -> bool {
 /// The name of a function whose declaration starts on this line, at any visibility.
 fn fn_start(line: &str) -> Option<&str> {
     let mut rest = line;
-    for prefix in ["pub(crate) ", "pub(super) ", "pub ", "unsafe ", "const ", "async "] {
+    for prefix in [
+        "pub(crate) ",
+        "pub(super) ",
+        "pub ",
+        "unsafe ",
+        "const ",
+        "async ",
+    ] {
         if let Some(stripped) = rest.strip_prefix(prefix) {
             rest = stripped;
         }

@@ -67,7 +67,8 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     };
 
     for mat in 0..matrices {
-        let batch = unravel_const(comptime!(batch_extents.clone()), mat.fcast::<u32>());
+        let batch =
+            Coords::constant(comptime!(batch_extents.clone())).unravel(mat.retyped::<u32>());
 
         // The contraction's own algebra, as [`direct`](super::direct) states it.
         let mut acc = acc.matrix_accumulate::<A>(
@@ -322,10 +323,8 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     let nr = comptime!(problem.block.nr);
     let contracted_per_step = comptime!(problem.block.contracted_per_step);
     let lw = comptime!(problem.block.lw);
-    let reduce_coords = unravel_const(
-        comptime!(problem.block.reduce_extents.clone()),
-        p.fcast::<u32>(),
-    );
+    let reduce_coords = Coords::constant(comptime!(problem.block.reduce_extents.clone()))
+        .unravel(p.retyped::<u32>());
 
     // An rhs free of the row holds for every row, so its `nr` lines are read once here and reused
     // down the `i` loop.
@@ -459,7 +458,7 @@ fn lane_component<E: Numeric, EL: Numeric, L: Size, V: Size>(
     } else {
         let last_k = reduce_coords.at(comptime!(k_axis_idx));
         Vector::<E, V>::cast_from(
-            line.extract_dynamic((last_k % comptime!(lw as u32)).fcast::<usize>()),
+            line.extract_dynamic((last_k % comptime!(lw as u32)).retyped::<usize>()),
         )
     }
 }

@@ -12,7 +12,7 @@ use crate::*;
 /// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::StridedTileSource::quantized)).
 ///
 /// Per-tensor never leaves index `0`: its strides are `0`, so every term folds away
-/// ([`fmul`](crate::Fold::fmul) annihilates) and a read is a constant-index broadcast.
+/// ([`fmul`](crate::Known::fmul) annihilates) and a read is a constant-index broadcast.
 #[derive(CubeType, Clone)]
 pub struct ScaleLayout {
     strides: Coords<u32>,
@@ -72,17 +72,17 @@ impl Layout for ScaleLayout {
                 // Only the innermost axis counts lines; blocks are cut in elements, so widen it.
                 let w = comptime!((if p == last { self.vector_size } else { 1 }) as u32);
                 let block = comptime!(self.block[p] as u32);
-                terms.push(pos[p].fmul(w).fdiv(block).fmul(self.strides.at(p)));
+                terms.push(pos[p].times(w).divided_by(block).times(self.strides.at(p)));
             }
         }
         let kept = terms.len();
         if comptime!(kept == 0) {
             // Every axis holds one scale: the window's own, already in `window_start`.
-            self.window_start.fcast::<usize>()
+            self.window_start.retyped::<usize>()
         } else {
             self.window_start
-                .fadd(terms.fsum(comptime!((0..kept).collect::<Vec<_>>())))
-                .fcast::<usize>()
+                .plus(terms.sum(comptime!((0..kept).collect::<Vec<_>>())))
+                .retyped::<usize>()
         }
     }
 

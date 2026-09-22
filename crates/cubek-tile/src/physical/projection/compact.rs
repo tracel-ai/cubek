@@ -5,7 +5,7 @@
 use cubecl::zspace::SmallVec;
 
 use super::gcd;
-use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection, Scale};
+use crate::{Axis, PhysicalAxisMap, Projection, Scale, Space};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
 /// what step in the source one of its cells is, plus the projection addressing it.
@@ -19,8 +19,8 @@ use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection, Scale};
 /// windows overlap (the usual convolution), loses when the stride outruns them.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
-    steps: SmallVec<[usize; MAX_AXES]>,
-    extents: SmallVec<[usize; MAX_AXES]>,
+    steps: SmallVec<[usize; Space::MAX_RANK]>,
+    extents: SmallVec<[usize; Space::MAX_RANK]>,
     projection: Projection,
 }
 

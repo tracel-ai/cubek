@@ -309,7 +309,7 @@ impl<T: Numeric> Tile<T> {
     /// list is empty (it never overhangs its buffer), so the padding policy has to come from here.
     pub(crate) fn window_boundaries(
         &self,
-    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; Space::MAX_RANK]>) {
         match &self.tile_kind {
             TileKind::Gmem(d) | TileKind::Smem(d) => comptime!(d.window.boundaries.clone()),
             _ => comptime!(SmallVec::new()),
@@ -320,7 +320,7 @@ impl<T: Numeric> Tile<T> {
     /// these on its source window even though its resident window itself no longer overhangs.
     pub(crate) fn separable_boundaries(
         &self,
-    ) -> comptime_type!(SmallVec<[Option<Boundary>; MAX_AXES]>) {
+    ) -> comptime_type!(SmallVec<[Option<Boundary>; Space::MAX_RANK]>) {
         match &self.tile_kind {
             TileKind::Gmem(d) => comptime!(d.window.boundaries.clone()),
             TileKind::Smem(d) =>
@@ -535,8 +535,8 @@ impl<T: Numeric> Tile<T> {
         let projection = self.projection();
         let p = comptime!(bound_position(&projection, axis));
         let raw = match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).fcast::<usize>(),
-            TileKind::TmaGmem(t) => t.bound[p].fcast::<usize>(),
+            TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).retyped::<usize>(),
+            TileKind::TmaGmem(t) => t.bound[p].retyped::<usize>(),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::runtime_extent: a plane tile has no extent")
             }

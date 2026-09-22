@@ -143,7 +143,7 @@ impl QuantInfo {
     /// meaningful where [`uniform`](QuantInfoExpand::uniform) holds; one load for the whole tile.
     pub(crate) fn uniform_scale(&self) -> f32 {
         self.known
-            .effective(self.buffer[self.window_start.fcast::<usize>()])
+            .effective(self.buffer[self.window_start.retyped::<usize>()])
     }
 
     /// The [`DequantView`] over a values/scales view pair on the same coordinates. Shared by
@@ -195,15 +195,15 @@ impl QuantInfo {
         #[unroll]
         for p in 0..rank {
             let w = comptime!(if p == last { vector_size } else { 1usize });
-            let origin_elem = origin.at(p).fmul(comptime!(w as u32).runtime());
+            let origin_elem = origin.at(p).times(comptime!(w as u32).runtime());
             let block = comptime!(self.block[p] as u32).runtime();
-            advances.push(origin_elem.fdiv(block).fmul(self.strides.at(p)));
+            advances.push(origin_elem.divided_by(block).times(self.strides.at(p)));
         }
         QuantInfo {
             buffer: unsafe { self.buffer.as_boxed_unchecked() },
             known: self.known,
             strides: self.strides.clone(),
-            window_start: advances.fsum(comptime!((0..rank).collect::<Vec<_>>())),
+            window_start: advances.sum(comptime!((0..rank).collect::<Vec<_>>())),
             block: comptime!(self.block.clone()),
             extent: comptime!(extent),
             dequant_at: comptime!(self.dequant_at),

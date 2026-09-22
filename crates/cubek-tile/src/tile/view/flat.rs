@@ -36,7 +36,7 @@ impl Layout for FlatLayout {
     type SourceCoordinates = CoordsDyn;
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
-        unravel(&self.shape, pos as u32).to_dyn()
+        self.shape.unravel(pos as u32).to_dyn()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -46,8 +46,8 @@ impl Layout for FlatLayout {
     fn shape(&self) -> Self::Coordinates {
         let rank = self.shape.len();
         self.shape
-            .fproduct(comptime!((0..rank).collect::<Vec<_>>()))
-            .fcast::<usize>()
+            .product(comptime!((0..rank).collect::<Vec<_>>()))
+            .retyped::<usize>()
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {

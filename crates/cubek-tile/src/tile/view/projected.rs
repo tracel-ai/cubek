@@ -236,9 +236,9 @@ impl AxisProjection {
             if comptime!(!moving.contains(&term.axis)) {
                 let p = comptime!(self.space.position(term.axis));
                 match comptime!(axis_map.static_offset_step(t)) {
-                    Some(step) => offsets.push(pos[p].fmul(comptime!(step as u32))),
+                    Some(step) => offsets.push(pos[p].times(comptime!(step as u32))),
                     None => match comptime!(term.scale) {
-                        Scale::Static(s) => terms.push(pos[p].fmul(comptime!(line_scale(
+                        Scale::Static(s) => terms.push(pos[p].times(comptime!(line_scale(
                             &self.space,
                             &self.projection,
                             self.width,
@@ -247,28 +247,30 @@ impl AxisProjection {
                             s
                         )
                             as u32))),
-                        Scale::Dynamic { .. } => terms.push(pos[p].fmul(self.map.coefficients.at(
-                            comptime!(self.projection.dynamic_scale_index(pa, t).unwrap()),
-                        ))),
+                        Scale::Dynamic { .. } => {
+                            terms.push(pos[p].times(self.map.coefficients.at(comptime!(
+                                self.projection.dynamic_scale_index(pa, t).unwrap()
+                            ))))
+                        }
                     },
                 }
             }
         }
         let n_kept = terms.len();
         let n_exact = offsets.len();
-        let sum = terms.fsum(comptime!((0..n_kept).collect::<Vec<_>>()));
+        let sum = terms.sum(comptime!((0..n_kept).collect::<Vec<_>>()));
 
         if comptime!(axis_map.is_rational()) {
             match comptime!(axis_map.divisor()) {
                 Divisor::Static(d) => {
-                    let offset = offsets.fsum(comptime!((0..n_exact).collect::<Vec<_>>()));
-                    sum.fdiv(comptime!(d as u32)).fadd(offset)
+                    let offset = offsets.sum(comptime!((0..n_exact).collect::<Vec<_>>()));
+                    sum.divided_by(comptime!(d as u32)).plus(offset)
                 }
                 Divisor::Dynamic { .. } => {
                     let divisor = self.map.coefficients.at(comptime!(
                         self.projection.dynamic_divisor_index(pa).unwrap()
                     ));
-                    sum.fdiv(divisor)
+                    sum.divided_by(divisor)
                 }
             }
         } else {
@@ -302,7 +304,7 @@ impl AxisProjection {
                     match comptime!(split_step(axis_map, t)) {
                         // In the units this physical axis is read at, like the fold `anchor` did:
                         // the two are added together, so they cannot be counted differently.
-                        Some(step) => steps.push(pos[p].fmul(comptime!(line_scale(
+                        Some(step) => steps.push(pos[p].times(comptime!(line_scale(
                             &self.space,
                             &self.projection,
                             self.width,
@@ -311,14 +313,14 @@ impl AxisProjection {
                             step
                         )
                             as u32))),
-                        None => steps.push(pos[p].fmul(self.map.coefficients.at(comptime!(
+                        None => steps.push(pos[p].times(self.map.coefficients.at(comptime!(
                             self.projection.dynamic_scale_index(pa, t).unwrap()
                         )))),
                     }
                 }
             }
             let n_steps = steps.len();
-            out.push(steps.fsum(comptime!((0..n_steps).collect::<Vec<_>>())));
+            out.push(steps.sum(comptime!((0..n_steps).collect::<Vec<_>>())));
         }
 
         out
@@ -346,7 +348,7 @@ impl Layout for AxisProjection {
     /// The logical box. Whether the physical coordinate it maps to is within the operand's valid
     /// data is the [`Window`](crate::Window)'s question, asked one layer down.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        within(&self.shape, pos)
+        self.shape.within(pos)
     }
 }
 
@@ -385,7 +387,7 @@ impl Layout for StepUp {
 
         #[unroll]
         for pa in 0..comptime!(self.steps.len()) {
-            out.push(pos[pa].fmul(comptime!(self.steps[pa] as u32)));
+            out.push(pos[pa].times(comptime!(self.steps[pa] as u32)));
         }
 
         out
@@ -403,7 +405,7 @@ impl Layout for StepUp {
     /// The compacted box, the source cell it steps up to being the [`Window`](crate::Window)'s
     /// question.
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        within(&self.shape, pos)
+        self.shape.within(pos)
     }
 }
 
@@ -587,7 +589,7 @@ pub(crate) fn axis_projection(
     #[comptime] vector_size: usize,
 ) -> AxisProjection {
     let rank = comptime!(space.rank());
-    let shape = const_coords(comptime!(line_extents(&space, vector_size, 0, rank)));
+    let shape = Coords::constant(comptime!(line_extents(&space, vector_size, 0, rank)));
 
     AxisProjection::new(shape, map, space, projection, vector_size)
 }

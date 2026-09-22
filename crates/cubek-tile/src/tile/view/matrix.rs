@@ -62,11 +62,10 @@ impl Layout for TileMatrix {
 
     fn to_source_pos(&self, pos: Self::Coordinates) -> Self::SourceCoordinates {
         let (row, col) = pos;
-        concat3(
-            &self.batches,
-            &unravel(&self.row_extents, row),
-            &unravel(&self.col_extents, col),
-        )
+        let mut coords = self.batches.clone();
+        coords.extend(&self.row_extents.unravel(row));
+        coords.extend(&self.col_extents.unravel(col));
+        coords.to_dyn()
     }
 
     fn to_source_pos_checked(&self, pos: Self::Coordinates) -> (Self::SourceCoordinates, bool) {
@@ -79,7 +78,9 @@ impl Layout for TileMatrix {
     }
 
     fn is_in_bounds(&self, pos: Self::Coordinates) -> bool {
-        within_2d(pos, self.tile_shape)
+        let (row, col) = pos;
+        let (rows, cols) = self.tile_shape;
+        row < rows && col < cols
     }
 }
 
@@ -299,14 +300,14 @@ pub(crate) fn batch_matrix(
     let extents = leading_extents(bound, comptime!(space), gathered, comptime!(axes.row_split));
 
     TileMatrix::new(
-        unravel(&extents, i.fcast::<u32>()),
-        const_coords(comptime!(line_extents(
+        extents.unravel(i.retyped::<u32>()),
+        Coords::constant(comptime!(line_extents(
             space,
             vector_size,
             axes.row_split,
             axes.col_split
         ))),
-        const_coords(comptime!(line_extents(
+        Coords::constant(comptime!(line_extents(
             space,
             vector_size,
             axes.col_split,
@@ -331,41 +332,40 @@ pub(crate) fn matrix_coords(
 ) -> Coords<u32> {
     let rank = comptime!(space.rank());
     let mut coords = Coords::<u32>::new();
-    let batches = unravel_const(
-        comptime!(
-            (0..axes.row_split)
-                .map(|p| space.extent_at(p))
-                .collect::<Vec<_>>()
-        ),
-        i.fcast::<u32>(),
-    );
+    let batches = Coords::constant(comptime!(
+        (0..axes.row_split)
+            .map(|p| space.extent_at(p))
+            .collect::<Vec<_>>()
+    ))
+    .unravel(i.retyped::<u32>());
     #[unroll]
     for p in 0..batches.len() {
         coords.push(batches.at(p));
     }
-    let rows = unravel_const(
-        comptime!(
-            (axes.row_split..axes.col_split)
-                .map(|p| space.extent_at(p))
-                .collect::<Vec<_>>()
-        ),
-        row,
-    );
+    let rows = Coords::constant(comptime!(
+        (axes.row_split..axes.col_split)
+            .map(|p| space.extent_at(p))
+            .collect::<Vec<_>>()
+    ))
+    .unravel(row);
     #[unroll]
     for p in 0..rows.len() {
         coords.push(rows.at(p));
     }
     // The column edge counts in lines, so its innermost digit is a line index; the value's own
     // coordinate is that many lines in.
-    let cols = unravel_const(
-        comptime!(line_extents(space, vector_size, axes.col_split, rank)),
-        col,
-    );
+    let cols = Coords::constant(comptime!(line_extents(
+        space,
+        vector_size,
+        axes.col_split,
+        rank
+    )))
+    .unravel(col);
     let n = cols.len();
     #[unroll]
     for p in 0..n {
         if comptime!(p == n - 1) {
-            coords.push(cols.at(p).fmul(comptime!(vector_size as u32)));
+            coords.push(cols.at(p).times(comptime!(vector_size as u32)));
         } else {
             coords.push(cols.at(p));
         }
@@ -388,8 +388,8 @@ pub(crate) fn whole_matrix(
 
     TileMatrix::new(
         Coords::<u32>::new(),
-        const_coords(comptime!(line_extents(space, vector_size, 0, split))),
-        const_coords(comptime!(line_extents(space, vector_size, split, rank))),
+        Coords::constant(comptime!(line_extents(space, vector_size, 0, split))),
+        Coords::constant(comptime!(line_extents(space, vector_size, split, rank))),
         rows,
         comptime!(cols / vector_size),
     )

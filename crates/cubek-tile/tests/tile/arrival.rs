@@ -2,11 +2,11 @@
 //!
 //! The shape under test is attention's: every cube reduces a slice of one row to a running max
 //! and the sum of the exponentials it implies. Two of those combine only after both are rescaled
-//! to a common max; adding the partial sums straight is wrong, so this tests [`last_cube_in`].
+//! to a common max; adding the partial sums straight is wrong, so this tests [`Arrival`].
 //!
 //! Two rows run at once, each with a counter of its own, because that is how a real launch is
 //! shaped: the cubes fall into independent groups and every group's last cube merges its own.
-//! A `last_cube_in` that counted the grid instead of the group would leave one row unwritten.
+//! An `Arrival` that counted the grid instead of the group would leave one row unwritten.
 
 use cubecl::prelude::*;
 use cubek_tile::*;
@@ -70,7 +70,7 @@ fn softmax_denominator(
 
     // Every unit reaches it: the release covers what unit zero just published, and the count is
     // taken once and read by the whole cube.
-    if last_cube_in(&counter[row as usize], cubes) && UNIT_POS == 0 {
+    if comptime!(Arrival::new(cubes)).count_in(&counter[row as usize]) && UNIT_POS == 0 {
         let base = row * cubes;
         let mut merged_max = maxes[base as usize];
         let mut c = 1u32;

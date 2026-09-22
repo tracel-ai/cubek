@@ -5,7 +5,7 @@ use crate::Addressed;
 use cubecl::zspace::SmallVec;
 
 use crate::{
-    Axis, Composition, ConcreteLayout, Divisor, MAX_AXES, Offset, PhysicalAxisMap, Scale,
+    Axis, Composition, ConcreteLayout, Divisor, Offset, PhysicalAxisMap, Scale, Space,
     StorageTiling,
 };
 
@@ -13,10 +13,10 @@ use crate::{
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Projection {
     /// One entry per physical axis, in buffer order.
-    physical: SmallVec<[PhysicalAxisMap; MAX_AXES]>,
+    physical: SmallVec<[PhysicalAxisMap; Space::MAX_RANK]>,
     /// The logical axes this operand spans, in its own order. This becomes the tile's
     /// [`Space`](crate::Space) axis order, so the last entry is the vectorized axis.
-    axes: SmallVec<[Axis; MAX_AXES]>,
+    axes: SmallVec<[Axis; Space::MAX_RANK]>,
 }
 
 impl Projection {
@@ -179,7 +179,7 @@ impl Projection {
         &self,
         pa: usize,
         axis: Axis,
-    ) -> (SmallVec<[usize; MAX_AXES]>, Option<usize>) {
+    ) -> (SmallVec<[usize; Space::MAX_RANK]>, Option<usize>) {
         let carriers = self.carriers(axis);
         assert!(
             carriers.contains(&pa),
@@ -199,8 +199,8 @@ impl Projection {
     /// The physical axes carrying `axis`, in buffer order: one entry unless the axis is
     /// storage-tiled, whose fragments' extents multiply back to the logical one. Never empty: an
     /// axis addressing no physical axis is a malformed projection, not an empty answer.
-    pub(crate) fn carriers(&self, axis: Axis) -> SmallVec<[usize; MAX_AXES]> {
-        let carriers: SmallVec<[usize; MAX_AXES]> = (0..self.physical.len())
+    pub(crate) fn carriers(&self, axis: Axis) -> SmallVec<[usize; Space::MAX_RANK]> {
+        let carriers: SmallVec<[usize; Space::MAX_RANK]> = (0..self.physical.len())
             .filter(|&q| self.physical[q].terms().iter().any(|t| t.axis == axis))
             .collect();
         assert!(

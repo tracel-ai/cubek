@@ -2,6 +2,7 @@
 //! route to the 2-D or the N-D nest.
 
 use cubecl::prelude::*;
+use cubecl::std::tensor::layout::CoordsDyn;
 
 use super::direct;
 use super::gather;
@@ -221,4 +222,57 @@ mod tests {
         let (lhs, rhs, acc) = spaces(&[M, K], &[K, N]);
         contracted_per_step(&lhs, &rhs, &acc, 4, 1, 2);
     }
+}
+
+/// The coordinate `operand` is read at, one entry per axis of its own space: an axis present in
+/// `acc` takes its coordinate from `acc_coords`, a contracted one from `reduce_coords`. An axis in
+/// neither is a routed one, which [`Space::contracted`] leaves out, so its one value sits at zero.
+///
+/// `acc_coords` is indexed by `acc.position(axis)`: one entry per axis of the accumulator's
+/// *space*, in that order, not per edge of the matrix a caller reads it as. A caller holding a
+/// `(row, col)` cell owes the unravel over each edge's axes before it gets here.
+///
+/// `width` is the operand's line width; only its innermost axis is addressed in lines, so it alone
+/// divides by it.
+///
+/// `scale_acc_branch` says whether that division also applies when the fastest axis falls in the
+/// acc branch: raw element `acc_coords` (reduce's cell) need it; a coordinate already a line index
+/// (mma's `col`, the gather leaf's `nr`-loop step) must pass `false` or is divided twice.
+#[cube]
+pub(crate) fn resolve_nd_coords(
+    #[comptime] operand: Space,
+    #[comptime] acc: Space,
+    #[comptime] reduce: Vec<Axis>,
+    acc_coords: &Coords<u32>,
+    reduce_coords: &Coords<u32>,
+    #[comptime] width: usize,
+    #[comptime] scale_acc_branch: bool,
+) -> CoordsDyn {
+    let operand_rank = comptime!(operand.rank());
+    let mut out = CoordsDyn::new();
+
+    #[unroll]
+    for p in 0..operand_rank {
+        let axis = comptime!(operand.axis_at(p));
+        let in_acc = comptime!(acc.contains(axis));
+        let raw_coord = if comptime!(in_acc) {
+            let pos = comptime!(acc.position(axis));
+            acc_coords.at(comptime!(pos))
+        } else {
+            match comptime!(reduce.iter().position(|&r| r == axis)) {
+                Some(pos) => reduce_coords.at(comptime!(pos)),
+                None => 0u32,
+            }
+        };
+        let divides =
+            comptime!(p == operand_rank - 1 && width > 1 && (scale_acc_branch || !in_acc));
+        let coord = if comptime!(divides) {
+            raw_coord.divided_by(comptime!(width as u32))
+        } else {
+            raw_coord
+        };
+        out.push(coord);
+    }
+
+    out
 }

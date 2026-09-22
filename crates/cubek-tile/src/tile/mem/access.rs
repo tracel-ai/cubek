@@ -261,8 +261,8 @@ impl<T: Numeric> MemData<T> {
         let shape = self.layout.physical_shape.clone();
         let plen = shape.len().comptime();
         let total = shape
-            .fproduct(comptime!((0..plen).collect::<Vec<_>>()))
-            .fcast::<usize>();
+            .product(comptime!((0..plen).collect::<Vec<_>>()))
+            .retyped::<usize>();
         let projection = comptime!(self.layout.projection.clone());
         // Asked whatever the widths: an equal-width fill reads nothing off the extent, but owes
         // the same agreement between the two boxes.
@@ -360,20 +360,22 @@ impl<T: Numeric> MemData<T> {
         let workers = CUBE_DIM as usize;
         let mut bl = UNIT_POS as usize;
         while bl < count {
-            let x = bl.fcast::<u32>();
+            let x = bl.retyped::<u32>();
             let mut src_idx = sinfo.window_start;
             #[unroll]
             for p in 0..rank {
                 let after = comptime!(nb[(p + 1)..].iter().product::<usize>());
                 let bi = x
-                    .fdiv(comptime!(after as u32))
-                    .frem(comptime!(nb[p] as u32));
-                src_idx = src_idx.fadd(bi.fmul(sinfo.strides.at(p)));
+                    .divided_by(comptime!(after as u32))
+                    .remainder(comptime!(nb[p] as u32));
+                src_idx = src_idx.plus(bi.times(sinfo.strides.at(p)));
             }
             // The grid holds *effective* scales: a two-level source's global level folds in here,
             // once per block per stage, so everything below the stage serves a one-level scheme
             // and no global scale threads past this point.
-            dst_scales[bl] = sinfo.known.effective(src_scales[src_idx.fcast::<usize>()]);
+            dst_scales[bl] = sinfo
+                .known
+                .effective(src_scales[src_idx.retyped::<usize>()]);
             bl += workers;
         }
     }
@@ -601,7 +603,7 @@ impl<T: Numeric> MemData<T> {
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
+                let start = self.window_start.retyped::<usize>();
                 let all = self.lines::<W>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
@@ -619,7 +621,7 @@ impl<T: Numeric> MemData<T> {
     ) -> View<'_, Vector<I, WP>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
+                let start = self.window_start.retyped::<usize>();
                 let all = self.lines_storage::<I, WP>();
                 all.slice(start, all.len()).view(self.contiguous_layout())
             }
@@ -639,7 +641,7 @@ impl<T: Numeric> MemData<T> {
     ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
-                let start = self.window_start.fcast::<usize>();
+                let start = self.window_start.retyped::<usize>();
                 let layout = self.contiguous_layout();
                 let all = self.lines_mut::<W>();
                 let len = all.len();
@@ -699,14 +701,14 @@ impl<T: Numeric> MemData<T> {
     pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.assert_dense();
         let all = self.lines::<W>();
-        let start = self.window_start.fcast::<usize>();
+        let start = self.window_start.retyped::<usize>();
         all.slice(start, all.len())
     }
 
     /// The mutable twin of [`dense_lines`](MemData::dense_lines).
     pub(crate) fn dense_lines_mut<W: Size>(&mut self) -> &mut [Vector<T, W>] {
         self.assert_dense();
-        let start = self.window_start.fcast::<usize>();
+        let start = self.window_start.retyped::<usize>();
         let all = self.lines_mut::<W>();
         let end = all.len();
         all.slice_mut(start, end)
@@ -781,7 +783,7 @@ impl<T: Numeric> MemData<T> {
                  load reads it through Tile::matrix_transparent"
             )
         }
-        self.window_start.fcast::<usize>()
+        self.window_start.retyped::<usize>()
     }
 
     /// Scalar stride between matrix rows: the line-unit physical stride of the leaf
@@ -806,7 +808,7 @@ impl<T: Numeric> MemData<T> {
         self.layout
             .physical_strides
             .at(row)
-            .fmul(comptime!(self.store.vector_size as u32).runtime())
+            .times(comptime!(self.store.vector_size as u32).runtime())
     }
 
     /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
@@ -1192,13 +1194,13 @@ impl<T: Numeric> MemData<T> {
         };
         let start = self
             .window_start
-            .fadd(advances.fsum(comptime!((0..rank).collect::<Vec<_>>())));
+            .plus(advances.sum(comptime!((0..rank).collect::<Vec<_>>())));
 
         // Re-window the scales alongside the values.
         let mut origin_u32 = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            origin_u32.push(origin.at(p).fcast::<u32>());
+            origin_u32.push(origin.at(p).retyped::<u32>());
         }
         let quant = #[comptime]
         match &self.store.quant {
@@ -1314,10 +1316,10 @@ impl<T: Numeric> MemData<T> {
                     self.window
                         .origin
                         .at(p)
-                        .fadd(index.fmul(edge).fcast::<u32>().fcast::<i32>()),
+                        .plus(index.times(edge).retyped::<u32>().retyped::<i32>()),
                 );
                 extent.push(comptime!(edge as u32).runtime());
-                advances.push(index.fcast::<u32>().fmul(step_offset(
+                advances.push(index.retyped::<u32>().times(step_offset(
                     comptime!(self.layout.projection.clone()),
                     comptime!(Axis(p as u8)),
                     edge,
@@ -1345,13 +1347,13 @@ impl<T: Numeric> MemData<T> {
             let (moved, residue, span) =
                 gathered_axis_descent(comptime!(self.projection.clone()), step, &self.map, w, pa);
             // The move only goes forward, so it adds directly to the signed origin.
-            origin.push(self.window.origin.at(pa).fadd(moved.fcast::<i32>()));
+            origin.push(self.window.origin.at(pa).plus(moved.retyped::<i32>()));
             residues.push(residue);
             extent.push(span);
             // `Projection::validate` pins a gathered operand to untiled storage (bare gmem, or
             // the row-major compacted stage of one), so one physical axis step is one stride
             // and the advance passes straight through.
-            advances.push(moved.fmul(self.layout.physical_strides.at(pa)));
+            advances.push(moved.times(self.layout.physical_strides.at(pa)));
         }
         let map = RuntimeMap {
             coefficients: self.map.coefficients.clone(),
@@ -1420,8 +1422,8 @@ impl<T: Numeric> MemData<T> {
         #[unroll]
         for p in 0..rank {
             if comptime!(p == at) {
-                origin.push(self.window.origin.at(p).fadd(from.fcast::<i32>()));
-                bound.push(self.window.bound.at(p).fmin(until.fcast::<u32>()));
+                origin.push(self.window.origin.at(p).plus(from.retyped::<i32>()));
+                bound.push(self.window.bound.at(p).min_with(until.retyped::<u32>()));
             } else {
                 origin.push(self.window.origin.at(p));
                 bound.push(self.window.bound.at(p));
@@ -1430,13 +1432,15 @@ impl<T: Numeric> MemData<T> {
 
         // The line route, which `dense_lines` and the matrix view read, moves by the same
         // elements: one axis step at edge `1`.
-        let start = self.window_start.fadd(from.fcast::<u32>().fmul(step_offset(
-            comptime!(self.layout.projection.clone()),
-            comptime!(Axis(at as u8)),
-            1usize,
-            &self.layout.physical_shape,
-            &self.layout.physical_strides,
-        )));
+        let start = self
+            .window_start
+            .plus(from.retyped::<u32>().times(step_offset(
+                comptime!(self.layout.projection.clone()),
+                comptime!(Axis(at as u8)),
+                1usize,
+                &self.layout.physical_shape,
+                &self.layout.physical_strides,
+            )));
 
         self.moved_to(
             Window::new(
@@ -1554,7 +1558,7 @@ fn gathered_axis_descent(
                 } else {
                     edge * s
                 });
-                terms.push(cut.coord(term.axis).fmul(step).fcast::<u32>());
+                terms.push(cut.coord(term.axis).times(step).retyped::<u32>());
                 spans.push(comptime!(((edge - 1) * s) as u32).runtime());
             }
             // The line division above never meets a runtime coefficient: the innermost physical
@@ -1566,15 +1570,15 @@ fn gathered_axis_descent(
                     .at(comptime!(projection.dynamic_scale_index(pa, t).unwrap()));
                 terms.push(
                     cut.coord(term.axis)
-                        .fcast::<u32>()
-                        .fmul(comptime!(edge as u32).runtime())
-                        .fmul(coefficient),
+                        .retyped::<u32>()
+                        .times(comptime!(edge as u32).runtime())
+                        .times(coefficient),
                 );
-                spans.push(comptime!((edge - 1) as u32).runtime().fmul(coefficient));
+                spans.push(comptime!((edge - 1) as u32).runtime().times(coefficient));
             }
         }
     }
-    let advance = terms.fsum(comptime!(picks.clone()));
+    let advance = terms.sum(comptime!(picks.clone()));
 
     if comptime!(!axis_map.is_rational()) {
         // The receptive field of the child edges: `1 + Σ (edge - 1) * scale`, which stays comptime
@@ -1586,34 +1590,34 @@ fn gathered_axis_descent(
             })
             .runtime()
         } else {
-            spans.fsum(comptime!(picks.clone())).fadd(1)
+            spans.sum(comptime!(picks.clone())).plus(1)
         };
         (advance, 0u32, span)
     } else {
         // No `/ vector_size` anywhere below, and none is owed: `Projection::validate` refuses a
         // rational innermost physical axis at any width past `1`, so it is `1` whenever this
         // branch runs and the terms above are already in elements.
-        let numerator = advance.fadd(map.residues.at(pa));
-        let field = spans.fsum(comptime!(picks.clone()));
+        let numerator = advance.plus(map.residues.at(pa));
+        let field = spans.sum(comptime!(picks.clone()));
         match comptime!(axis_map.divisor()) {
             Divisor::Static(d) => {
                 let d = comptime!(d as u32);
-                let residue = numerator.frem(d);
+                let residue = numerator.remainder(d);
                 (
-                    numerator.fdiv(d),
+                    numerator.divided_by(d),
                     residue,
-                    field.fadd(residue).fdiv(d).fadd(1),
+                    field.plus(residue).divided_by(d).plus(1),
                 )
             }
             Divisor::Dynamic { .. } => {
                 let d = map
                     .coefficients
                     .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()));
-                let residue = numerator.frem(d);
+                let residue = numerator.remainder(d);
                 (
-                    numerator.fdiv(d),
+                    numerator.divided_by(d),
                     residue,
-                    field.fadd(residue).fdiv(d).fadd(1),
+                    field.plus(residue).divided_by(d).plus(1),
                 )
             }
         }
@@ -1723,7 +1727,7 @@ fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 /// digits back into one off `projection`'s own div/modulo (`GmemLayout`'s map, invertible).
 #[cube]
 fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32>) -> CoordsDyn {
-    let x = i.fcast::<u32>();
+    let x = i.retyped::<u32>();
     let mut digits = Coords::<u32>::new();
     #[unroll]
     for j in 0..shape.len() {
@@ -1764,7 +1768,9 @@ fn widen_line<T: Numeric, W: Size, SW: Size>(
     });
     #[unroll]
     for l in 0..width {
-        let cell = line.fmul(comptime!(width as u32)).fadd(comptime!(l as u32));
+        let cell = line
+            .times(comptime!(width as u32))
+            .plus(comptime!(l as u32));
         let valid = if comptime!(guarded) {
             cell < comptime!(padding.lanes.unwrap() as u32)
         } else {
@@ -1807,7 +1813,7 @@ fn widened_shape(
     #[unroll]
     for p in 0..rank {
         if comptime!(p == rank - 1) {
-            out.push(shape.at(p).fmul(comptime!(width as u32)));
+            out.push(shape.at(p).times(comptime!(width as u32)));
         } else {
             out.push(shape.at(p));
         }
@@ -1819,6 +1825,6 @@ fn widened_shape(
 #[cube]
 fn line_digit(x: u32, shape: &Coords<u32>, #[comptime] j: usize) -> u32 {
     let plen = shape.len();
-    x.fdiv(shape.fproduct(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
-        .frem(shape.at(j))
+    x.divided_by(shape.product(comptime!(((j + 1)..plen).collect::<Vec<_>>())))
+        .remainder(shape.at(j))
 }

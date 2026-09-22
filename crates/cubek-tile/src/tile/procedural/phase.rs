@@ -1,6 +1,6 @@
 use cubecl::prelude::*;
 
-use crate::{Axis, Fold, FoldExpand, floor_div_rem};
+use crate::{Axis, Known, KnownExpand, floor_div_rem};
 
 use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 
@@ -13,7 +13,7 @@ use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 ///
 /// The three terms name the same fraction [`PhysicalAxisMap`](crate::PhysicalAxisMap) does, with
 /// its sign discipline (unsigned scale and divisor, signed offset). They are runtime values under
-/// [`Fold`], so a constant folds away at expand time like a comptime field; a runtime one stays.
+/// [`Known`], so a constant folds away at expand time like a comptime field; a runtime one stays.
 ///
 /// `coefficient` folds a sign in, so `x = tap - phase` needs no negation recipe. Like a
 /// [`PhysicalAxisMap`], this cannot run an axis backwards; a flip belongs in the coordinate.
@@ -41,10 +41,10 @@ impl<T: Float> Recipe<T> for Phase<T> {
         ));
         let numerator = coordinates
             .along(self.axis)
-            .fmul(self.numerator_scale)
-            .fcast::<i32>()
-            .fadd(self.numerator_offset);
-        let (_, residue) = floor_div_rem(numerator, self.divisor.fcast::<i32>());
+            .times(self.numerator_scale)
+            .retyped::<i32>()
+            .plus(self.numerator_offset);
+        let (_, residue) = floor_div_rem(numerator, self.divisor.retyped::<i32>());
         let residue = T::cast_from(residue);
         // A folded divisor becomes a reciprocal literal to multiply by; only a launch-time one
         // pays for the cast and the divide.

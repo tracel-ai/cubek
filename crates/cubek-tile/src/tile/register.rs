@@ -3,10 +3,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{
-    instruction::{plane, registers::horizontal},
-    *,
-};
+use crate::{instruction::plane, *};
 
 // The block's line width, a scope-registered size rather than a generic, as `MmaData` carries
 // `NA`/`NL`/`NR`: `alloc` binds it with `register_size`, every op reads `Vector<T, RA>`, and it
@@ -286,7 +283,7 @@ fn cell<T: Numeric, Out: Numeric, A: Size>(
     #[comptime] monoid: Monoid,
 ) -> Vector<Out, A> {
     if comptime!(fold > 1) {
-        Vector::<Out, A>::cast_from(horizontal::vector::<T, RA>(line, fold, monoid))
+        Vector::<Out, A>::cast_from(Monoid::fold_lanes::<T, RA>(line, fold, monoid))
     } else {
         Vector::<Out, A>::cast_from(line)
     }

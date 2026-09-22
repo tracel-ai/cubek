@@ -7,7 +7,7 @@
 //! touches; the rest pass down whole. [`Level::every`], a walk over a region, goes through it too.
 
 use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
-use crate::{Axis, ByAxis, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
+use crate::{Axis, AxisMap, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
 
 /// How many tiles a level takes along one of its axes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -81,7 +81,7 @@ struct Entry {
 /// takes the tiles, plus the axes it deals as one. An axis it does not name is handed down whole.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Level {
-    entries: ByAxis<Entry>,
+    entries: AxisMap<Entry>,
     scope: LevelScope,
     work: Option<Work>,
     /// Planes that fill this walk's stages and take no tile of any level
@@ -155,7 +155,7 @@ impl Level {
             .map(|&(axis, tile, count, dist)| (axis, Entry { tile, count, dist }))
             .collect();
         Level {
-            entries: ByAxis::new(&entries),
+            entries: AxisMap::new(&entries),
             scope,
             work: None,
             fillers: 0,
@@ -281,7 +281,7 @@ impl Level {
             .map(|a| (a, self.entries.get(a)))
             .collect();
         entries.push((axis, entry));
-        self.entries = ByAxis::new(&entries);
+        self.entries = AxisMap::new(&entries);
     }
 
     /// The tile this level steps `axis` in, where it names it. An axis the level does not name

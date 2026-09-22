@@ -11,14 +11,14 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Composition, Geometry, MAX_AXES, Projection};
+use crate::{Axis, Composition, Geometry, Projection, Space};
 
 impl Projection {
     /// The axes carried by the buffer's unit-strided dim, or none where no dim strides by one.
     ///
     /// Several come back from a windowed dim, which is the honest answer: a convolution's
     /// innermost spatial dim is addressed by an output step and a tap together.
-    pub fn contiguous(&self, geometry: &Geometry) -> SmallVec<[Axis; MAX_AXES]> {
+    pub fn contiguous(&self, geometry: &Geometry) -> SmallVec<[Axis; Space::MAX_RANK]> {
         match self.unit_dim(geometry) {
             None => SmallVec::new(),
             Some(dim) => self
@@ -61,7 +61,7 @@ impl Projection {
 ///
 /// A dim of extent one reaches exactly one cell whatever its stride, and a stride-zero dim is a
 /// broadcast that aliases on purpose; neither takes part in the orderings the checks rest on.
-fn addressing_dims(geometry: &Geometry) -> SmallVec<[(usize, (usize, usize)); MAX_AXES]> {
+fn addressing_dims(geometry: &Geometry) -> SmallVec<[(usize, (usize, usize)); Space::MAX_RANK]> {
     geometry
         .dims()
         .enumerate()
@@ -71,7 +71,7 @@ fn addressing_dims(geometry: &Geometry) -> SmallVec<[(usize, (usize, usize)); MA
 
 /// The addressing dims coarsest stride first. Ordering by stride rather than by position is
 /// what makes a transposed view and its physical self answer the same.
-fn by_stride(geometry: &Geometry) -> SmallVec<[(usize, (usize, usize)); MAX_AXES]> {
+fn by_stride(geometry: &Geometry) -> SmallVec<[(usize, (usize, usize)); Space::MAX_RANK]> {
     let mut dims = addressing_dims(geometry);
     dims.sort_by_key(|&(_, (_, stride))| core::cmp::Reverse(stride));
     dims

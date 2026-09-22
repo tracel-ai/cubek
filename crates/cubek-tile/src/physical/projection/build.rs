@@ -29,7 +29,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, Composition, MAX_AXES, PhysicalAxisMap, Projection};
+use crate::{Axis, Composition, PhysicalAxisMap, Projection, Space};
 
 impl Projection {
     /// Start writing a projection one buffer dim at a time. See the [module doc](self).
@@ -45,8 +45,8 @@ impl Projection {
 /// defined over but addresses with no dim.
 #[derive(Clone, Debug)]
 pub struct DimsBuilder {
-    physical: SmallVec<[PhysicalAxisMap; MAX_AXES]>,
-    spanning: SmallVec<[Axis; MAX_AXES]>,
+    physical: SmallVec<[PhysicalAxisMap; Space::MAX_RANK]>,
+    spanning: SmallVec<[Axis; Space::MAX_RANK]>,
 }
 
 impl DimsBuilder {
@@ -80,8 +80,8 @@ impl DimsBuilder {
             "Projection::dims: an operand has at least one dim"
         );
         let (innermost, outer) = self.physical.split_last().expect("checked non-empty");
-        let mut axes: SmallVec<[Axis; MAX_AXES]> = SmallVec::new();
-        let mention = |axis: Axis, axes: &mut SmallVec<[Axis; MAX_AXES]>| {
+        let mut axes: SmallVec<[Axis; Space::MAX_RANK]> = SmallVec::new();
+        let mention = |axis: Axis, axes: &mut SmallVec<[Axis; Space::MAX_RANK]>| {
             if !axes.contains(&axis) {
                 axes.push(axis);
             }
@@ -131,7 +131,7 @@ pub fn split(extents: &[(Axis, usize)]) -> PhysicalAxisMap {
         !extents.is_empty(),
         "split: a dim is cut by at least one axis"
     );
-    let mut terms: SmallVec<[(Axis, usize); MAX_AXES]> = SmallVec::new();
+    let mut terms: SmallVec<[(Axis, usize); Space::MAX_RANK]> = SmallVec::new();
     let mut coefficient = 1;
     for &(axis, extent) in extents.iter().rev() {
         assert!(extent > 0, "split: {axis:?} has extent 0");
@@ -159,7 +159,7 @@ pub fn window(coefficients: &[(Axis, usize)]) -> WindowDim {
 /// padding, or after [`pad`](Self::pad).
 #[derive(Clone, Debug)]
 pub struct WindowDim {
-    coefficients: SmallVec<[(Axis, usize); MAX_AXES]>,
+    coefficients: SmallVec<[(Axis, usize); Space::MAX_RANK]>,
     pad: usize,
 }
 

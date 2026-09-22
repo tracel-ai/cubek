@@ -1,11 +1,10 @@
 //! Unit tests for the leaf instructions in `instruction/` and the 1-D register folds in
-//! `instruction/registers/horizontal.rs`.
+//! `Monoid::fold_lanes` and `Monoid::fold_array`.
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::{
     Monoid,
-    instruction::registers::horizontal,
     instruction::{logsumexp, plane},
 };
 
@@ -23,18 +22,28 @@ fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
     v2.insert(0usize, input[0]);
     v2.insert(1usize, input[1]);
 
-    output[0] = horizontal::vector(v4, 4usize, Monoid::Sum);
-    output[1] = horizontal::vector(v4, 2usize, Monoid::Sum);
-    output[2] = horizontal::vector(v2, 2usize, Monoid::Sum);
+    output[0] = Monoid::fold_lanes(v4, 4usize, Monoid::Sum);
+    output[1] = Monoid::fold_lanes(v4, 2usize, Monoid::Sum);
+    output[2] = Monoid::fold_lanes(v2, 2usize, Monoid::Sum);
 
     let mut arr = Array::<f32>::new(4usize);
     arr[0] = 1.0f32;
     arr[1] = 2.0f32;
     arr[2] = 3.0f32;
     arr[3] = 4.0f32;
-    output[3] = horizontal::array(&arr, 4usize, Monoid::Sum);
-    output[4] = horizontal::array(&arr, 2usize, Monoid::Sum);
-    output[5] = horizontal::array_from(&arr, 4usize, 5.0f32, Monoid::Sum);
+    output[3] = Monoid::fold_array(
+        &arr,
+        4usize,
+        Monoid::identity::<f32>(Monoid::Sum),
+        Monoid::Sum,
+    );
+    output[4] = Monoid::fold_array(
+        &arr,
+        2usize,
+        Monoid::identity::<f32>(Monoid::Sum),
+        Monoid::Sum,
+    );
+    output[5] = Monoid::fold_array(&arr, 4usize, 5.0f32, Monoid::Sum);
 }
 
 #[cube(launch)]
@@ -51,20 +60,30 @@ fn test_extrema_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
     v2.insert(0usize, input[0]);
     v2.insert(1usize, input[1]);
 
-    output[0] = horizontal::vector(v4, 4usize, Monoid::Max);
-    output[1] = horizontal::vector(v4, 4usize, Monoid::Min);
-    output[2] = horizontal::vector(v2, 2usize, Monoid::Max);
-    output[3] = horizontal::vector(v2, 2usize, Monoid::Min);
+    output[0] = Monoid::fold_lanes(v4, 4usize, Monoid::Max);
+    output[1] = Monoid::fold_lanes(v4, 4usize, Monoid::Min);
+    output[2] = Monoid::fold_lanes(v2, 2usize, Monoid::Max);
+    output[3] = Monoid::fold_lanes(v2, 2usize, Monoid::Min);
 
     let mut arr = Array::<f32>::new(4usize);
     arr[0] = 3.0f32;
     arr[1] = 1.0f32;
     arr[2] = 7.0f32;
     arr[3] = 2.0f32;
-    output[4] = horizontal::array(&arr, 4usize, Monoid::Max);
-    output[5] = horizontal::array(&arr, 4usize, Monoid::Min);
-    output[6] = horizontal::array_from(&arr, 4usize, 10.0f32, Monoid::Max);
-    output[7] = horizontal::array_from(&arr, 4usize, -10.0f32, Monoid::Min);
+    output[4] = Monoid::fold_array(
+        &arr,
+        4usize,
+        Monoid::identity::<f32>(Monoid::Max),
+        Monoid::Max,
+    );
+    output[5] = Monoid::fold_array(
+        &arr,
+        4usize,
+        Monoid::identity::<f32>(Monoid::Min),
+        Monoid::Min,
+    );
+    output[6] = Monoid::fold_array(&arr, 4usize, 10.0f32, Monoid::Max);
+    output[7] = Monoid::fold_array(&arr, 4usize, -10.0f32, Monoid::Min);
 }
 
 #[cube(launch)]

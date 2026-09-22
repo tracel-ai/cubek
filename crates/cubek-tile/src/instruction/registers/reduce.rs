@@ -8,7 +8,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::instruction::registers::horizontal;
+use crate::instruction::registers::contract::resolve_nd_coords;
 use crate::*;
 
 #[cube]
@@ -52,10 +52,8 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
 
     #[unroll]
     for a in 0..total_acc {
-        let acc_coords = unravel(
-            &const_coords(comptime!(layout.acc_extents.clone())),
-            comptime!(a as u32),
-        );
+        let acc_coords =
+            Coords::constant(comptime!(layout.acc_extents.clone())).unravel(comptime!(a as u32));
 
         let line_idx = comptime!(a / acc.vector_size);
         let lane_idx = comptime!(a % acc.vector_size);
@@ -119,10 +117,8 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
         #[unroll]
         for lane_idx in 0..comptime!(ws) {
             let a = line_idx * comptime!(ws) + comptime!(lane_idx);
-            let acc_coords = unravel(
-                &const_coords(comptime!(layout.acc_extents.clone())),
-                a.fcast::<u32>(),
-            );
+            let acc_coords =
+                Coords::constant(comptime!(layout.acc_extents.clone())).unravel(a.retyped::<u32>());
 
             let seed = seed_vec.extract(comptime!(lane_idx));
             let curr_val: Acc = element::<Acc, In, V>(
@@ -188,7 +184,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
 
 /// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step
 /// lands on a line start and one read serves `contracted_per_step` folds. The lanes accumulate in
-/// parallel and collapse through [`horizontal::vector`] once, after the walk.
+/// parallel and collapse through [`Monoid::fold_lanes`] once, after the walk.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
@@ -203,10 +199,8 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
 ) -> Acc {
     let mut acc_vec = Vector::<Acc, V>::cast_from(Monoid::identity::<Acc>(monoid));
     for p in 0..comptime!(layout.kc / contracted_per_step) {
-        let reduce_coords = unravel(
-            &const_coords(comptime!(layout.reduce_extents.clone())),
-            (p * comptime!(contracted_per_step)).fcast::<u32>(),
-        );
+        let reduce_coords = Coords::constant(comptime!(layout.reduce_extents.clone()))
+            .unravel((p * comptime!(contracted_per_step)).retyped::<u32>());
 
         let in_coords = resolve_nd_coords(
             comptime!(in_space.clone()),
@@ -234,7 +228,7 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
     }
     monoid.fold::<Acc>(
         seed,
-        horizontal::vector::<Acc, V>(acc_vec, contracted_per_step, monoid),
+        Monoid::fold_lanes::<Acc, V>(acc_vec, contracted_per_step, monoid),
     )
 }
 
@@ -254,10 +248,8 @@ fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
     let mut curr_val = seed;
     let kc = comptime!(layout.kc);
     for p in 0..kc {
-        let reduce_coords = unravel(
-            &const_coords(comptime!(layout.reduce_extents.clone())),
-            p.fcast::<u32>(),
-        );
+        let reduce_coords =
+            Coords::constant(comptime!(layout.reduce_extents.clone())).unravel(p.retyped::<u32>());
 
         let in_coords = resolve_nd_coords(
             comptime!(in_space.clone()),
@@ -357,5 +349,7 @@ fn resolve_reduce_in_lane(
         let pos = comptime!(reduce_axes.iter().position(|&r| r == fastest_axis).unwrap());
         reduce_coords.at(comptime!(pos))
     };
-    raw_coord.frem(comptime!(width as u32)).fcast::<usize>()
+    raw_coord
+        .remainder(comptime!(width as u32))
+        .retyped::<usize>()
 }

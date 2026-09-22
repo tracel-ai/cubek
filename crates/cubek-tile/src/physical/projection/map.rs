@@ -4,7 +4,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, MAX_AXES};
+use crate::{Axis, Space};
 
 /// How far one unit of a logical axis's coordinate moves along one physical axis, mirroring
 /// [`Extent`](crate::Extent): `Static` folds as [`window_start`](crate::MemData) needs, `Dynamic`
@@ -155,7 +155,7 @@ pub enum Composition {
 /// floored. The divisor is `1` for every mapping but a [rational](Divisor) one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxisMap {
-    terms: SmallVec<[AxisTerm; MAX_AXES]>,
+    terms: SmallVec<[AxisTerm; Space::MAX_RANK]>,
     offset: Offset,
     divisor: Divisor,
     composition: Composition,
@@ -212,7 +212,7 @@ impl PhysicalAxisMap {
     /// `affine_with_offset(&[(Oh, stride), (Rh, dilation)], -padding)` or
     /// `affine_with_offset(&[(Oh, stride), (Rh, dilation)], Offset::Dynamic)`.
     pub fn affine_with_offset(terms: &[(Axis, usize)], offset: impl Into<Offset>) -> Self {
-        let terms: SmallVec<[(Axis, Scale); MAX_AXES]> = terms
+        let terms: SmallVec<[(Axis, Scale); Space::MAX_RANK]> = terms
             .iter()
             .map(|&(axis, scale)| (axis, Scale::Static(scale)))
             .collect();
@@ -333,7 +333,7 @@ impl PhysicalAxisMap {
     /// The radices a [`Disjoint`](Composition::Disjoint) map claims, coarsest first: each term
     /// the product of the finer axes' extents, the finest `1`. Returns the axis each coefficient
     /// stands for; empty for an [`Overlapping`](Composition::Overlapping) map, claiming nothing.
-    pub(crate) fn claimed_radices(&self) -> SmallVec<[(Axis, usize); MAX_AXES]> {
+    pub(crate) fn claimed_radices(&self) -> SmallVec<[(Axis, usize); Space::MAX_RANK]> {
         match self.composition {
             Composition::Overlapping => SmallVec::new(),
             Composition::Disjoint => self

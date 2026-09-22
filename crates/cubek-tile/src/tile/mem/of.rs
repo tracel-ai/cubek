@@ -521,10 +521,10 @@ fn gathered_origin(
                 Divisor::Static(d) => comptime!(d as i32).runtime(),
                 Divisor::Dynamic { .. } => coefficients
                     .at(comptime!(projection.dynamic_divisor_index(pa).unwrap()))
-                    .fcast::<i32>(),
+                    .retyped::<i32>(),
             };
             let (start, residue) = floor_div_rem(offset, divisor);
-            (start, residue.fcast::<u32>())
+            (start, residue.retyped::<u32>())
         }
     }
 }

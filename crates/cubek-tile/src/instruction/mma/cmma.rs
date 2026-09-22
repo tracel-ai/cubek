@@ -336,12 +336,12 @@ fn coords_of_line(
     #[comptime] vw: usize,
 ) -> Coords<u32> {
     let n = comptime!(line_extents.len());
-    let digits = unravel_const(line_extents, line);
+    let digits = Coords::constant(line_extents).unravel(line);
     let mut coords = Coords::<u32>::new();
     #[unroll]
     for p in 0..n {
         if comptime!(p == n - 1) {
-            coords.push(digits.at(p).fmul(comptime!(vw as u32)));
+            coords.push(digits.at(p).times(comptime!(vw as u32)));
         } else {
             coords.push(digits.at(p));
         }
@@ -357,7 +357,7 @@ fn as_dyn(coords: &Coords<u32>, #[comptime] vw: usize) -> CoordsDyn {
     #[unroll]
     for p in 0..n {
         if comptime!(p == n - 1) {
-            at.push(coords.at(p).fdiv(comptime!(vw as u32)));
+            at.push(coords.at(p).divided_by(comptime!(vw as u32)));
         } else {
             at.push(coords.at(p));
         }
@@ -373,7 +373,7 @@ fn offset_of(coords: &Coords<u32>, #[comptime] strides: Vec<usize>) -> usize {
     let mut offset = 0u32.runtime();
     #[unroll]
     for p in 0..n {
-        offset = offset.fadd(coords.at(p).fmul(comptime!(strides[p] as u32)));
+        offset = offset.plus(coords.at(p).times(comptime!(strides[p] as u32)));
     }
     offset as usize
 }

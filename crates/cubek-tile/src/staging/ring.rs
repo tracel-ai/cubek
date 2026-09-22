@@ -236,13 +236,13 @@ mod schedule {
         }
 
         let laps = total
-            .__expand_fadd_method(scope, (depth - 1).into_expand(scope))
-            .__expand_fdiv_method(scope, depth.into_expand(scope));
+            .__expand_plus_method(scope, (depth - 1).into_expand(scope))
+            .__expand_divided_by_method(scope, depth.into_expand(scope));
         let mut body = |scope: &Scope, lap: NativeExpand<usize>| {
             for j in 0..depth {
                 let region_idx = lap
-                    .__expand_fmul_method(scope, depth.into_expand(scope))
-                    .__expand_fadd_method(scope, j.into_expand(scope));
+                    .__expand_times_method(scope, depth.into_expand(scope))
+                    .__expand_plus_method(scope, j.into_expand(scope));
                 if depth == 1 {
                     // Nothing is in flight: this region's fill is the last event before its read.
                     let region = walk.__expand_region_method(scope, region_idx);
@@ -252,7 +252,7 @@ mod schedule {
                     compute(scope, slot, &region);
                 } else {
                     let ahead =
-                        region_idx.__expand_fadd_method(scope, (depth - 1).into_expand(scope));
+                        region_idx.__expand_plus_method(scope, (depth - 1).into_expand(scope));
                     let prefetching = ahead.__expand_lt_method(scope, &total);
                     let draining = region_idx.__expand_lt_method(scope, &total);
                     if_else_expand(scope, prefetching, |scope| {

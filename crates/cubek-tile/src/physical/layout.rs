@@ -4,7 +4,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, MAX_AXES};
+use crate::{Axis, Space};
 
 /// One physical axis of a stored buffer: the logical [`Axis`] it belongs to and its extent. A
 /// storage-tiled axis contributes one entry per nesting level (outer grid to inner leaf), so tiling
@@ -34,7 +34,7 @@ impl PhysicalAxis {
 /// can exceed the logical axis count. Realized from a tensor's [`Projection`](crate::Projection).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ConcreteLayout {
-    axes: SmallVec<[PhysicalAxis; MAX_AXES]>,
+    axes: SmallVec<[PhysicalAxis; Space::MAX_RANK]>,
 }
 
 impl ConcreteLayout {
@@ -52,7 +52,7 @@ impl ConcreteLayout {
 
     /// The distinct logical axes in first-occurrence order, the axes the operand spans, with each
     /// storage-tiled axis (which contributes several physical fragments) collapsed to one entry.
-    pub(crate) fn distinct_axes(&self) -> SmallVec<[Axis; MAX_AXES]> {
+    pub(crate) fn distinct_axes(&self) -> SmallVec<[Axis; Space::MAX_RANK]> {
         let mut out = SmallVec::new();
         for a in &self.axes {
             if !out.contains(&a.axis) {

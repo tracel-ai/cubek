@@ -7,7 +7,7 @@ use cubecl::{
     std::tensor::{ViewOperations, ViewOperationsExpand, layout::CoordsDyn},
 };
 
-use crate::{Axis, Coords, DivGuard, Fold, FoldExpand, Space, Step, TapMask};
+use crate::{Axis, Coords, DivGuard, Known, KnownExpand, Space, Step, TapMask};
 
 use super::{RecipeCoords, VirtualRecipe};
 
@@ -80,7 +80,7 @@ impl<T: Numeric> ProceduralData<T> {
             match comptime!(step.level.tile(axis)) {
                 Some(tile) => {
                     let tile = comptime!(tile as u32);
-                    origin.push(self.origin.at(p) + step.coord(axis).fcast::<u32>() * tile);
+                    origin.push(self.origin.at(p) + step.coord(axis).retyped::<u32>() * tile);
                 }
                 None => origin.push(self.origin.at(p)),
             }

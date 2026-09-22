@@ -4,7 +4,7 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, ByAxis, Level, MAX_AXES, PartitioningLaunch};
+use crate::{Axis, AxisMap, Level, PartitioningLaunch};
 
 /// One axis's size.
 /// `Static` is a comptime constant (a tile edge);
@@ -38,13 +38,13 @@ impl Extent {
 #[derive(CubeType, CubeLaunch, Clone, Debug)]
 pub struct Extents {
     #[cube(comptime)]
-    kinds: ByAxis<Extent>,
+    kinds: AxisMap<Extent>,
     pub(crate) sizes: Sequence<usize>,
 }
 
 impl Extents {
     /// A fully-`Static` (or yet-unresolved) extents, with no runtime sizes.
-    fn fixed(kinds: ByAxis<Extent>) -> Self {
+    fn fixed(kinds: AxisMap<Extent>) -> Self {
         Extents {
             kinds,
             sizes: Sequence::new(),
@@ -174,6 +174,9 @@ impl Space {
 }
 
 impl Space {
+    /// The most axes a space holds inline; a per-axis small vector spills to the heap past it.
+    pub const MAX_RANK: usize = 6;
+
     /// This space as a kernel argument, cut by no level: the comptime extents, plus each
     /// [`Dynamic`](Extent::Dynamic) axis's size read off `concrete` (this space, extents real). A
     /// launch with levels hands [`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg).
@@ -211,7 +214,7 @@ impl Space {
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
     pub(crate) fn from_extents(extents: &[(Axis, Extent)]) -> Self {
         Space {
-            extents: Extents::fixed(ByAxis::new(extents)),
+            extents: Extents::fixed(AxisMap::new(extents)),
         }
     }
 
@@ -230,7 +233,7 @@ impl Space {
                 (a, extent)
             })
             .collect();
-        self.extents = Extents::fixed(ByAxis::new(&entries));
+        self.extents = Extents::fixed(AxisMap::new(&entries));
         self
     }
 
@@ -261,7 +264,7 @@ impl Space {
                 (a, extent)
             })
             .collect();
-        self.extents = Extents::fixed(ByAxis::new(&entries));
+        self.extents = Extents::fixed(AxisMap::new(&entries));
         self
     }
 
@@ -314,7 +317,7 @@ impl Space {
     /// is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else conflict); an
     /// omitted axis broadcasts along all of it. E.g. `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn merge(parts: &[&Space]) -> Space {
-        let mut entries: SmallVec<[(Axis, Extent); MAX_AXES]> = SmallVec::new();
+        let mut entries: SmallVec<[(Axis, Extent); Space::MAX_RANK]> = SmallVec::new();
 
         for part in parts {
             for axis in part.axes() {
@@ -326,12 +329,12 @@ impl Space {
             }
         }
         Space {
-            extents: Extents::fixed(ByAxis::new(&entries)),
+            extents: Extents::fixed(AxisMap::new(&entries)),
         }
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
-    pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
+    pub fn contracting(&self, output: &Space) -> SmallVec<[Axis; Space::MAX_RANK]> {
         self.axes().filter(|&axis| !output.contains(axis)).collect()
     }
 
@@ -355,7 +358,7 @@ impl Space {
     /// An axis is kept if it varies or every operand shares it. One that does neither, as a routed
     /// axis ([`Walk::routed`](crate::Walk::routed)) leaves, is a fixed coordinate, not a sum. A
     /// shared axis stays even at one value: separable factors are named by contracted position.
-    pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
+    pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; Space::MAX_RANK]> {
         let merged = Space::merge(operands);
         // Read raw: a `Dynamic` extent is not known to be one, and asking its comptime size panics.
         let varies = |axis: Axis| merged.extent_raw(axis) != Extent::Static(1);
@@ -391,7 +394,7 @@ impl Space {
     /// read as a disagreement.
     pub(crate) fn contraction_agrees(lhs: &Space, rhs: &Space, output: &Space) -> bool {
         let joint = Space::contracted(&[lhs, rhs], output);
-        let listed = |operand: &Space| -> SmallVec<[Axis; MAX_AXES]> {
+        let listed = |operand: &Space| -> SmallVec<[Axis; Space::MAX_RANK]> {
             operand
                 .contracting(output)
                 .into_iter()

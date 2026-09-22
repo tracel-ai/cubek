@@ -6,7 +6,7 @@
 //! `total` is one and there is no step order to state. A [`CubeOrder`] permutes which *instance*
 //! holds which box: the positions [`Walk::from_counts`](crate::Walk) decodes from the hardware.
 
-use crate::{Fold, FoldExpand};
+use crate::{Known, KnownExpand};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -25,7 +25,7 @@ pub(crate) fn walk_index(i: usize, total: usize, #[comptime] order: WalkOrder) -
         WalkOrder::RowMajor => i,
         // Folded: an unrolled walk's constant `i` must stay constant through the
         // reversal, or its regions lose their comptime coordinates.
-        WalkOrder::Reversed => total.fsub(i).fsub(1),
+        WalkOrder::Reversed => total.minus(i).minus(1),
     }
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn cube_positions(
 ) -> (usize, usize) {
     let (count_x, count_y) = cubes;
     match comptime!(order.canonicalize()) {
-        CubeOrder::RowMajor => (flat.frem(count_x), flat.fdiv(count_x)),
+        CubeOrder::RowMajor => (flat.remainder(count_x), flat.divided_by(count_x)),
         CubeOrder::SwizzleRow(width) => {
             let (step, along) = swizzle(flat, count_y, comptime!(width as u32));
             (along as usize, step as usize)

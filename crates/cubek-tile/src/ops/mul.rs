@@ -11,6 +11,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
+use crate::instruction::registers::contract::resolve_nd_coords;
 use crate::*;
 
 #[cube]
@@ -40,7 +41,7 @@ impl<T: Numeric> Tile<T> {
         let b_reader = b.nd_split::<F>();
 
         let a_fold_at = comptime!(a.space.position(split.axis));
-        let extents = const_coords(comptime!(split.groups.clone()));
+        let extents = Coords::constant(comptime!(split.groups.clone()));
         let total = comptime!(split.groups.iter().product::<usize>());
 
         let mut dst = self.nd_mut::<W>();
@@ -48,7 +49,7 @@ impl<T: Numeric> Tile<T> {
         let mut i = UNIT_POS as usize;
         while i < total {
             let group = group_line(
-                &unravel(&extents, i.fcast::<u32>()),
+                &extents.unravel(i.retyped::<u32>()),
                 comptime!(split.clone()),
             );
             let (a_base, b_base) = bases(
@@ -141,7 +142,7 @@ fn group_line(at: &Coords<u32>, #[comptime] split: FoldWalk) -> CoordsDyn {
     #[unroll]
     for p in 0..comptime!(split.groups.len()) {
         let coord = match comptime!(p == split.at) {
-            true => at.at(p).fmul(comptime!(split.folds as u32)),
+            true => at.at(p).times(comptime!(split.folds as u32)),
             false => at.at(p),
         };
         out.push(coord);
@@ -164,7 +165,7 @@ fn bases(
     let mut cells = Coords::<u32>::new();
     #[unroll]
     for p in 0..comptime!(dst.rank()) {
-        cells.push(group[p].fmul(comptime!(match p == dst.rank() - 1 {
+        cells.push(group[p].times(comptime!(match p == dst.rank() - 1 {
             true => width as u32,
             false => 1u32,
         })));

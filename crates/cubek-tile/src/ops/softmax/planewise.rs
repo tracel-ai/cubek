@@ -15,7 +15,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::Monoid, instruction::plane, *};
+use crate::{instruction::plane, *};
 
 #[cube]
 impl<EA: Float> Tile<EA> {

@@ -5,7 +5,7 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::{Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, const_coords};
+use crate::{Axis, Coords, Known, KnownExpand, KnownSeq, KnownSeqExpand, Projection};
 
 /// What a [`Projection`] cannot state at comptime: the values its [`Dynamic`](crate::Scale)
 /// coefficients and divisors carry, and the phase its window origin sits at under a
@@ -16,7 +16,7 @@ use crate::{Axis, Coords, Fold, FoldExpand, FoldSeq, FoldSeqExpand, Projection, 
 /// phase at once, and a descent ([`MemData::at`](crate::MemData)) advances both.
 ///
 /// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
-/// which is every operand but a runtime-strided or fractionally scaled gather; [`Fold`] passes
+/// which is every operand but a runtime-strided or fractionally scaled gather; [`Known`] passes
 /// that through, so carrying it costs nothing where it says nothing.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
@@ -37,7 +37,7 @@ impl RuntimeMap {
     pub(crate) fn integral(#[comptime] physical_rank: usize) -> RuntimeMap {
         RuntimeMap {
             coefficients: Coords::<u32>::new(),
-            residues: const_coords(comptime!(vec![0; physical_rank])),
+            residues: Coords::constant(comptime!(vec![0; physical_rank])),
         }
     }
 
@@ -70,7 +70,7 @@ pub(crate) fn logical_extent(
     #[unroll]
     for i in 0..comptime!(projection.logical_rank()) {
         let picks = comptime!(projection.carriers(projection.logical_axes()[i]).to_vec());
-        bound.push(physical_shape.fproduct(picks));
+        bound.push(physical_shape.product(picks));
     }
     bound
 }
@@ -99,14 +99,18 @@ pub(crate) fn step_offset(
         let scale = comptime!(projection.scale(pa, axis) as u32);
         let quot = comptime!(edge as u32)
             .runtime()
-            .fdiv(physical_shape.fproduct(comptime!(finer.to_vec())));
+            .divided_by(physical_shape.product(comptime!(finer.to_vec())));
         let digit = match comptime!(modulo) {
-            Some(m) => quot.frem(physical_shape.at(m)),
+            Some(m) => quot.remainder(physical_shape.at(m)),
             None => quot,
         };
-        parts.push(digit.fmul(comptime!(scale).runtime()).fmul(strides.at(pa)));
+        parts.push(
+            digit
+                .times(comptime!(scale).runtime())
+                .times(strides.at(pa)),
+        );
     }
-    parts.fsum(picks)
+    parts.sum(picks)
 }
 
 /// The inverse of `GmemLayout`'s `to_source_pos`: the logical coordinate under `projection` that
@@ -141,10 +145,10 @@ pub(crate) fn fold_physical(
             parts.push(
                 digits
                     .at(pa)
-                    .fmul(physical_shape.fproduct(comptime!(finer.to_vec()))),
+                    .times(physical_shape.product(comptime!(finer.to_vec()))),
             );
         }
-        out.push(parts.fsum(picks));
+        out.push(parts.sum(picks));
     }
     out
 }

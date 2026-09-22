@@ -6,7 +6,6 @@
 
 use cubecl::prelude::*;
 
-use crate::instruction::registers::horizontal;
 use crate::*;
 
 /// `c += lhs · rhs` over the block, one line of the contraction at a time.
@@ -276,13 +275,13 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
         #[unroll(unroll)]
         for n in 0..nr {
             if comptime!(spread > 1) {
-                let base = (n as u32).fmul(comptime!(spread as u32));
+                let base = (n as u32).times(comptime!(spread as u32));
                 // The spare lanes of an overhanging last column have no cell to seed from, and
                 // the identity they keep contributes nothing to the fold.
                 let mut lanes = Vector::<E, V>::cast_from(Monoid::identity::<E>(monoid));
                 #[unroll]
                 for l in 0..spread {
-                    let col = base.fadd(comptime!(l as u32));
+                    let col = base.plus(comptime!(l as u32));
                     let live = if comptime!(guard) {
                         col < comptime!(cols as u32)
                     } else {
@@ -347,12 +346,12 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
         for n in 0..nr {
             let cell = c[i * nr + n];
             if comptime!(spread > 1) {
-                let base = (n as u32).fmul(comptime!(spread as u32));
+                let base = (n as u32).times(comptime!(spread as u32));
                 // One commit per lane, which the assert above holds to `LaneShare::Whole`: each
                 // is a bare write, not `spread` plane folds where the plain path does one.
                 #[unroll]
                 for l in 0..spread {
-                    let col = base.fadd(comptime!(l as u32));
+                    let col = base.plus(comptime!(l as u32));
                     let live = if comptime!(guard) {
                         col < comptime!(cols as u32)
                     } else {
@@ -363,7 +362,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
                     }
                 }
             } else if comptime!(contracted_per_step > 1) {
-                let total = horizontal::vector::<E, V>(cell, contracted_per_step, monoid);
+                let total = Monoid::fold_lanes::<E, V>(cell, contracted_per_step, monoid);
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(total));
             } else {
                 acc.commit((i as u32, n as u32), Vector::<E, A>::cast_from(cell));
