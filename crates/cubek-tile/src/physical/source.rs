@@ -599,11 +599,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
 /// stored tiles-of-tiles deep names one level per nesting, coarse to fine; [`at`](crate::Tile::at)
 /// descends to the innermost. Matched on the subspace axes alone: a batch dim is one physical dim.
 ///
-/// # Panics
-///
-/// When the launch states no levels, or some nesting's storage tile is no level's tile: the
-/// space owns the storage tile's size, so a tensor that disagrees is refused here, on the
-/// caller's thread, rather than read across a storage tile boundary.
+/// [`Unaligned`](Storage::Unaligned) when some nesting's storage tile is no level's tile, or the
+/// launch states no levels: the operand is then read through the layout walk alone, which maps
+/// every coordinate onto its fragments wherever the levels cut, and only a raw window refuses it.
 fn storage_level(
     geometry: &Geometry,
     subspace: &[Axis],
@@ -611,11 +609,6 @@ fn storage_level(
     space: &Space,
     levels: &[Level],
 ) -> Storage {
-    assert!(
-        !levels.is_empty(),
-        "StridedTileSource: a storage-tiled operand's storage tile is the tile of one of the kernel's \
-         levels, which this launch does not state; launch it through Launcher::partitioned"
-    );
     let order = tiling.order(subspace);
     let batch_dims = geometry.rank() - order.len();
     let dims = &geometry.shape()[batch_dims..];
@@ -655,16 +648,9 @@ fn storage_level(
                 ),
             })
             .collect();
-        let level = (from..levels.len())
-            .find(|&i| tile_of(i) == tile)
-            .unwrap_or_else(|| {
-                panic!(
-                    "StridedTileSource: this operand is stored in {tile:?} storage tiles, which is the \
-                     tile of no level of the kernel's nest (the levels cut it to {:?}); the space \
-                     owns the storage tile's size, so pack the tensor to one of its tiles",
-                    (from..levels.len()).map(tile_of).collect::<Vec<_>>()
-                )
-            });
+        let Some(level) = (from..levels.len()).find(|&i| tile_of(i) == tile) else {
+            return Storage::Unaligned;
+        };
         innermost = Some(level);
         from = level + 1;
     }

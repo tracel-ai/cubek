@@ -20,8 +20,10 @@ use crate::*;
 /// block is an axis of a scaled matmul: the space owns the block size, so a window that descended
 /// through that level lies inside one storage tile by construction, not by a divisibility check.
 ///
-/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand
-/// and refuses a tensor whose storage tile is no level's tile. A comptime fact in the kernel;
+/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand. A
+/// storage tile that is no level's tile is still read, by the layout walk alone
+/// ([`Unaligned`](Storage::Unaligned)): the projection maps every logical coordinate onto its
+/// physical fragments whatever the levels cut. A comptime fact in the kernel;
 /// [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled) [`Contiguous`](Storage::Contiguous).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
@@ -36,6 +38,10 @@ pub enum Storage {
     /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
     /// want.
     Contiguous,
+    /// Storage-tiled, the storage tile being the tile of no level of the kernel's nest: a window
+    /// may straddle storage tiles at any depth, so every window is addressed by the layout walk,
+    /// each coordinate split into its fragments' digits, and none is ever one contiguous run.
+    Unaligned,
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and

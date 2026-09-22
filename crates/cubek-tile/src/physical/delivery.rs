@@ -118,7 +118,7 @@ impl DeliveryFamily for Cooperative {
         #[comptime] space: Partitioning,
     ) -> Tile<E> {
         comptime!(match arg.spec.storage {
-            Storage::Strided | Storage::Tiled(_) => {}
+            Storage::Strided | Storage::Tiled(_) | Storage::Unaligned => {}
             Storage::Contiguous =>
                 panic!("Cooperative: a launched spec is never inside a storage tile"),
         });
