@@ -18,16 +18,18 @@
 
 mod algebra;
 pub mod instruction;
+mod launch;
+mod layout;
 mod ops;
-mod physical;
 mod space;
 mod staging;
 mod tile;
 
 pub use algebra::*;
 pub use instruction::*;
+pub use launch::*;
+pub use layout::*;
 pub use ops::*;
-pub use physical::*;
 pub use space::*;
 pub use staging::*;
 pub use tile::*;

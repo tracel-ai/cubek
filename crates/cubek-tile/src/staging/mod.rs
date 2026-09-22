@@ -8,8 +8,10 @@ mod fill;
 mod model;
 mod pipeline;
 mod ring;
+mod storage;
 
 pub use base::*;
 pub use pipeline::*;
 pub use ring::*;
+pub use storage::*;
 // fill is `Ring`/`Staging` construction and fill/consume impls; nothing else to re-export.

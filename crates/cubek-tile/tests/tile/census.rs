@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
-const PUB_ITEMS: usize = 745;
+const PUB_ITEMS: usize = 749;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 41;
@@ -21,7 +21,18 @@ const TOO_MANY_ARGUMENTS: usize = 26;
 
 /// Words the redesign retires, each checked as a whole identifier. A phase that deletes a concept
 /// moves its word here, and the count must be zero from then on.
-const RETIRED: &[&str] = &["Fold", "FoldSeq", "Foldable", "ByAxis", "MAX_AXES", "const_coords", "last_cube_in", "unravel_const", "concat3", "within_2d"];
+const RETIRED: &[&str] = &[
+    "Fold",
+    "FoldSeq",
+    "Foldable",
+    "ByAxis",
+    "MAX_AXES",
+    "const_coords",
+    "last_cube_in",
+    "unravel_const",
+    "concat3",
+    "within_2d",
+];
 
 #[test]
 fn the_source_stays_under_its_ceilings() {

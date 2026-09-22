@@ -12,7 +12,7 @@ use crate::{Axis, Coords, Known, KnownExpand, KnownSeq, KnownSeqExpand, Projecti
 /// [rational](Divisor) mapping.
 ///
 /// They travel together because they are read together, per physical axis, in one expression:
-/// [`AxisProjection`](crate::AxisProjection) resolves a tap through the coefficients and off the
+/// [`ProjectionInKernel`](crate::ProjectionInKernel) resolves a tap through the coefficients and off the
 /// phase at once, and a descent ([`MemData::at`](crate::MemData)) advances both.
 ///
 /// No coefficients and an all-zero phase is the whole of it for a fully-`Static` integer mapping,
@@ -113,11 +113,11 @@ pub(crate) fn step_offset(
     parts.sum(picks)
 }
 
-/// The inverse of `GmemLayout`'s `to_source_pos`: the logical coordinate under `projection` that
+/// The inverse of `BufferLayout`'s `to_source_pos`: the logical coordinate under `projection` that
 /// produced physical digits `digits` (one per physical axis, already decoded off the flat index).
 /// Requires [`Projection::is_invertible`]: a gathered (affine, scale != 1) one never reaches this.
 ///
-/// A [`GmemLayout`](crate::GmemLayout) only carries its buffer's own positional map: a gathered
+/// A [`BufferLayout`](crate::BufferLayout) only carries its buffer's own positional map: a gathered
 /// operand is resolved a layer above it or staged through its own compacted [`Projection`].
 #[cube]
 pub(crate) fn fold_physical(

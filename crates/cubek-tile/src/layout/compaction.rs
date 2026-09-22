@@ -4,7 +4,7 @@
 
 use cubecl::zspace::SmallVec;
 
-use super::gcd;
+use super::dim::gcd;
 use crate::{Axis, PhysicalAxisMap, Projection, Scale, Space};
 
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and

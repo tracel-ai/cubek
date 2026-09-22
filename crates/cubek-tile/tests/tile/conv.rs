@@ -2105,7 +2105,7 @@ fn conv2d_staged_asymmetric_stride_and_dilation() {
 
 /// One compacted physical axis per step: `h` has `gcd(2, 2) = 2`, so its stage keeps every second
 /// row and the fill steps through it, while `w` is dense and steps by one. The only case where
-/// `StepUp` carries more than one distinct step, so a transposed or broadcast step shows up here.
+/// `CompactionStep` carries more than one distinct step, so a transposed or broadcast step shows up here.
 #[test]
 fn conv2d_staged_mixed_steps() {
     Conv2d {
@@ -2910,7 +2910,7 @@ fn resize1d_rational_dynamic() {
 }
 
 /// A rational gathered stage born with dynamic coefficients can be addressed before fill
-/// without tripping AxisProjection's dynamic coefficient count assert.
+/// without tripping ProjectionInKernel's dynamic coefficient count assert.
 #[cube(launch)]
 fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,

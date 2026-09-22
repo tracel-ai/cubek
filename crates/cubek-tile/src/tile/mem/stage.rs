@@ -410,7 +410,7 @@ impl<T: Numeric> MemData<T> {
                     quant,
                     packing: comptime!(packing),
                 },
-                layout: GmemLayout {
+                layout: BufferLayout {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
@@ -642,7 +642,7 @@ pub(crate) fn stage_compaction(
 pub(crate) struct StageForm {
     /// Physical extents in lines, innermost already divided by the store width.
     extents: Vec<usize>,
-    /// The buffer's own per-position map, what [`GmemLayout`] splits coordinates through.
+    /// The buffer's own per-position map, what [`BufferLayout`] splits coordinates through.
     positional: Projection,
     /// How the staged tile's logical axes address those extents.
     projection: Projection,

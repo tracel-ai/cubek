@@ -9,7 +9,7 @@ use cubecl::{
 
 use crate::*;
 
-/// A lifetime-erased buffer, how to address it ([`layout`](GmemLayout)), and which part of it this
+/// A lifetime-erased buffer, how to address it ([`layout`](BufferLayout)), and which part of it this
 /// tile is looking at ([`window`](Window)). The layout is fixed at construction, so a staged smem
 /// sub-tile keeps addressing its whole buffer after [`at`](Tile::at) windows it down.
 #[derive(CubeType, Clone)]
@@ -18,7 +18,7 @@ pub struct MemData<T: Numeric> {
     /// What the bytes are and mean.
     pub(crate) store: Store<T>,
     /// How a logical coordinate becomes a buffer offset. Fixed at construction.
-    pub(crate) layout: GmemLayout,
+    pub(crate) layout: BufferLayout,
     /// The region of the *physical* buffer this tile covers; narrowed by [`at`](Tile::at).
     pub(crate) window: Window,
     /// How the tile's logical axes address the buffer's physical ones:
@@ -271,4 +271,28 @@ impl Guard {
     pub fn checks(self) -> bool {
         matches!(self, Guard::Checked)
     }
+}
+
+/// What a storage tile is to the window an operand is read through.
+///
+/// A storage-tiled tensor's storage tile is the tile of a level of the kernel's nest, as a scale
+/// block is an axis of a scaled matmul: the space owns the block size, so a window that descended
+/// through that level lies inside one storage tile by construction, not by a divisibility check.
+///
+/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand
+/// and refuses a tensor whose storage tile is no level's tile. A comptime fact in the kernel;
+/// [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled) [`Contiguous`](Storage::Contiguous).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Storage {
+    /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
+    /// window lies inside it.
+    Strided,
+    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this
+    /// window sits above that level and spans several storage tiles, so only a layout walk
+    /// addresses its cells. Descending through level `i` makes it [`Contiguous`](Self::Contiguous).
+    Tiled(usize),
+    /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
+    /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
+    /// want.
+    Contiguous,
 }

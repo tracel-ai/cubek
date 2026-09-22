@@ -62,7 +62,7 @@ impl Projection {
     }
 
     /// The same operand in *coordinate* space: an axis's storage fragments merged back into the one
-    /// coordinate they are digits of, one entry per coordinate [`GmemLayout`](crate::GmemLayout)
+    /// coordinate they are digits of, one entry per coordinate [`BufferLayout`](crate::BufferLayout)
     /// consumes; the other half of [`positional`](Projection::positional). Untiled: its own map.
     pub fn untiled(&self) -> Projection {
         let carried = self.carried_groups();
@@ -82,7 +82,7 @@ impl Projection {
 
     /// The same buffer addressed by physical position, not this operand's axes: each physical axis
     /// relabeled with its synthetic [`Axis`] at coefficient `1`. Tiling survives, a gather does not
-    /// (resolved a layer up); the map [`GmemLayout`](crate::GmemLayout) splits coordinates through.
+    /// (resolved a layer up); the map [`BufferLayout`](crate::BufferLayout) splits coordinates through.
     pub fn positional(&self) -> Projection {
         let carried = self.carried_groups();
         let axes: Vec<Axis> = (0..carried.len()).map(|p| Axis(p as u8)).collect();
@@ -136,7 +136,7 @@ impl Projection {
         carried
     }
 
-    /// [`GmemLayout`](crate::GmemLayout)'s own physical-position map: coordinate `p`
+    /// [`BufferLayout`](crate::BufferLayout)'s own physical-position map: coordinate `p`
     /// (`0..tiling.rank()`) labeled by the synthetic axis `Axis(p)`, split per `tiling`. The layout
     /// addresses by position, past any gather resolved a layer up, so it needs no real axis labels.
     pub(crate) fn of_tiling(tiling: StorageTiling) -> Projection {

@@ -315,7 +315,7 @@ impl<T: Numeric> MemData<T> {
             } else {
                 MaskedView::new(
                     src.window_view_storage::<I2, WP2>(comptime!(Guard::Checked))
-                        .view(StepUp::new(shape.clone(), comptime!(steps))),
+                        .view(CompactionStep::new(shape.clone(), comptime!(steps))),
                     check,
                 )
             };
@@ -331,7 +331,7 @@ impl<T: Numeric> MemData<T> {
             } else {
                 MaskedView::new(
                     src.window_view_storage::<I2, Const<1>>(comptime!(Guard::Checked))
-                        .view(StepUp::new(
+                        .view(CompactionStep::new(
                             widened_shape(&shape, comptime!(plen), comptime!(w)),
                             comptime!(steps),
                         )),
@@ -528,7 +528,7 @@ impl<T: Numeric> MemData<T> {
 
     /// The base layout: the `[grid…, tile…]` split (`levels > 0`) or a plain
     /// strided dot (`levels = 0`).
-    fn base(&self) -> GmemLayout {
+    fn base(&self) -> BufferLayout {
         self.layout.clone()
     }
 
@@ -563,7 +563,10 @@ impl<T: Numeric> MemData<T> {
     /// The backing as a [`ViewMut`] addressed by `layout`: the write path, and the only one a
     /// [`WriteCall`](Backing::WriteCall) serves. The layout is the same for every backing; only the
     /// end of the address differs, a store or a call, so every mutable view above composes on it.
-    fn write_view<W: Size>(&mut self, layout: GmemLayout) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
+    fn write_view<W: Size>(
+        &mut self,
+        layout: BufferLayout,
+    ) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match &mut self.store.backing {
             Backing::Buffer(buffer) => buffer
                 .as_vectorized_mut()
@@ -584,7 +587,7 @@ impl<T: Numeric> MemData<T> {
     ///
     /// The slice-shaped half (dense runs, quantized re-typing, tma maps) is deliberately left out:
     /// none is a view over `Coords1d`, so each keeps saying so through [`Store::buffer`].
-    fn read_view<W: Size>(&self, layout: GmemLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
+    fn read_view<W: Size>(&self, layout: BufferLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.store.backing {
             Backing::Buffer(buffer) => buffer.as_vectorized().with_vector_size::<W>().view(layout),
             Backing::ReadCall(producer) => {
@@ -658,7 +661,7 @@ impl<T: Numeric> MemData<T> {
     /// The layout of a window inside one storage tile, relative to its origin: its own extent,
     /// each coordinate addressed by the stride of its innermost fragment, no digit to split. Sits
     /// over the run from [`window_offset`](MemData::window_offset) on, like a fragment load.
-    fn contiguous_layout(&self) -> GmemLayout {
+    fn contiguous_layout(&self) -> BufferLayout {
         comptime!(assert!(
             !self.access.overhang.masks(),
             "MemData: a window inside one storage tile reads unmasked; a storage-tiled tensor is \
@@ -673,7 +676,7 @@ impl<T: Numeric> MemData<T> {
             let inner = comptime!(*positional.carriers(axis).last().unwrap());
             strides.push(self.layout.physical_strides.at(inner));
         }
-        GmemLayout {
+        BufferLayout {
             physical_shape: self.window.extent.clone(),
             physical_strides: strides,
             projection: comptime!(Projection::direct(positional.logical_axes())),
@@ -813,7 +816,7 @@ impl<T: Numeric> MemData<T> {
 
     /// Re-view this buffer through `layout` as a [`MaskedView`], carrying its own `check` flag
     /// so the leaf masks without being asked. `layout` is a [`TileMatrix`] for the 2-D matmul
-    /// leaves and an [`AxisProjection`] for a gathered N-D read.
+    /// leaves and an [`ProjectionInKernel`] for a gathered N-D read.
     pub(crate) fn masked<W: Size, C: Coordinates, L: TileLayout<C>>(
         &self,
         layout: L,
@@ -1015,7 +1018,7 @@ impl<T: Numeric> MemData<T> {
     /// lane loads its line from, decoded later at the read.
     pub(crate) fn nd_words<WP: Size>(
         &self,
-        layout: AxisProjection,
+        layout: ProjectionInKernel,
         #[comptime] guard: Guard,
     ) -> MaskedView<'_, Vector<u32, WP>, CoordsDyn> {
         comptime!(assert!(
@@ -1036,9 +1039,9 @@ impl<T: Numeric> MemData<T> {
     /// The logical box test goes with the map, though, so a view over this masks against the
     /// physical box alone: a position folded from an out-of-range logical coordinate is no longer
     /// caught and reads whatever the window says lives at it. The caller owes in-range coordinates.
-    pub(crate) fn physical_box(&self) -> StepUp {
+    pub(crate) fn physical_box(&self) -> CompactionStep {
         let rank = comptime!(self.projection.physical_rank());
-        StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]))
+        CompactionStep::new(self.window.extent.clone(), comptime!(vec![1; rank]))
     }
 
     /// The `i`-th batch matrix of this window, read over the axes `axes` names, through the
@@ -1082,7 +1085,7 @@ impl<T: Numeric> MemData<T> {
 
     /// The operand's [`Projection`] applied to this window's logical box: the N-D read surface,
     /// one coordinate per axis of `space`.
-    pub(crate) fn axis_projection(&self, #[comptime] space: Space) -> AxisProjection {
+    pub(crate) fn axis_projection(&self, #[comptime] space: Space) -> ProjectionInKernel {
         axis_projection(
             space,
             comptime!(self.projection.clone()),
@@ -1724,7 +1727,7 @@ fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 
 /// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
 /// digit per physical axis ([`line_digit`]), then [`fold_physical`] folds a storage-tiled axis's
-/// digits back into one off `projection`'s own div/modulo (`GmemLayout`'s map, invertible).
+/// digits back into one off `projection`'s own div/modulo (`BufferLayout`'s map, invertible).
 #[cube]
 fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32>) -> CoordsDyn {
     let x = i.retyped::<u32>();

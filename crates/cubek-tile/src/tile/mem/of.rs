@@ -321,7 +321,7 @@ impl<T: Numeric> Tile<T> {
                 physical_strides.push(stride / w);
             }
         }
-        // `GmemLayout`'s own physical-position map: the operand's projection relabeled by position,
+        // `BufferLayout`'s own physical-position map: the operand's projection relabeled by position,
         // since the layout is handed coordinates a gather has already resolved. Storage tiling
         // survives it, so `physical_shape` is `[pre…, grid…, …, tile…]` in synthetic-axis order.
         let gmem_projection = comptime!(projection.positional());
@@ -346,7 +346,7 @@ impl<T: Numeric> Tile<T> {
                     quant,
                     packing: comptime!(packing),
                 },
-                layout: GmemLayout {
+                layout: BufferLayout {
                     physical_shape,
                     physical_strides,
                     projection: gmem_projection,
@@ -489,7 +489,7 @@ fn top_window(
 
 /// Where a gathered physical axis's top window starts and the phase its division left behind:
 /// `⌊offset / divisor⌋` and `offset mod divisor`. A rational mapping absorbs only its divisor's
-/// multiples, handing the rest to [`AxisProjection`](crate::AxisProjection); an integer one all.
+/// multiples, handing the rest to [`ProjectionInKernel`](crate::ProjectionInKernel); an integer one all.
 ///
 /// The floor is the host's whenever both sides are comptime; only a `Dynamic` offset or divisor
 /// pays for one in the kernel.

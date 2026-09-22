@@ -295,7 +295,7 @@ impl PhysicalAxisMap {
             return self;
         };
         let common = self.terms.iter().try_fold(0, |g, t| match t.scale {
-            Scale::Static(s) => Some(super::gcd(g, s)),
+            Scale::Static(s) => Some(gcd(g, s)),
             Scale::Dynamic { .. } => None,
         });
         // `gcd(0, s)` seeds from the first coefficient, so an all-`0` combination (or none at all)
@@ -442,6 +442,14 @@ impl PhysicalAxisMap {
     pub(crate) fn is_identity(&self, axis: Axis) -> bool {
         self.identity_axis() == Some(axis)
     }
+}
+
+/// Shared by the two places a set of coefficients has a common factor worth taking out:
+/// [`PhysicalAxisMap::over`], where a divisor every coefficient cancels is not a division at all,
+/// and [`Compaction`](crate::Compaction), where the step it leaves is what a stage stores instead
+/// of the whole box.
+pub(crate) fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
 }
 
 #[cfg(test)]

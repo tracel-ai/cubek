@@ -14,5 +14,5 @@ pub use flat::*;
 pub use masked::*;
 pub use matrix::*;
 pub(crate) use packed::*;
-pub use projected::*;
+pub(crate) use projected::*;
 pub use quant::*;

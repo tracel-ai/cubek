@@ -24,8 +24,8 @@ use super::{
 /// ([`assert_separable_shapes`](super::coords::assert_separable_shapes)), so one cell apart.
 ///
 /// Taps move only contracted axes. With every factor free of the column axis, a run shares one
-/// anchor ([`AxisProjection::anchor`]) per row; otherwise each `(i, n)` cell anchors once and steps
-/// via [`AxisProjection::advance`]. Reads and mask tests use the stepped physical coordinates.
+/// anchor ([`ProjectionInKernel::anchor`]) per row; otherwise each `(i, n)` cell anchors once and steps
+/// via [`ProjectionInKernel::advance`]. Reads and mask tests use the stepped physical coordinates.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     acc: &mut MemData<E>,
@@ -310,7 +310,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
 /// Anchor the rhs projection at one accumulator cell with every contracted coordinate at zero.
 #[cube]
 fn rhs_anchor(
-    rhs_map: &AxisProjection,
+    rhs_map: &ProjectionInKernel,
     batch: &Coords<u32>,
     row: u32,
     col: u32,
@@ -338,7 +338,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
     offset: usize,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
-    rhs_map: &AxisProjection,
+    rhs_map: &ProjectionInKernel,
     anchor: &CoordsDyn,
     batch: &Coords<u32>,
     row: u32,

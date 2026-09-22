@@ -67,7 +67,7 @@ impl<T: Numeric> Tile<T> {
                 .view
                 .read(b_reader.map.anchor(b_base, comptime!(Vec::new())));
             // `a`'s address does step with the fold, so its map folds once here and each step is
-            // the addition [`advance`](crate::AxisProjection::advance) puts back.
+            // the addition [`advance`](crate::ProjectionInKernel::advance) puts back.
             let moving = comptime!(vec![split.axis]);
             let a_anchor = a_reader
                 .map

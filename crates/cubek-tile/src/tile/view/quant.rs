@@ -7,7 +7,7 @@ use cubecl::{
 
 use crate::*;
 
-/// The scales' [`GmemLayout`]: a window coordinate to the flat index of its block's scale, the dot
+/// The scales' [`BufferLayout`]: a window coordinate to the flat index of its block's scale, the dot
 /// of each axis's block index with its scale stride. `window_start` carries the origin's own block
 /// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::StridedTileSource::quantized)).
 ///
