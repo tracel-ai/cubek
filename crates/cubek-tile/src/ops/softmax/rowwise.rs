@@ -1,6 +1,6 @@
-//! The online-softmax step at unit ownership. Each op runs over the unit's owned rows (`rpu`
-//! contiguous rows per unit, unit `unit` of its team starting at `unit*rpu`) with no syncs, a line
-//! (the tile's vector width of adjacent columns) at a time, every loop over a comptime bound.
+//! The online-softmax step at unit ownership. Each op runs over the rows a [`RowState`] owns
+//! ([`owned_row`](RowState::owned_row)) with no syncs, a line (the tile's vector width of adjacent
+//! columns) at a time, every loop over a comptime bound.
 
 use cubecl::prelude::*;
 
@@ -16,9 +16,9 @@ impl<EA: Float> Tile<EA> {
         scale: EA,
         probe: &MaskProbe,
         mask: &Tile<u32>,
-        #[comptime] rpu: usize,
-        unit: usize,
+        state: &RowState<EA>,
     ) {
+        let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let w = self.vector_size();
@@ -28,7 +28,7 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpu {
-            let r = unit * rpu + ri;
+            let r = state.owned_row(ri);
             if r < rows {
                 let q = probe.row_q(r);
                 #[unroll]
@@ -46,14 +46,9 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// Per owned row max into `acc`, seeded from `base`.
-    pub fn row_max(
-        &self,
-        acc: &mut Array<EA>,
-        base: &Array<EA>,
-        #[comptime] rpu: usize,
-        unit: usize,
-    ) {
+    /// Per owned row max into `acc`, seeded from the running max `state.m`.
+    pub fn row_max(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+        let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let w = self.vector_size();
@@ -63,8 +58,8 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpu {
-            acc[ri] = base[ri];
-            let r = unit * rpu + ri;
+            acc[ri] = state.m[ri];
+            let r = state.owned_row(ri);
             if r < rows {
                 #[unroll]
                 for line in 0..lines {
@@ -80,7 +75,8 @@ impl<EA: Float> Tile<EA> {
 
     /// `self = exp(self - rowwise)` per owned row, with the fully-masked
     /// guard: a row whose max is below the threshold goes entirely to zero.
-    pub fn exp_diff(&mut self, rowwise: &Array<EA>, #[comptime] rpu: usize, unit: usize) {
+    pub fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
+        let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let threshold = EA::new(LOGIT_MASKED);
@@ -91,7 +87,7 @@ impl<EA: Float> Tile<EA> {
 
         #[unroll]
         for ri in 0..rpu {
-            let r = unit * rpu + ri;
+            let r = state.owned_row(ri);
             if r < rows {
                 let live = EA::cast_from(rowwise[ri] >= threshold);
                 let safe_m = clamp_min(rowwise[ri], threshold);
@@ -110,7 +106,8 @@ impl<EA: Float> Tile<EA> {
     }
 
     /// Per owned row sum into `acc`.
-    pub fn row_sum(&self, acc: &mut Array<EA>, #[comptime] rpu: usize, unit: usize) {
+    pub fn row_sum(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
+        let rpu = comptime!(state.share.rows());
         let rows = comptime!(self.space.extent_at(0));
         let cols = comptime!(self.space.extent_at(1));
         let w = self.vector_size();
@@ -121,7 +118,7 @@ impl<EA: Float> Tile<EA> {
         #[unroll]
         for ri in 0..rpu {
             acc[ri] = EA::from_int(0);
-            let r = unit * rpu + ri;
+            let r = state.owned_row(ri);
             if r < rows {
                 #[unroll]
                 for line in 0..lines {

@@ -55,19 +55,6 @@ impl RowShare {
     }
 }
 
-/// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
-///
-/// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit of its team, unit
-/// `unit` starting at `unit * rows`. A plane owns every row of the tile it is handed: the kernel
-/// windows the tile per plane before the call, so no leaf indexes planes.
-#[cube]
-pub fn owned_row(#[comptime] share: RowShare, unit: usize, ri: usize) -> usize {
-    match comptime!(share) {
-        RowShare::Unit { rows } => unit * rows + ri,
-        RowShare::Plane { rows: _, lanes: _ } => ri,
-    }
-}
-
 /// This unit's lane within its worker: its position in the plane, or zero for a unit.
 #[cube]
 pub fn owned_lane(#[comptime] share: RowShare) -> usize {
@@ -92,9 +79,9 @@ pub struct RowState<E: Float> {
     /// holds the same `(m, l)`, since a plane-reduced score is plane-uniform.
     #[cube(comptime)]
     pub share: RowShare,
-    /// This unit's index in the team sharing the tile, which a unit-owned row is numbered from
-    /// ([`owned_row()`]). Unread under [`RowShare::Plane`].
-    pub unit: usize,
+    /// This unit's place in the team sharing the tile, which a unit-owned row is numbered from
+    /// ([`owned_row`](RowState::owned_row)). Unread under [`RowShare::Plane`].
+    pub team: TeamUnit,
 }
 
 /// What one streamed [`absorb`](RowState::absorb) tells the row's
@@ -157,7 +144,19 @@ impl<E: Float> RowState<E> {
             l,
             space,
             share,
-            unit: team.index,
+            team: team.clone(),
+        }
+    }
+
+    /// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
+    ///
+    /// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit of its team,
+    /// the unit at `index` starting at `index * rows`. A plane owns every row of the tile it is
+    /// handed: the kernel windows the tile per plane before the call, so no leaf indexes planes.
+    pub fn owned_row(&self, ri: usize) -> usize {
+        match comptime!(self.share) {
+            RowShare::Unit { rows } => self.team.index * rows + ri,
+            RowShare::Plane { rows: _, lanes: _ } => ri,
         }
     }
 
