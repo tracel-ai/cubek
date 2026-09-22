@@ -12,7 +12,11 @@ use cubecl::prelude::*;
 /// rows of it, and a cube read off a partitioning is a plane wide whatever the team is. A kernel
 /// whose levels deal the team reads the two off them; [`along_x`](TeamUnit::along_x) is the
 /// team a kernel lays on the cube's x dim by hand.
-#[derive(CubeType, Clone, Copy)]
+///
+/// Its expand type is `Clone`, so a cube struct that holds one — a fold's per-team view, a
+/// [`RowState`](crate::RowState) — can hand a copy on rather than rebuild it from its fields.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
 pub struct TeamUnit {
     /// This unit, among the team's.
     pub index: usize,
