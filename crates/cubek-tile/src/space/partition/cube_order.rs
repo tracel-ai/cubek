@@ -1,33 +1,14 @@
-//! The orders a [`Walk`](crate::Walk) deals its work in: the order its steps visit the
-//! odometer ([`WalkOrder`]), and the order the cube level hands its boxes to the grid
-//! ([`CubeOrder`]).
+//! The order the cube level hands its boxes to the grid ([`CubeOrder`]), and the joint decode of
+//! the two in-plane positions it permutes.
 //!
-//! The two differ, and the cube level shows it: every instance takes one tile, so the walk's
-//! `total` is one and there is no step order to state. A [`CubeOrder`] permutes which *instance*
-//! holds which box: the positions [`Walk::from_counts`](crate::Walk) decodes from the hardware.
+//! A [`WalkOrder`](crate::WalkOrder) is a different thing, and the cube level shows it: every
+//! instance takes one tile, so the walk's `total` is one and there is no step order to state. A
+//! [`CubeOrder`] permutes which *instance* holds which box: the positions the walk decodes from
+//! the hardware.
 
-use crate::{Known, KnownExpand};
+use crate::{ComputeScope, Coords, CubeAxis, Known, KnownExpand, Level, Space, hardware_pos};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
-
-/// A new order is a new variant here plus a [`walk_index`] arm.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum WalkOrder {
-    /// step `i` visits odometer index `i` (the identity).
-    RowMajor,
-    /// step `i` visits `total - i - 1`.
-    Reversed,
-}
-
-#[cube]
-pub(crate) fn walk_index(i: usize, total: usize, #[comptime] order: WalkOrder) -> usize {
-    match order {
-        WalkOrder::RowMajor => i,
-        // Folded: an unrolled walk's constant `i` must stay constant through the
-        // reversal, or its regions lose their comptime coordinates.
-        WalkOrder::Reversed => total.minus(i).minus(1),
-    }
-}
 
 /// The order a cube level deals its boxes to the grid.
 ///
@@ -149,6 +130,68 @@ pub fn swizzle(index: usize, num_steps: usize, #[comptime] step_length: u32) -> 
     };
 
     (step_index, pos_in_step + strip_offset)
+}
+
+/// The two in-plane positions of a cube level that deals its boxes in an order other than the
+/// grid's own, decoded together from the flat dispatch index ([`CubeOrder`]).
+///
+/// Zeros where no order is stated, which is every other level and every walk: the branch is
+/// comptime, so nothing of this reaches a kernel that did not ask for it.
+#[cube]
+pub(crate) fn swizzled_positions(
+    #[comptime] space: Space,
+    #[comptime] level: Level,
+    instances: &Coords<usize>,
+) -> Coords<usize> {
+    let mut out = Coords::<usize>::new();
+    if comptime!(level.order().swizzles()) {
+        let (x_at, y_at) = comptime!(in_plane_axes(&space, &level));
+        let (count_x, count_y) = (instances.at(x_at), instances.at(y_at));
+        // The grid's own linear order, which is the order the hardware starts cubes in and so
+        // the one a permutation of it can say anything about.
+        let flat = hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X)))
+            .plus(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).times(count_x));
+        let (x, y) = cube_positions(flat, (count_x, count_y), comptime!(level.order()));
+        out.push(x);
+        out.push(y);
+    } else {
+        out.push(0usize);
+        out.push(0usize);
+    }
+    out
+}
+
+/// Where this space holds the cube level's two in-plane axes, `(x, y)`.
+///
+/// Refuses what the joint decode cannot state: an axis not owning its whole grid dimension. A
+/// swizzle permutes the grid, and a dimension shared by axes ([`Level::shared_by`], a batch axis
+/// folded onto an in-plane dimension) carries digits this has no way to put back.
+pub(crate) fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
+    let at = |wanted: CubeAxis| {
+        let found: Vec<usize> = (0..space.rank())
+            .filter(|&p| {
+                level.distribution(space.axis_at(p)).scope() == Some(ComputeScope::Cube(wanted))
+            })
+            .collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "Walk: a {:?} cube level deals the grid's {wanted:?} dimension to {} of its axes, \
+             and a swizzle can put back only an axis that owns a whole dimension",
+            level.order(),
+            found.len()
+        );
+        let p = found[0];
+        assert_eq!(
+            level.inner_weight_unspanned(space, space.axis_at(p)),
+            1,
+            "Walk: a {:?} cube level shares the grid's {wanted:?} dimension with an axis this \
+             space does not span, whose digit a swizzle has no way to put back",
+            level.order()
+        );
+        p
+    };
+    (at(CubeAxis::X), at(CubeAxis::Y))
 }
 
 #[cfg(test)]

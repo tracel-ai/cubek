@@ -212,6 +212,15 @@ impl Region {
     }
 }
 
+#[cube]
+impl Region {
+    /// The regions of `level` over this region's own box, a level of the kernel's own rather
+    /// than the partitioning's next ([`walk`](Region::walk)).
+    pub fn over(&self, #[comptime] level: &Level) -> Walk {
+        Walk::of(&self.child(), comptime!(level.clone()), self.clone())
+    }
+}
+
 /// The comptime shape of a path, the same read on the host and the expand types.
 macro_rules! path_shape {
     ($ty:ty) => {

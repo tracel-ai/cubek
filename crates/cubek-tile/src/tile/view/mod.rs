@@ -12,7 +12,7 @@ mod quant;
 pub(crate) use accumulate::*;
 pub use flat::*;
 pub use masked::*;
-pub use matrix::*;
+pub(crate) use matrix::*;
 pub(crate) use packed::*;
 pub(crate) use projected::*;
 pub use quant::*;

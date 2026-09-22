@@ -20,9 +20,9 @@ use crate::{
     Axis, Coords, Count, Known, KnownExpand, Level, Region, RegionExpand, Space, instance_tiles,
 };
 
-use super::level::GridCount;
-use super::walk_order::{cube_positions, walk_index};
-use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
+use super::order::walk_index;
+use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
+use crate::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -65,31 +65,6 @@ pub struct Walk {
     /// The order the steps visit the odometer in ([`reversed`](Walk::reversed)).
     #[cube(comptime)]
     order: WalkOrder,
-}
-
-/// This instance's run of a level dealt as one index ([`Level::shared_by`]): the regions it
-/// touches and, for the first and last, how much of their walk below is its own. Counted in the
-/// level below's steps, the ones its instances take *together*, however that level cuts the plane.
-#[derive(CubeType)]
-pub struct Run {
-    /// The regions the run touches, in order.
-    regions: Walk,
-    /// The first of them, in the level's flat index.
-    first: usize,
-    /// The run's bounds on the joint step index.
-    start: usize,
-    end: usize,
-    /// Steps of the level below per region.
-    stride: usize,
-}
-
-#[cube]
-impl Region {
-    /// The regions of `level` over this region's own box, a level of the kernel's own rather
-    /// than the partitioning's next ([`walk`](Region::walk)).
-    pub fn over(&self, #[comptime] level: &Level) -> Walk {
-        Walk::of(&self.child(), comptime!(level.clone()), self.clone())
-    }
 }
 
 #[cube]
@@ -365,58 +340,6 @@ impl Walk {
             digit.times(self.scales.at(p)).plus(self.positions.at(p))
         }
     }
-
-    /// This instance's run of the index this level deals as one, counted in steps of `below`,
-    /// the level each region is walked with. Two divisions rather than a length each: the runs
-    /// abut, cover the work once, and differ in length by at most one.
-    pub fn run(self, #[comptime] below: Level) -> Run {
-        let work = comptime!(
-            self.level
-                .work()
-                .cloned()
-                .expect("Walk::run: this level deals no work as one; say `shared_by`")
-        );
-        let instances = comptime!(work.instances());
-        let stride = self.region(0).over(&below).total();
-        let steps = self.total() * stride;
-        let pos = hardware_pos(comptime!(work.scope()));
-        let start = pos * steps / instances;
-        let end = (pos + 1) * steps / instances;
-        let first = start / stride;
-        // Through the region the run's last step falls in. `end` is exclusive, so the step before
-        // it is the one to find; an empty run (more instances than work) touches nothing.
-        let touched = select(start < end, (end - 1) / stride + 1 - first, 0);
-        Run {
-            regions: self.window(first, touched),
-            first,
-            start,
-            end,
-            stride,
-        }
-    }
-}
-
-#[cube]
-impl Run {
-    /// How many regions the run touches.
-    pub fn touched(&self) -> usize {
-        self.regions.total()
-    }
-
-    /// The `i`-th region the run touches.
-    pub fn region(&self, i: usize) -> Region {
-        self.regions.region(i)
-    }
-
-    /// Where in the `i`-th region's walk below this run starts, and how many steps of it are the
-    /// run's own: all of them inside the run, part of them at either end. What the region's walk
-    /// is [`window`](Walk::window)ed to.
-    pub fn steps(&self, i: usize) -> (usize, usize) {
-        let base = (self.first + i) * self.stride;
-        let from = select(base < self.start, self.start - base, 0);
-        let to = select(self.end < base + self.stride, self.end - base, self.stride);
-        (from, to - from)
-    }
 }
 
 /// Iterating a `Walk` visits its regions in order, so `for region in walk` is equivalent to
@@ -467,68 +390,6 @@ impl Iterable for WalkExpand {
     fn const_len(&self) -> Option<usize> {
         crate::algebra::constant(&self.steps).map(|n| n as usize)
     }
-}
-
-/// The two in-plane positions of a cube level that deals its boxes in an order other than the
-/// grid's own, decoded together from the flat dispatch index ([`CubeOrder`]).
-///
-/// Zeros where no order is stated, which is every other level and every walk: the branch is
-/// comptime, so nothing of this reaches a kernel that did not ask for it.
-#[cube]
-fn swizzled_positions(
-    #[comptime] space: Space,
-    #[comptime] level: Level,
-    instances: &Coords<usize>,
-) -> Coords<usize> {
-    let mut out = Coords::<usize>::new();
-    if comptime!(level.order().swizzles()) {
-        let (x_at, y_at) = comptime!(in_plane_axes(&space, &level));
-        let (count_x, count_y) = (instances.at(x_at), instances.at(y_at));
-        // The grid's own linear order, which is the order the hardware starts cubes in and so
-        // the one a permutation of it can say anything about.
-        let flat = hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X)))
-            .plus(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).times(count_x));
-        let (x, y) = cube_positions(flat, (count_x, count_y), comptime!(level.order()));
-        out.push(x);
-        out.push(y);
-    } else {
-        out.push(0usize);
-        out.push(0usize);
-    }
-    out
-}
-
-/// Where this space holds the cube level's two in-plane axes, `(x, y)`.
-///
-/// Refuses what the joint decode cannot state: an axis not owning its whole grid dimension. A
-/// swizzle permutes the grid, and a dimension shared by axes ([`Level::shared_by`], a batch axis
-/// folded onto an in-plane dimension) carries digits this has no way to put back.
-fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
-    let at = |wanted: CubeAxis| {
-        let found: Vec<usize> = (0..space.rank())
-            .filter(|&p| {
-                level.distribution(space.axis_at(p)).scope() == Some(ComputeScope::Cube(wanted))
-            })
-            .collect();
-        assert_eq!(
-            found.len(),
-            1,
-            "Walk: a {:?} cube level deals the grid's {wanted:?} dimension to {} of its axes, \
-             and a swizzle can put back only an axis that owns a whole dimension",
-            level.order(),
-            found.len()
-        );
-        let p = found[0];
-        assert_eq!(
-            level.inner_weight_unspanned(space, space.axis_at(p)),
-            1,
-            "Walk: a {:?} cube level shares the grid's {wanted:?} dimension with an axis this \
-             space does not span, whose digit a swizzle has no way to put back",
-            level.order()
-        );
-        p
-    };
-    (at(CubeAxis::X), at(CubeAxis::Y))
 }
 
 /// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
