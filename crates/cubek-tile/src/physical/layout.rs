@@ -6,11 +6,9 @@ use cubecl::zspace::SmallVec;
 
 use crate::{Axis, MAX_AXES};
 
-/// One physical axis (dimension) of a stored buffer: the logical [`Axis`] it belongs to and
-/// its extent. Storage tiling is *not* an annotation here; a tiled logical axis contributes
-/// several `PhysicalAxis` entries (one per nesting level, outer grid to inner leaf), so tiling
-/// is just higher physical rank with the label repeated, mirroring the `[grid…, tile…]` buffer
-/// the tile engine ([`Projection`](crate::Projection)) actually launches.
+/// One physical axis of a stored buffer: the logical [`Axis`] it belongs to and its extent. A
+/// storage-tiled axis contributes one entry per nesting level (outer grid to inner leaf), so tiling
+/// is just higher physical rank with the label repeated: the `[grid…, tile…]` buffer's shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxis {
     axis: Axis,
@@ -31,11 +29,9 @@ impl PhysicalAxis {
     }
 }
 
-/// A concrete physical layout: its axes in major (outer) to minor (inner) order, the last
-/// being innermost/contiguous. A storage-tiled axis appears as several entries, level-major
-/// (coarse grid outer, leaf inner), so the rank can exceed the number of logical axes. Built
-/// from a real tensor and its [`Projection`](crate::Projection) at realization; constructed directly
-/// in tests.
+/// A concrete physical layout: its axes major (outer) to minor (inner), the last contiguous. A
+/// storage-tiled axis is several level-major entries (coarse grid outer, leaf inner), so the rank
+/// can exceed the logical axis count. Realized from a tensor's [`Projection`](crate::Projection).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ConcreteLayout {
     axes: SmallVec<[PhysicalAxis; MAX_AXES]>,

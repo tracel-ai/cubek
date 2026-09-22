@@ -17,11 +17,8 @@ impl<Acc: Numeric> Tile<Acc> {
     }
 
     /// `c = fold(c, input)`: [`reduce_axis`](Tile::reduce_axis) with the accumulate
-    /// [`mma`](Tile::mma) carries over [`mm`](Tile::mm), folding each contracted cell into
-    /// whatever `self` already holds there. That existing value is the fold's literal starting
-    /// point, and the caller owns it: it must have seeded `self` with the monoid's identity
-    /// ([`init_identity`](Tile::init_identity)) first, or an uninitialized accumulator folds
-    /// against garbage.
+    /// [`mma`](Tile::mma) carries over [`mm`](Tile::mm), folding each contracted cell into what
+    /// `self` holds; unseeded ([`init_identity`](Tile::init_identity)) it folds against garbage.
     pub fn reduce_axis_accumulate<In: Numeric>(
         &mut self,
         input: &Tile<In>,

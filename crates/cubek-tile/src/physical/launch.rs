@@ -1,7 +1,6 @@
 //! One kernel launch: the [`Launcher`] binds a space, the grid the selector chose and the tiles
-//! its operands are cut to to a client, and keeps the concrete (real-extent) space alongside the
-//! kernel-form one, so geometry and divisibility are always read off real extents and no call
-//! site can consume the space too early.
+//! its operands are cut to to a client, keeping the concrete (real-extent) space beside the
+//! kernel-form one: geometry and divisibility read off real extents, and nothing consumes it early.
 
 use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
@@ -11,10 +10,9 @@ use crate::{
     StridedTileSource, Unset,
 };
 
-/// Which extents the compiled kernel reads at runtime. Every one (`Dynamic`) makes one compiled
-/// kernel serve every shape; none (`Static`) specializes the kernel to this launch's extents;
-/// `DynamicAlong` frees only the listed axes, which specializes the loops along the others and
-/// serves an axis no operand can state the size of ([`Tile::witnesses`](crate::Tile::witnesses)).
+/// Which extents the compiled kernel reads at runtime. `Dynamic` (all) makes one compiled kernel
+/// serve every shape; `Static` (none) specializes it to this launch's extents; `DynamicAlong` frees
+/// only the listed axes, e.g. one no operand sizes ([`Tile::witnesses`](crate::Tile::witnesses)).
 #[derive(Clone, Copy, Debug)]
 pub enum KernelForm<'a> {
     Dynamic,
@@ -23,15 +21,12 @@ pub enum KernelForm<'a> {
 }
 
 /// One launch: a space, the grid the selector chose, the tiles the operands are cut to and the
-/// axes that overhang, bound to a client. Every one of those is the blueprint's statement.
-/// Geometry and divisibility are read off the concrete (real-extent) space, and tile arguments
-/// project from the kernel-form one.
+/// axes that overhang, bound to a client; each is the blueprint's statement. Geometry and
+/// divisibility read off the concrete (real-extent) space, tile arguments off the kernel-form one.
 ///
-/// A launch that states its levels too ([`partitioned`](Launcher::partitioned)) can bind a
-/// storage-tiled operand: its storage tile has to be the tile of one of them
-/// ([`Storage`](crate::Storage)). A kernel with no blueprint (a test, a benchmark mapping) is
-/// [`implied`](Launcher::implied) by its levels instead, and keeps them to hand its loops one
-/// each.
+/// A launch stating its levels ([`partitioned`](Launcher::partitioned)) can bind a storage-tiled
+/// operand: its storage tile must be one of their tiles ([`Storage`](crate::Storage)). A kernel
+/// with no blueprint (a test) is [`implied`](Launcher::implied) by its levels, kept for its loops.
 #[derive(Clone)]
 pub struct Launcher {
     client: Client,
@@ -103,10 +98,9 @@ impl Launcher {
         let leaf = partitioning.leaf().extents();
         let overhangs = partitioning.overhanging();
         let fillers = partitioning.fillers();
-        // The two roles meet on a barrier and nowhere else, so a device that carries no barrier
-        // type would run two loops with no rendezvous between them. Refused here, on the host,
-        // and not where the slot is allocated: a refusal at expansion fires on a worker thread,
-        // where nothing sees it and the launch returns zeros.
+        // The two roles meet on a barrier and nowhere else, so a device with no barrier type would
+        // run two loops with no rendezvous. Refused on the host, not where the slot is allocated: a
+        // refusal at expansion fires on a worker thread, unseen, and the launch returns zeros.
         assert!(
             fillers == 0
                 || client
@@ -128,10 +122,8 @@ impl Launcher {
     }
 
     /// The launch `partitioning` implies, for a kernel with no blueprint to state one: as many
-    /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they
-    /// overhang. A third constructor, not `new`: a launch is stated, and this one reads off
-    /// the levels what a blueprint would have stated, which only a test or a benchmark mapping
-    /// wants.
+    /// cubes, planes and lanes as its levels deal to, the leaf they cut to, the axes they overhang.
+    /// Reads off the levels what a blueprint would state, for a test or a benchmark mapping only.
     pub fn implied(client: &Client, partitioning: Partitioning, form: KernelForm<'_>) -> Self {
         let plane_size = client.properties().hardware.plane_size_max;
         let lanes = partitioning.lanes();
@@ -207,17 +199,13 @@ impl Launcher {
             .levels(&self.levels)
     }
 
-    /// [`arg`](Self::arg) over a stated geometry rather than a binding, for an operand with no
-    /// tensor: the destination a fused store writes through
-    /// ([`Tile::of_sink`](crate::Tile::of_sink)) or the producer a fused read comes from
-    /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is the physical extents and
-    /// strides the operand *would* have had; everything else is settled exactly as for a bound
-    /// operand, since this is the same builder.
+    /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor: a fused store's
+    /// destination ([`Tile::of_sink`](crate::Tile::of_sink)) or a fused read's producer
+    /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is what it *would* have had.
     ///
-    /// End it with [`build_spec`](StridedTileSource::build_spec), not
-    /// [`build`](StridedTileSource::build): there is no tensor to ship, and the *settled* geometry
-    /// comes back beside the spec. The two part company where a broadcast batch dim is dropped,
-    /// which is why the settled one travels rather than the call site reproducing the drop.
+    /// The rest is settled as for a bound operand, since this is the same builder. End it with
+    /// [`build_spec`](StridedTileSource::build_spec), not [`build`](StridedTileSource::build):
+    /// no tensor ships, and the *settled* geometry (broadcast batch dims dropped) comes back too.
     pub fn geometry(&self, geometry: &Geometry) -> StridedTileSource<'_, Set, Unset, Unset> {
         StridedTileSource::<Unset, Unset, Unset>::of_geometry(geometry)
             .space(&self.kernel)
@@ -227,11 +215,11 @@ impl Launcher {
     }
 
     /// The widest `Vector<E, v>` line every operand can be served in along `axis`: one width for
-    /// all of them, since a kernel reading one operand's lines writes the other's. Each
-    /// `(geometry, subspace)` must be unchecked and innermost-contiguous, and the width must
-    /// divide each inner extent, every coarser stride and the axis's leaf tile edge; `1`
-    /// otherwise. Takes a [`Geometry`] rather than a binding so an operand with no tensor
-    /// constrains the shared width like any other.
+    /// all, since a kernel reading one operand's lines writes the other's. Takes a [`Geometry`]
+    /// rather than a binding, so an operand with no tensor constrains the width like any other.
+    ///
+    /// `1` unless each `(geometry, subspace)` is unchecked and innermost-contiguous and `v` divides
+    /// each inner extent, every coarser stride and the axis's leaf tile edge.
     pub fn vector_size(
         &self,
         axis: Axis,

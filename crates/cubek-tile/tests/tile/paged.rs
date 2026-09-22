@@ -2,9 +2,10 @@
 //!
 //! The physical pool is `[PAGE, OFFSET]` over one buffer, spelled with
 //! [`PhysicalAxisMap::disjoint`] exactly as a quantization block splits `K`. A page table names
-//! which physical page holds a sequence's logical one, and the walk routes `PAGE` to it, so the
-//! pool needs no ordering of its own and the page size is the split's radix rather than a number
-//! carried beside a lookup.
+//! which physical page holds a sequence's logical one, and the walk routes `PAGE` to it.
+//!
+//! So the pool needs no ordering of its own, and the page size is the split's radix rather than a
+//! number carried beside a lookup.
 #![allow(non_snake_case)]
 
 use cubecl::{prelude::*, zspace::Shape};

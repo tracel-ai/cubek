@@ -6,10 +6,9 @@ use cubecl::zspace::SmallVec;
 
 use crate::{Axis, MAX_AXES};
 
-/// How far one unit of a logical axis's coordinate moves along one physical axis. Mirrors
-/// [`Extent`](crate::Extent): `Static` is a comptime constant so the advance folds the way
-/// [`window_start`](crate::MemData) needs, `Dynamic` is a runtime stride or dilation whose value
-/// rides the tile ([`Tile::of_gathered`](crate::Tile::of_gathered)) instead of the kernel.
+/// How far one unit of a logical axis's coordinate moves along one physical axis, mirroring
+/// [`Extent`](crate::Extent): `Static` folds as [`window_start`](crate::MemData) needs, `Dynamic`
+/// a runtime stride or dilation riding the tile ([`Tile::of_gathered`](crate::Tile::of_gathered)).
 ///
 /// A `Dynamic` coefficient still declares `max`, the largest value the launch may pass: the field
 /// is then a runtime value but its *bound* is not, which is all a stage needs. Overshoot is dead
@@ -49,14 +48,12 @@ impl Scale {
 }
 
 /// The constant term of one physical axis's affine combination. Mirrors [`Scale`]: `Static` is a
-/// comptime constant so [`may_underflow`](crate::Projection::may_underflow) can track whether it
-/// is negative, `Dynamic` is a runtime padding or placement whose value rides the tile's signed
-/// offset carrier instead of the kernel.
+/// comptime constant [`may_underflow`](crate::Projection::may_underflow) can check the sign of,
+/// `Dynamic` a runtime padding or placement riding the tile's signed offset carrier.
 ///
 /// Unlike [`Scale::Dynamic`], an `Offset::Dynamic` needs no bound to be staged: `span` is
-/// offset-invariant and [`Compaction`](crate::Compaction) drops the offset entirely, so it costs
-/// no window geometry. The only cost is that
-/// [`may_underflow`](crate::Projection::may_underflow) arms the signed guard conservatively.
+/// offset-invariant and [`Compaction`](crate::Compaction) drops the offset, so it costs no window
+/// geometry, only a conservative [`may_underflow`](crate::Projection::may_underflow) guard.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Offset {
     Static(isize),
@@ -89,10 +86,9 @@ impl From<isize> for Offset {
 /// *rational* mapping, `(Σ digit * scale + offset) / divisor`. `Static(1)` is the integer mapping
 /// every operand but a fractionally scaled one carries, and is the identity everywhere below.
 ///
-/// One per physical axis rather than one per term, because the floor does not distribute over the
-/// sum. A term meant to stay integral is spelled by giving it the divisor as its coefficient,
-/// which the division cancels exactly, and a divisor every coefficient cancels is reduced away by
-/// [`over`](PhysicalAxisMap::over) rather than carried.
+/// One per physical axis rather than per term, because the floor does not distribute over the sum.
+/// A term meant to stay integral takes the divisor as its coefficient, which the division cancels
+/// exactly; a divisor every coefficient cancels is reduced away by [`over`](PhysicalAxisMap::over).
 ///
 /// A `Dynamic` divisor declares a *lower* bound: a window shrinks as its divisor grows, so `min`
 /// sizes the stage. Any rational mapping stages uncompacted, with a conservative comptime extent
@@ -131,26 +127,23 @@ impl From<usize> for Divisor {
     }
 }
 
-/// One logical axis's contribution to one physical axis: `digit * scale`, where the digit is the
-/// whole coordinate unless the axis is spread over several physical axes, which
-/// [`Projection::digit`](crate::Projection::digit) reads off the map's own shape rather than off a
-/// stored constant.
+/// One logical axis's contribution to one physical axis: `digit * scale`, the digit being the
+/// whole coordinate unless the axis spreads over several physical axes; no constant is stored:
+/// [`Projection::digit`](crate::Projection::digit) reads the digit off the map's own shape.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AxisTerm {
     pub axis: Axis,
     pub scale: Scale,
 }
 
-/// Whether a physical axis's terms can land on the same cell. The coefficients alone cannot say:
-/// `affine(&[(A, 2), (B, 1)])` partitions the axis when `B` has extent `2` and is a stride-2
-/// stencil when it has `3`, so the caller states which it means and
-/// [`validate_composition`](crate::Projection) checks the claim against the extents.
+/// Whether a physical axis's terms can land on the same cell. The coefficients alone cannot say
+/// (`affine(&[(A, 2), (B, 1)])` partitions the axis when `B` has extent `2`, is a stride-2 stencil
+/// at `3`), so the caller states it; [`validate_composition`](crate::Projection) checks the claim.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Composition {
     /// No two logical positions share a cell: each coefficient is the product of the finer axes'
     /// extents, so the terms partition the axis and every window stays a dense box. The mirror of
-    /// storage tiling: there one logical axis spreads over several physical ones, here several
-    /// share one, because the operands tell them apart. A quantization block is this.
+    /// storage tiling (several logical axes sharing one physical). A quantization block is this.
     Disjoint,
     /// Two positions may land on the same cell, so a cell does not determine the position: a
     /// stencil's taps, a resample's ratio.
@@ -159,8 +152,7 @@ pub enum Composition {
 
 /// One [`PhysicalAxis`](crate::PhysicalAxis) as an affine combination of logical axes' digits
 /// plus a constant term, over a divisor: `physical = (Σ digit(axis) * scale + offset) / divisor`,
-/// floored. The divisor is `1` for every mapping but a [rational](Divisor) one, which is the only
-/// case any of the arithmetic below is not the plain affine sum.
+/// floored. The divisor is `1` for every mapping but a [rational](Divisor) one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct PhysicalAxisMap {
     terms: SmallVec<[AxisTerm; MAX_AXES]>,
@@ -246,9 +238,8 @@ impl PhysicalAxisMap {
         }
         let offset = offset.into();
         // One axis stepping by one is the identity however it was spelled, and the identity
-        // partitions its axis. Anything else is ambiguous from the coefficients alone, so it takes
-        // the [`Overlapping`](Composition::Overlapping) reading unless a caller claims
-        // otherwise ([`disjoint`](Self::disjoint)).
+        // partitions its axis. Anything else is ambiguous from the coefficients alone, so it reads
+        // [`Overlapping`](Composition::Overlapping) unless claimed [`disjoint`](Self::disjoint).
         let composition = match (terms, offset) {
             ([(_, Scale::Static(1))], Offset::Static(0)) => Composition::Disjoint,
             _ => Composition::Overlapping,
@@ -265,9 +256,10 @@ impl PhysicalAxisMap {
     }
 
     /// The same combination read as a fraction: `(Σ digit * scale + offset) / divisor`, floored.
-    /// The rational spelling of a fractional scale, e.g. resizing `w_in` cells to `w_out` is
-    /// `affine_with_offset(&[(O, w_in), (R, w_out)], offset).over(w_out)`, where `R`'s coefficient
-    /// is the divisor precisely so the tap index survives the division whole.
+    ///
+    /// The rational spelling of a fractional scale: resizing `w_in` cells to `w_out` is
+    /// `affine_with_offset(&[(O, w_in), (R, w_out)], offset).over(w_out)`, `R`'s coefficient being
+    /// the divisor precisely so the tap index survives the division whole.
     ///
     /// A divisor the coefficients all cancel is [reduced](Self::reduced) away here, so
     /// [`is_rational`](Self::is_rational) means the mapping genuinely divides.
@@ -292,9 +284,8 @@ impl PhysicalAxisMap {
     }
 
     /// The same mapping with a divisor its own coefficients cancel spelled without one:
-    /// `⌊(Σ digit * s + o) / d⌋` *is* `Σ digit * (s/d) + ⌊o/d⌋` when `d` divides every coefficient,
-    /// since the floor then only acts on the constant term. Worth taking out because a rational
-    /// axis costs an in-kernel division and a conservative window extent.
+    /// `⌊(Σ digit * s + o) / d⌋` *is* `Σ digit * (s/d) + ⌊o/d⌋` when `d` divides every coefficient
+    /// (the floor touches only the constant), sparing a kernel division and a conservative window.
     ///
     /// Only a fully comptime numerator reduces: a [`Dynamic`](Scale::Dynamic) coefficient cannot
     /// be shown divisible, and a [`Dynamic`](Offset::Dynamic) offset's quotient is the caller's to
@@ -321,9 +312,8 @@ impl PhysicalAxisMap {
     }
 
     /// What this physical axis is addressed by. A map with no terms resolves every position to the
-    /// same element, which is how an operand says it does not distinguish this buffer axis at all.
-    /// A real state (a per-tensor scale is exactly it), not a degenerate one, so it is named
-    /// rather than read off an empty list by whoever asks.
+    /// same element, how an operand says it does not distinguish this buffer axis. A real state (a
+    /// per-tensor scale is exactly it), so it is named rather than read off an empty list.
     pub fn addressed(&self) -> Addressed {
         match self.terms().first() {
             Some(term) => Addressed::By(term.axis),
@@ -340,10 +330,9 @@ impl PhysicalAxisMap {
         self.composition
     }
 
-    /// The radices a [`Disjoint`](Composition::Disjoint) map claims, coarsest first: each term's
-    /// coefficient must be the product of the finer axes' extents, the finest `1`. Returns the
-    /// axis whose extent each coefficient stands for, so the caller can check the claim. Empty for
-    /// an [`Overlapping`](Composition::Overlapping) map, which claims nothing.
+    /// The radices a [`Disjoint`](Composition::Disjoint) map claims, coarsest first: each term
+    /// the product of the finer axes' extents, the finest `1`. Returns the axis each coefficient
+    /// stands for; empty for an [`Overlapping`](Composition::Overlapping) map, claiming nothing.
     pub(crate) fn claimed_radices(&self) -> SmallVec<[(Axis, usize); MAX_AXES]> {
         match self.composition {
             Composition::Overlapping => SmallVec::new(),
@@ -368,9 +357,10 @@ impl PhysicalAxisMap {
 
     /// The static physical step this term contributes outside this map's rational floor, where it
     /// factors exactly: `⌊(base + digit * scale) / divisor⌋` is
-    /// `⌊base / divisor⌋ + digit * (scale / divisor)`. The per-term counterpart of
-    /// [`reduced`](Self::reduced), which needs *every* coefficient divisible; this leaves the
-    /// divisor in place for the terms that still need it. `Some` implies
+    /// `⌊base / divisor⌋ + digit * (scale / divisor)`.
+    ///
+    /// The per-term counterpart of [`reduced`](Self::reduced), which needs *every* coefficient
+    /// divisible; this leaves the divisor in place for the terms that still need it. `Some` implies
     /// [`is_rational`](Self::is_rational), so readers may skip it elsewhere.
     pub(crate) fn static_offset_step(&self, term: usize) -> Option<usize> {
         match (self.divisor, self.terms[term].scale) {

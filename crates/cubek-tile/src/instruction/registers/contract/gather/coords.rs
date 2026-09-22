@@ -81,12 +81,11 @@ pub(super) fn offset_last(coords: &CoordsDyn, #[comptime] rank: usize, delta: u3
 ///
 /// `batch`'s axes come already resolved; `row` unravels over the row group and `col` over the
 /// column group, whose innermost entry counts the cells one block column holds rather than
-/// scalars ([`ContractShape::cell_width`]). Both groups hold a single axis in the common case,
-/// where the unravels are the identity and this is exactly `[batch…, row, col]`. A column group
-/// spanning several axes is not: `MatrixAxes::accumulator` stops the group at the first axis the
-/// lhs spans, and an accumulator carrying axes the lhs does not pair it over — a depthwise
-/// convolution's `[batch, out_h, out_w, channel]` against a filter over the channel and the taps
-/// — leaves every one of them in the column group.
+/// scalars ([`ContractShape::cell_width`]). One axis per group gives `[batch…, row, col]`.
+///
+/// A column group spans several axes when `MatrixAxes::accumulator`, which stops it at the first
+/// axis the lhs spans, finds none: a depthwise convolution's `[batch, out_h, out_w, channel]`
+/// against a filter over channel and taps leaves them all in the column group.
 #[cube]
 fn acc_cell_coords(
     batch: &Coords<u32>,
@@ -118,10 +117,9 @@ fn acc_cell_coords(
 /// What the separable schedule assumes on top of [`assert_operand_shapes`], where it steps one
 /// resolved coordinate along the accumulator's columns by hand instead of resolving each cell.
 ///
-/// [`Projection::validate`] already states this for an operand contracted_per_step in lines, but it skips the
-/// rule at width `1`, where there are no lines to address and a scalar operand is free to gather
-/// on its innermost axis. The step below is not free of it either way, so it is asked for here at
-/// every width. Host-side, so a violation is a comptime message.
+/// [`Projection::validate`] already states this for an operand lined `contracted_per_step` wide,
+/// but skips it at width `1`, where a scalar operand may gather on its innermost axis. The step
+/// below needs it at every width, so it is asked here. Host-side, so a violation is comptime.
 pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_col: bool) {
     let col = acc.axis_at(acc.rank() - 1);
     assert!(
@@ -137,10 +135,9 @@ pub(super) fn assert_separable_shapes(rhs: &Projection, acc: &Space, rhs_spans_c
     );
 }
 
-/// What [`resolve_nd_coords`] and the lane fold assume about how the operands are lined up. Both
-/// treat one axis per operand as the vectorized one and address it in lines; if that is not the
-/// axis the operand actually lines along, the reads are silently off by the width rather than
-/// wrong in a way a test would localize. Host-side, so a violation is a comptime message.
+/// What [`resolve_nd_coords`] and the lane fold assume about how the operands are lined up: one
+/// axis per operand is the vectorized one, addressed in lines; if it is not the axis the operand
+/// really lines along, reads are silently off by the width. Host-side, so it fails at comptime.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn assert_operand_shapes(
     lhs: &Space,
@@ -174,19 +171,16 @@ pub(super) fn assert_operand_shapes(
     );
     // A vectorized rhs lines along the accumulator's innermost axis (its lanes are cells) or the
     // fastest contracted one (its lanes are partials of one cell); a scalar one is addressed in
-    // elements and need not span either, which is what lets a weight shared by every column live
-    // in a space that simply omits it.
+    // elements and need not span either, so a weight shared by every column can omit that axis.
     let rhs_lined = rhs.axis_at(rhs.rank() - 1);
     assert!(
         rhs_vec_len == 1 || rhs_lined == acc.axis_at(acc.rank() - 1) || rhs_lined == fastest,
         "contract gather: a vectorized rhs must line along the accumulator's innermost axis or \
          the fastest contracted axis {fastest:?}"
     );
-    // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns wide.
-    // One read covers them only when the column is the axis it lines along, which is the case the
-    // role separates. Lined along a contracted axis instead, it would need a value per lane off an
-    // axis it does not line along, and the broadcast would silently serve the first column's value
-    // to all of them.
+    // A [`LhsRole::PerCell`] lhs is read once per cell, and a cell is `rhs_vec_len` columns wide,
+    // so one read covers them only when it lines along the column axis. Lined along a contracted
+    // axis instead, the broadcast would silently serve the first column's value to every lane.
     assert!(
         lhs_role != LhsRole::PerCell || rhs_vec_len == 1,
         "contract gather: an lhs spanning the accumulator's innermost axis needs a value per \

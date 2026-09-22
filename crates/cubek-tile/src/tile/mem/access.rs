@@ -2,12 +2,11 @@
 //! reads and writes it through, and [`at`](MemData::at), which windows it down to a region.
 //!
 //! Every cooperative fill here deals its elements out over `CUBE_DIM` workers indexed by
-//! `UNIT_POS`, which is to say it assumes every unit of the cube runs it. A walk that sets planes
-//! aside to fill its stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that
-//! assumption: only those planes run the fill, and the elements the absent units would have
-//! copied are never written — a wrong answer, not a hang. So such a walk is refused where the two
-//! meet, and only a bulk copy may be filled by planes of their own. Closing the gap is a worker
-//! offset and count on these loops, taken from the pipeline, which already knows both numbers.
+//! `UNIT_POS`, assuming every unit of the cube runs it. A walk that sets planes aside to fill its
+//! stages ([`Level::filled_by`](crate::Level::filled_by)) breaks that: a wrong answer, not a hang.
+//!
+//! Such a walk is refused where the two meet, and only a bulk copy may be filled by planes of
+//! their own. Closing the gap is a worker offset and count on these loops, taken from the pipeline.
 
 use cubecl::{
     prelude::*,
@@ -25,7 +24,7 @@ use cubecl::unexpanded;
 impl<T: Numeric> Tile<T> {
     /// A read [`View`] over `Vector<T, W>` lines: the scalar buffer re-grouped into its physical
     /// width, then re-viewed through the base layout and [`Window`]. `W` is the line width
-    /// (`self.store.vector_size`); pass `Const<1>` when only the (width-invariant) leading shape is needed.
+    /// (`self.store.vector_size`); `Const<1>` when only the width-invariant leading shape matters.
     pub fn view<W: Size>(&self) -> View<'_, Vector<T, W>, CoordsDyn> {
         let g = self.mem("view");
         if comptime!(g.store.packing != Packing::Plain) {
@@ -97,10 +96,9 @@ impl<T: Numeric> MemData<T> {
                 !gathered,
                 "MemData::fill_from: a gathered operand cannot stage in its quantized form"
             ));
-            // Quant → quant: stage the packed storage words verbatim through the straight-line fill,
-            // then the scales beside them, so a leaf read dequantizes straight out of smem with no
-            // f32 inflation. A quantized stage is always a fresh whole buffer, so the masked slow
-            // path never applies.
+            // Quant → quant: stage the packed storage words verbatim through the straight-line
+            // fill, then the scales beside them, so a leaf read dequantizes straight out of smem
+            // with no f32 inflation. A quantized stage is a fresh whole buffer; nothing masks.
             comptime!(assert!(
                 self.access.whole && !self.access.overhang.masks(),
                 "MemData::fill_from: a quantized stage is always a fresh whole buffer"
@@ -140,14 +138,12 @@ impl<T: Numeric> MemData<T> {
                 && src.store.packing == Packing::Plain
                 && self.access.write == Write::Replace
         ) {
-            // Plain → plain, whole destination that *replaces*: fill in destination-physical
-            // order (the write is linear and only the source decodes, once per line by constants
-            // on a static store). A destination that folds is excluded by the write above, not by
-            // the shape: this path addresses the buffer directly and a folding store has no
-            // address, so it takes the layout walk below — where its adds land through the sink's
-            // own call.
-            // A padded stage is served in lines its source cannot hand out whole, so assemble each
-            // destination line lane by lane.
+            // Plain → plain, whole destination that *replaces*: fill in destination-physical order
+            // (the write is linear; only the source decodes, once per line). A folding destination
+            // has no address to fill directly, so it takes the layout walk below (the sink's call).
+            //
+            // A padded stage is served in lines its source cannot hand out whole, so each
+            // destination line is assembled lane by lane.
             if comptime!(self.store.vector_size != src.store.vector_size) {
                 comptime!(assert!(
                     src.store.vector_size == 1,
@@ -162,11 +158,9 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// The general path of [`fill_from`](MemData::fill_from): the source read as a flat run of its
-    /// *window* and the destination written as a flat run of its own, which pairs the two only
-    /// when they are the same box. A gathered side's window is a physical box its logical rank
-    /// does not match, so it is addressed per axis or not at all. Reached by a windowed or masked
-    /// destination, and by a quantized source serving a plain one.
+    /// The general path of [`fill_from`](MemData::fill_from): source and destination each scanned
+    /// as a flat run of its own *window*, which pairs them only when they are the same box; a
+    /// gathered side is refused. Taken by a windowed or masked destination, or a quantized source.
     fn fill_scanned<W: Size>(&mut self, src: &MemData<T>, #[comptime] space: Space) {
         let gathered = comptime!(!src.projection.is_direct());
         comptime!(assert!(
@@ -175,10 +169,8 @@ impl<T: Numeric> MemData<T> {
              destination (a stage)"
         ));
         // The read decodes at the source's true storage element: `T` for a plain tile, else the
-        // quantized store's element recovered from its scheme (the tile serves `T`, so `I` was
-        // erased at construction and lives only on the scheme). This is what lets a plain
-        // `copy_from`/`fill` dequantize on its own into a plain destination; the kernel never
-        // threads `I`.
+        // quantized store's element recovered from its scheme (`I` was erased at construction).
+        // That lets a plain `copy_from`/`fill` dequantize on its own; the kernel never threads `I`.
         {
             #[comptime]
             match &src.store.quant {
@@ -234,9 +226,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The straight-line half of [`fill_from`](MemData::fill_from): the destination filled in its
-    /// own physical order, whole `Vector<I2, WP2>` lines, decoding the source once per line rather
-    /// than per cell. `I2` / `WP2` are the *storage* element and physical width: served for a plain
-    /// copy, packed `u32` (or native `i8`) for a quant stage.
+    /// own physical order, whole `Vector<I2, WP2>` lines, decoding the source once per line. `I2` /
+    /// `WP2`: the *storage* element and width, `T` for a plain copy, `u32`/`i8` for a quant stage.
     ///
     /// Both sides are physical boxes of the same rank here, so the fill copies and never gathers;
     /// a gathered pair differs only by the compaction's step. The [`Window`] sits below either way,
@@ -293,10 +284,11 @@ impl<T: Numeric> MemData<T> {
             }
         }));
         // A comptime worker count emits the tasks straight-line: a rolled loop's runtime `CUBE_DIM`
-        // stride blocks unrolling, and on Metal's in-order pipe each line's store then stalls the
-        // next line's read. Only a spilling last task needs its guard; unknown or tiny cubes take
-        // the rolled loop. `constant()` bridges the folded total back to host data; a whole smem
-        // stage's shape is static, so it always folds.
+        // stride blocks unrolling, and on Metal's in-order pipe each store then stalls the next
+        // read. Only a spilling last task needs a guard; unknown or tiny cubes stay rolled.
+        //
+        // `constant()` bridges the folded total back to host data; a whole smem stage's shape is
+        // static, so it always folds.
         let units = comptime!(self.access.units);
         let total_c = total.constant();
         // The other half of the fill's contract: the mappings agree ([`stage_compaction`]), and so
@@ -352,10 +344,9 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// Refill this quantized stage's scales side-channel from `src`: one f32 per block of the
-    /// sub-tile, into the compact self-relative grid [`smem_quant_info`] laid out, cooperatively
-    /// across the cube. The destination index is the flat block index (the grid is row-major); the
-    /// source dots the block coords with `src`'s scale strides, whose `window_start` carries base.
+    /// Refill quantized stage's scales side-channel from `src`, cooperatively across the cube:
+    /// one f32 per block of the sub-tile into the row-major grid [`smem_quant_info`] laid out, each
+    /// read by dotting its block coords with `src`'s scale strides from `src`'s `window_start`.
     fn stage_scales(&mut self, src: &MemData<T>) {
         let dst = self.store.quant.as_mut().unwrap();
         let sinfo = src.store.quant.as_ref().unwrap();
@@ -405,17 +396,15 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The cooperative flat scan behind [`fill_from`](MemData::fill_from)'s general path: cyclic
-    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …. Reads through
-    /// [`flat_transparent`](MemData::flat_transparent) at storage element `I`, so a quantized
-    /// source dequantizes into `T` transparently (`I == T` on a plain source).
+    /// across the cube, each unit writing lines `u`, `u + CUBE_DIM`, …, read at storage element
+    /// `I` via [`flat_transparent`](MemData::flat_transparent), so a quantized source dequantizes.
     fn scan_transparent<I: Numeric, WP: Size, W: Size>(&mut self, src: &MemData<T>) {
         let s = src.flat_transparent::<I, WP, W>();
         let mut d = self.flat_mut::<W>();
         let total = d.shape();
-        // One line per unit, striding by the cube: **the deal is disjoint**, and that is what a
-        // folding destination rests on. An identical store is idempotent, so a repeated deal would
-        // be invisible here under `Write::Replace` and land once per repeat under
-        // `Write::Accumulate`. Any future deal on this path owes the same property.
+        // One line per unit, striding by the cube: **the deal is disjoint**, which a folding
+        // destination rests on. A repeated deal would be invisible under `Write::Replace`
+        // and land once per repeat under `Write::Accumulate`; any future deal owes the same.
         let workers = CUBE_DIM as usize;
         let mut i = UNIT_POS as usize;
         while i < total {
@@ -427,9 +416,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The sub-word twin of [`scan_transparent`](MemData::scan_transparent): the source's served
-    /// line is one whole packed word and each word unpacks into `num_quants / W` lines of this
-    /// store's width, which is how a packed operand stages on a device whose vectors cannot cover
-    /// a word. One line **is** one word, so no other width plays.
+    /// line is one whole packed word, unpacked into `num_quants / W` lines of this store's width,
+    /// which is how a packed operand stages on a device whose vectors cannot cover a word.
     ///
     /// Unchecked only and unreachable any other way (a checked operand cannot vectorize), so the
     /// assert below is a backstop for hand-built args; the ragged tail is the caller's ordinary
@@ -502,9 +490,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// How far this store's stored form travels ([`DequantAt`]). A plain store answers
-    /// [`DequantAt::Load`]: served and stored are the same element, so nothing is left to decode.
-    /// A [`packed`](Packing::Packed) store with no scheme answers [`DequantAt::Read`]: its words
-    /// are what a stage copies and what a read unpacks, and nothing in between serves a value.
+    /// [`DequantAt::Load`], served and stored being the same element; a [`packed`](Packing::Packed)
+    /// store with no scheme answers [`DequantAt::Read`], since a stage copies its words verbatim.
     // The `let`-then-return is load-bearing, see [`quant_pack`](MemData::quant_pack).
     #[allow(clippy::let_and_return)]
     pub(crate) fn dequant_at(&self) -> comptime_type!(DequantAt) {
@@ -572,9 +559,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The backing as a [`ViewMut`] addressed by `layout`: the write path, and the only one a
-    /// [`WriteCall`](Backing::WriteCall) serves. The layout is the same for every backing, which is
-    /// the point: only the end of the address differs, a store or a call, so every mutable view
-    /// above composes onto this without knowing what it writes to.
+    /// [`WriteCall`](Backing::WriteCall) serves. The layout is the same for every backing; only the
+    /// end of the address differs, a store or a call, so every mutable view above composes on it.
     fn write_view<W: Size>(&mut self, layout: GmemLayout) -> ViewMut<'_, Vector<T, W>, CoordsDyn> {
         match &mut self.store.backing {
             Backing::Buffer(buffer) => buffer
@@ -592,11 +578,10 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The backing as a [`View`] addressed by `layout`: the read path, and the only one a
-    /// [`ReadCall`](Backing::ReadCall) serves. The mirror of
-    /// [`write_view`](MemData::write_view), so a producer with no slice to hand out is still read
-    /// where a buffer is. The slice-shaped half (dense runs, quantized re-typing, tma maps) is
-    /// deliberately left out: none is a view over `Coords1d`, so each keeps saying so through
-    /// [`Store::buffer`].
+    /// [`ReadCall`](Backing::ReadCall) serves; the mirror of [`write_view`](MemData::write_view).
+    ///
+    /// The slice-shaped half (dense runs, quantized re-typing, tma maps) is deliberately left out:
+    /// none is a view over `Coords1d`, so each keeps saying so through [`Store::buffer`].
     fn read_view<W: Size>(&self, layout: GmemLayout) -> View<'_, Vector<T, W>, CoordsDyn> {
         match &self.store.backing {
             Backing::Buffer(buffer) => buffer.as_vectorized().with_vector_size::<W>().view(layout),
@@ -611,9 +596,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window as a view over its own coordinates (`pos` relative to the origin), served at
-    /// `T` grouped `W` wide. Inside one storage tile ([`Held`](Storage::Contiguous)) that is the run
-    /// from the origin addressed by the storage tile's own strides, no digit to split; otherwise the
-    /// layout walk through the window, under `guard`.
+    /// `T` grouped `W` wide: inside one storage tile ([`Held`](Storage::Contiguous)) the run from
+    /// the origin under the storage tile's own strides, otherwise the layout walk under `guard`.
     fn window_view<W: Size>(&self, #[comptime] guard: Guard) -> View<'_, Vector<T, W>, CoordsDyn> {
         match comptime!(self.access.storage) {
             Storage::Contiguous => {
@@ -646,11 +630,9 @@ impl<T: Numeric> MemData<T> {
         }
     }
 
-    /// The mutable twin of [`window_view`](MemData::window_view): inside one storage tile the run
-    /// from the origin under the storage tile's own strides, no digit to split; otherwise the
-    /// layout walk through the window, under `guard`. A window inside a storage tile is always a
-    /// buffer (it came off a binding's tiling), so the run is sliced where an erased destination
-    /// could not be.
+    /// The mutable twin of [`window_view`](MemData::window_view). A window inside a storage tile
+    /// is always a buffer (it came off a binding's tiling), so its run is sliced where an erased
+    /// destination could not be.
     fn window_view_mut<W: Size>(
         &mut self,
         #[comptime] guard: Guard,
@@ -712,9 +694,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The window as one dense run of lines: index `i` addresses line `origin + i`, one add and no
-    /// layout walk. Legal only where the window is physically contiguous in row-major order: an
-    /// untiled, unmasked, unquantized store. The comptime-checkable parts assert; contiguity is
-    /// the caller's guarantee.
+    /// layout walk. Legal only on a physically contiguous, row-major window (untiled, unmasked,
+    /// unquantized); the comptime-checkable parts assert, contiguity is the caller's guarantee.
     pub(crate) fn dense_lines<W: Size>(&self) -> &[Vector<T, W>] {
         self.assert_dense();
         let all = self.lines::<W>();
@@ -752,10 +733,9 @@ impl<T: Numeric> MemData<T> {
         ));
     }
 
-    /// The buffer from this window's origin on: the base a cmma load/store addresses,
-    /// rows stepping by the scalar [`row_stride`](MemData::row_stride) (cmma takes a line
-    /// slice with a scalar stride). Requires an unmasked store whose window doesn't split
-    /// rows across storage tiles.
+    /// The buffer from this window's origin on: the base a cmma load/store addresses, rows
+    /// stepping by the scalar [`row_stride`](MemData::row_stride). Requires an unmasked store
+    /// whose window does not split rows across storage tiles.
     pub(crate) fn window_slice(&self) -> &[T] {
         let offset = self.window_offset();
         self.store.buffer().slice(offset, self.store.buffer().len())
@@ -782,8 +762,8 @@ impl<T: Numeric> MemData<T> {
             "MemData::window_offset: cmma cannot mask an overhang"
         ));
         // Reading a window above its storage tile from a base and a row stride would walk straight
-        // through a storage tile boundary and return another tile's cells, silently. The layout walk
-        // addresses them correctly; a fragment load cannot, and says so.
+        // through a storage tile boundary and return another tile's cells, silently. The layout
+        // walk addresses them correctly; a fragment load cannot, and says so.
         match comptime!(self.access.storage) {
             Storage::Strided => {}
             Storage::Contiguous => {}
@@ -811,11 +791,9 @@ impl<T: Numeric> MemData<T> {
         self.row_stride_at(comptime!(rank - 2))
     }
 
-    /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a
-    /// matrix reader takes as its rows ([`MatrixAxes::edges`]), which is the physical one on
-    /// a direct store — one logical axis a physical dim, what a dense stage is. Any other store
-    /// keeps its own row: a storage-tiled one its tile's, a split one the dim above the one
-    /// its trailing axes fold into.
+    /// [`row_stride`](MemData::row_stride) with the row axis stated: the logical position a matrix
+    /// reader takes as its rows ([`MatrixAxes::edges`]), the physical one on a direct, untiled
+    /// store. Any other keeps its own row: its tile's if storage-tiled, else the dim above a fold.
     pub(crate) fn row_stride_at(&self, #[comptime] row: usize) -> u32 {
         let rank = comptime!(self.layout.projection.physical_rank());
         let row = comptime!(
@@ -928,9 +906,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// Quantization-transparent [`masked`](MemData::masked): the windowed twin of
-    /// [`flat_transparent`](MemData::flat_transparent). A quantized store re-types to the storage
-    /// element `I`, pairs it with the scales over the same `layout` and dequantizes each read, so
-    /// a leaf reads a quantized operand straight from gmem. `#[comptime]`, so plain pays nothing.
+    /// [`flat_transparent`](MemData::flat_transparent). A quantized store re-types to `I` and pairs
+    /// it with the scales over the same `layout`, so a leaf reads it straight from gmem.
     pub(crate) fn transparent<
         I: Numeric,
         WP: Size,
@@ -976,9 +953,8 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// The scale-free half of [`transparent`](MemData::transparent): a plain store read as it
-    /// stands, a packed one unpacked at the read ([`PackedView`]). `WP` is the physical line the
-    /// buffer holds, `W` the served one. Needs the field alone where the quantized arm needs a
-    /// scheme, a grid and a window start: a packed operand's values are values.
+    /// stands, a packed one unpacked at the read ([`PackedView`]) off its field alone, needing no
+    /// scheme or grid. `WP` is the physical line the buffer holds, `W` the served one.
     fn unscaled<WP: Size, W: Size, C: Coordinates + 'static, L: TileLayout<C>>(
         &self,
         layout: L,
@@ -1051,15 +1027,13 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// The identity step over this window's physical box: the layout a caller that folds the
-    /// map itself reads through ([`nd_split`](Tile::nd_split)). The map is the only layer
-    /// dropped: the [`Window`] owning the boundary sits below either way, and the identity step
-    /// keeps the box's own bound, which is the part a caller cannot fold away.
+    /// The identity step over this window's physical box: the layout a caller that folds the map
+    /// itself reads through ([`nd_split`](Tile::nd_split)). Only the map is dropped: the [`Window`]
+    /// owning the boundary sits below either way, keeping the box's bound no caller can fold away.
     ///
     /// The logical box test goes with the map, though, so a view over this masks against the
-    /// physical box alone. A caller owes it the coordinates the map would have produced from
-    /// inside the logical one: a position folded from a logical coordinate out of range is no
-    /// longer caught, and reads whatever the window says lives at it.
+    /// physical box alone: a position folded from an out-of-range logical coordinate is no longer
+    /// caught and reads whatever the window says lives at it. The caller owes in-range coordinates.
     pub(crate) fn physical_box(&self) -> StepUp {
         let rank = comptime!(self.projection.physical_rank());
         StepUp::new(self.window.extent.clone(), comptime!(vec![1; rank]))
@@ -1285,11 +1259,12 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// One level down under the direct mapping, one logical axis per physical axis at coefficient
-    /// `1`: the child window's origin and extent per axis, how far each axis moves the line
-    /// route, and the map (integral: nothing to carry, no phase to leave over). Its own loop
-    /// because this is the only mapping a *tiled* buffer can carry, where `step_offset` folds the
-    /// grid/tile digit split that a scaled advance cannot be pushed through.
+    /// One level down under the direct mapping (one logical axis per physical axis at coefficient
+    /// `1`): the child window's origin and extent per axis, each axis's line-route advance, and
+    /// the integral map (nothing to carry, no phase left over).
+    ///
+    /// Its own loop because only this mapping can sit on a *tiled* buffer, where `step_offset`
+    /// folds the grid/tile digit split a scaled advance cannot be pushed through.
     fn direct_descent(
         &self,
         step: &Step,
@@ -1318,10 +1293,9 @@ impl<T: Numeric> MemData<T> {
                 // The innermost (vectorized) axis's edge is a line count, so `/ width`.
                 let edge = comptime!(if p == last {
                     let e = step.level.extent_in(&space, axis).get();
-                    // A padded stage's innermost extent need not fill whole lines, but then its
-                    // partial tail line has no sibling to start after it: the axis has to be cut
-                    // whole, or the next region would begin mid-line. `extent_raw` because a
-                    // `Dynamic` axis has no extent to be cut whole, and owes the divisibility.
+                    // A padded stage's innermost extent need not fill whole lines, but the axis
+                    // must be cut whole or the next region would begin mid-line. `extent_raw`: a
+                    // `Dynamic` axis has no extent to be cut whole, so it owes the divisibility.
                     assert!(
                         e.is_multiple_of(w)
                             || matches!(space.extent_raw(axis), Extent::Static(x) if x == e),
@@ -1357,8 +1331,7 @@ impl<T: Numeric> MemData<T> {
 
     /// [`direct_descent`](MemData::direct_descent) under a gathering mapping: each physical axis
     /// moves by the sum of its terms and covers the receptive field, and the phase each axis's
-    /// division left over is this level's map. The coefficients are a fact about the buffer,
-    /// invariant down the descent.
+    /// division left over is this level's map; the coefficients are invariant down the descent.
     fn gathered_descent(&self, step: &Step) -> (Coords<i32>, Coords<u32>, Coords<u32>, RuntimeMap) {
         let mut origin = Coords::<i32>::new();
         let mut extent = Coords::<u32>::new();
@@ -1389,14 +1362,11 @@ impl<T: Numeric> MemData<T> {
 
     /// This store looking at `window` from line `window_start` on, under `access`, `lanes` and
     /// `split_share`: the same buffer, layout, mapping and offsets, which no descent moves. What
-    /// [`at`](MemData::at) and [`within`](MemData::within) build once each has settled the
-    /// window it moves to.
+    /// [`at`](MemData::at) and [`within`](MemData::within) build once they have settled the window.
     ///
-    /// The layout addresses the whole buffer and never narrows; only the window moves. How the
-    /// logical axes address the physical ones is a fact about the buffer, invariant down the
-    /// descent; the offsets only placed the top window, which the origin already carries. A
-    /// source window rides down as it was filled: a step moves the staged window and the source
-    /// window by the same physical delta.
+    /// The layout addresses the whole buffer and never narrows; only the window moves. The mapping
+    /// is the buffer's, invariant down the descent; the offsets only placed the top window, which
+    /// the origin carries; a source window rides down as filled, a step moving both by one delta.
     #[allow(clippy::too_many_arguments)]
     fn moved_to(
         &self,
@@ -1434,10 +1404,8 @@ impl<T: Numeric> MemData<T> {
     /// in that axis's own elements.
     ///
     /// Where a routed coordinate names a whole tile of an axis, this places the window at an
-    /// element and says where it stops, which a coordinate cannot: a packed sequence starts
-    /// wherever the one before it ended and runs for however long it is. `until` arms
-    /// [`Boundary::Zero`] on the axis, so the tail of a last tile that overruns the range reads
-    /// zero rather than the next sequence's values.
+    /// element and says where it stops (a packed sequence starts where the one before it ended).
+    /// `until` arms [`Boundary::Zero`] on the axis, so an overrunning last tile's tail reads zero.
     pub(crate) fn within(&self, #[comptime] axis: Axis, from: usize, until: usize) -> MemData<T> {
         let proj = comptime!(self.projection.clone());
         comptime!(assert!(
@@ -1505,9 +1473,8 @@ impl<T: Numeric> MemData<T> {
 }
 
 /// What the storage tiles are to the window one level down: descending through the storage tile's
-/// own level puts the window inside one storage tile, where it stays. The launch matched the tile to
-/// that level on real extents; here the level is only asked to hand every axis down static, as
-/// a storage tile is, and never to be skipped past.
+/// own level puts the window inside one storage tile, where it stays. The launch matched the tile
+/// to that level; here it only has to hand every axis down static and never be skipped past.
 fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -> Storage {
     match storage {
         Storage::Strided => Storage::Strided,
@@ -1537,12 +1504,12 @@ fn storage_below(storage: Storage, depth: usize, level: &Level, space: &Space) -
 /// One gathered physical axis's descent into `region`: how far its window moves, the phase that
 /// move leaves behind, and the receptive field the child then covers.
 ///
-/// The move sums one term per contributing axis, its tile coordinate times its sub-tile edge times
-/// its coefficient. All comptime but the coordinate, so this stays the multiply-add `window_start`
-/// is documented to be. Each term divides by `vector_size` on its own, which only sums back to the
-/// whole move because the innermost physical axis carries a single identity term:
-/// [`Projection::validate`] requires it, precisely because that axis is addressed in lines. A
-/// second term here would need the division after the sum, not before.
+/// The move sums one term per contributing axis (tile coordinate × sub-tile edge × coefficient),
+/// all comptime but the coordinate, so it stays the multiply-add `window_start` promises.
+///
+/// Each term divides by `vector_size` on its own, which only sums back to the whole move because
+/// the innermost axis carries a single identity term, as [`Projection::validate`] requires;
+/// a second term there would need the division after the sum, not before.
 ///
 /// A [rational](crate::Divisor) axis moves by the whole cells its numerator crossed and hands the
 /// phase it did not fill to the child: `⌊(move + phase)/d⌋` splits into this step plus a child
@@ -1656,10 +1623,8 @@ fn gathered_axis_descent(
 /// The innermost extent of `space` in cells, with the two widths a fill pairs checked against it.
 ///
 /// The fill reads whole `sw`-wide source lines, so the innermost extent has to be a whole number
-/// of them, and only the *destination* may hold a partial `w`-wide one. That partial line is what
-/// a padded stage is, and its spare lanes hold zero. Without this the two boxes silently disagree,
-/// the stage rounding its line count up ([`storage_extents`], `Compaction::line_extents`) where
-/// the source truncated its own.
+/// of them; only the *destination* may hold a partial `w`-wide line (a padded stage, spare lanes
+/// zero). Else the stage rounds its line count up ([`storage_extents`]) where the source truncates.
 ///
 /// `None` for a `Dynamic` extent: nothing can be said at comptime, so a padded stage over one
 /// leans on `check` to zero its spare lanes instead.
@@ -1755,8 +1720,7 @@ fn read_stage_line<I2: Numeric, WP2: Size, SW: Size>(
 
 /// The logical coordinate of physical line `i` in a `[grid…, tile…]` store: decode `i` into one
 /// digit per physical axis ([`line_digit`]), then [`fold_physical`] folds a storage-tiled axis's
-/// several digits back into one, off `projection`'s own div/modulo (`GmemLayout`'s synthetic
-/// per-position map, invertible by construction).
+/// digits back into one off `projection`'s own div/modulo (`GmemLayout`'s map, invertible).
 #[cube]
 fn physical_pos(#[comptime] projection: Projection, i: usize, shape: &Coords<u32>) -> CoordsDyn {
     let x = i.fcast::<u32>();

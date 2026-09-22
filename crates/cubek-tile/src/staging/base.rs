@@ -53,9 +53,8 @@ pub(crate) struct OperandPlan {
 }
 
 /// One slot of a buffered walk: its payload `T` and the [`Pipeline`] sequencing fill vs read.
-/// Generic over `T` and over how many operands `T` holds, so the slot knows nothing about the
-/// operation; it just hands out a synchronized `&mut T` to fill (`write`) and a synchronized
-/// `&T` to consume (`read`).
+/// Generic over `T` and how many operands it holds, so the slot knows nothing of the operation; it
+/// hands out a synchronized `&mut T` to fill (`write`) and a synchronized `&T` to consume (`read`).
 #[derive(CubeType)]
 pub struct Staging<T: CubeType> {
     pub(crate) data: T,
@@ -132,8 +131,8 @@ impl<T: CubeType> Staging<T> {
         }
     }
 
-    /// Consumer acquire: wait the slot's fill (`full`, RAW) for `Barrier`; nothing for `Cube` (already
-    /// rendezvoused in `write`).
+    /// Consumer acquire: wait the slot's fill (`full`, RAW) for `Barrier`; nothing for `Cube`
+    /// (already rendezvoused in `write`).
     #[allow(dead_code)] // Reached through its expand, from `Staging::fill` / `Staging::consume`.
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {

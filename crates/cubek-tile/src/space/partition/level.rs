@@ -1,14 +1,10 @@
-//! One decomposition [`Level`]: which axes of a space a loop steps, in tiles of what size, how
-//! many of them, and who takes them. One entry of a [`Partitioning`](crate::Partitioning), which
-//! is what a kernel's loops iterate in turn, the value a [`Region`](crate::Region) carries down
-//! to `at`, and the value a launch sizes its grid from ([`Launcher`](crate::Launcher)). The
-//! launch hands the same value to both, so the grid and the loops cannot disagree.
+//! One [`Level`]: which axes a loop steps, in tiles of what size, how many, and who takes them.
+//! One entry of a [`Partitioning`](crate::Partitioning): a [`Region`](crate::Region) hands it to
+//! `at`, a [`Launcher`](crate::Launcher) sizes its grid from it, so grid and loops cannot disagree.
 //!
-//! A level is built only by [`Tiling`](crate::Tiling), from the leaf up: its tile on an axis is
-//! the product of what was stated below it, and its [`Count`] is what it stated. Nothing here
-//! divides one level by another. A level names only the axes it touches; every other axis is
-//! handed down whole. [`Level::every`] is the one-liner for a walk over a region, and it goes
-//! through the builder like everything else.
+//! Built only by [`Tiling`](crate::Tiling), leaf up: a level's tile on an axis is the product of
+//! what was stated below it, and its [`Count`] is what it stated. A level names only the axes it
+//! touches; the rest pass down whole. [`Level::every`], a walk over a region, goes through it too.
 
 use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
 use crate::{Axis, ByAxis, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
@@ -191,11 +187,9 @@ impl Level {
         self
     }
 
-    /// The tiles of every entry read as one index, of which each of `n` workers takes a share:
-    /// a run of the whole rather than a box of it, which is what balances a grid its shape
-    /// cannot divide. The index runs over this level's tiles and one region of the level
-    /// below, so a share can end part way through a region's own work
-    /// ([`Walk::window`](crate::Walk::window) is how a kernel takes its share).
+    /// Every entry's tiles read as one index, of which each of `n` workers takes a share: a run
+    /// of the whole, not a box, which balances a grid its shape cannot divide. It also spans a
+    /// region of the level below, so a [`Walk::window`](crate::Walk::window) can end mid-region.
     ///
     /// The plain entries' boxes go: the workers ride the scope as one, on its first dimension.
     /// Not for lanes: they combine in registers, which needs them in lockstep, and lanes holding
@@ -244,10 +238,9 @@ impl Level {
     /// The stages of this walk are filled by `n` planes of the cube, which take no tile of any
     /// level and do nothing else.
     ///
-    /// Those `n` sit at the *end* of the cube, so every plane position below this level is the
-    /// one it would have been without them; the cube is `n` planes wider and nothing is
-    /// renumbered. A ring built over this walk reads the count off the level and hands the two
-    /// roles their own halves of each slot.
+    /// Those `n` sit at the *end* of the cube, so no plane position below this level changes: the
+    /// cube is `n` planes wider and nothing is renumbered. A ring built over this walk reads the
+    /// count off the level and hands the two roles their own halves of each slot.
     ///
     /// Only a walk's regions are staged, so only a walk takes this.
     pub(crate) fn filled_by(mut self, n: usize) -> Level {
@@ -367,10 +360,9 @@ impl Level {
         )
     }
 
-    /// Whether this level's tile on `axis` fails to divide the extent `space` hands it, leaving
-    /// a partial tile that needs masking. Only an [`Every`](Count::Every) or an
-    /// [`Across`](Count::Across) can: a stated count built the extent below it. Host-side,
-    /// static extents.
+    /// Whether this level's tile on `axis` fails to divide the extent `space` hands it, leaving a
+    /// partial tile that needs masking. Only [`Every`](Count::Every) or [`Across`](Count::Across)
+    /// can: a stated count built the extent below it. Host-side, static extents.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
         match self.tile(axis) {
             Some(tile) => !space.extent(axis).is_multiple_of(tile),
@@ -411,9 +403,8 @@ impl Level {
     }
 
     /// Whether every worker's run along an `axis` dealt across workers is the full one: the grid
-    /// divides the worker count, which the host can only prove of a static extent. Any other
-    /// count deals one tile a worker, which every grid divides. What lets the kernel skip
-    /// clamping a run.
+    /// divides the worker count, provable only of a static extent. Any other count deals one tile
+    /// a worker, which every grid divides. What lets the kernel skip clamping a run.
     pub(crate) fn divides(&self, space: &Space, axis: Axis) -> bool {
         match self.count(axis) {
             Some(Count::Across(workers)) => match space.extent_raw(axis) {
@@ -469,19 +460,17 @@ impl Level {
     }
 
     /// Whether a walk of this level over `space` leaves `operand`'s window unchanged: every axis
-    /// the walk actually steps (more than one tile) is absent from the operand, the same
-    /// structural fact as broadcast omission. A staged walk fills such an operand once, above
-    /// the loop. Host-side, static extents.
+    /// the walk steps (more than one tile) is absent from the operand, as in broadcast omission.
+    /// A staged walk fills such an operand once, above the loop. Host-side, static extents.
     pub(crate) fn walk_invariant(&self, space: &Space, operand: &Space) -> bool {
         space
             .axes()
             .all(|axis| self.tiles(space, axis) == 1 || !operand.contains(axis))
     }
 
-    /// How many workers `axis` is dealt out to at this level, where that is comptime: the stated
-    /// count, or the tiles an every-level takes over a static extent. `None` where the grid is
-    /// not known here: the extent is [`Dynamic`](Extent::Dynamic), or `space` is a projection
-    /// that dropped the axis (a drain descending an output through its own space).
+    /// How many workers `axis` is dealt out to at this level, where comptime: the stated count, or
+    /// the tiles an every-level takes over a static extent. `None` where the grid is unknown here:
+    /// a [`Dynamic`](Extent::Dynamic) extent, or `space` a projection dropping the axis (a drain).
     pub fn instances_along(&self, space: &Space, axis: Axis) -> Option<usize> {
         match self.count(axis) {
             None => Some(1),
@@ -495,10 +484,10 @@ impl Level {
 
     /// The instance-index weight `spanned`'s own axis list cannot see: the instance counts of the
     /// same-scope axes *inside* `axis` that this level distributes and `spanned` does not span.
-    /// A projected space is why: the index's odometer belongs to the level, so an operand not
-    /// spanning a contracted axis must still divide it out to find its own digit, and reading
-    /// omitted axes as weight `1` aliases the outer digits onto one value. Panics where such an
-    /// axis has no comptime count: assuming `1` is exactly that aliasing.
+    /// The odometer is the level's, so an operand divides out contracted axes it does not span.
+    ///
+    /// Reading omitted axes as weight `1` aliases the outer digits onto one value, so this panics
+    /// where such an axis has no comptime count: assuming `1` would be exactly that aliasing.
     pub(crate) fn inner_weight_unspanned(&self, spanned: &Space, axis: Axis) -> usize {
         let scope = self.distribution(axis).scope();
         self.axes()
@@ -563,13 +552,13 @@ impl Level {
         }
     }
 
-    /// What one instance of an operand spanning `spanned` holds of its cells after this level
-    /// is dealt out over `space`: [`Partial`](SplitShare::Partial) where a `Plane` or `Cube` axis
-    /// the operand does not span is dealt across several instances, so each contracts a slice.
+    /// What one instance of an operand spanning `spanned` holds of its cells after this level is
+    /// dealt out over `space`: [`Partial`](SplitShare::Partial) where a `Plane` or `Cube` axis the
+    /// operand does not span is dealt across several instances, so each contracts a slice.
+    ///
     /// Asked with the level's whole space, not the operand's projection: a projection has dropped
     /// the contracted axis and so cannot tell a split from a cut whose edge is the whole axis.
-    /// Answered conservatively where the instance count is not comptime, since calling it whole
-    /// loses every partial but one.
+    /// Conservative where the count is not comptime: whole would lose every partial but one.
     pub(crate) fn split_share_of(&self, space: &Space, spanned: &Space) -> SplitShare {
         // Work distributed as one is not an axis: a share of it covers part of a cell whenever
         // the index runs over an axis the operand does not span, and which part is not something
@@ -614,10 +603,9 @@ impl Level {
 
 /// Several axes' work distributed as one.
 ///
-/// Dealing each axis on its own gives an instance the product of its per-axis runs, which is a
-/// box of the grid. These axes are read as a single index instead, so an instance takes a share
-/// of the whole rather than a box of it: the shares that no box can describe are exactly the ones
-/// that balance a grid its shape cannot divide.
+/// Dealing each axis on its own gives an instance a box of the grid, the product of its per-axis
+/// runs. Read as a single index instead, these axes give it a share of the whole: the shares no
+/// box can describe are exactly the ones that balance a grid its shape cannot divide.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Work {
     axes: Vec<Axis>,

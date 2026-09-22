@@ -1,8 +1,9 @@
 //! Attention's matmul leaves at column ownership, the arm the software instruction runs: each
 //! unit owns every `CUBE_DIM_X`-th column of the output, so a K or V block streamed along that
-//! axis is read from gmem once per team. Split teams sit on the cube's y dim; a cube with y = 1
-//! is one team spanning every unit. The hardware form is the general contraction on a
-//! plane-resident accumulator ([`cmma_accumulator`](crate::Tile::cmma_accumulator)).
+//! axis is read from gmem once per team. Split teams sit on the cube's y dim (y = 1: one team).
+//!
+//! The hardware form is the general contraction on a plane-resident accumulator
+//! ([`cmma_accumulator`](crate::Tile::cmma_accumulator)).
 //!
 //! Called by name from the kernel, which picks the arm. Trailing-two-axes convention
 //! (matmul's): leading degenerate axes ride the flat index.
@@ -83,11 +84,12 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// The value matmul under the software instruction. A unit owns one `(row chunk, value
-    /// line)` pair at a time, cyclically: the line is the inner digit, so adjacent units read
-    /// adjacent lines of `val` and a gmem `val` is read once per team, coalesced. The rows are the
-    /// other digit because a leaf spread over the value lines alone would sit entirely on the axis
-    /// vectorization divides, where widening starves the grid and narrowing starves the bus.
+    /// The value matmul under the software instruction. A unit owns one `(row chunk, value line)`
+    /// pair at a time, cyclically: the line is the inner digit, so adjacent units read adjacent
+    /// lines of `val` and a gmem `val` is read once per team, coalesced.
+    ///
+    /// The rows are the other digit because a leaf spread over the value lines alone would sit
+    /// on the axis vectorization divides, where widening starves the grid and narrowing the bus.
     ///
     /// The rescale rides the same visit because each cell has exactly one owner here.
     pub fn mix_columns<EP: Numeric, EI: Numeric>(

@@ -1,7 +1,6 @@
-//! Row verbs on a tile: publish a per-row register into a row lane, scale a
-//! row by its factor, copy the owned rows elsewhere. Structure, not algebra —
-//! the online softmax ([`softmax`](crate::Tile::softmax)) and the attention
-//! leaves are callers, and nothing here reads their state.
+//! Row verbs on a tile: publish a per-row register into a row lane, scale a row by its factor,
+//! copy the owned rows elsewhere. Structure, not algebra: nothing here reads the state of its
+//! callers, the online softmax ([`softmax`](crate::Tile::softmax)) and the attention leaves.
 //!
 //! Who owns row `r` is the caller's [`RowShare`], the same statement the
 //! softmax leaf reads, so a row is written exactly once whether its owner is a
@@ -16,10 +15,9 @@ impl<EA: Float> Tile<EA> {
     /// Publish per-owned-row `values` into this factors tile, one cell per
     /// score row. The caller syncs before any cross-worker read.
     ///
-    /// Takes the [`RowShare`] rather than a count, because it has to agree with
-    /// the leaf about who owns row `r` — and under
-    /// [`Plane`](RowShare::Plane) it also has to write each row once, where
-    /// every lane of the plane holds the value.
+    /// Takes the [`RowShare`] rather than a count, because it has to agree with the leaf about
+    /// who owns row `r`, and under [`Plane`](RowShare::Plane) it also has to write each row once
+    /// where every lane of the plane holds the value.
     ///
     /// A row lane at any rank: a fold's window on a split-wide tile is
     /// `{1, rows}`, the same cells as a plain `{rows}`.
@@ -49,16 +47,13 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// The online-softmax rescale, by the row's owner: `self[r, :] *= corr[ri]` for the rows
-    /// `share` gives this worker, straight out of [`softmax`](Tile::softmax) and before the sync
-    /// that hands the accumulator to the value matmul. The correction is the worker's own
-    /// register — no factors tile, no cube-wide sweep, no barrier of its own. Under
-    /// [`Plane`](RowShare::Plane) the lanes split the row's lines.
+    /// The online-softmax rescale by the row's owner: `self[r, :] *= corr[ri]` over `share`'s rows,
+    /// straight out of [`softmax`](Tile::softmax), before the sync handing the accumulator to the
+    /// value matmul; no factors tile or barrier. [`Plane`](RowShare::Plane) lanes split the lines.
     ///
     /// A plane-resident accumulator ([`cmma_accumulator`](Tile::cmma_accumulator)) is scaled
-    /// where it sits, one tile at a time through the scratch it was opened with
-    /// ([`with_scratch`](Tile::with_scratch)); its owner is the plane, so `share` is its plane
-    /// share and the rows are the accumulator's own.
+    /// where it sits, tile by tile through its scratch ([`with_scratch`](Tile::with_scratch)); the
+    /// owner is the plane, so `share` is its plane share and the rows are the accumulator's own.
     pub fn rescale_rows(&mut self, corr: &Array<EA>, #[comptime] share: RowShare) {
         match &self.tile_kind {
             TileKind::Gmem(_) | TileKind::Smem(_) => self.rescale_rows_in_memory(corr, share),
@@ -110,10 +105,9 @@ impl<EA: Float> Tile<EA> {
 
     /// Multiply each row by its factor: `self[r, c] *= factors[r]`.
     ///
-    /// The accumulator rescale between fold steps, and the epilogue
-    /// normalize when the factors are `recip_l`. Cyclic over the whole cube
-    /// so each cell is touched exactly once, whatever ownership the
-    /// interleaved matmuls use; the caller syncs on both sides.
+    /// The accumulator rescale between fold steps, and the epilogue normalize when the factors
+    /// are `recip_l`. Cyclic over the whole cube so each cell is touched exactly once, whatever
+    /// ownership the interleaved matmuls use; the caller syncs on both sides.
     pub fn scale_rows(&mut self, factors: &Tile<EA>) {
         let cols = comptime!(self.space.extent_at(1));
         comptime!(assert!(

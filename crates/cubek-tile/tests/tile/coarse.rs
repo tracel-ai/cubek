@@ -1,19 +1,16 @@
 //! A **coarse** operand: one value per block of an axis, rather than one per element.
 //!
-//! This is the shape a per-block quantization scale has: `s[m, k / block]` beside a
-//! `v[m, k]`, and it is the one capability the explicit-scales design needs, since there the
-//! scales are a real operand of the kernel instead of a buffer hidden on the values' binding.
-//! Proven here with plain floats, deliberately: if the mechanism only works inside the quant
-//! machinery it is not a mechanism.
+//! The shape a per-block quantization scale has, `s[m, k / block]` beside `v[m, k]`, and the one
+//! capability the explicit-scales design needs, since there the scales are a real kernel operand.
+//! Proven with plain floats, deliberately: a mechanism only the quant machinery can use is not one.
 //!
 //! The spelling is a rational [`Projection`]: `⌊k / BLOCK⌋`, the same floor the resample
 //! mapping already rides, so a coarse operand is a gather like any other, and nothing about it
 //! is quantization's.
 //!
-//! The probe is a contraction, not a copy, because the read is what the design needs: a scale
-//! is consumed where the values are, never staged into the shape of its own expansion.
-//! ([`Tile::copy`] refuses this outright: a compacted stage fill requires source and
-//! destination to share a projection, which a coarse source by definition does not.)
+//! The probe is a contraction, not a copy, because the read is what the design needs: a scale is
+//! consumed where the values are, never staged into the shape of its own expansion. [`Tile::copy`]
+//! refuses this outright: a compacted stage fill needs source and destination on one projection.
 
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};

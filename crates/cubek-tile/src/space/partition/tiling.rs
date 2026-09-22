@@ -1,10 +1,8 @@
 //! Stating a partitioning from the leaf up, in counts.
 //!
-//! A [`Level`] steps an axis in tiles of some size, and a caller almost always knows that size
-//! as a product: the instruction is `16x8x16`, a plane holds `2x4` of them, a cube holds `2x4`
-//! planes. Written as sizes, those three facts read as `16x8`, `32x32` and `64x128`, and whether
-//! two of them are the same kind of number is something the reader divides to find out. Written
-//! here, the multiplication is stated once and the sizes are nobody's business.
+//! A [`Level`] steps an axis in tiles of some size, which a caller almost always knows as a
+//! product: the instruction is `16x8x16`, a plane holds `2x4` of them, a cube `2x4` planes. As
+//! sizes (`16x8`, `32x32`, `64x128`) the reader divides to relate them; here it is stated once.
 //!
 //! ```ignore
 //! Tiling::leaf(&[(M, 16), (N, 8), (K, 16)])   // the instruction: the device's, not a choice
@@ -19,20 +17,23 @@
 //! **The leaf is not a level.** It is the size the first level above it states as its tile, which
 //! is why the instruction disappears from the list and becomes the first line instead.
 //!
-//! **Counts, and "all of it".** Every level says how many of the thing below it
-//! ([`Count::Of`]). The one exception is a level that takes *every* tile of an axis — a
-//! reduction's whole `K`, the boxes of the output, the batch — a count nobody knows until launch
-//! ([`Count::Every`]). That is [`walk_every`](Tiling::walk_every), [`cubes`](Tiling::cubes) and
+//! **Counts, and "all of it".** Every level says how many of the thing below it ([`Count::Of`]);
+//! the exception takes *every* tile of an axis (a reduction's `K`, the output's boxes, the batch),
+//! a count nobody knows until launch ([`Count::Every`]).
+//!
+//! That is [`walk_every`](Tiling::walk_every), [`cubes`](Tiling::cubes) and
 //! [`batches`](Tiling::batches), which name axes and no number, and what they settle is this:
 //!
-//! * "every" means every tile **the level above hands down** — the whole axis only at the
-//!   outermost level that names it. Under a cube level that deals the axis across cubes, it is
-//!   the cube's run.
-//! * It closes the axis. Nothing above may count its tiles, because nothing above knows how
-//!   many there are; a walk above it would have nothing to step through.
+//! * "every" means every tile **the level above hands down**: the whole axis only at the outermost
+//!   level that names it; under a cube level that deals the axis across cubes, the cube's run.
+//!
+//! * It closes the axis. Nothing above may count its tiles, because nothing above knows how many
+//!   there are; a walk above it would have nothing to step through.
+//!
 //! * It returns exactly once, on the cube level, and only to be dealt across cubes
 //!   ([`across`](Tiling::across), [`Count::Across`]): the split of a contraction is the walk
 //!   below taking every stage of the run the grid hands its cube.
+//!
 //! * An axis a level does not name is not "all of it"; it is not that level's. The region is
 //!   handed down whole, unstepped, and the [`Level`] has no tile for it.
 //!
@@ -187,10 +188,9 @@ impl Tiling {
         self
     }
 
-    /// The workers of the level just stated take `axis`'s tiles in turns — worker 0 the first,
-    /// worker 1 the next — rather than each a contiguous run. Neighbouring lanes then read
-    /// neighbouring memory at the same instant, which is what a lane split of a contiguous
-    /// contraction wants.
+    /// The workers of the level just stated take `axis`'s tiles in turns (worker 0 the first,
+    /// worker 1 the next) rather than each a contiguous run, so neighbouring lanes read
+    /// neighbouring memory at the same instant, as a lane split of a contiguous contraction wants.
     pub fn interleaved(mut self, axis: Axis) -> Self {
         self.last("interleaved").interleaved.push(axis);
         self

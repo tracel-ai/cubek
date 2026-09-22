@@ -1,14 +1,12 @@
 //! Dequantization on its own: `out = weights ⊗ scales`, no contraction anywhere.
 //!
 //! A quantized tensor is values stored small beside a coarser tensor of scales. Decoding it is not
-//! a matmul verb and not a quantization feature: it is the elementwise product of two tiles, where
-//! one spans fewer axes than the other and so spreads each of its values across every position of
-//! the axes it omits.
+//! a matmul verb and not a quantization feature: it is the elementwise product of two tiles, one
+//! spanning fewer axes than the other and so spreading each value across the axes it omits.
 //!
 //! Proven here with the axes doing all the work. `COL` is spelled `(CB, CI)`: which block of
-//! columns, and where inside it. The weights address both, and the scales address `CB` alone. One
-//! scale per block of columns is then a fact about which axes the operand distinguishes, with
-//! nothing dividing anything.
+//! columns, and where inside it. The weights address both and the scales address `CB` alone, so
+//! one scale per block is a fact about which axes the operand distinguishes; nothing divides.
 
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,

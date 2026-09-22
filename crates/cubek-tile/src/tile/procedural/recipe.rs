@@ -24,8 +24,8 @@ pub trait SeparableRecipeAxisDependencies {
 }
 
 /// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
-/// position it is read at, within its [`Space`]. Rebased one axis at a time on demand, so a recipe
-/// emits an add only for the axes it actually reads, and one that ignores its coordinates emits none.
+/// position it is read at, within its [`Space`]. Rebased one axis at a time on demand, so a
+/// recipe emits an add only for the axes it reads, and one that ignores its coordinates emits none.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RecipeCoords {

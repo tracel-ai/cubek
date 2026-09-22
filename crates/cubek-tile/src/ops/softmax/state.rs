@@ -20,10 +20,9 @@ pub(crate) fn masked_recip<E: Float>(l: E) -> E {
 
 /// How the score rows are shared out, and therefore how a row reduction closes.
 ///
-/// The two arms compute the same softmax over the same cells; what differs is
-/// the worker. Stated once, here, because every op of the leaf has to agree
-/// with every other about who owns row `r` — and because the caller's own row
-/// loops ([`store_rows`](crate::Tile::store_rows)) have to agree with them too.
+/// The two arms compute the same softmax over the same cells; only the worker differs. Stated once,
+/// here, because every op of the leaf must agree with every other about who owns row `r`, and the
+/// caller's own row loops ([`store_rows`](crate::Tile::store_rows)) must agree with them too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RowShare {
     /// One **unit** per row-slice: the reduction runs in that unit's own
@@ -33,12 +32,9 @@ pub enum RowShare {
     /// One **plane** per row-slice: its lanes split the reduced axis and meet
     /// in a plane reduction, so every lane leaves holding the row's state.
     ///
-    /// Costs `lanes`× the workers on the same rows, which is the whole point:
-    /// a score tile of 8 rows keeps 8 units busy under `Unit` and a whole
-    /// 64-unit cube busy under `Plane`. In exchange the cube's x dim must be a
-    /// whole number of planes, and `lanes` must be the width the device
-    /// actually commits to — a plane reduction over a wrong width is silently
-    /// wrong rather than an error.
+    /// Costs `lanes`× the workers on the same rows, which is the point: a score tile of 8 rows
+    /// keeps 8 units busy under `Unit` and a 64-unit cube under `Plane`. In exchange the cube's x
+    /// dim must be whole planes and `lanes` the width the device commits to, else silently wrong.
     Plane { rows: usize, lanes: usize },
 }
 
@@ -81,11 +77,11 @@ pub fn owned_lane(#[comptime] share: RowShare) -> usize {
     }
 }
 
-/// Per-row running state `(m, l)` of the online softmax, in the owning
-/// worker's registers. Its space is the softmax's kept axes; the score axis it
-/// omits is the reduced one. Allocated once before the walk, threaded through
-/// every [`Tile::softmax`](crate::Tile::softmax) call (or every
-/// [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
+/// Per-row running state `(m, l)` of the online softmax, in the owning worker's registers. Its
+/// space is the softmax's kept axes; the score axis it omits is the reduced one.
+///
+/// Allocated once before the walk, threaded through every [`Tile::softmax`](crate::Tile::softmax)
+/// call (or every [`absorb`](RowState::absorb) of a streamed fold), drained by the epilogue.
 #[derive(CubeType)]
 pub struct RowState<E: Float> {
     pub m: Array<E>,
@@ -122,12 +118,12 @@ impl<E: Float> RowState<E> {
     /// each, so `units / lanes` planes share the tile and plane `p` owns rows
     /// `[p*rpp, (p+1)*rpp)`, its lanes splitting each row's reduced axis.
     ///
-    /// `lanes` must be the width the device commits to
-    /// (`plane_size_min == plane_size_max`, and plane ops offered); one lane is
-    /// the degenerate case and gives back [`new`](RowState::new)'s arm, which is
-    /// what a CPU runtime gets.
     /// The state of a plane owning every row of `space`, its window of the score rows, `lanes`
     /// wide.
+    ///
+    /// `lanes` must be the width the device commits to (`plane_size_min == plane_size_max`, plane
+    /// ops offered); one lane is the degenerate case and gives back [`new`](RowState::new)'s arm,
+    /// which is what a CPU runtime gets.
     pub fn over_plane(#[comptime] space: Space, #[comptime] lanes: usize) -> RowState<E> {
         let rows = comptime!(space.tile_size());
         RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
@@ -159,10 +155,9 @@ impl<E: Float> RowState<E> {
         corr
     }
 
-    /// Fold one streamed score into row `i`'s `(m, l)`: the per-position
-    /// reading of [`update`](RowState::update). The `min_value` identity
-    /// makes the first real score overwrite the state cleanly, and a row
-    /// that never absorbs keeps `l = 0` for the epilogue's masked guard.
+    /// Fold one streamed score into row `i`'s `(m, l)`: the per-position reading of
+    /// [`update`](RowState::update). The `min_value` identity makes the first real score overwrite
+    /// the state cleanly; a row that never absorbs keeps `l = 0` for the epilogue's masked guard.
     pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
         let (m_new, l_new, correction, weight) =
             instruction::logsumexp::step::<E>(self.m[i], self.l[i], score);
@@ -186,10 +181,9 @@ impl<E: Float> RowState<E> {
 /// (kept, reduced) space: origin of its top-left element and the valid
 /// extents. Causal and materialized are comptime knobs.
 ///
-/// `q_rows` maps a score row to its query position: a GQA score tile stacks
-/// the group members over the same query block (group-major), so row `r` sits
-/// at query `origin_q + r % q_rows`. A group-free tile sets `q_rows` to its
-/// row count, and the modulo is the identity.
+/// `q_rows` maps a score row to its query position: a GQA score tile stacks the group members
+/// over the same query block (group-major), so row `r` sits at query `origin_q + r % q_rows`. A
+/// group-free tile sets `q_rows` to its row count, and the modulo is the identity.
 #[derive(CubeType)]
 pub struct MaskProbe {
     pub origin_q: usize,
@@ -229,11 +223,9 @@ impl MaskProbe {
     /// How many key positions this tile's rows can read: past it every score is masked, so a
     /// walk stops there rather than contracting blocks whose scores it will discard.
     ///
-    /// The operand's bound and the causal limit are one statement, differing only in where
-    /// they come from: the first is how much of the axis is real, the second how much of it
-    /// this tile's largest query may see. A materialized mask is not one of them, since an
-    /// arbitrary mask leaves no suffix that is masked throughout; it stays an element
-    /// predicate, and this stays an upper bound that is correct with or without it.
+    /// The operand's bound and the causal limit are one statement, differing only in origin: how
+    /// much of the axis is real, and how much this tile's largest query may see. A materialized
+    /// mask is not one: it leaves no fully-masked suffix, so it stays an element predicate.
     pub fn keys(&self) -> usize {
         let mut keys = self.bound_s;
         if comptime!(self.causal) {

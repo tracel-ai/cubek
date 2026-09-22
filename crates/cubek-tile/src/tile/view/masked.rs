@@ -30,9 +30,8 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
     }
 
     /// Whether `pos` lands on the operand's real data (`true` unconditionally when `check` is
-    /// `false`: the launch already proved every access in-bounds). A caller that cannot use
-    /// [`read`](Self::read)'s zeroed default, because its fold's identity is not zero (`Max`,
-    /// `Min`), queries this and selects its own fallback instead.
+    /// `false`: the launch already proved every access in-bounds). A fold whose identity is not
+    /// zero (`Max`, `Min`) cannot use [`read`](Self::read)'s zeroed default and selects its own.
     pub fn is_in_bounds(&self, pos: C) -> bool {
         if comptime!(self.check) {
             self.view.is_in_bounds(pos)

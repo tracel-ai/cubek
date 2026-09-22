@@ -1,7 +1,6 @@
-//! The host-decided physical facts about an operand's bytes: its layout ([`layout`])
-//! and the specs, deliveries and builder that bring it into the kernel ([`arg`], [`delivery`],
-//! [`source`]). Everything true of an operand before it becomes an in-kernel
-//! [`Tile`](crate::Tile) with a [`Space`](crate::Space).
+//! The host-decided physical facts about an operand's bytes: its layout ([`layout`]) and the
+//! specs, deliveries and builder that bring it into the kernel ([`arg`], [`delivery`], [`source`]):
+//! all true of an operand before it is a [`Tile`](crate::Tile) with a [`Space`](crate::Space).
 //!
 //! Formerly the standalone `cubek-layout` crate plus the `load/` surface, folded together since
 //! the tile engine is their only consumer.

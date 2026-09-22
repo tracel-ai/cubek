@@ -22,12 +22,9 @@ use half::f16;
 
 use super::references;
 
-/// Skip guard for the tensor-core tests in this file, which all hardcode
-/// `8x8x8` `f32` fragments (the native Metal simdgroup shape). Checking only
-/// that *some* cmma config exists is not enough: drivers accept only the exact
-/// fragment shapes they advertise, and an unsupported shape is rejected at
-/// compile time. Returns `false` (after enforcing a skip outcome) when the
-/// device doesn't advertise the exact configuration.
+/// Skip guard for the tensor-core tests in this file, which all hardcode `8x8x8` `f32` fragments
+/// (the native Metal simdgroup shape). Drivers accept only the exact fragment shapes they
+/// advertise, so *some* config is not enough; returns `false` (after enforcing a skip) if absent.
 pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.cmma.iter().any(|cfg| {
@@ -47,11 +44,9 @@ pub(crate) fn require_cmma_8x8x8_f32(client: &Client) -> bool {
     supported
 }
 
-/// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the
-/// feature: a backend can advertise manual mma and offer only `16x16x16`
-/// (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
-/// not have: it reads back zeros, which looks like a leaf bug and is a missing
-/// guard.
+/// The manual-mma twin of [`require_cmma_8x8x8_f32`]. The *shape*, not just the feature: a
+/// backend can advertise manual mma and offer only `16x16x16` (gfx1151 does), and running `8x8x8`
+/// there is an instruction the hardware lacks: it reads back zeros, which looks like a leaf bug.
 fn require_mma_8x8x8_f32(client: &Client) -> bool {
     let f32_ty = f32::elem_type_native();
     let supported = client.properties().features.matmul.mma.iter().any(|cfg| {
@@ -155,9 +150,8 @@ fn assert_matmul_arange(client: &Client, handle: TensorHandle, m: usize, n: usiz
 // ---- the kernels ------------------------------------------------------------------
 
 /// `c = a · b` with every operand read where it lies: `outer`'s workers each take their box of
-/// it, through `runs` of boxes where the tiling states that level, and the leaf runs the
-/// software instruction under `config` on each region of `inner`, folding under `semiring`. `c`
-/// owns its init: the semiring's identity, whatever the buffer held.
+/// it (through `runs` of boxes where the tiling states that level) and the leaf runs the software
+/// instruction under `config` on each `inner` region, folding under `semiring` from its identity.
 #[cube(launch)]
 fn matmul_in_place<E: Numeric, AV: Size, BV: Size, CV: Size>(
     a: &TileArg<'_, E, AV>,
@@ -987,10 +981,9 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     }
 }
 
-/// The legacy register budget as a level structure: the K stage walk (staged, `depth` in
-/// flight), the plane split, a contraction-step walk that only windows, an N walk loading one B
-/// fragment per step beside the A column loaded once above it, and an M-only fragment walk
-/// below. The two fragment walks select out of the plane's partition, so they unroll.
+/// The legacy register budget as a level structure: a staged K walk (`depth` in flight), the plane
+/// split, a windowing-only step walk, an N walk loading one B fragment per step beside the A
+/// column loaded once above, and an M-only fragment walk; both fragment walks unroll (they select).
 #[cube(launch)]
 fn cmma_matmul_five_levels<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -1917,10 +1910,9 @@ fn matmul_broadcast_lhs_only() {
     );
 }
 
-/// Both batch axes ride cube-Z at once: `B0` and `B1` are `Spatial { Cube(Z) }`, so
-/// the launch puts their *product* on Z and the walk decodes one cube's `CUBE_POS_Z`
-/// back into `(b0, b1)`. The same broadcast result as the sequential variants: this
-/// is what lets CpuGemm parallelise the whole batch on Z.
+/// Both batch axes ride cube-Z at once: `B0` and `B1` are `Spatial { Cube(Z) }`, so the launch
+/// puts their *product* on Z and the walk decodes one cube's `CUBE_POS_Z` back into `(b0, b1)`.
+/// Same broadcast result as the sequential variants; this lets CpuGemm parallelise a batch on Z.
 #[test]
 fn matmul_broadcast_two_batch_axes_on_z() {
     check_matmul_broadcast(
@@ -1934,10 +1926,9 @@ fn matmul_broadcast_two_batch_axes_on_z() {
     );
 }
 
-/// The two-axis broadcast tiled across *two* levels: L0 walks the batch
-/// (`batch_edge = 1`) and stages the whole `4×4` matrix, then L1 tiles that matrix
-/// into `2×2` final tiles. The broadcast (omitted) batch axes must stay correct
-/// through both `divide`s. The result is the same broadcast matmul.
+/// The two-axis broadcast tiled across *two* levels: L0 walks the batch (`batch_edge = 1`) and
+/// stages the whole `4×4` matrix, then L1 tiles that matrix into `2×2` final tiles. The broadcast
+/// (omitted) batch axes must stay correct through both `divide`s; the result is the same matmul.
 #[test]
 fn matmul_broadcast_multilevel() {
     check_matmul_broadcast(
@@ -1951,12 +1942,12 @@ fn matmul_broadcast_multilevel() {
     );
 }
 
-/// `C = A @ B` where the batch is two independent axes `B0`, `B1` and each operand
-/// carries only one: `lhs ∈ {B0, M, K}`, `rhs ∈ {B1, K, N}`, `out ∈ {B0, B1, M, N}`.
-/// Each operand omits the batch axis it broadcasts, and the kernel's `Space::merge`
-/// fills the omitted axis back wholesale. Single tile per matrix (`t³`) with
-/// `batch_edge = 1`, so each output batch element is its own walk point. Every level
-/// stages, whatever the caller stacked.
+/// `C = A @ B` where the batch is two independent axes `B0`, `B1` and each operand carries only
+/// one: `lhs ∈ {B0, M, K}`, `rhs ∈ {B1, K, N}`, `out ∈ {B0, B1, M, N}`. Each operand omits the
+/// batch axis it broadcasts, and the kernel's `Space::merge` fills the omitted axis back wholesale.
+///
+/// Single tile per matrix (`t³`) with `batch_edge = 1`, so each output batch element is its own
+/// walk point. Every level stages, whatever the caller stacked.
 fn check_matmul_broadcast(b0: usize, b1: usize, t: usize, levels: &[Level]) {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
@@ -2084,10 +2075,9 @@ fn matmul_cpu_cores_split_m_planes() {
     );
 }
 
-// Short runs across a cube's planes (four tiles over three planes, three each, in turns) cannot
-// be stated any more: a plane level says how many planes take one tile each, and a run of tiles
-// is a walk below it, which every plane takes whole. Only a cube level deals an axis in runs
-// (`Tiling::across`), and the short-run cases above cover it there.
+// Short runs across a cube's planes (four tiles over three planes, three each, in turns) cannot be
+// stated any more: a plane level says how many planes take one tile each, and a run of tiles is a
+// walk below it, taken whole by every plane; only a cube level deals runs (`Tiling::across`).
 
 /// The register leaf reads both operands where they lie: nothing is materialized and the walk is
 /// the plain loop. `levels` is the worker level over the walk, with a run of boxes between them
@@ -2134,10 +2124,9 @@ fn check_matmul_cpu(m: usize, n: usize, k: usize, levels: Vec<Level>) {
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
 
-/// The "global matmul" shape: M and N stay comptime (`Static`), only K is `Dynamic`, so its tile
-/// count is resolved from the tensor at runtime while M/N fold and unroll. Exercises the mixed
-/// `Static`/`Dynamic` path through `merged_space`/`Extents` that every `all_dynamic` caller skips.
-/// Geometry and allocation use the concrete nest; the kernel keys on the K-dynamic one.
+/// The "global matmul" shape: M and N stay comptime (`Static`) and only K is `Dynamic`, resolved
+/// from the tensor at runtime while M/N fold and unroll: the mixed `merged_space`/`Extents` path
+/// that `all_dynamic` skips. Allocation uses the concrete nest, the kernel the K-dynamic one.
 #[test]
 fn matmul_cpu_dynamic_k() {
     let client = cubecl::test_device().client();
@@ -2189,13 +2178,13 @@ fn matmul_cpu_dynamic_k() {
     assert_tiled_matmul(&client, c.handle(), m, n, k, edge);
 }
 
-/// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint
-/// column of the register-leaf output and contracts the whole K in registers: the
-/// gemv-perpendicular mapping. A bare `lanes()` declares the split without the lane count;
-/// [`Space::resolve_lanes`] (the launch's stamping pass) fills it from the hardware
-/// `plane_size`, so the Unit axis rides the warp's lanes on the cube's X dim.
-/// `plane_size == 1` on CPU degenerates to one lane doing all of N (still correct); the
-/// win is on GPU where the warp's lanes divide N.
+/// N spread across a plane's lanes (`ComputeScope::Unit`): each lane owns a disjoint column of
+/// the register-leaf output and contracts all of K in registers: the gemv-perpendicular mapping.
+/// `plane_size == 1` on CPU is one lane doing all of N (still correct); the win is on GPU's lanes.
+///
+/// A bare `lanes()` declares the split without the lane count; [`Space::resolve_lanes`] (the
+/// launch's stamping pass) fills it from the hardware `plane_size`, so the Unit axis rides the
+/// warp's lanes on the cube's X dim.
 #[test]
 fn register_matmul_unit_spread_n() {
     let client = cubecl::test_device().client();
@@ -2324,8 +2313,7 @@ fn check_padded_rhs_stage((m, n, k): (usize, usize, usize), expected: Vec<f32>) 
 
 /// A scalar `M×K` source with `K = 3` passes an outer level read where it lies before the inner
 /// one pads it into one four-wide line per row. Unlike the padded-rhs cases above, a scalar rhs
-/// and sink keep this on the direct 2-D contraction path; its partial final lhs line must
-/// contribute exactly three K values.
+/// and sink keep it on the direct 2-D path; its partial last lhs line must add exactly 3 K values.
 #[test]
 fn matmul_padded_lhs_stage_direct_tail() {
     let client = cubecl::test_device().client();
@@ -2655,12 +2643,12 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
 }
 
 // A contraction cut at cube scope leaves each cube holding a slice of every output cell, and
-// nothing combines them: a register-resident accumulator drains by storing, so the last cube to
-// arrive erases the others, and one accumulating in place reads the cell, folds, and writes it
-// back, which is a lost update between cubes. Both are refused (`SplitShare::validate`), and the
-// refusal is unit-tested where it can be observed: `space::base` checks the share. Not here, for
-// the reason `blocked.rs` gives: this one fires inside the kernel, on a worker thread, where
-// `#[should_panic]` never sees it and the launch just returns zeros.
+// nothing combines them: a register accumulator drains by storing, so the last cube to arrive
+// erases the others, and one accumulating in place reads, folds and writes back: a lost update.
+//
+// Both are refused (`SplitShare::validate`), and the refusal is unit-tested where it can be
+// observed, `space::base`. Not here, for the reason `blocked.rs` gives: this one fires inside the
+// kernel, on a worker thread, where `#[should_panic]` never sees it and the launch returns zeros.
 
 // ---- vectorized operands through the rings -------------------------------------------
 
@@ -2740,9 +2728,8 @@ fn matmul_buffered_deeper_than_the_walk() {
 }
 
 /// A depth-2 ring whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
-/// window. It is filled once above the loop and its buffer serves both slots
-/// (`WindowMode::Reused`), the only sound way for two slots to reuse one buffer, and why a stage
-/// count is derived rather than stated.
+/// window. It is filled once above the loop and its buffer serves both slots, `WindowMode::Reused`:
+/// the one sound way for two slots to share a buffer, and why a stage count is derived, not stated.
 #[test]
 fn matmul_double_buffered_with_a_fixed_operand() {
     check_matmul_vectorized((8, 4, 4), Staged::Both, 2);
@@ -3057,10 +3044,11 @@ fn tropical_matmul_promoted() {
 }
 
 /// The promoted register accumulator under the two-level cube/plane nest a real gemm composes,
-/// with **vectorized** operands (rhs and output in 2-wide lines). This is the case that once
-/// failed to compile on the CPU backend, when the block was allocated scalar and re-viewed as
-/// lines; the block is now allocated at its vector element (`Array<Vector<T, RA>>`), so the
-/// store is a real vector write and the numbers are right on every runtime.
+/// with **vectorized** operands (rhs and output in 2-wide lines).
+///
+/// This once failed to compile on the CPU backend, when the block was allocated scalar and
+/// re-viewed as lines; the block is now allocated at its vector element (`Array<Vector<T, RA>>`),
+/// so the store is a real vector write and the numbers are right on every runtime.
 #[test]
 fn register_matmul_promoted_cube_plane() {
     let client = cubecl::test_device().client();
@@ -3158,8 +3146,7 @@ fn matmul_on_a_stated_instruction<E: Numeric, EA: Numeric>(
 ///
 /// What it proves is that the pair is form-blind on the side that asks nothing of the hardware:
 /// `operand` hands a register block the tile it was given, so a kernel written for a fragment
-/// form runs unchanged where there is no fragment. The cmma form of the same body is
-/// [`instruction_stated_once_runs_on_cmma`].
+/// form runs unchanged without one; the cmma form is [`instruction_stated_once_runs_on_cmma`].
 #[test]
 fn instruction_stated_once_runs_in_registers() {
     let client = cubecl::test_device().client();
@@ -3209,12 +3196,12 @@ fn instruction_stated_once_runs_in_registers() {
 /// A buffered level that *cuts* a promoted (fragment) accumulator: each region selects its own
 /// block, so the ring's walk has to unroll and hand every region comptime coordinates.
 ///
-/// The regression this guards is silent in both directions. `#[unroll(flag)]` only unrolls when
-/// the macro sees `flag` as a comptime binding, and rolls the loop without complaint otherwise;
-/// the lap arithmetic then has to fold, or the coordinates come out runtime even unrolled. Either
-/// slip lands on `Tile::at`'s "must be walked with compile-time coordinates" panic. The other
-/// unrolled shape, a fragment stage, needs a fragment leaf and so only runs on tensor-core
-/// hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
+/// The regression this guards is silent in both directions: `#[unroll(flag)]` rolls the loop
+/// without complaint unless the macro sees `flag` as a comptime binding, and the lap arithmetic
+/// must fold or the coordinates come out runtime even unrolled. Either slip panics in `Tile::at`.
+///
+/// The other unrolled shape, a fragment stage, needs a fragment leaf and so only runs on
+/// tensor-core hardware ([`cmma_matmul_staged_n_walk_partition`]); this one runs everywhere.
 #[test]
 fn matmul_buffered_walk_cutting_a_fragment_accumulator_unrolls() {
     let client = cubecl::test_device().client();
@@ -3369,8 +3356,10 @@ fn folded_matmul_reference(m: usize, n: usize, k: usize) -> Vec<f32> {
 
 /// Both operands lined along `K` with a scalar output: a step consumes a whole line, the block's
 /// lanes are `K`-partials of one cell, and one horizontal fold collapses them. The rhs is declared
-/// `[N, K]`, which is what puts its line on the contracted axis. `budget` sizes the block: too
-/// small for the shape and the rolled body runs, indexing its local arrays at runtime.
+/// `[N, K]`, which puts its line on the contracted axis.
+///
+/// `budget` sizes the block: too small for the shape and the rolled body runs, indexing its local
+/// arrays at runtime.
 fn check_folded_step(launcher: Launcher, (m, n, k): (usize, usize, usize), budget: usize) {
     let client = cubecl::test_device().client();
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
@@ -3426,9 +3415,8 @@ fn register_matmul_folded_step_rolled() {
 }
 
 /// The folded step through a promoted block. The rhs lines along `K`, so the block's lines are
-/// one cell's partials, collapsed on drain rather than committed per visit: the sum never meets
-/// the output between regions, which is what lets it run wider than the output
-/// ([`a_promoted_folded_step_sums_wider_than_its_output`]).
+/// one cell's partials, collapsed on drain rather than committed per visit; the sum never meets
+/// the output between regions, hence [`a_promoted_folded_step_sums_wider_than_its_output`].
 #[test]
 fn register_matmul_promoted_folded_step() {
     let client = cubecl::test_device().client();
@@ -3476,6 +3464,7 @@ fn register_matmul_promoted_folded_step() {
 /// A half-precision output summing a long folded contraction: `4096` products of one. Summed in
 /// its own element the cell stops at `2048`, where one more product falls under half its spacing
 /// and rounds away; carried in `f32` across the walk and cast once on drain, it lands `4096`.
+///
 /// The property a weight stored along `K` needs from a register block, the folded step being
 /// the only way such a weight contracts.
 #[test]
@@ -3682,8 +3671,7 @@ fn run_folded_step_quant(
 
 /// The nest a rows-in-flight gemv cuts: the plane splits into aligned groups of `group_lanes`,
 /// each group owning one output row and its lanes interleaving `K` between them. Every lane holds
-/// a *partial* of its group's row, so the drain is a segmented reduction: `LaneShare::Group`,
-/// where a whole-plane fold would be `LaneShare::Plane`.
+/// a *partial* of the row, so the drain is a segmented reduction: `LaneShare::Group`, not `Plane`.
 ///
 /// `groups == 1` is the same nest at `LaneShare::Plane`, which is the case already covered; the
 /// point here is a plane carrying several cells at once.
@@ -3747,11 +3735,12 @@ fn register_matmul_lane_group_fold() {
 
 /// The same segmented fold through a **promoted** accumulator.
 ///
-/// This is the case no other test covers: every promoted test in this file folds either nothing
-/// (`Whole`) or the whole plane (`Plane`). A plane carrying one cell per group has to reduce
-/// within each group and let each group's first lane write *its own row*, and the rows a group
-/// owns are what the `M` cut hands it, which a block built before the walk descends has to be
-/// told rather than assume.
+/// The case no other test covers: every promoted test here folds either nothing (`Whole`) or the
+/// whole plane (`Plane`). A plane carrying one cell per group has to reduce within each group and
+/// let each group's first lane write *its own row*.
+///
+/// The rows a group owns are what the `M` cut hands it, which a block built before the walk
+/// descends has to be told rather than assume.
 #[test]
 fn register_matmul_promoted_lane_group_fold() {
     let client = cubecl::test_device().client();
@@ -3793,10 +3782,10 @@ fn register_matmul_promoted_lane_group_fold() {
 
 /// The gemv's own layout, promoted: a plane split into groups, each owning a row, its lanes
 /// interleaving `K`, and the weight stored along `K` lining both operands along the contraction.
-/// Every lane's block is one line of partials, so the drain folds twice, across the line and then
-/// across the group, and the cell is written once at the end. The memory-backed leaf does both
-/// folds per visit and rounds the cell at each; a half-precision cell rounds away the walk that
-/// way, so this is the block a half-precision gemv runs in.
+/// Every lane's block is one line of partials, so the drain folds line then group and writes once.
+///
+/// The memory-backed leaf does both folds per visit and rounds the cell at each; a half-precision
+/// cell rounds away the walk that way, so this is the block a half-precision gemv runs in.
 #[test]
 fn register_matmul_promoted_folded_step_lane_group_fold() {
     let client = cubecl::test_device().client();
@@ -3847,9 +3836,7 @@ fn register_matmul_promoted_folded_step_lane_group_fold() {
 ///
 /// The decode belongs to the read, not to the leaf: `Tile::matrix_packed` dequantizes per read
 /// for whichever leaf asks, so a promoted accumulator serves a quantized operand with nothing of
-/// its own. What that is worth is only checkable against a reference the kernel had no hand in,
-/// built on the host from the quantized values and their scales, since a leaf that decoded
-/// wrongly and a reference that decoded the same way wrongly would agree.
+/// its own. The reference is built on the host from the values and scales, so it shares no decode.
 #[test]
 fn register_matmul_promoted_accumulator_quant() {
     let client = cubecl::test_device().client();
@@ -3935,11 +3922,9 @@ fn register_matmul_promoted_accumulator_quant() {
 
 // ---- cmma fragment transit (tensor-core) -------------------------------------
 
-/// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no
-/// arithmetic: gmem → smem → cmma (load) → smem → gmem. Validates that the
-/// `TileKind::Cmma` transit (`cmma::load_with_layout` / `cmma::store`) preserves data.
-/// Tensor-core only: skipped on backends without cmma (wgpu/cpu); run with
-/// `cargo test-metal`.
+/// Round-trips a 16×16 tile through a tensor-core *accumulator* fragment with no arithmetic,
+/// gmem → smem → cmma (load) → smem → gmem, to check that the `TileKind::Cmma` transit
+/// (`cmma::load_with_layout` / `cmma::store`) preserves data. Tensor-core only: `cargo test-metal`.
 #[test]
 fn cmma_fragment_roundtrip() {
     let client = cubecl::test_device().client();
@@ -4389,12 +4374,13 @@ fn check_staged_matmul_on_a_stated_instruction(instruction: Instruction) {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The manual/raw-mma instruction: the raw-mma twin of `cmma_matmul_staged_k_walk`: the same
-/// open → zero → mma → drain kernel, but the contraction runs through `MmaDefinition::execute`
-/// over register fragments rather than the cooperative `cmma::execute`. Gated on the backend
-/// exposing the manual-mma feature (`features.matmul.mma`); uses the universal manual transport
-/// (`MmaIOConfig::manual()`), so no `ldmatrix`/`stmatrix` path is taken. Run with `cargo
-/// test-metal` / `test-cuda` on a backend that advertises manual mma.
+/// The raw-mma twin of `cmma_matmul_staged_k_walk`: the same open → zero → mma → drain kernel,
+/// but the contraction runs through `MmaDefinition::execute` over register fragments rather than
+/// the cooperative `cmma::execute`.
+///
+/// Gated on the backend exposing the manual-mma feature (`features.matmul.mma`); uses the
+/// universal manual transport (`MmaIOConfig::manual()`), so no `ldmatrix`/`stmatrix` path is
+/// taken. Run with `cargo test-metal` / `test-cuda` on a backend that advertises manual mma.
 #[test]
 fn mma_matmul_8x8x8() {
     let client = cubecl::test_device().client();
@@ -4440,10 +4426,9 @@ fn mma_matmul_8x8x8() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The multi-plane cmma stage: a double-buffered K walk fills a shared `16×8`/`8×16`
-/// stage cooperatively (cyclic across the cube's 128 units), and a plane-partitioned
-/// inner level hands each of the 4 planes its own `8×8` fragment, resident across all
-/// four K steps. Tensor-core only: run with `cargo test-metal`.
+/// The multi-plane cmma stage: a double-buffered K walk fills a shared `16×8`/`8×16` stage
+/// cooperatively (cyclic across the cube's 128 units), and a plane-partitioned inner level hands
+/// each of the 4 planes an `8×8` fragment resident across all four K steps. Tensor-core only.
 #[test]
 fn cmma_matmul_plane_partitioned_stage() {
     let client = cubecl::test_device().client();
@@ -4491,10 +4476,9 @@ fn cmma_matmul_plane_partitioned_stage() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³
-/// fragments, resident across a double-buffered K walk; the fragment level reads the stage
-/// where it lies, so the unrolled walk reloads operand fragments per execute (no restaging).
-/// Tensor-core only; run with `cargo test-metal`.
+/// The multi-fragment partition: each of the 4 planes owns a 2×2 partition of 8³ fragments,
+/// resident across a double-buffered K walk; the fragment level reads the stage where it lies, so
+/// the unrolled walk reloads operand fragments per execute (no restaging). Tensor-core only.
 #[test]
 fn cmma_matmul_multi_fragment_partition() {
     let client = cubecl::test_device().client();
@@ -4545,10 +4529,9 @@ fn cmma_matmul_multi_fragment_partition() {
     assert_matmul_arange(&client, c.handle(), m, n, k);
 }
 
-/// The legacy register budget as a level structure: a contraction-step walk (windowing only),
-/// an N-walk loading one B fragment per step while the A column loads once above it, and an
-/// M-only fragment walk below. Exercises sub-block partition selection (the N-walk's regions
-/// each own a column of the accumulator) and the unrolled fragment walks. Tensor-core only.
+/// The legacy register budget as a level structure: a contraction-step walk (windowing only), an
+/// N-walk loading one B fragment per step while the A column loads once above it, and an M-only
+/// fragment walk below: sub-block partition selection and unrolled fragment walks. Tensor-core only
 #[test]
 fn cmma_matmul_staged_n_walk_partition() {
     let client = cubecl::test_device().client();
@@ -4656,9 +4639,8 @@ fn cmma_matmul_quant_block_k_k_walk() {
 }
 
 /// Block-K-quantized `A` served in 2-wide lines: the blocks sit on the vectorized inner axis, so
-/// a line's coordinate counts lines while its scale block is cut in elements: the widening
-/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a stage's scale still changes mid-fill.
-/// Tensor-core only.
+/// a line's coordinate counts lines while its scale block is cut in elements, the widening
+/// [`ScaleLayout`] does. Two lines per `bk = 4` block, so a scale changes mid-fill. Tensor-core.
 #[test]
 fn cmma_matmul_quant_block_k_k_walk_vectorized() {
     let (m, k, bk) = (8usize, 16usize, 4usize);
@@ -4758,17 +4740,14 @@ fn check_cmma_matmul_quant_walk(
 }
 
 /// The manual-mma leaf decoding at the *read*: `DequantAt::Read` keeps `A`'s stage in its stored
-/// `i8`, and the fragment load decodes each element through the quant-transparent matrix view.
-/// The cmma twin of this test has no choice but `DequantAt::Load`, because its fragment load
-/// takes a raw window; the manual transport addresses one element at a time, so it can decode.
-/// Same numbers, a stage that is a quarter the size.
+/// `i8`, and the fragment load decodes each element through the quant-transparent matrix view,
+/// which the cmma twin cannot (its load takes a raw window). Same numbers, a quarter the stage.
 #[test]
 fn mma_matmul_quant_until_read() {
     let client = cubecl::test_device().client();
     // The shape, not just the feature; see `require_mma_8x8x8_f32`. The `f32` triple, not the
-    // stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is the *walk*, walked 8 deep, and
-    // `A` decodes at the read, so the instruction this leaf reaches for is the same f32 `8x8x8`
-    // the plain manual-mma test runs.
+    // stored `i8` one, and `8x8x8`, not `8x8x16`: `K = 16` is the *walk*, walked 8 deep, and `A`
+    // decodes at the read, so the leaf uses the same f32 `8x8x8` the plain manual-mma test runs.
     if !require_mma_8x8x8_f32(&client) || !require_native_i8(&client) {
         return;
     }
@@ -4849,9 +4828,10 @@ fn mma_matmul_quant_until_read() {
 
 // ---- Quantized A through the register (plain-ALU) leaf --------------------------------
 //
-// Every other quant matmul above runs on tensor cores and skips where cmma is absent, which
-// is everywhere the memory-bound GEMV actually lives. These pin the other leaf: the staged
-// kernel stages `A`'s *packed storage words* into smem, and the software instruction
+// Every other quant matmul above runs on tensor cores and skips where cmma is absent, which is
+// everywhere the memory-bound GEMV actually lives. These pin the other leaf.
+//
+// The staged kernel stages `A`'s *packed storage words* into smem, and the software instruction
 // dequantizes each read out of smem: no f32 inflation of the stage, no promotion, no cmma, no
 // i8 needed for the packed cases (the binding is a `u32`).
 
@@ -4863,8 +4843,7 @@ fn register_matmul_quant_native_block_m() {
 
 /// Native i8 `A` served DIRECTLY through the register leaf (Keystone K): nothing is staged, so
 /// the leaf reads i8 straight from gmem and scales per read. The native + lhs-arm twin of the
-/// packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; together they exercise every
-/// branch of the leaf's quant dispatch (lhs/rhs × native/packed).
+/// packed-rhs [`register_matmul_quant_rhs_direct_serve_gemv`]; the pair covers the quant dispatch.
 #[test]
 fn register_matmul_quant_native_direct_serve() {
     run_register_matmul_quant_native(Serve::Direct);
@@ -4974,8 +4953,7 @@ fn run_register_matmul_quant_packed(
 
 /// Drive the quantized-lhs register kernels and check `C[i,j] = Σ_p q[i,p]·scale[i/bm]·B[p,j]`.
 /// [`Serve::Staged`] stages `A`'s storage into smem and dequantizes per read out of it,
-/// [`Serve::Direct`] serves it straight from gmem. Either way through the leaf's
-/// `matrix_transparent`, with no dequantized f32 stage.
+/// [`Serve::Direct`] serves it from gmem; either way through `matrix_transparent`, no f32 stage.
 #[allow(clippy::too_many_arguments)]
 fn run_register_matmul_quant(
     client: Client,
@@ -5069,10 +5047,9 @@ fn run_register_matmul_quant(
 
 // ---- Quantized B (RHS) through the register leaf ---------------------------------------
 //
-// The gemv production shape: the *weight* is the streamed RHS at `(K, N) = (d_in, d_out)`,
-// packed along `d_out` (the innermost axis) with one scale per `(k, N-group)` block
-// (`[1, bn]`). A stays float. The RHS's served width drives the accumulator's line width
-// in the register instruction, so `C` is launched at the same width.
+// The gemv production shape: the *weight* is the streamed RHS at `(K, N) = (d_in, d_out)`, packed
+// along `d_out` (the innermost axis) with one scale per `(k, N-group)` block (`[1, bn]`); A stays
+// float. The RHS's served width drives the accumulator's line width, so `C` launches at that width.
 
 /// Packed-u32 Q8S `B` (4 values per word along `N`), scales `[1, bn]`: the exact scheme
 /// family `metabolic`'s gemv ships (`q8s`, packed-u32, block scales along `d_out`).
@@ -5180,9 +5157,11 @@ fn register_matmul_quant_rhs_gemv_row_multi_cube() {
 
 /// Direct-serve the quantized RHS weight (Keystone K): nothing is staged, so the register leaf
 /// reads the packed weight straight from gmem and dequantizes *per read* through
-/// [`matrix_transparent`]: the sync-free `m = 1` decode path. The `_rhs_*` tests above are all
-/// staged: they stage the weight's *packed words* into smem (plus its scales) and dequantize per
-/// read out of smem. Same answer; direct avoids even the smem round-trip.
+/// [`matrix_transparent`]: the sync-free `m = 1` decode path.
+///
+/// The `_rhs_*` tests above are all staged: they stage the weight's *packed words* into smem
+/// (plus its scales) and dequantize per read out of smem. Same answer; direct avoids even the
+/// smem round-trip.
 #[test]
 fn register_matmul_quant_rhs_direct_serve_gemv() {
     let client = cubecl::test_device().client();
@@ -5213,11 +5192,11 @@ fn register_matmul_quant_rhs_direct_serve_gemv() {
 }
 
 /// The Goal path: a staged packed weight whose smem stage holds the *packed u32 words*, not a
-/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with block `[1, bn]` scales
-/// (distinct along K), so each region refills both the staged packed words and the staged
-/// scales, and the leaf dequantizes per read out of smem via [`matrix_transparent`]. This is the
-/// batched weight-streaming case the change targets: the contrast to the f32-inflated stage the
-/// cmma leaf still uses, and to the sync-free direct serve above.
+/// dequantized f32 stage. A four-region K-walk (`k = 16`, `tk = 4`) with `[1, bn]` scales distinct
+/// along K refills both per region; the leaf decodes each smem read via [`matrix_transparent`].
+///
+/// This is the batched weight-streaming case the change targets: the contrast to the f32-inflated
+/// stage the cmma leaf still uses, and to the sync-free direct serve above.
 #[test]
 fn register_matmul_quant_rhs_staged_packed_smem() {
     let client = cubecl::test_device().client();
@@ -5233,9 +5212,8 @@ fn register_matmul_quant_rhs_staged_packed_smem() {
 }
 
 /// The same staged packed weight, decoded by the load instead of the read (`DequantAt::Load`): the
-/// stage holds served values, so it costs the served-to-stored ratio in shared memory and the
-/// decode happens once per element rather than per read. The fork a register leaf may take and a
-/// cmma leaf is forced into; same numbers either way, which is the point of checking it.
+/// stage holds served values, so it costs the served-to-stored ratio in shared memory and decodes
+/// once per element rather than per read: the fork a register leaf may take and a cmma leaf must.
 #[test]
 fn register_matmul_quant_rhs_staged_dequantized_smem() {
     let client = cubecl::test_device().client();
@@ -5251,9 +5229,8 @@ fn register_matmul_quant_rhs_staged_dequantized_smem() {
 }
 
 /// Two-level through the staged `DequantAt::Read` path: the stage keeps the packed weight, and
-/// `stage_scales` writes `global * local` into the smem scale grid, so the reads below see
-/// effective one-level scales. The expectation carries the global scale, so a fold that never
-/// happens (or happens twice) fails by that factor.
+/// `stage_scales` writes `global * local` into the smem scale grid, so reads see one-level
+/// scales. The expectation carries the global scale, so a missed or doubled fold fails by it.
 #[test]
 fn register_matmul_quant_rhs_two_level_staged_packed_smem() {
     let client = cubecl::test_device().client();

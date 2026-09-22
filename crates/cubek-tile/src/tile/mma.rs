@@ -119,9 +119,8 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Fill this fragment from `src`'s window (row-major stage), by the role's transport
-    /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile
-    /// rather than its store: the manual path reads each element through the quant-transparent
-    /// matrix view, so a quantized stage decodes here rather than at the fill.
+    /// ([`Manual`](LoadMethod::Manual) index math or the `ldmatrix` intrinsic). Takes the tile, not
+    /// its store: the manual path reads through the quant-transparent matrix view, decoding here.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         let dequant_at = src.dequant_at();
         let io = comptime!(self.io);
@@ -205,9 +204,8 @@ fn register_rhs_size<R: Numeric>(def: &MmaDefinition<R, R, R>) {
 }
 
 // ===========================================================================
-// Fill / load / store primitives (adapted from cubek-std's mma module to read/write cubek-tile's
-// `MemData` window: a row-major stage addressed by `window_slice()` + scalar `row_stride()`).
-// ===========================================================================
+// Fill / load / store primitives over cubek-tile's `MemData` window: a row-major stage addressed by
+// `window_slice()` + scalar `row_stride()`. (Adapted from cubek-std's mma module.)
 
 /// Fill every register slot with `value`.
 #[cube]

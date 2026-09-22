@@ -5,11 +5,9 @@
 //! steps is a fact about the allocation, and they arrive from different places. So every
 //! question here takes both. The ones that exist are the ones the launches actually ask:
 //!
-//! * [`contiguous`](Projection::contiguous) — which axis the unit-strided dim carries. This is
-//!   all that "row-major" and "col-major" ever meant for a rank-2 operand, and it is a question
-//!   about the layout *and* the buffer, never about the layout alone.
-//! * [`is_addressable`](Projection::is_addressable) — whether two positions can land on one
-//!   cell. The question a launch asks before deciding to copy an operand.
+//! * [`contiguous`](Projection::contiguous) — which axis the unit-strided dim carries: all that
+//!   "row-major" and "col-major" ever meant for a rank-2 operand, a fact of layout *and* buffer.
+//! * [`is_addressable`](Projection::is_addressable) — whether two positions can land on one cell.
 
 use cubecl::zspace::SmallVec;
 
@@ -35,9 +33,8 @@ impl Projection {
     /// Whether the buffer's dims can be addressed without two positions landing on one cell.
     ///
     /// Ordered by stride, each dim must step by at least the span of everything finer than it.
-    /// Equality is a dense buffer and a larger stride is padding; only a *shorter* one aliases.
-    /// An [`Overlapping`](Composition::Overlapping) projection is exempt, because landing twice
-    /// on a cell is what it is for.
+    /// Equality is a dense buffer and a larger stride is padding; only a *shorter* one aliases. An
+    /// [`Overlapping`](Composition::Overlapping) projection is exempt: it lands twice by design.
     pub fn is_addressable(&self, geometry: &Geometry) -> bool {
         if self.composition() == Composition::Overlapping {
             return true;

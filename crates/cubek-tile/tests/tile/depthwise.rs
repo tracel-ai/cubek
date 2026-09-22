@@ -2,20 +2,19 @@
 //! the channel axis *batched* rather than contracted.
 //!
 //! A dense convolution contracts input channels into output channels, so `CI` appears in the two
-//! operands and not in the accumulator. A depthwise one has no such pairing: each channel carries
-//! its own filter and reaches exactly one output channel, so the single channel axis `C` appears
-//! in *all three* operands. That is the whole difference. `C` is then a batch axis (an axis the
-//! walk splits and the leaf never folds), and the contraction is over the window taps `RH`/`RW`
-//! alone.
+//! operands and not in the accumulator. Depthwise, each channel has its own filter and its own
+//! output channel, so one axis `C` appears in *all three* operands. That is the whole difference.
+//!
+//! `C` is then a batch axis (an axis the walk splits and the leaf never folds), and the
+//! contraction is over the window taps `RH`/`RW` alone.
 //!
 //! Stating it that way is what keeps this a space-and-projection change rather than a new kernel:
 //! the input's [`Projection`] is the same `Ih = Oh*stride + Rh*dilation` gather, the weight drops
 //! to `[RH, RW, C]`, and the accumulator keeps `C`. Nothing here re-derives a level hierarchy.
 //!
 //! Why it matters: `groups != 1` is refused outright by every accelerated convolution routine, so
-//! a depthwise layer has exactly one implementation to fall back on. Expressing it here gives the
-//! DSL a path that keeps channels innermost, which is the layout a depthwise kernel wants: it is
-//! bandwidth-bound, and coalescing across `C` is the whole game.
+//! a depthwise layer has exactly one implementation to fall back on. This path keeps channels
+//! innermost, which a bandwidth-bound depthwise kernel needs: coalescing across `C` is the game.
 #![allow(non_snake_case)]
 
 use cubecl::{

@@ -1,8 +1,6 @@
-//! The online-softmax step at unit ownership: the legacy fragment row ops
-//! re-expressed on tiles. Each op runs over the unit's owned rows (`rpu`
-//! contiguous rows per unit, unit u starting at `u*rpu`) with no syncs, a line
-//! — the tile's vector width of adjacent columns — at a time, every loop over a
-//! comptime bound. The backward's row ops (prepass rowsum) join here.
+//! The online-softmax step at unit ownership. Each op runs over the unit's owned rows (`rpu`
+//! contiguous rows per unit, unit u starting at `u*rpu`) with no syncs, a line (the tile's vector
+//! width of adjacent columns) at a time, every loop over a comptime bound.
 
 use cubecl::prelude::*;
 

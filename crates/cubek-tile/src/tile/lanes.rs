@@ -5,14 +5,12 @@
 //! at the lane that asks by a plane shuffle, a word at a time.
 //!
 //! **One line per lane**, so a box deeper than the plane is wide does not fit. The plane's width
-//! is the launch's rather than a comptime fact, so nothing here can refuse one; a caller wanting
-//! more lines than the device gives it lanes wants a shared-memory stage, which is a different
-//! tile and not a mode of this one.
+//! is the launch's, not a comptime fact, so nothing here can refuse one; a caller wanting more
+//! lines than it has lanes wants a shared-memory stage, a different tile, not a mode of this one.
 //!
 //! The lines are held as the words they lie in and decoded at the read. Nothing here windows a
-//! line: a window into the box is a scalar origin, so a step one block deep into a line of four
-//! is a coordinate, never a line index a window cannot state
-//! ([`MemData::at`](crate::MemData) refuses exactly that cut).
+//! line: a window into the box is a scalar origin, so a step one block deep into a line of four is
+//! a coordinate, never a line index ([`MemData::at`](crate::MemData) refuses exactly that cut).
 
 use std::marker::PhantomData;
 
@@ -354,10 +352,9 @@ impl<T: Numeric> Lanes<T> {
                 }
             }
         };
-        // **One field, not the word it sits in.** Decoding the whole word and keeping one of its
-        // values costs `per_word` decodes to use a single one, and a minifloat decode is around
-        // twenty integer operations — so a `ue4m3` scale was paying about eighty to deliver one.
-        // Shifting the wanted field down first leaves exactly one to decode.
+        // **One field, not the word it sits in.** Decoding the whole word costs `per_word` decodes
+        // to use one value, and a minifloat decode is around twenty integer operations (about
+        // eighty for one `ue4m3` scale). Shifting the wanted field down first leaves one to decode.
         let bits = comptime!(self.field.size_bits() as u32);
         let only = match comptime!(per_word > 1) {
             true => held >> field.fmul(bits),

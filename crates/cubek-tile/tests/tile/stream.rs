@@ -2,15 +2,15 @@
 //!
 //! Dealing each axis on its own gives a cube the product of its per-axis runs, which is a box of
 //! the grid. A share of the work is not a box: it is a range of the index the axes make together,
-//! and it may start inside one output tile and end inside another. No box of a four by two grid
-//! holds three regions.
+//! and may start in one tile and end in another; no box of a four by two grid holds three regions.
 //!
 //! [`Walk::run`] is that range, and [`Walk::window`] the walk over it. The axes of the
-//! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat
-//! index already carries every coordinate; an instance's run is `base` and `steps` into it,
-//! both runtime. The first tests here are the assignment on a copy, with no contraction and
-//! nothing partial: they prove the runs cover the grid exactly once, and that a run starting
-//! late reads the regions it was given.
+//! distributed work stay `Sequential`, so the walk's counts are the whole grid and its flat index
+//! carries every coordinate; an instance's run is `base` and `steps` into it, both runtime values.
+//!
+//! The first tests here are the assignment on a copy, with no contraction and nothing partial:
+//! they prove the runs cover the grid exactly once, and that a run starting late reads the
+//! regions it was given.
 
 use cubecl::{
     features::AtomicUsage,
@@ -234,8 +234,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
 //
 // The assignment above, over a matmul. `K` is not cut at cube scope and no axis is: the line runs
 // over the output's tiles and each tile's `K` blocks together, and a cube takes a run of it. A run
-// covers whole tiles in the middle and part of the contraction of the two at either end, so
-// several cubes hold slices of the same cell and the destination folds them.
+// spans whole tiles inside, partial ones at each end; cubes then share cells, which the sink folds.
 
 const MM: Axis = Axis(2);
 const NN: Axis = Axis(3);
@@ -569,8 +568,7 @@ fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {
 
 /// Two scopes sharing one contraction: the cubes take shares of the work, and inside a cube the
 /// plane's lanes cut `K` between them and meet in registers. The share is counted in the steps
-/// the lanes take *together*, so a cube's slice of the work is the same size however many lanes
-/// cover one step of it.
+/// the lanes take *together*, so a cube's slice is the same size however many lanes cover a step.
 #[test]
 fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
     let client = cubecl::test_device().client();

@@ -3,19 +3,15 @@
 //!
 //! A quantized tensor is values *and* scales, and an operand's binding names one thing, so the
 //! scales are an operand of their own and folding them in is the contraction's own arithmetic.
-//! Which factor they multiply is where the kernel wrote them. How deep they go is how many times
-//! it said so. Nothing here states a side and nothing counts levels.
+//! Which factor they multiply, and how deep, is where and how often the kernel wrote them.
 //!
-//! **Nothing here multiplies anything.** `scaled` says which level a factor carries, and the
-//! multiply happens once per line, at the read, inside the leaf ([`ScaleLookup`]) — which is
-//! the only place it can happen without materializing a dequantized tile. So a factor that
-//! says `scaled` twice is multiplied twice per line, not twice up front, and the verb that
-//! applies them is the contraction's ([`mm_scaled`](Tile::mm_scaled) and its twins).
+//! **Nothing here multiplies anything.** `scaled` says which level a factor carries; the multiply
+//! happens once per line, at the read, inside the leaf ([`ScaleLookup`]), the only place it can
+//! without a dequantized tile. The verb is the contraction's ([`mm_scaled`](Tile::mm_scaled)).
 //!
-//! A factor that carries none is [`Tile::plain`], and the leaf reads it with no arithmetic at
-//! all, which is why a float kernel compiles to what it always did. A level the launch binds is
-//! written with [`Tile::scaled`], once per level and named: binding none of them is
-//! scaling by one.
+//! A factor that carries none is [`Tile::plain`], read with no arithmetic at all, so a float
+//! kernel compiles to what it always did. A level the launch binds is written with
+//! [`Tile::scaled`], once per level and named: binding none of them is scaling by one.
 //!
 //! A level above the first is read once per leaf region at its origin, so it is only correct
 //! where it covers the whole tile the level below spans.
@@ -60,10 +56,9 @@ impl<E: Numeric> Tile<E> {
     /// This factor, carrying `level`, which a scheme may not have: absent, it folds
     /// nothing and emits nothing, which is scaling by one.
     ///
-    /// A scale that does not cover everything an accumulator sums has to ride its factor like
-    /// this, because the running sum already holds terms it does not apply to. One that does
-    /// cover everything belongs on the accumulator instead ([`Tile::scale`]), where it costs one
-    /// multiply per cell rather than one per value read.
+    /// A scale that does not cover everything an accumulator sums rides its factor like this: the
+    /// running sum already holds terms it does not apply to. One that does belongs on the
+    /// accumulator ([`Tile::scale`]), one multiply per cell rather than one per value read.
     pub fn scaled<S: Numeric>(&self, level: &ComptimeOption<Tile<S>>) -> Scaled<E, S> {
         let mut levels = Sequence::new();
         #[comptime]
@@ -203,11 +198,8 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
 /// cover.
 ///
 /// A scale is a tile in the values' space with the axes one scale holds whole omitted, so the
-/// value's own coordinate names its scale: the coordinate of every axis the scales address is
-/// the value's, and the axes they omit contribute nothing. The level nearest the values is read
-/// as the lines its binding serves, and the scale is the field of that line the coordinate
-/// falls in — a shift and a byte where the scales come four to a word. Every coarser level was
-/// read once, at the region's origin, and rides along as one value.
+/// value's own coordinate names its scale. The nearest level is read as lines, the scale being the
+/// field the coordinate falls in; every coarser level was read once at the region's origin.
 ///
 /// Absent is a factor with no scales, and it emits nothing: its values go through as they lie.
 #[derive(CubeType)]

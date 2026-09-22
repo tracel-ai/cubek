@@ -12,8 +12,7 @@ use crate::*;
 ///
 /// Each factor arrives as its values and the levels of scales that multiply them, innermost
 /// first. A factor carrying none reads as its values alone, so this is the one nest whatever is
-/// quantized: the scales are looked up at every line's own coordinates and the block below runs
-/// the same contraction either way.
+/// quantized: scales are looked up at each line's coordinates and the block contracts the same.
 ///
 /// The 2-D form its reads assume: `mat` indexes a batch matrix, `(row, k)` and `(k, col)` (or
 /// `(col, k)` at a folded step) address the operands. [`memory`](super::memory) routes anything
@@ -62,8 +61,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
          gives one; the N-D nest reads them a cell at a time"
     ));
 
-    // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
-    // `aw`-wide neighbouring cells otherwise.
+    // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a
+    // folded step, `aw`-wide neighbouring cells otherwise.
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
@@ -140,10 +139,9 @@ fn nest<
             comptime!(semiring.add()),
         );
 
-        // A checked edge normally rolls every local array access. When enabled, split the leaf
-        // into two comptime-specialized bodies: interior instances prove their complete operand
-        // and accumulator blocks in bounds once, then keep `c` and `b` in registers; only the
-        // actual edge instance pays masked reads/writes and runtime local-array indexing.
+        // A checked edge normally rolls every local array access. When enabled, split the leaf in
+        // two comptime-specialized bodies: interior instances prove their blocks in bounds once and
+        // keep `c` and `b` in registers; only the edge instance pays masking and runtime indexing.
         let lhs_check = comptime!(lhs_mat.check);
         let rhs_check = comptime!(rhs_mat.check);
         let acc_check = acc_view.check();

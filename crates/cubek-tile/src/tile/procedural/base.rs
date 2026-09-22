@@ -28,10 +28,9 @@ pub struct ProceduralData<T: Numeric> {
     /// comparison when only an unrelated axis has a trailing partial tile.
     #[cube(comptime)]
     bounded_axes: Vec<Axis>,
-    /// Requested factor normalization and the space whose complete factor runs it describes.
-    /// Only a separable contraction consumes it, because only that leaf knows the tap run
-    /// belonging to each factor. The original space lets the leaf reject an ancestor split that
-    /// would otherwise normalize each chunk independently.
+    /// Requested factor normalization and the space whose complete factor runs it describes. Only
+    /// a separable contraction consumes it, since only that leaf knows each factor's tap run; the
+    /// original space lets it reject an ancestor split that would normalize each chunk on its own.
     #[cube(comptime)]
     pub(crate) normalization: Option<(TapMask, DivGuard, Space)>,
     recipe: VirtualRecipe<T>,

@@ -5,9 +5,8 @@ use super::{
 };
 
 /// A recipe that factorizes into one factor per contracted axis, `R(coords) = ∏ᵢ Rᵢ(coords)`,
-/// factor `i` varying only along the `i`-th contracted axis. The gather microkernel uses this
-/// stronger contract to evaluate each factor once per 1-D tap walk instead of evaluating the
-/// whole product at every point of their Cartesian product.
+/// factor `i` varying only along the `i`-th contracted axis, so the gather microkernel evaluates
+/// each factor once per 1-D tap walk instead of the whole product at every point of their product.
 ///
 /// The factor count is the recipe's, not the consumer's: a 1-D, 2-D or N-D filter is the same
 /// contract with a different `factors`.
@@ -53,8 +52,7 @@ where
 
 /// The product of one factor per contracted axis, in contraction order: the separable kernel
 /// `K₀ ⊗ K₁ ⊗ … ⊗ Kₙ₋₁`. Rank is the sequence's length, so one type serves a 1-D, 2-D or
-/// volumetric filter, and each factor is free to read a different axis of the same recipe
-/// coordinates.
+/// volumetric filter, each factor reading its own axis of the same recipe coordinates.
 ///
 /// Each factor states its own axis, so nothing here checks that they are distinct; a factor
 /// reading an axis another one also reads makes the separable evaluation below wrong rather than
@@ -85,10 +83,9 @@ pub fn separable_product<R: CubeType>(factors: Sequence<R>) -> SeparableProduct<
 
 #[cube]
 impl<R: CubeType> SeparableProduct<R> {
-    /// The sequence's length, refused when empty. An empty product names no axis and contributes
-    /// no value, and both readings below start at factor zero, so it is caught where the rank is
-    /// stated rather than at the index that would trip over it or, worse, in a consumer that
-    /// walks a rank of zero and leaves its accumulator untouched.
+    /// The sequence's length, refused when empty: both readings below start at factor zero, so an
+    /// empty product is caught where the rank is stated rather than at the index that would trip
+    /// over it or, worse, in a consumer walking a rank of zero and leaving its accumulator alone.
     pub(crate) fn rank(&self) -> comptime_type!(usize) {
         let rank = self.factors.len();
         comptime!(assert!(

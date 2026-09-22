@@ -367,9 +367,8 @@ fn an_axis_named_twice_is_refused() {
 // ---- A level that cuts nothing --------------------------------------------
 
 /// A level that takes one of the thing below has one region on every axis, so it partitions
-/// nothing. It stays all the same: the kernel walks the levels it stated, one loop per level,
-/// so the list has to hold every one of them. A one-region walk folds away in the kernel, so
-/// keeping it costs nothing.
+/// nothing. It stays all the same: the kernel walks the levels it stated, one loop per level, so
+/// the list must hold every one. A one-region walk folds away in the kernel, so it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
     let plain = Launcher::implied(

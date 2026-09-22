@@ -1,9 +1,8 @@
 //! The table a [`Partitioning`] prints as: one row a level, leaf up.
 //!
-//! Two blocks of the same shape. The count block is how many tiles a level takes along each
-//! axis; the tile block is what one of those tiles holds. A row's tile is the row below it times the count
-//! beside it, axis by axis, so the arithmetic is checkable down the page and a row that fails to
-//! multiply out is a partitioning that will answer wrong.
+//! Two blocks of the same shape: the count block is how many tiles a level takes along each axis,
+//! the tile block what one of those tiles holds. A row's tile is the row below times the count
+//! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
 //!
 //! The level column is the scope's glyph alone: the count block already names the axes a level
 //! touches, and the glyph comes off [`LevelScope`] rather than off the per-axis distributions,

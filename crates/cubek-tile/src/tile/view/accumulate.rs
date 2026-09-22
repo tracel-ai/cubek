@@ -35,11 +35,9 @@ impl CellRead {
     /// Derived, never stated: whether the cell counts at all is the accumulation's statement, and
     /// which site reads it is what the plane's lanes hold of it.
     ///
-    /// A destination that folds is never read here, whatever the accumulation says. Folding *is*
-    /// the read-modify-write, done atomically by the store, so reading the cell back to add to it
-    /// would both duplicate what the commit does and race every other instance writing it. That
-    /// is what lets an accumulation contract in place across a split: the cell may already hold
-    /// other instances' contributions, and nothing here has to know.
+    /// A destination that folds is never read here, whatever the accumulation says: the store's
+    /// atomic read-modify-write *is* the fold, so reading the cell back would duplicate the commit
+    /// and race every other instance writing it. That is what lets a split contract in place.
     const fn of(lane_share: LaneShare, init_from: InitFrom, write: Write) -> Self {
         match write {
             Write::Accumulate => CellRead::Never,
@@ -79,9 +77,8 @@ impl Drain {
             LaneShare::Plane => Drain::PlaneFold,
             LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
             // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
-            // all write is a different question, and the one a fold turns on: repeated lanes hold
-            // the same cells, so a store lands the same value however many make it and a fold
-            // lands it once per lane.
+            // all write is what a fold turns on: repeated lanes hold the same cells, so a store
+            // lands the same value however many make it, but a fold lands it once per lane.
             LaneShare::Whole => match (lanes.work, write) {
                 (LaneWork::Repeated, Write::Accumulate) => Drain::LaneZero,
                 (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
@@ -91,9 +88,8 @@ impl Drain {
 }
 
 /// The view a register block accumulates through: [`seed`](AccumulateView::seed) it, contract into
-/// it, [`commit`](AccumulateView::commit) it back. The write-side mirror of a
-/// quantized view dequantizing on read: it owns the [`LaneShare`], so cells the plane's lanes
-/// hold partials of combine on commit and the contraction never asks.
+/// it, [`commit`](AccumulateView::commit) it back. It owns the [`LaneShare`], so cells the plane's
+/// lanes hold partials of combine on commit and the contraction never asks.
 ///
 /// It owns the [`Monoid`] and the [`CellRead`] for the same reason. Both are one fact about the
 /// accumulation, not a fact about each cell, so they are settled where the view is built and read
@@ -166,10 +162,9 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
         }
     }
 
-    /// Fold a finished block back. The fold reduces each `V`-wide cell element-wise
-    /// and leaves every lane holding a partial of it with the total, so one of them writes and its
-    /// siblings don't all hit the address: the plane's first lane where the whole plane shares one
-    /// cell, each group's first lane where the plane carries a cell per group.
+    /// Fold a finished block back. The fold reduces each `V`-wide cell element-wise and leaves
+    /// every lane holding the total, so one writes: the plane's first lane where the whole plane
+    /// shares one cell, each group's first lane where the plane carries a cell per group.
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {

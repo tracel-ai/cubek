@@ -10,12 +10,13 @@ use crate::{Axis, MAX_AXES, PhysicalAxisMap, Projection, Scale};
 /// The compacted stage of a [`Projection`]: per physical axis, how many cells the stage holds and
 /// what step in the source one of its cells is, plus the projection addressing it.
 ///
-/// A gathered sub-tile reads a *window*, and several logical cells read the same physical one, so
+/// A gathered sub-tile reads a *window* in which several logical cells share a physical one, so
 /// staging the logical tile replicates by roughly the tap count; staging the window holds each
-/// element once and leaves the gather at the leaf's read. The window on `pa` is the offsets
-/// `Sum aa*ss` its terms reach: step `g = gcd{ ss : ee > 1 }`, extent `1 + Sum (ee - 1)*(ss/g)`,
-/// the rest padding. Not always smaller: it wins when taps outrun the stride and the windows
-/// overlap (the usual convolution), loses when the stride outruns them.
+/// element once and leaves the gather at the leaf's read.
+///
+/// The window on `pa` is the offsets `Sum aa*ss` its terms reach: step `g = gcd{ ss : ee > 1 }`,
+/// extent `1 + Sum (ee - 1)*(ss/g)`, the rest padding. It wins when taps outrun the stride and
+/// windows overlap (the usual convolution), loses when the stride outruns them.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Compaction {
     steps: SmallVec<[usize; MAX_AXES]>,
@@ -25,9 +26,8 @@ pub struct Compaction {
 
 impl Compaction {
     /// Compact `projection`'s window, `extent_of` giving each logical axis's extent over the
-    /// sub-tile staged. A [`direct`](Projection::direct) projection compacts to itself, so a plain
-    /// operand's stage is the tile it always was. `vector_size` is the width the stage is served
-    /// at, threaded through to [`Projection::validate`].
+    /// sub-tile staged; a [`direct`](Projection::direct) one compacts to itself. `vector_size` is
+    /// the width the stage is served at, threaded through to [`Projection::validate`].
     pub fn of(
         projection: &Projection,
         vector_size: usize,
@@ -49,11 +49,11 @@ impl Compaction {
 
             if stage_map.is_rational() {
                 // A rational axis advances by one physical cell on some steps and none on others,
-                // so its window has no single step to quotient by. Its step is 1 (dense, no holes
-                // to skip), and its extent is the conservative receptive field over all possible
-                // runtime phase residues: 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋.
-                // Under a bound (a Dynamic coefficient or divisor) that field is the widest one the
-                // bound admits, so the box still holds every window the launch can ask for.
+                // so its window has no single step to quotient by: its step is 1 (dense, no holes).
+                //
+                // Its extent is the conservative receptive field over all runtime phase residues,
+                // 1 + ⌊(Σ (extent - 1) * scale + divisor - 1) / divisor⌋; a Dynamic coefficient or
+                // divisor takes the widest its bound admits: the box holds every launchable window.
                 let d = stage_map.divisor().bound();
                 let field: usize = terms
                     .iter()
@@ -64,8 +64,8 @@ impl Compaction {
                 steps.push(1);
                 physical.push(stage_map);
             } else {
-                // Only a term that moves contributes an offset, so only its coefficient constrains the
-                // step; a single-tap axis (extent 1) sits at a fixed offset the window's origin absorbs.
+                // Only a term that moves contributes an offset, so only its coefficient constrains
+                // the step; a single-tap axis (extent 1) sits at a fixed offset the origin absorbs.
                 //
                 // A moving Dynamic coefficient has no comptime lattice to quotient by (the runtime
                 // value need share no factor with anything), so any of those forces the dense step.
@@ -79,11 +79,11 @@ impl Compaction {
                     .unwrap_or(1);
                 let step = step.max(1);
                 // `step` divides every moving static coefficient by construction; a non-moving one
-                // need not divide, and its value is unobservable, so it is pinned rather than
-                // truncated. A Dynamic one passes through untouched: `step` is 1 wherever one
-                // moves, and pinning a non-moving one would drop its slot from the coefficient
-                // carrier, which the stage inherits verbatim from its source
-                // ([`MemData::fill_from`](crate::MemData)) and must therefore index identically.
+                // need not divide, and its value is unobservable, so it is pinned, not truncated.
+                //
+                // A Dynamic one passes untouched: `step` is 1 wherever one moves, and pinning a
+                // non-moving one would drop its slot from the coefficient carrier, which the stage
+                // inherits verbatim ([`MemData::fill_from`](crate::MemData)) so must index alike.
                 let scaled: Vec<(Axis, Scale)> = terms
                     .iter()
                     .map(|t| {
@@ -119,9 +119,8 @@ impl Compaction {
     }
 
     /// How the stage's own logical axes address its cells: `projection` with every moving
-    /// coefficient divided by its axis's step. This is what the staged tile carries as its
-    /// [`projection`](crate::MemData), so its reads and its [`at`](crate::Tile::at) descents run
-    /// through the same machinery a gmem operand's do.
+    /// coefficient divided by its step; the staged tile's [`projection`](crate::MemData), so its
+    /// reads and [`at`](crate::Tile::at) descents run through the machinery a gmem operand's do.
     pub fn projection(&self) -> &Projection {
         &self.projection
     }
@@ -148,10 +147,8 @@ impl Compaction {
     /// every physical shape in this crate is counted in.
     ///
     /// The innermost physical axis is one logical axis at coefficient `1`
-    /// ([`Projection::validate`]), so it is never gathered: its step is `1`, its window has no
-    /// holes, and its extent is the logical edge itself. A stage therefore keeps the store's full
-    /// line width whatever the outer axes do, and compaction pads the innermost axis out to whole
-    /// lines.
+    /// ([`Projection::validate`]), so it is never gathered: step `1`, no holes, extent the logical
+    /// edge itself, so a stage keeps the store's full line width, padding this axis to whole lines.
     ///
     /// That rounding is only sound for a *padded* stage, one served wider than the source it is
     /// filled from. `fill_extent` is where the two boxes meet, so it is what refuses an
@@ -334,9 +331,8 @@ mod tests {
     }
 
     /// A moving runtime coefficient has no comptime lattice to quotient by, so the box goes dense
-    /// and is sized at the coefficient's `max`, matching what the same map spelled statically at
-    /// that bound compacts to. The coefficient itself survives into the stage's own mapping: the
-    /// box is bounded at comptime, but addressing it still needs the runtime value.
+    /// and is sized at the coefficient's `max`, as the same map spelled statically at that bound.
+    /// The coefficient survives into the stage's mapping; addressing the box still needs its value.
     #[test]
     fn a_dynamic_coefficient_compacts_dense_against_its_max() {
         let p = Projection::new(

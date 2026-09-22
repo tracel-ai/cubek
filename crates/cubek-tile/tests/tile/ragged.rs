@@ -2,8 +2,7 @@
 //!
 //! Sequences of different lengths packed end to end on one axis. The kernel walks that axis with
 //! [`Walk::window`], whose base and length are runtime values, so a sequence steps its own tokens
-//! and nothing else: no operand carries a side channel, no window origin is displaced behind a
-//! read, and `at` is the same call it is everywhere else.
+//! and nothing else: no side channel on an operand, no displaced window origin, `at` unchanged.
 //!
 //! The reduce is the shape that isolates it: the output omits the packed axis, so nothing but the
 //! walk's bounds decides which tokens a sequence folds.

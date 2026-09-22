@@ -11,11 +11,11 @@ use cubecl::{
 use crate::*;
 
 /// Where an operand's quantized form is decoded: the one site that turns stored values into served
-/// ones. Stated at launch, once, since the quantized form ends at exactly one boundary. Which sites
-/// are available is fixed by what the operand's transports can decode, never by preference, so a
-/// stated value is either the one that was left (which
-/// [`build`](crate::StridedTileSource::build) enforces) or a genuine fork between stage size and
-/// per-read cost.
+/// ones, stated once at launch since the quantized form ends at exactly one boundary.
+///
+/// Which sites are available is fixed by what the operand's transports can decode, never by
+/// preference ([`build`](crate::StridedTileSource::build) enforces it); where both remain, the
+/// choice is a fork between stage size and per-read cost.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DequantAt {
     /// The load into the stage decodes; the stage holds served values, so it inflates by the
@@ -26,18 +26,16 @@ pub enum DequantAt {
     Read,
 }
 
-/// Quantization a tile's store carries, so reads dequantize on their own. Holds the scale `buffer`
-/// plus what walks the scales in step with the values: a per-axis `strides`, a running
-/// `window_start`, and comptime `block` sizes. [`ScaleLayout`] turns those into an address ([`MemData::at`]).
-/// Per-tensor is the trivial case: one scale, every stride `0`, `window_start` never moves.
+/// Quantization a tile's store carries, so reads dequantize on their own: the scale `buffer` plus
+/// per-axis `strides`, a running `window_start` and comptime `block` sizes, which [`ScaleLayout`]
+/// turns into an address ([`MemData::at`]). Per-tensor: one scale, every stride `0`, a fixed start.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
     pub(crate) buffer: Box<[f32]>,
-    /// What every read below this window already holds of its scale, settled once at
-    /// construction: the global level's scale read from its binding, or nothing. Never
-    /// [`KnownScale::Whole`] here: a stage's scales do not exist until its fill, so a uniform
-    /// window promotes to it at read time ([`dequant_view`](QuantInfo::dequant_view)).
+    /// What every read below this window already holds of its scale, settled at construction: the
+    /// global level's scale, or nothing. Never [`KnownScale::Whole`], since a stage's scales do not
+    /// exist until its fill; uniform windows promote in [`dequant_view`](QuantInfo::dequant_view).
     pub(crate) known: KnownScale,
     pub(crate) strides: Coords<u32>,
     pub(crate) window_start: u32,
@@ -53,24 +51,21 @@ pub struct QuantInfo {
     #[cube(comptime)]
     pub(crate) dequant_at: DequantAt,
     /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
-    /// ([`MemData::smem_quant`]): the values stage as packed words and their scales stage compactly
-    /// beside them, so the fill knows how many blocks to copy. Empty for a gmem operand, which reads
-    /// the tensor's own scales in place.
+    /// ([`MemData::smem_quant`]) so the fill knows how many blocks of scales to copy beside the
+    /// packed values. Empty for a gmem operand, which reads the tensor's own scales in place.
     #[cube(comptime)]
     pub(crate) scale_shape: Vec<usize>,
     /// A lookup scheme's `2^bits`-entry table, present exactly under
-    /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode). Always the gmem buffer: it is at
-    /// most a few hundred cache-resident floats, so a stage carries it through rather than
-    /// copying it ([`smem_quant`](MemData::smem_quant)).
+    /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode). Always the gmem buffer: a few
+    /// hundred cache-resident floats, so a stage carries it ([`smem_quant`](MemData::smem_quant)).
     pub(crate) table: ComptimeOption<Box<[f32]>>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
 
-/// Per-axis block edges (elements per block) for a scheme. Per-tensor is one scale for the whole
-/// tensor, so every axis reports `usize::MAX`: with `0` strides ([`Tile::of_dequant`]) the value
-/// never addresses a real block, and it makes [`uniform_window`] report the whole window as
-/// uniform, which per-tensor always is. A block scheme's edges come straight from the scheme.
+/// Per-axis block edges (elements per block) for a scheme. Per-tensor reports `usize::MAX` on
+/// every axis: with `0` strides ([`Tile::of_dequant`]) no real block is ever addressed, and
+/// [`uniform_window`] then reports the whole window uniform, which per-tensor always is.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     let Some(block) = scheme.block_size() else {
         return vec![usize::MAX; rank];
@@ -78,11 +73,9 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     block.to_dim_vec(rank).iter().map(|&b| b as usize).collect()
 }
 
-/// The [`Packing`] a quantization scheme implies: how many of its values a stored element holds
-/// and what field each occupies. The one place a scheme is read for a fact about *storage*, so a
-/// quantized operand and one that merely states [`TileSpec::packed`] answer every reader alike,
-/// and the one place a storage this crate does not serve is refused: a native store holds one
-/// `i8` per value, a packed one `u32` words, and nothing else is wired.
+/// The [`Packing`] a quantization scheme implies. The one place a scheme is read for a fact about
+/// *storage*, so a quantized operand and one that merely states [`TileSpec::packed`] answer every
+/// reader alike, and the one place a storage this crate does not serve (not `i8`/`u32`) is refused.
 pub(crate) fn scheme_packing(scheme: QuantScheme) -> Packing {
     match scheme.store {
         QuantStore::Native => match scheme.value {
@@ -153,11 +146,11 @@ impl QuantInfo {
             .effective(self.buffer[self.window_start.fcast::<usize>()])
     }
 
-    /// The [`DequantView`] this info's scale data resolves to for a values/scales view pair over
-    /// the same coordinates: a uniform window promotes to one whole scale, read here so no read
-    /// below pays for the scales view at all; any other window reads with what it already
-    /// [`known`](QuantInfo::known). Shared by [`flat_transparent`](MemData::flat_transparent) and
-    /// [`transparent`](MemData::transparent).
+    /// The [`DequantView`] over a values/scales view pair on the same coordinates. Shared by
+    /// [`flat_transparent`](MemData::flat_transparent) and [`transparent`](MemData::transparent).
+    ///
+    /// A uniform window promotes to one whole scale read here, so no read below pays for the
+    /// scales view; any other window reads with what it already [`known`](QuantInfo::known).
     pub(crate) fn dequant_view<
         'a,
         I: Numeric,
@@ -184,10 +177,11 @@ impl QuantInfo {
         )
     }
 
-    /// Re-window the scales onto a tile whose absolute logical origin is `origin`. Per axis the block
-    /// index is `origin / block`, dotted with the scale strides and summed into a flat start (elements
-    /// everywhere, the inner axis scaled back by `vector_size`; per-tensor keeps strides `0`). Folding
-    /// the window's own block index in here lets [`ScaleLayout`] add only the within-window offset,
+    /// Re-window the scales onto a tile whose absolute logical origin is `origin`: per axis the
+    /// block index `origin / block` (in elements, the inner axis scaled by `vector_size`) is dotted
+    /// with the scale strides into a flat start; per-tensor keeps strides `0`.
+    ///
+    /// Folding the block index in here lets [`ScaleLayout`] add only the within-window offset,
     /// sound because a window never straddles a block (`validate_scheme` enforces it).
     pub(crate) fn window(
         &self,

@@ -1,7 +1,6 @@
-//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is
-//! always a resident fragment; the operands arrive as fragments or as staged smem
-//! windows (row-major by construction), the latter loaded into transient `A`/`B`
-//! fragments here. A gmem window's layout is unchecked, so it must be staged first.
+//! The tensor-core leaf: `acc += lhs · rhs` via `cmma::execute`. The accumulator is always a
+//! resident fragment; operands are fragments or staged smem windows (row-major by construction)
+//! loaded into transient `A`/`B` here. A gmem window's layout is unchecked, so it is staged first.
 //!
 //! The rhs window is `{k, n}` as stored, or `{n, k}` when its trailing axis is the one
 //! contracted: that window is read as a col-major `B`, so `a · bᵀ` needs no transposed
@@ -20,11 +19,9 @@ use crate::*;
 impl<A: Numeric> CmmaData<A> {
     /// Tensor-core contraction `self += lhs · rhs`, each factor times whatever scales it carries.
     ///
-    /// Operands already resident as fragments execute as they are. Every other operand is read
-    /// into a transient `A`/`B` fragment first, which is where a scaled factor is served: a
-    /// fragment load reads memory as it lies, so a factor carrying scales is folded into its
-    /// plane's landing and the load reads that. Marlin's shape, with the landing where Metal's
-    /// fragment load wants memory.
+    /// Operands already resident as fragments execute as they are; every other operand is read
+    /// into a transient `A`/`B` fragment first. A fragment load reads memory as it lies, so a
+    /// factor carrying scales is folded into its plane's landing and the load reads that.
     pub(crate) fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &self,
         lhs: &Scaled<EL, LS>,
@@ -138,13 +135,12 @@ impl FragmentRead {
 impl<E: Numeric, S: Numeric> Scaled<E, S> {
     /// This factor read into `frag`.
     ///
-    /// A fragment loads a window as it lies, so the window's layout has to be one the
-    /// instruction can be told: a shared one is, and a global one is not. **The landing is how a
-    /// factor answers that** ([`landed`](Scaled::landed)) — it holds the factor's own values in
-    /// a window of shared memory the plane owns, dense over the window's axes, and the load
-    /// reads them from there. A factor carrying scales has no other route, since its values do
-    /// not exist anywhere until they are scaled; one carrying none takes it when it has a
-    /// landing, and is read from its window as it lies when the window is already shared.
+    /// A fragment loads a window as it lies, so the window's layout must be one the instruction
+    /// can be told: a shared one is, a global one is not. The landing ([`landed`](Scaled::landed))
+    /// answers that: the factor's values, dense in plane-owned shared memory, loaded from there.
+    ///
+    /// A factor carrying scales has no other route, since its values exist only once scaled; one
+    /// carrying none lands when it has a landing and is read as it lies when already shared.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
         let values = self.values();
         let count = self.levels().len();
@@ -193,18 +189,13 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         ));
     }
 
-    /// This factor in its plane's landing: a stage in shared memory, dense over the window's
-    /// own axes, holding `values ⊗ scales`, that the fragments of the window load from as they
-    /// load from any shared stage. Sized here, to this window: a kernel that lands a step whole
-    /// lands it once, and its partition's fragments load from it.
+    /// This factor in its plane's landing: a shared-memory stage, dense over the window's own
+    /// axes, holding `values ⊗ scales`, that fragments load from as from any shared stage. Sized
+    /// to this window: a kernel landing a step whole lands it once for its partition's fragments.
     ///
-    /// Each lane reads lines through the values' packed view, multiplies each by the scale
-    /// looked up at the line's own coordinates where the factor carries one, and writes them at
-    /// those coordinates; the plane then syncs past the writes. A factor with no scales lands
-    /// its values as they lie — the same walk, with nothing to multiply by — which is what
-    /// makes the landing an operand's *residence* rather than a scale mechanism: it is the
-    /// answer to a layout a fragment cannot be told, and a packed or scaled factor needs it for
-    /// its values as well.
+    /// Each lane reads lines through the values' packed view, multiplies each by the scale at
+    /// the line's coordinates where the factor carries one, and writes it there; the plane then
+    /// syncs past the writes. A scale-free factor walks the same way: the landing is a residence.
     ///
     /// `side` and `out` are what the scales' statement is checked against: the accumulator's
     /// space, and which factor of it this is.
@@ -241,10 +232,9 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let strides = comptime!(dense_strides(&space));
         let by_shuffle = scales.by_shuffle();
         if comptime!(by_shuffle) {
-            // A scale held in the plane's lanes reaches the lane that asks by a shuffle, and a
-            // shuffle is the whole plane's or nothing: every lane takes every turn, whether or
-            // not a line is left for it. A lane past the lines reads the last one again and
-            // writes nothing.
+            // A scale held in the plane's lanes is fetched by shuffle, which the whole plane must
+            // join: every lane takes every turn, and a lane past the lines reads the last one
+            // again and writes nothing.
             #[allow(clippy::manual_div_ceil)]
             let turns = (lines + PLANE_DIM - 1) / PLANE_DIM;
             for turn in 0..turns {

@@ -14,9 +14,8 @@ use crate::*;
 #[cube]
 impl<T: Numeric> Tile<T> {
     /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one `space`
-    /// projected onto the operand's `spec` axes, so no operand carries its own copy. The element
-    /// type carries the line width, so the served width *is* the binding's by construction and is
-    /// never re-lined in-kernel. Shape/strides arrive scalar-unit and convert to line-unit here.
+    /// projected onto the operand's `spec` axes. The element type carries the line width, so the
+    /// served width *is* the binding's. Shape/strides arrive scalar-unit and convert to lines here.
     pub fn of<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -32,13 +31,13 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) for a gather whose affine map is not all comptime: `coefficients` holds one
-    /// value per [`Scale::Dynamic`](crate::Scale) term and one per
-    /// [`Divisor::Dynamic`](crate::Divisor) axis, interleaved physical axis major so an axis's
-    /// divisor follows its own coefficients; `offsets` one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis. A runtime stride, dilation, padding or resize
-    /// ratio is exactly this. Only the lengths are checked, so those index orders are the
-    /// contract: swap a coefficient for a divisor and the read is silently wrong.
+    /// [`of`](Tile::of) for a gather whose affine map is not all comptime (a runtime stride,
+    /// dilation, padding or resize ratio). `coefficients`: one per [`Scale::Dynamic`](crate::Scale)
+    /// term and one per [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last.
+    ///
+    /// `offsets`: one signed value per [`Offset::Dynamic`](crate::Offset) axis. Only the lengths
+    /// are checked, so those orders are the contract: swap a coefficient for a divisor and the
+    /// read is silently wrong.
     pub(crate) fn of_gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -57,10 +56,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// [`of`](Tile::of) where the stored element `E` and the served element `T` need not be the
-    /// same: a [`packed`](TileSpec::packed) binding holds `u32` words and the tile reads the
-    /// values inside them, `factor` per word; a binding that states no packing reads its own
-    /// element, and this is [`of`](Tile::of) with the type written out rather than inferred. No
-    /// scales and no scheme: an operand that also has scales names them as its own tensor.
+    /// same: a [`packed`](TileSpec::packed) binding holds `u32` words read at `factor` values each;
+    /// one stating no packing reads its own element. No scales: those are the operand's own tensor.
     ///
     /// `T` is stated at the call because a packed binding's element is the word, not the value,
     /// so nothing can infer it. Where the binding does read its own element, the two must agree,
@@ -87,10 +84,9 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (its
-    /// element's scalar is the *stored* type: `u32` words for a packed scheme, `i8` native),
-    /// the scales ride as a plain second tensor, and the comptime scheme says how reads fold
-    /// them back in. The served width is the binding's width × the scheme's packing factor.
+    /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (`u32` words
+    /// for a packed scheme, `i8` native), the scales ride as a plain second tensor, and the scheme
+    /// says how reads fold them back in. The served width is the binding's × the packing factor.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn of_dequant<E: CubePrimitive>(
         values: &Tensor<E>,
@@ -141,10 +137,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Shared body of [`of`](Tile::of)/[`of_dequant`](Tile::of_dequant): `E` is the *binding*
-    /// element, `T` the served scalar, differing only for a quantized operand whose served width
-    /// is the binding's × the packing factor. Re-typing the buffer to `T` is a static coercion for
-    /// a plain operand; a quantized store truly holds the stored type and the read view downcasts
-    /// back ([`lines_storage`](MemData::lines_storage)).
+    /// element, `T` the served scalar, differing only for a quantized operand, whose store truly
+    /// holds `E` and whose read view downcasts back ([`lines_storage`](MemData::lines_storage)).
     fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
@@ -174,9 +168,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// A tile whose values are handed to `sink` instead of stored: the walk a buffer gets, with
-    /// only its last step a call rather than a store. The geometry is *stated* because a
-    /// destination with no address has none to read, so a caller that states the product's own
-    /// metadata gets the store the unfused kernel would have made.
+    /// only its last step a call. The geometry is *stated* because a destination with no address
+    /// has none to read; stating the product's own metadata gives the unfused kernel's store.
     ///
     /// A sink serves the layout-addressed writes and only those: it cannot be staged into shared
     /// memory, written dense, quantized, filled by a tensor map, or [`packed`](TileSpec::packed),
@@ -193,10 +186,9 @@ impl<T: Numeric> Tile<T> {
         #[comptime] spec: TileSpec,
         #[comptime] write: Write,
     ) -> Tile<T> {
-        // A bound operand reads its width off its binding, so a packing multiplying it is a
-        // fact about the two together; a sink has only what it states, and `of_impl` would
-        // address it at `vector_size * factor`. Refused here, where the spec says it, rather
-        // than left to the width mismatch cubecl reports off the erased tensor.
+        // A packing multiplies a binding's own width, but a sink has only the width it states, and
+        // `of_impl` would address it at `vector_size * factor`. Refused here, where the spec says
+        // it, rather than left to the width mismatch cubecl reports off the erased tensor.
         comptime!(assert!(
             spec.packing == Packing::Plain,
             "Tile::of_sink: a sink is written at the width it states, so its spec may not \
@@ -217,9 +209,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// A tile whose values come from `source` instead of from memory: the fuse-on-read twin of
-    /// [`of_sink`](Tile::of_sink), stated geometry and all. A source serves the layout-addressed
-    /// reads and only those: it cannot be staged into shared memory, read dense, quantized, loaded
-    /// by a tensor map, or [`packed`](TileSpec::packed).
+    /// [`of_sink`](Tile::of_sink), stated geometry and all. A source serves layout-addressed reads
+    /// only: no staging, dense reads, quantization, tensor maps or [`packed`](TileSpec::packed).
     pub fn of_source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
@@ -249,10 +240,9 @@ impl<T: Numeric> Tile<T> {
     #[allow(clippy::too_many_arguments)]
     fn of_impl(
         backing: Backing<T>,
-        // `geometry` is the destination's physical extents and strides in scalars,
-        // one per physical axis; `bound_width` the binding's own line width, on top
-        // of which a packed destination serves `packing.factor()` values per stored
-        // element.
+        // `geometry` is the destination's physical extents and strides in scalars, one per physical
+        // axis; `bound_width` the binding's own line width, on top of which a packed destination
+        // serves `packing.factor()` values per stored element.
         geometry: RuntimeGeometry,
         #[comptime] bound_width: usize,
         #[comptime] space: Space,
@@ -282,20 +272,32 @@ impl<T: Numeric> Tile<T> {
         // A packed store serves `factor` values per stored element, on top of the binding's own
         // line width; a sub-word store serves its stated width out of one word.
         let vector_size = comptime!(packing.served(bound_width));
+        // The runtime lists, checked against the statement here, where they arrive.
         let dims_given = geometry.shape.len();
         let coefficients_given = coefficients.len();
         let offsets_given = offsets.len();
+        comptime!(assert!(
+            dims_given == projection.physical_rank(),
+            "Tile::of: the projection addresses {} physical dims but {dims_given} were given",
+            projection.physical_rank()
+        ));
+        comptime!(assert!(
+            coefficients_given == coords.dynamic_coefficient_count(),
+            "Tile::of: the projection has {} Dynamic coefficients and divisors but \
+             {coefficients_given} were given",
+            coords.dynamic_coefficient_count()
+        ));
+        comptime!(assert!(
+            offsets_given == coords.dynamic_offset_count(),
+            "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
+            coords.dynamic_offset_count()
+        ));
         comptime!(check_operand(
             &space,
             &spec,
             &coords,
             quant.is_some(),
-            vector_size,
-            Given {
-                dims: dims_given,
-                coefficients: coefficients_given,
-                offsets: offsets_given,
-            }
+            vector_size
         ));
         // Off the projection rather than the space: a gathered operand's buffer has fewer
         // physical axes than its logical space has axes, and a storage-tiled one has more.
@@ -319,10 +321,9 @@ impl<T: Numeric> Tile<T> {
                 physical_strides.push(stride / w);
             }
         }
-        // `GmemLayout`'s own physical-position map: the operand's own projection relabeled by
-        // position, since the layout is handed coordinates a gather has already resolved. Storage
-        // tiling survives that relabeling, so `physical_shape` is exactly
-        // `[pre…, grid…, …, tile…]` in synthetic-axis order.
+        // `GmemLayout`'s own physical-position map: the operand's projection relabeled by position,
+        // since the layout is handed coordinates a gather has already resolved. Storage tiling
+        // survives it, so `physical_shape` is `[pre…, grid…, …, tile…]` in synthetic-axis order.
         let gmem_projection = comptime!(projection.positional());
         // Logical bound folded from the physical shape, so it's correct for tiled
         // operands too (the physical buffer is padded; the logical extent is not).
@@ -388,28 +389,15 @@ impl<T: Numeric> Tile<T> {
     }
 }
 
-/// What a call to `of` handed over beside the statement: the runtime lists whose lengths the
-/// statement fixes.
-#[derive(Clone, Copy)]
-struct Given {
-    /// Physical dims of the geometry.
-    dims: usize,
-    /// Dynamic coefficients and divisors.
-    coefficients: usize,
-    /// Dynamic offsets.
-    offsets: usize,
-}
-
-/// The contract an operand's statement owes, refused at `of` on the host: every check here is
-/// comptime, and the one place the spec, the projection, the space and the served width are all
-/// in hand. `coords` is the projection in coordinate space ([`Projection::untiled`]).
+/// The contract an operand's statement owes, refused at `of` on the host, the one place the
+/// spec, the projection, the space and the served width are all in hand. `coords` is the
+/// projection in coordinate space ([`Projection::untiled`]).
 fn check_operand(
     space: &Space,
     spec: &TileSpec,
     coords: &Projection,
     quantized: bool,
     vector_size: usize,
-    given: Given,
 ) {
     let projection = &spec.projection;
     // The scales are gridded over the operand's *logical* axes, while `at` re-windows them over
@@ -425,31 +413,9 @@ fn check_operand(
         "Tile::of: a quantized operand's scheme already states how its values are stored, so \
          its spec may not state a packing too"
     );
-    assert!(
-        given.coefficients == coords.dynamic_coefficient_count(),
-        "Tile::of: the projection has {} Dynamic coefficients and divisors but {} were given",
-        coords.dynamic_coefficient_count(),
-        given.coefficients
-    );
-    assert!(
-        given.offsets == coords.dynamic_offset_count(),
-        "Tile::of: the projection has {} Dynamic offsets but {} were given",
-        coords.dynamic_offset_count(),
-        given.offsets
-    );
-    // Free for a bound operand, which builds its geometry off the projection's own rank; the
-    // check is for a *stated* one ([`of_sink`](Tile::of_sink)), where too few dims panic on an
-    // opaque `Sequence` index and too many silently ignore their tail.
-    assert!(
-        given.dims == projection.physical_rank(),
-        "Tile::of: the projection addresses {} physical dims but {} were given",
-        projection.physical_rank(),
-        given.dims
-    );
-    // The operand's own contract, checked here rather than at `TileSpec` construction because
-    // it turns on the served width, which only this call, not the spec, ever knows. Same for a
-    // padded stage width, which `StridedTileSource` already checked for the specs it builds;
-    // this catches hand-built ones too.
+    // The operand's own contract, checked here rather than at `TileSpec` construction because it
+    // turns on the served width, which only this call knows. `StridedTileSource` already checked
+    // a padded stage width for the specs it builds; this catches hand-built ones too.
     projection.validate(vector_size);
     // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
     // and the space are both in hand.
@@ -470,9 +436,8 @@ fn check_operand(
 }
 
 /// [`full_window`] for the top gmem tile, over the *physical* axes, where an axis may be
-/// [`Dynamic`](crate::Extent) and read its runtime size from `bound` instead of a comptime
-/// constant, so the problem shape never specializes the kernel. A gathered operand always reads
-/// `bound`: no single logical extent sizes a physical axis combining several.
+/// [`Dynamic`](crate::Extent) and read its runtime size from `bound`, so the problem shape never
+/// specializes the kernel; a gathered operand always reads `bound`, no one extent sizing its axes.
 #[cube]
 fn top_window(
     #[comptime] space: Space,
@@ -522,11 +487,12 @@ fn top_window(
     )
 }
 
-/// Where a gathered physical axis's top window starts, and the phase its division left behind:
-/// `⌊offset / divisor⌋` and `offset mod divisor`. An integer mapping divides by `1` and absorbs
-/// the offset whole; a rational one absorbs only the multiples of its divisor and hands the rest
-/// to [`AxisProjection`](crate::AxisProjection). The floor is the host's whenever both sides are
-/// comptime; only a `Dynamic` offset or divisor pays for one in the kernel.
+/// Where a gathered physical axis's top window starts and the phase its division left behind:
+/// `⌊offset / divisor⌋` and `offset mod divisor`. A rational mapping absorbs only its divisor's
+/// multiples, handing the rest to [`AxisProjection`](crate::AxisProjection); an integer one all.
+///
+/// The floor is the host's whenever both sides are comptime; only a `Dynamic` offset or divisor
+/// pays for one in the kernel.
 #[cube]
 fn gathered_origin(
     #[comptime] projection: Projection,

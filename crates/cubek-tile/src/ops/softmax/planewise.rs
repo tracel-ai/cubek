@@ -1,22 +1,17 @@
-//! The row ops at plane ownership: a plane owns every row of the tile it is
-//! handed (the kernel windows the score tile per plane), its lanes split the
-//! reduced axis, and each row's reduction closes in one plane instruction.
-//! The [`rowwise`](super::rowwise) twin runs the same algebra with a unit
-//! owning the whole row; which one a call reaches is the state's
-//! [`RowShare`] and nothing else.
+//! The row ops at plane ownership: a plane owns every row of the tile it is handed (windowed per
+//! plane by the kernel), its lanes split the reduced axis, and each row's reduction closes in one
+//! plane op. In the [`rowwise`](super::rowwise) twin a unit owns the row; [`RowShare`] picks.
 //!
-//! A lane touches only the lines `lane, lane + lanes, …` of its plane's rows,
-//! in every op — a line being the tile's vector width of adjacent columns, one
-//! column at width one — so nothing here reads a cell another lane wrote, and
-//! the leaf keeps the twin's promise of no syncs. What crosses lanes is the
-//! reduced scalar, and it crosses through the hardware. Every loop is over a
-//! comptime bound and unrolls; the edge compare compiles out when the lanes
+//! A lane touches only the lines `lane, lane + lanes, …` of its plane's rows (a line being the
+//! tile's vector width of adjacent columns), so nothing reads a cell another lane wrote and the
+//! leaf keeps the twin's promise of no syncs; only the reduced scalar crosses lanes, in hardware.
+//!
+//! Every loop is over a comptime bound and unrolls; the edge compare compiles out when the lanes
 //! divide the lines, which a fold sized to its plane arranges.
 //!
-//! **The plane must be the cube's**: `lanes` is the width the device commits
-//! to, and a plane may not straddle the x dim, so `CUBE_DIM_X` has to be a
-//! whole number of planes. A wrong width reduces over the wrong lanes and is
-//! silently wrong, which is why the caller states it rather than reads it.
+//! **The plane must be the cube's**: `lanes` is the width the device commits to, and a plane may
+//! not straddle the x dim, so `CUBE_DIM_X` has to be a whole number of planes. A wrong width
+//! reduces over the wrong lanes, silently, which is why the caller states it rather than reads it.
 
 use cubecl::prelude::*;
 
@@ -63,10 +58,9 @@ impl<EA: Float> Tile<EA> {
         }
     }
 
-    /// [`row_max`](Tile::row_max) at plane ownership: a lane's partial over its
-    /// own lines, then one plane reduction per row. Seeding with `base` on
-    /// every lane is free — a max is idempotent, so the seed survives the fold
-    /// whichever lane carried it.
+    /// [`row_max`](Tile::row_max) at plane ownership: a lane's partial over its own lines, then
+    /// one plane reduction per row. Seeding with `base` on every lane is free: a max is
+    /// idempotent, so the seed survives the fold whichever lane carried it.
     pub fn row_max_planar(
         &self,
         acc: &mut Array<EA>,

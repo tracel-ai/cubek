@@ -2,10 +2,10 @@
 //! block *is* the accumulator.
 //!
 //! The peer of [`memory`](super::memory), and the reason [`block`](super::super::block) takes the
-//! block as a parameter. The memory form seeds a block from its sink and commits it back on every
-//! visit, so a `K` walk that returns to the leaf repeatedly round-trips its partials through the
-//! sink's element; this one keeps them in `T` across the whole walk and only meets memory on
-//! drain. Sibling of the two hardware leaves in `instruction/mma`, reached from the same dispatch.
+//! block as a parameter: the memory form round-trips its partials through the sink's element on
+//! every visit, this one keeps them in `T` across the walk and only meets memory on drain.
+//!
+//! Sibling of the two hardware leaves in `instruction/mma`, reached from the same dispatch.
 
 use cubecl::prelude::*;
 
@@ -18,21 +18,17 @@ impl<T: Numeric> RegisterData<T> {
     /// `self += lhs · rhs` over the block, one rank-1 update per scalar `K` step, each factor
     /// times whatever scales it carries.
     ///
-    /// The same contraction the memory-backed instruction runs, minus the round trip: there the
-    /// block is seeded from the sink and committed back on every visit, so a `K` walk that
-    /// returns here repeatedly loses precision to the sink's element between visits. This one
-    /// *is* the accumulator, so the partials stay in `T` until [`store_cast_window`] drains them.
+    /// The memory-backed instruction's contraction minus the round trip: there the block is seeded
+    /// from the sink and committed back per visit, losing precision to the sink's element. This one
+    /// *is* the accumulator, so partials stay in `T` until [`store_cast_window`] drains them.
     ///
-    /// A **packed factor is served here too**: the decode is [`Tile::matrix_packed`]'s and it
-    /// happens per read for whichever leaf asks, so a promoted accumulator needs nothing of its
-    /// own to serve one. The rhs may be packed as well, and the width assert below is the whole
-    /// of what governs it: a packed operand's `vector_size` is the *served* width, and the block
-    /// was opened at the rhs's.
+    /// A **packed factor is served here too**: the decode is [`Tile::matrix_packed`]'s, per read
+    /// for whichever leaf asks. The rhs may be packed as well; the width assert below governs it,
+    /// as a packed `vector_size` is the *served* width, and the block was opened at the rhs's.
     ///
     /// An rhs lined along the contraction is the folded step ([`fold`](Self::fold)): a step
-    /// consumes a whole line of each operand and the block's lanes are one cell's partials,
-    /// which [`store_cast_window`](Self::store_cast_window) collapses. The block must have been
-    /// opened that way: the lines are allocated at the open, not here.
+    /// consumes a whole line of each operand and the block's lanes are one cell's partials, which
+    /// [`store_cast_window`](Self::store_cast_window) collapses. The block must be opened that way.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &mut self,
@@ -95,7 +91,8 @@ impl<T: Numeric> RegisterData<T> {
         let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs_values.space));
         let cols = comptime!(acc_axes.cols(&out));
         let lhs_axes = comptime!(MatrixAxes::of(&lhs_values.space, mr, kc));
-        // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator `(k, col)`.
+        // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator
+        // `(k, col)`.
         let rhs_axes = comptime!(if fold > 1 {
             MatrixAxes::of(&rhs_values.space, cols, kc)
         } else {

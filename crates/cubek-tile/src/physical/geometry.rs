@@ -10,10 +10,9 @@ use crate::Coords;
 
 /// One operand's physical extents and strides, in scalars, one entry per physical dim.
 ///
-/// The two are one value because they are never separately true. Held apart they are two
-/// `Vec<usize>` a caller can state at two ranks, and two same-typed arguments a call site can
-/// swap in silence; here a dim is an `(extent, stride)` pair and neither is expressible. A bound
-/// operand takes its geometry off its binding ([`From`]), an unbound one states it.
+/// The two are one value because they are never separately true: apart, they are two `Vec<usize>`
+/// a caller can state at two ranks or swap in silence; here a dim is an `(extent, stride)` pair. A
+/// bound operand takes its geometry off its binding ([`From`]), an unbound one states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Geometry {
     shape: Vec<usize>,
@@ -51,12 +50,12 @@ impl Geometry {
 
     /// Whether this operand can be served in `vector_size`-wide lines.
     ///
-    /// The kernel re-expresses the geometry in lines rather than scalars: [`Tile::of`] counts the
-    /// innermost extent in lines and divides every coarser stride by the served width, so a width
-    /// that does not divide them truncates: in bounds, no fault, addressing a fraction of the
-    /// operand. [`Launcher::vector_size`](crate::Launcher::vector_size) reads this to *pick* a
-    /// width; a caller that states one is *refused* by it. One answer, so the two cannot drift
-    /// apart about what a servable width is.
+    /// The kernel restates the geometry in lines: [`Tile::of`] counts the innermost extent in lines
+    /// and divides every coarser stride by the served width, so a width that does not divide them
+    /// truncates in bounds, no fault, addressing a fraction of the operand.
+    ///
+    /// [`Launcher::vector_size`](crate::Launcher::vector_size) reads this to *pick* a width and to
+    /// *refuse* one a caller states, so the two cannot drift apart about what a servable width is.
     ///
     /// [`Tile::of`]: crate::Tile::of
     pub(crate) fn serves_lines(&self, vector_size: usize) -> Result<(), LineMisfit> {

@@ -2,9 +2,8 @@
 //! contracted axes into one accumulator cell at a time, under a [`Monoid`].
 //!
 //! The contraction nest's sibling ([`contract`](super::contract)): same seed, walk `kc`, commit
-//! shape over an [`AccumulateView`], one operand and an elementwise fold
-//! instead of two operands and a rank-1 outer product. The dispatch that reaches here by
-//! accumulator storage stays with the verb, in `ops/reduce/lower.rs`.
+//! shape over an [`AccumulateView`], with one operand and an elementwise fold instead of a rank-1
+//! outer product. Dispatch by accumulator storage stays with the verb, in `ops/reduce/lower.rs`.
 
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -147,9 +146,9 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
 /// The per-element inner reduction shared by both accumulator backings: fold `in_view` across the
 /// contracted axes into `seed`, for the single accumulator cell at `acc_coords`.
 ///
-/// A step consumes [`Space::contracted_per_step`] values: past one the input's line runs along the fastest
-/// contracted axis, so the whole line folds into this one cell ([`element_lines`]) instead of one
-/// scalar at a time ([`element_scalars`]).
+/// A step consumes [`Space::contracted_per_step`] values: past one the input's line runs along
+/// the fastest contracted axis, so the whole line folds into this one cell ([`element_lines`])
+/// instead of one scalar at a time ([`element_scalars`]).
 #[cube]
 fn element<Acc: Numeric, In: Numeric, V: Size>(
     in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
@@ -187,9 +186,9 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
     }
 }
 
-/// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step lands on a line
-/// start and one read serves `contracted_per_step` folds. The lanes accumulate in parallel and collapse
-/// through [`horizontal::vector`] once, after the walk.
+/// [`element`]'s line path: the flat reduce index steps by `contracted_per_step`, so each step
+/// lands on a line start and one read serves `contracted_per_step` folds. The lanes accumulate in
+/// parallel and collapse through [`horizontal::vector`] once, after the walk.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_lines<Acc: Numeric, In: Numeric, V: Size>(

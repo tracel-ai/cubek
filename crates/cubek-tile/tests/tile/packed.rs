@@ -1,9 +1,8 @@
 //! `TileSpec::packed`: an operand whose values are fields of a stored word, said on its own.
 //!
 //! A packed tensor is *values*, stored small. Saying so takes one fact (how wide a field is and
-//! how it reads back), and that fact belongs to the values, not to a quantization scheme: there
-//! are no scales here, no block grid, no scale binding, nothing for a scheme to carry. The tile
-//! serves what the words hold ([`TileArg::tile_as`]) and the read unpacks.
+//! how it reads back) that belongs to the values, not to a quantization scheme: there are no
+//! scales here. The tile serves what the words hold ([`TileArg::tile_as`]) and the read unpacks.
 //!
 //! What a *quantized* operand adds on top is its scales, which are their own tensor and their own
 //! operand; folding them in is a verb the kernel writes ([`Tile::mm_scaled`], see
@@ -119,16 +118,14 @@ fn nvfp4_shaped_matmul<E: Numeric>(
 /// one factor over the whole tensor.
 ///
 /// The only thing standing between this and the format itself is where the block scales are
-/// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything the design
-/// has to get right is here: the value decode, two levels in order, the coarser one spanning no
-/// axis, and a block of sixteen against words of eight.
+/// *stored*: `nvfp4` puts them in `ue4m3`, which needs a device that loads it. Everything else is
+/// here: the decode, two ordered levels, the coarser spanning no axis, 16-blocks on 8-value words.
 ///
 /// Nothing in the kernel names the format, the block, or the number of levels.
 ///
-/// Every operand here is bound one element wide, so unlike the read tests below this asks nothing
-/// of the device's vector cap and runs everywhere. That matters: the decode it covers is the one
-/// that lowers differently per backend, so a device that skipped this would be the device most
-/// worth running it on.
+/// Every operand is bound one element wide, so unlike the read tests below this asks nothing of
+/// the device's vector cap and runs everywhere. That matters: the decode it covers lowers
+/// differently per backend, so a device that skipped this is the one most worth running it on.
 #[test]
 fn nvfp4_shaped_decode() {
     let (field, rows, cols, block, blocks) = (QuantValue::E2M1, 4, 4, 16, 2);
@@ -285,8 +282,7 @@ fn packed_matmul_rhs<E: Numeric, V: Size>(
 
 /// `c = (w ⊗ s) · x` with `w` an `i8` tensor: the native store, which needs no packing statement
 /// at all. The binding says `i8`, the tile serves `i8`, and the contraction casts each value into
-/// the accumulator's element as it always does: a value is whatever its tensor holds, for the
-/// same reason a scale is.
+/// the accumulator's element as always: a value is whatever its tensor holds, as a scale is.
 #[cube(launch)]
 fn native_matmul<E: Numeric>(
     w: &TileArg<'_, i8, Const<1>>,
@@ -625,9 +621,8 @@ fn four_bit_fields_unpack_on_read() {
 /// Eight `e2m1` codes per word, reinterpreted rather than sign-extended.
 ///
 /// The field of `nvfp4` and `mxfp4`. Its bits are an index into the format's sixteen values, not a
-/// small integer, so reading it as one would answer plausible nonsense — `0b0111` is `6.0`, and as
-/// a signed nibble it is `7`. Nothing here states a scheme: the packing names the field, and the
-/// values a word holds are whatever that field decodes to.
+/// small integer, so reading it as one would answer plausible nonsense (`0b0111` is `6.0`, and as
+/// a signed nibble `7`). Nothing states a scheme: the packing names the field, which decodes.
 #[test]
 fn fp4_codes_unpack_on_read() {
     let (field, rows, cols) = (QuantValue::E2M1, 4, 32);
@@ -1016,10 +1011,9 @@ fn eight_bit_fields_contract_against_their_scales() {
     }
 }
 
-/// **The folded walk takes its scales several at a time.** A packed line folds a whole word
-/// per step, so nothing walks the contraction one value at a time — which used to mean the
-/// scales had to be read one at a time. They are read two to a line here, and each field of
-/// that line covers a block of the walk: the walk builds which, so no scalar read is needed.
+/// **The folded walk takes its scales several at a time.** A packed line folds a whole word per
+/// step, so nothing walks the contraction one value at a time, which used to force the scales to
+/// be read singly. Here they are read two to a line, each field covering a block the walk picks.
 #[test]
 fn a_folded_walk_takes_its_scales_several_at_a_time() {
     let (field, rows, cols, block, blocks) = (QuantValue::Q4S, 4, 4, 8, 4);
@@ -1429,11 +1423,9 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
     }
 }
 
-/// A block covering both lines: several lines share a scale, which is the direction that is
-/// always sound. The other one (a block narrower than the line reading it) is refused by the
-/// contraction (`mm_scaled: ... scale blocks must cover whole lines`), and that refusal is a
-/// comptime panic inside the kernel, so it lands on a worker thread rather than in a
-/// `should_panic` test.
+/// A block covering both lines: several lines share a scale, the direction that is always sound.
+/// The other one (a block narrower than the line reading it) is refused by the contraction
+/// (`mm_scaled: scale blocks must cover whole lines`), a comptime kernel panic on a worker thread.
 #[test]
 fn several_lines_may_share_one_scale() {
     let (field, rows, block_k, blocks_k) = (QuantValue::Q8S, 4, 8, 4);
@@ -1683,9 +1675,8 @@ fn an_i8_operand_contracts_against_its_scales() {
 }
 
 /// **The q4 decode gemv, end to end.** A packed weight tensor read in place, its scales as their
-/// own operand, one row of activations, `N` across cubes, and the partials living in registers for
-/// the whole `K` walk. Every piece of it is a thing the plan had to build: packed values with no
-/// scheme, a scales operand, the rhs side, and a promoted accumulator.
+/// own operand, one row of activations, `N` across cubes, and the partials in registers for the
+/// whole `K` walk: schemeless packed values, a scales operand, the rhs side, a promoted block.
 #[test]
 fn a_packed_decode_gemv_runs_in_this_spelling() {
     let (field, block_k, blocks_k) = (QuantValue::Q4S, 8, 4);
@@ -2002,8 +1993,9 @@ fn packed_gemv_unscaled<E: Numeric, V: Size>(
 ///
 /// [`a_packed_decode_gemv_runs_in_this_spelling`] runs this block with the scales folded in, and
 /// the two reach the same `block::contract` through the same `RegisterData`, so if a packed rhs
-/// were what a promoted accumulator could not drain, the gemv could not be spelled either. What
-/// makes both work is the accumulator being declared at the *served* width (`V = factor`); a
+/// were what a promoted accumulator could not drain, the gemv could not be spelled either.
+///
+/// What makes both work is the accumulator being declared at the *served* width (`V = factor`); a
 /// narrower one is refused by the width assert, and that is the only thing packing owes here.
 #[test]
 fn a_packed_rhs_drains_from_a_promoted_accumulator() {
@@ -2185,10 +2177,10 @@ fn e4m3_fields_unpack_on_read() {
 }
 
 /// **Scales stored as `ue8m0` bytes are read in their own width.** Four codes to a word, the
-/// scales operand bound one word wide and served one scale at a time
-/// ([`TileSpec::packed`]), on the lhs of the memory-backed leaf, which steps the block index at
-/// runtime. A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is
-/// exact.
+/// scales operand bound one word wide and served one scale at a time ([`TileSpec::packed`]), on
+/// the lhs of the memory-backed leaf, which steps the block index at runtime.
+///
+/// A `ue8m0` code is a bare exponent, so the scales are powers of two and the answer is exact.
 #[test]
 fn ue8m0_scales_are_read_as_bytes() {
     check_ue8m0_scales(8, 4);
@@ -2611,9 +2603,8 @@ fn e4m3_scales_reach_the_promoted_block() {
 }
 
 /// **A packed rhs with byte scales reaches the tensor cores.** Eight activation rows against a
-/// `q8` weight packed along its columns, `e4m3` scales per `(block of K, block of N)` read one
-/// at a time, the weight landed unpacked and scaled and loaded as the `B` fragment of the M2's
-/// `8x8x8` instruction. The prefill shape, one fragment a region.
+/// `q8` weight packed along its columns, `e4m3` scales per `(K block, N block)` read one at a time,
+/// the weight unpacked and scaled into the `8x8x8` `B` fragment. Prefill: one fragment a region.
 #[test]
 fn a_packed_rhs_reaches_the_tensor_cores() {
     let (field, rows, block_k, blocks_k) = (QuantValue::Q8S, 8, 8, 4);

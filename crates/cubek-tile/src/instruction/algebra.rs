@@ -24,11 +24,9 @@ impl<T> Foldable for T where
 {
 }
 
-/// An identity and an associative fold. Everything that merges values takes one: the plane
-/// instructions ([`plane`](super::plane)), the register nests
-/// ([`instruction`](crate::instruction::registers)), the verb that schedules them
-/// ([`Tile::reduce_axis`](crate::Tile::reduce_axis)), and the drain that combines a plane's
-/// partials.
+/// An identity and an associative fold, taken by everything that merges values: the
+/// [`plane`](super::plane) instructions, the [`instruction`](crate::instruction::registers) nests,
+/// [`Tile::reduce_axis`](crate::Tile::reduce_axis), and the drain that combines a plane's partials.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Monoid {
     /// `acc + val`, identity `0`.
@@ -43,10 +41,9 @@ pub enum Monoid {
 
 #[cube]
 impl Monoid {
-    /// This monoid's identity element: folding it in leaves the other operand unchanged. What a
-    /// masked read past an operand's valid extent must return instead of a shared zero, since zero
-    /// is `Sum`'s identity but biases `Max` toward it (any negative data), `Min` away from it (any
-    /// positive data), and annihilates `Prod`.
+    /// This monoid's identity element, which a masked read past an operand's valid extent must
+    /// return instead of a shared zero: zero is `Sum`'s identity but biases `Max` and `Min` toward
+    /// it and annihilates `Prod`.
     pub fn identity<E: Numeric>(#[comptime] monoid: Monoid) -> E {
         match comptime!(monoid) {
             Monoid::Sum => E::from_int(0),
@@ -70,11 +67,10 @@ impl Monoid {
 /// `monoid.fold(a, b)`, the form call sites use.
 ///
 /// Written out rather than generated: `#[cube]` hangs a method's expansion on `{Name}Expand`,
-/// and a comptime-only value has none, so the operation is an associated function above and
-/// this pair forwards to it. The plain half serves the unexpanded copy of a `#[cube]` body, the
-/// `__expand` half is what the macro calls. [`identity`](Monoid::identity) takes no such pair:
-/// its call is comptime through and through, which the macro folds on the host, where a generic
-/// element has no value to fold.
+/// which a comptime-only value lacks, so the operation is an associated function above and this
+/// pair forwards to it (the plain half for unexpanded `#[cube]` bodies, `__expand` for the macro).
+///
+/// [`identity`](Monoid::identity) needs no pair: its call is fully comptime and folds on the host.
 impl Monoid {
     pub fn fold<T: Foldable>(self, lhs: T, rhs: T) -> T {
         Monoid::fold_of::<T>(lhs, rhs, self)
@@ -173,11 +169,9 @@ impl Semiring {
     }
 }
 
-/// An algebra is comptime-only: a kernel never holds one in a register, it reads one to decide
-/// which instruction to emit. Expanding as itself is what lets a [`CubeType`] carry one in a
-/// `#[cube(comptime)]` field, the way an accumulator's scope carries the monoid it folds under and
-/// a level's walk carries the semiring it contracts under. Each impl below is one `CubeType`
-/// requires of an expand type; none is spare.
+/// An algebra is comptime-only: a kernel reads one to decide which instruction to emit, never
+/// holds one in a register. Expanding as itself lets a [`CubeType`] carry one in a
+/// `#[cube(comptime)]` field. Each impl below is one `CubeType` requires of an expand type.
 macro_rules! expands_as_itself {
     ($ty:ty) => {
         impl CubeType for $ty {

@@ -19,7 +19,7 @@ pub fn linear_along<T: Float>(#[comptime] axis: Axis, offset: T, coefficient: T)
     }
 }
 
-/// Triangle filter over the value of an inner recipe, usually an [`AffineCoordinate`](super::super::AffineCoordinate).
+/// Triangle filter over the value of an inner recipe, usually an [`AffineCoordinate`].
 #[derive(CubeType, Clone)]
 pub struct Linear<C: CubeType> {
     pub coordinate: C,

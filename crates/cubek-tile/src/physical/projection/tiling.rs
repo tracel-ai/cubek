@@ -6,17 +6,15 @@ use cubecl::zspace::{SmallVec, Tiling};
 use crate::{Axis, MAX_AXES};
 
 /// How many physical fragments each logical axis is split across, in the operand's own axis order.
-/// One fragment is an untiled axis; `n` fragments make a coordinate along it an `n`-digit mixed
-/// radix number ([`Projection::digit`](crate::Projection::digit)), which is the whole encoding of
-/// storage tiling. No extent
-/// appears here: the radices are read off the buffer's `physical_shape` at use time.
+/// One fragment is an untiled axis; `n` make a coordinate along it an `n`-digit mixed radix number
+/// ([`Projection::digit`](crate::Projection::digit)); the radices are read off `physical_shape`.
 ///
 /// The physical order this induces is level-major, coarsest first: every axis contributes its
-/// level-0 fragment, then every axis still deep enough contributes its level-1 fragment, down to
-/// the tile fragments. For the common case of untiled leading axes over a uniformly tiled block
-/// that is the buffer's `[pre…, grid…, tile…]` order, with each untiled axis dropping out after
-/// the coarsest level. Per-axis counts rather than a start/depth pair, so a buffer whose axes are
-/// tiled to different depths needs no new shape of description.
+/// level-0 fragment, then every axis still deep enough its level-1 fragment, down to the tile
+/// fragments. Untiled leading axes over a uniformly tiled block give `[pre…, grid…, tile…]`.
+///
+/// Per-axis counts rather than a start/depth pair, so a buffer whose axes are tiled to different
+/// depths needs no new shape of description.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct StorageTiling {
     fragments: SmallVec<[usize; MAX_AXES]>,
@@ -42,11 +40,9 @@ impl StorageTiling {
         )
     }
 
-    /// The tiling a tensor's own metadata states, over the `subspace_len` inner axes of a buffer
-    /// of `physical_rank` dims. The one place a stored [`Tiling`] becomes a [`StorageTiling`]:
-    /// a metadata describes every logical dim, batches first, while this describes the subspace
-    /// block alone, since [`labeled`](crate::physical::source) gives a batch dim its own physical
-    /// dim regardless.
+    /// The tiling a tensor's metadata states, over the `subspace_len` inner axes of a buffer of
+    /// `physical_rank` dims: where a stored [`Tiling`] becomes a [`StorageTiling`]. Metadata covers
+    /// every dim; this the subspace only: [`labeled`](crate::physical::source) handles batch dims.
     ///
     /// # Panics
     ///
@@ -109,9 +105,10 @@ impl StorageTiling {
     }
 
     /// The physical axis labels this tiling induces over `axes`, in buffer order: the level-major
-    /// emission itself, one entry per physical axis, a tiled axis appearing once per fragment. The
-    /// single place the order is defined, shared by [`Projection::tiled`](crate::Projection::tiled)
-    /// and by callers labeling a binding's dims ([`ConcreteLayout`](crate::ConcreteLayout)).
+    /// emission itself, one entry per physical axis, a tiled axis appearing once per fragment.
+    ///
+    /// The one place the order is defined: [`Projection::tiled`](crate::Projection::tiled) and
+    /// callers labeling a binding's dims ([`ConcreteLayout`](crate::ConcreteLayout)) share it.
     pub fn order(&self, axes: &[Axis]) -> Vec<Axis> {
         assert_eq!(
             self.rank(),

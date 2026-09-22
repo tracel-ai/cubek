@@ -1,10 +1,8 @@
 //! What a scales operand is against the values it covers.
 //!
-//! A scale is a tile that spans fewer axes than the values it multiplies, and "one scale per block"
-//! is what its axes say rather than what any arithmetic does. Which side it folds into is the
-//! kernel's statement ([`Scaling`](crate::Scaling)), checked here against the axes; reading one
-//! is a lookup at the value's coordinates ([`ScaleLookup`](crate::ScaleLookup)), which needs
-//! nothing derived here.
+//! A scale is a tile spanning fewer axes than the values it multiplies: "one scale per block" is
+//! what its axes say, not arithmetic. The fold side is stated ([`Scaling`](crate::Scaling)) and
+//! checked here; a read is a lookup ([`ScaleLookup`](crate::ScaleLookup)) needing nothing here.
 
 use crate::*;
 /// Which factor of a contraction's terms an operand is: the argument position, which the caller
@@ -25,10 +23,9 @@ pub enum Side {
 
 /// Refuse scales that do not ride the operand the kernel put them on.
 ///
-/// A scales operand over the accumulator's columns is a fact about the rhs's columns and folds
-/// nowhere else; one over its rows, about the lhs's. Either on the other operand is a scale of
-/// the output, not a factor of a term. A scale over neither axis (per-tensor, or one value per
-/// block of `k`) is the same number wherever it folds, and rides whichever side was stated.
+/// Scales over the accumulator's columns are a fact about the rhs's columns and fold nowhere
+/// else; over its rows, about the lhs's. Either on the other operand scales the output, not a term.
+/// Scales over neither axis (per-tensor, or per block of `k`) ride whichever side was stated.
 pub(crate) fn check_scales_ride(side: Side, scales: &Space, output: &Space, axes: MatrixAxes) {
     let group = |range: core::ops::Range<usize>| {
         range
@@ -52,11 +49,9 @@ pub(crate) fn check_scales_ride(side: Side, scales: &Space, output: &Space, axes
 
 /// Refuse a scales operand that spells its granularity by dividing.
 ///
-/// A scale covers a block because the operand has no axis to vary over inside one: the block is an
-/// axis and the scales omit it. A rational axis (`PhysicalAxisMap::of(N).over(bn)`) states the same
-/// granularity arithmetically, and then whether a line straddles a block stops being a fact about
-/// the axes and becomes one about the line width, which no operand states. Split the axis instead,
-/// and the invariance is structural.
+/// A scale covers a block because the operand has no axis to vary over inside one: the block is
+/// an axis the scales omit. A rational axis (`PhysicalAxisMap::of(N).over(bn)`) states the same
+/// granularity, but whether a line straddles a block then depends on the unstated line width.
 pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
     for pa in 0..scales.physical_rank() {
         let divisor = scales.divisor(pa).bound();

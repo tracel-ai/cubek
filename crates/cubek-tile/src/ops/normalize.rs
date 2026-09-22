@@ -55,11 +55,8 @@ pub(crate) fn guarded_recip_numeric<E: Numeric>(d: E, #[comptime] guard: DivGuar
 
 impl<T: Float> Tile<T> {
     /// Normalize a separable procedural tile's factor runs where the gather contraction evaluates
-    /// them. This is deliberately refused for opaque recipes and backed tiles: silently routing
-    /// either through a post-pass would conceal an extra contraction or memory walk. A masked
-    /// normalization also requires the contraction's rhs to remain at its original source window;
-    /// staging that rhs in shared memory is rejected rather than adding boundary tracking to the
-    /// normal staging path.
+    /// them. Refused for opaque recipes and backed tiles: a post-pass would hide an extra walk. A
+    /// masked one also needs the rhs at its source window, so staging it in smem is rejected.
     pub fn normalized(self, _mask: TapMask, _guard: DivGuard) -> Tile<T> {
         unexpanded!()
     }

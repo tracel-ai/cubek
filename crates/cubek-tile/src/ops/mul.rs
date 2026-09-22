@@ -1,10 +1,9 @@
 //! `dst.mul(&a, &b)`: the elementwise product of two tiles, each broadcasting over the axes it
 //! omits.
 //!
-//! Not a quantization verb. A scale is a tile that spans fewer axes than the values it multiplies,
-//! and "one scale per block" is what its axes say rather than what any arithmetic does; dequantizing
-//! is this operation with a packed operand on one side. Written alone, and tested alone, because a
-//! mechanism that only works inside the contraction is not a mechanism.
+//! Not a quantization verb. A scale is a tile spanning fewer axes than the values it multiplies,
+//! "one scale per block" being what its axes say, not arithmetic; dequantizing is this operation
+//! with a packed operand on one side. Written and tested alone, so the mechanism stands by itself.
 //!
 //! Both operands are read at the destination's logical coordinate through their own
 //! [`Projection`](crate::Projection), so an axis an operand does not address costs it nothing and
@@ -28,9 +27,8 @@ impl<T: Numeric> Tile<T> {
     /// per group and taking a lane of it per fold.
     ///
     /// Each operand is addressed over *its own* axes, so an axis it does not span costs it nothing
-    /// and one of its values serves every position of that axis. A packed operand serves a whole
-    /// stored word per line, which is why the walk moves in lines at all: there is no
-    /// cell-at-a-time reading of a tensor whose values share a word.
+    /// and one value serves every position of it. A packed operand serves a whole stored word per
+    /// line, hence the walk in lines: values sharing a word cannot be read cell by cell.
     fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
         let space = comptime!(self.space.clone());
         let width = self.vector_size();

@@ -8,10 +8,8 @@ use cubecl::{
 use crate::*;
 
 /// The scales' [`GmemLayout`]: a window coordinate to the flat index of its block's scale, the dot
-/// of each axis's block index with its scale stride. `window_start` carries the window origin's own
-/// block (folded in at descent by [`QuantInfo`]), so this only adds the offset within the window,
-/// sound because no window straddles a block, which
-/// [`quantized`](crate::StridedTileSource::quantized) rejects at launch.
+/// of each axis's block index with its scale stride. `window_start` carries the origin's own block
+/// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::StridedTileSource::quantized)).
 ///
 /// Per-tensor never leaves index `0`: its strides are `0`, so every term folds away
 /// ([`fmul`](crate::Fold::fmul) annihilates) and a read is a constant-index broadcast.

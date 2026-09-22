@@ -1,17 +1,15 @@
 //! What the hardware instances are to a tile's cells, once a level has been dealt out.
 //!
-//! Two questions, at two scopes. A plane's lanes share registers, so they combine there and a
-//! folding drain must know *which* lanes hold a cell ([`LaneShare`]) and how many run the work
-//! ([`LaneWork`]). Planes and cubes share none, so each folds its own contribution into the
-//! destination and the answer is only whether it holds a whole cell ([`SplitShare`]).
+//! Two questions, at two scopes. A plane's lanes share registers and combine there, so a folding
+//! drain asks *which* lanes hold a cell ([`LaneShare`]) and how many run the work ([`LaneWork`]).
+//! Planes and cubes share none; the one question is whether it holds a whole cell ([`SplitShare`]).
 //!
 //! The vocabulary and the [`Space`] descent that derives it, together: the enums are only ever
 //! read off a space, and the descent is only ever read as one of them.
 
 /// What the plane's lanes each hold of a tile's cells, once a `Unit` split is dealt out. An axis
 /// the tile doesn't span is *folded* (lanes cover disjoint slices, each holds a partial); one it
-/// does span is *carried* (each lane gets a different cell). Which case a tile is in says how a
-/// partial drains.
+/// does span is *carried* (each lane gets a different cell). The case says how a partial drains.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LaneShare {
     /// Nothing folded: the lane's cells are whole, so they read and write as they are.
@@ -26,9 +24,8 @@ pub enum LaneShare {
 }
 
 /// A descent's share, given the parent's and the level's: the folds compose, since each level
-/// takes its own bits of the lane index. [`LaneShare::Plane`] already spans every lane, so nothing
-/// folds under it, and nothing builds that: [`Space::cube_dim`](crate::Space::cube_dim) caps the
-/// tree's `Unit` instance product at the plane width.
+/// takes its own bits of the lane index. [`LaneShare::Plane`] spans every lane, so nothing folds
+/// under it: [`Space::cube_dim`](crate::Space::cube_dim) caps `Unit` instances at the plane width.
 pub(crate) fn join_lane_share(parent: LaneShare, level: LaneShare) -> LaneShare {
     match (parent, level) {
         (LaneShare::Whole, share) | (share, LaneShare::Whole) => share,
@@ -57,10 +54,8 @@ pub(crate) fn join_lane_work(parent: LaneWork, rides: bool) -> LaneWork {
 }
 
 /// How many of the plane's lanes run one tile's work. A space distributing nothing at `Unit` scope
-/// still launches a full plane, every lane running the same code over the same cells. Identical
-/// stores land the same value however many lanes make them, but a fold is not idempotent, so a
-/// folding drain elects one lane. Distinct from [`LaneShare`], which says what a lane holds of a
-/// cell rather than how many lanes hold it.
+/// still launches a full plane, all lanes running the same code; identical stores are harmless but
+/// a fold is not, so a folding drain elects one lane; [`LaneShare`] says what a lane holds instead.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LaneWork {
     /// Something rides the lanes, so each has its own share and a cell is written once.
@@ -79,9 +74,8 @@ pub struct LaneRoles {
 }
 
 /// What one instance holds of a tile's cells, across the scopes whose instances can only meet in
-/// the destination: `Plane` and `Cube`. [`LaneShare`]'s counterpart, and deliberately coarser: a
-/// plane's lanes share registers and must elect a writer, hence a mask, but planes and cubes share
-/// none, so each folds its own contribution and there is nothing to elect between them.
+/// the destination: `Plane` and `Cube`. Coarser than [`LaneShare`], whose lanes share registers
+/// and elect a writer (a mask); planes and cubes share none, so each folds its own contribution.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SplitShare {
     /// Every cell this instance writes is its own outright, so the drain is a store.
@@ -92,11 +86,12 @@ pub enum SplitShare {
 }
 
 impl SplitShare {
-    /// Refuse an accumulation this share leaves in pieces, unless the destination adds them
-    /// together. Called where an accumulator is opened and where one is written, the two places a
-    /// partial can escape. A destination that replaces is wrong twice over and silently: a
-    /// register drain stores, so the last instance erases the rest, and one accumulating in place
-    /// loses the update. [`Write::Accumulate`](crate::Write) is the case this lets through.
+    /// Refuse an accumulation this share leaves in pieces unless the destination adds them. Called
+    /// where an accumulator is opened and where it is written, the two places a partial can escape.
+    ///
+    /// A replacing destination is silently wrong: a register drain stores, so the last instance
+    /// erases the rest, and one accumulating in place loses the update.
+    /// [`Write::Accumulate`](crate::Write) is the case this lets through.
     pub(crate) fn validate(self, write: crate::Write, site: &str) {
         match (self, write) {
             (SplitShare::Whole, _) | (SplitShare::Partial, crate::Write::Accumulate) => {}

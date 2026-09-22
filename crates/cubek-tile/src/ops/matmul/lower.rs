@@ -65,9 +65,8 @@ impl<Acc: Numeric> Tile<Acc> {
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {
     /// `c = a · b` at a final memory tile through the software instruction run under `config`:
-    /// the leaf a kernel that walks its own levels reaches, stated with the register block it
-    /// runs rather than read off the space. `c` owns each cell outright here, so the block
-    /// starts from the identity and never reads `c` back.
+    /// the leaf a kernel walking its own levels reaches, with the register block stated rather
+    /// than read off the space. `c` owns each cell outright, so the block starts from the identity.
     pub fn mm_with<Lhs: Numeric, Rhs: Numeric>(
         &mut self,
         lhs: &Tile<Lhs>,
@@ -173,8 +172,7 @@ impl<E: Numeric> PlaneTile<E> {
     ///
     /// A hardware instruction eats its operands' format, so a scaled factor reaches one through
     /// memory: [`CmmaData::mma`] lands it, unpacked and scaled, in the plane's own window and
-    /// loads the fragment from there. The manual-mma form takes its operands from registers and
-    /// has no such landing, so it refuses one.
+    /// loads the fragment from there. The manual-mma form has no landing, so it refuses one.
     pub fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
         &mut self,
         lhs: &Scaled<EL, LS>,
@@ -220,10 +218,11 @@ fn hardware_semiring(#[comptime] semiring: Semiring) {
 }
 
 /// Asserts that operands are not gathered and read as one matrix each. A fragment contracts over
-/// one `k` edge, which is not one contracted *axis*: axes carried as one run flatten into an edge,
-/// and a partitioned contraction is exactly that. What it cannot read is a contraction its axes
-/// give no edge for. The rhs reads `(k, col)`, or `(col, k)` where a register block folds a step
-/// (`rhs_along_k`): lined along the contraction, its matrix is the transpose.
+/// one `k` edge, not one contracted *axis*: axes carried as one run flatten into an edge (as a
+/// partitioned contraction does); what it cannot read is a contraction its axes give no edge for.
+///
+/// The rhs reads `(k, col)`, or `(col, k)` where a register block folds a step (`rhs_along_k`):
+/// lined along the contraction, its matrix is the transpose.
 #[cube]
 fn strided_2d<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
@@ -254,9 +253,8 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
 }
 
 /// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)`
-/// window, the transpose of the role's own order, which the leaf reads as the same matrix
-/// ([`PlanePartition::store`], [`rhs_layout`](crate::instruction::rhs_layout)) and which is
-/// therefore the edge the contraction runs along, as it is for a folded register step.
+/// window, the transpose of the role's order, read as the same matrix along the contracted edge
+/// ([`PlanePartition::store`], [`rhs_layout`](crate::instruction::rhs_layout)), like a folded step.
 #[cube]
 fn transposed_rhs<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,

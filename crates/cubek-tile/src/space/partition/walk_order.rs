@@ -2,10 +2,9 @@
 //! odometer ([`WalkOrder`]), and the order the cube level hands its boxes to the grid
 //! ([`CubeOrder`]).
 //!
-//! The two are not the same quantity, and the cube level is where that shows. There every
-//! instance takes one tile, so the walk's `total` is one and there is no step order to state;
-//! what a [`CubeOrder`] permutes is which *instance* holds which box, which lives in the
-//! positions [`Walk::from_counts`](crate::Walk) decodes from the hardware.
+//! The two differ, and the cube level shows it: every instance takes one tile, so the walk's
+//! `total` is one and there is no step order to state. A [`CubeOrder`] permutes which *instance*
+//! holds which box: the positions [`Walk::from_counts`](crate::Walk) decodes from the hardware.
 
 use crate::{Fold, FoldExpand};
 use cubecl::prelude::*;
@@ -32,19 +31,13 @@ pub(crate) fn walk_index(i: usize, total: usize, #[comptime] order: WalkOrder) -
 
 /// The order a cube level deals its boxes to the grid.
 ///
-/// The grid's own order runs a wave of cubes along one axis, so the wave's footprint is a
-/// band of one operand as wide as the whole other axis. A swizzle folds that band into a
-/// square-ish patch instead, and the cubes that run together then read rows and columns each
-/// other already brought into the last level cache. What it is worth is the cache's, so it
-/// grows with the problem: it is nothing while a band still fits, and the whole difference
-/// once none does.
+/// The grid's own order runs a wave of cubes along one axis: a band of one operand as wide as the
+/// whole other axis. A swizzle folds it into a square-ish patch, so cubes running together share
+/// rows and columns in the last level cache: nothing while a band fits, everything once none does.
 ///
-/// **The width must divide the cube count of the axis it strips.** A strip starts every
-/// `width` boxes along that axis, so a width that does not divide it runs the last strip past
-/// the grid and two boxes answer to one cube. Nothing in the kernel can check it — the counts
-/// are the launch's, and a `Space` carries its extents as runtime values — so it is the
-/// caller's to state, and the routine that states it is where it is checked
-/// ([`CubeOrder::divides`]).
+/// **The width must divide the cube count of the axis it strips**, or the last strip runs past
+/// the grid and two boxes answer to one cube. The kernel cannot check it (the counts are the
+/// launch's), so the caller states it, and that routine checks it ([`CubeOrder::divides`]).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum CubeOrder {
     /// The box at `(x, y)` goes to the cube at `(x, y)`.
@@ -120,6 +113,7 @@ pub(crate) fn cube_positions(
 /// - Prefer **power-of-two `step_length`** for better performance.
 ///
 /// # Parameters
+///
 /// - `index`: linear input index
 /// - `num_steps`: number of snaking steps in a strip
 /// - `step_length`: number of elements in each step (must be > 0)

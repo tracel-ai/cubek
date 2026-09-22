@@ -1,7 +1,6 @@
 //! The coordinate arithmetic the tile's [`Layout`](cubecl::std::tensor::layout::Layout)s share:
-//! unraveling a flat index over a group of extents, joining groups, and the box test each
-//! layout answers `is_in_bounds` with. Kept apart from the layouts themselves so a reshaper and a
-//! projection reach the same `unravel` rather than each spelling one out.
+//! unraveling a flat index over a group of extents, joining groups, and the `is_in_bounds` box
+//! test. Kept apart so a reshaper and a projection reach the same `unravel`.
 
 use cubecl::{
     prelude::*,
@@ -36,9 +35,8 @@ pub(crate) fn unravel(extents: &Coords<u32>, i: u32) -> Coords<u32> {
 /// [`unravel`] over extents that are known at comptime.
 ///
 /// The same arithmetic, but the divisor and the modulus are constants rather than the `runtime()`
-/// entries a [`const_coords`] group carries, so each digit folds instead of being computed. What a
-/// caller unraveling a comptime index nest wants; the runtime form stays for extents read off a
-/// layout.
+/// entries a [`const_coords`] group carries, so each digit folds. For a caller unraveling a
+/// comptime index nest; the runtime form stays for extents read off a layout.
 #[cube]
 pub(crate) fn unravel_const(#[comptime] extents: Vec<usize>, i: u32) -> Coords<u32> {
     let n = comptime!(extents.len());
@@ -57,7 +55,7 @@ pub(crate) fn unravel_const(#[comptime] extents: Vec<usize>, i: u32) -> Coords<u
     out
 }
 
-/// Concatenates three coordinate groups, which is what a matrix over `[batch…, row…, col…]` assembles.
+/// Concatenates three coordinate groups: what a matrix over `[batch…, row…, col…]` assembles.
 #[cube]
 pub(crate) fn concat3(batches: &Coords<u32>, rows: &Coords<u32>, cols: &Coords<u32>) -> CoordsDyn {
     let mut out = CoordsDyn::new();
@@ -103,18 +101,16 @@ pub(crate) fn within_2d(pos: Coords2d, shape: Coords2d) -> bool {
 /// `acc` takes its coordinate from `acc_coords`, a contracted one from `reduce_coords`. An axis in
 /// neither is a routed one, which [`Space::contracted`] leaves out, so its one value sits at zero.
 ///
-/// `acc_coords` is indexed by `acc.position(axis)`, so it holds one entry per axis of the
-/// accumulator's *space*, in that space's order — not one per edge of whatever matrix a caller
-/// reads the accumulator as. A caller holding a `(row, col)` cell owes the unravel over each
-/// edge's axes before it gets here.
+/// `acc_coords` is indexed by `acc.position(axis)`: one entry per axis of the accumulator's
+/// *space*, in that order, not per edge of the matrix a caller reads it as. A caller holding a
+/// `(row, col)` cell owes the unravel over each edge's axes before it gets here.
 ///
 /// `width` is the operand's line width; only its innermost axis is addressed in lines (matching an
-/// `nd`/[`matrix_transparent`](crate::Tile::matrix_transparent) view), so it alone divides by
-/// `width`. `scale_acc_branch` decides whether that division also applies when the fastest axis
-/// falls in the acc branch: a caller whose `acc_coords` already hold raw element coordinates
-/// (reduce's accumulator cell) needs it there too; a caller whose acc-branch coordinate arrives
-/// pre-divided into a line index by construction (mma's `col`, the gather leaf's own `nr`-loop
-/// step) does not, and must pass `false` to avoid dividing twice.
+/// `nd`/[`matrix_transparent`](crate::Tile::matrix_transparent) view), so it alone divides by it.
+///
+/// `scale_acc_branch` says whether that division also applies when the fastest axis falls in the
+/// acc branch: raw element `acc_coords` (reduce's cell) need it; a coordinate already a line index
+/// (mma's `col`, the gather leaf's `nr`-loop step) must pass `false` or is divided twice.
 #[cube]
 pub(crate) fn resolve_nd_coords(
     #[comptime] operand: Space,

@@ -9,13 +9,9 @@ use crate::{
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
-/// The two are one value because they are never separately true. A `Space` is the axes and
-/// their extents; a `Level` cuts *that* space, and its child spaces below. Held apart they are
-/// two arguments a call site states in the right order or the wrong one, and nothing says which
-/// space a list of levels was cut for — the mismatch compiles, and a level that names an axis
-/// the space does not hold, or an edge the extents never asked for, becomes a wrong answer
-/// rather than a refusal. Held together, everything read off the pair — the leaf, the overhangs,
-/// the grid — is a method, and there is no second space to read it against.
+/// One value because they are never separately true: a `Level` cuts *that* `Space`. Held apart,
+/// nothing says which space the levels were cut for: a level naming an axis the space lacks is a
+/// wrong answer, not a refusal. Held together, every read is a method; there is no second space.
 ///
 /// It is the pair, not a new statement: the levels are the kernel's, outermost first, and
 /// nothing here reorders or invents one. What the kernel *does* with a level — where it opens an
@@ -23,8 +19,7 @@ use crate::{
 ///
 /// What a kernel is handed ([`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg)),
 /// and what its loops iterate: `for cube in space` deals the first level, `for plane in cube` the
-/// next, down to the leaf. The levels ride along comptime; the space's dynamic extents are the
-/// runtime half.
+/// next, down to the leaf. Levels are comptime; the space's dynamic extents are the runtime half.
 #[derive(CubeType, CubeLaunch, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Partitioning {
     pub(crate) space: Space,

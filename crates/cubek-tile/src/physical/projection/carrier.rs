@@ -1,19 +1,18 @@
 //! Where a [`Projection`]'s runtime coefficients sit once they are packed for launch.
 //!
-//! A projection's scales, offsets and divisors are each [`Static`](Scale::Static) or
-//! [`Dynamic`](Scale::Dynamic). The dynamic ones travel to the kernel in two flat carriers, one
-//! unsigned (coefficients and divisors) and one signed (offsets), and every reader has to agree
-//! on the order: the projection's own, physical axis major, terms within an axis, each axis's
-//! divisor after its terms. That agreement is what this file is; the launch fills the carriers by
-//! walking the maps in order, and the kernel indexes them with the same functions.
+//! A projection's [`Dynamic`](Scale::Dynamic) scales, offsets and divisors travel to the kernel in
+//! two flat carriers, one unsigned (coefficients and divisors) and one signed (offsets), in the
+//! projection's own order: physical axis major, terms within an axis, each axis's divisor last.
+//!
+//! This file is that agreement: the launch fills the carriers by walking the maps in order, and
+//! the kernel indexes them with the same functions.
 
 use super::Projection;
 
 impl Projection {
     /// Where physical axis `pa`'s term `t` sits in the runtime coefficient carrier, or `None` when
-    /// it is [`Static`](Scale::Static). The order is the projection's own, physical axis major and
-    /// term order within, each axis's [`Dynamic`](Divisor::Dynamic) divisor last, so a caller fills
-    /// the carrier by walking the maps in order.
+    /// it is [`Static`](Scale::Static): physical axis major, term order within, each axis's
+    /// [`Dynamic`](Divisor::Dynamic) divisor last: a caller fills it by walking the maps in order.
     pub fn dynamic_scale_index(&self, pa: usize, t: usize) -> Option<usize> {
         if !self.physical_axis(pa).terms()[t].scale.is_dynamic() {
             return None;

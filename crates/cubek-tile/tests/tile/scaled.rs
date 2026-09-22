@@ -1,16 +1,13 @@
-//! `c.mm(&a.scaled(&ComptimeOption::new_Some(s)), &b, semiring)`: the contraction with one factor scaled by a **real
-//! operand**, on the factor the kernel wrote it on.
+//! `c.mm(&a.scaled(&ComptimeOption::new_Some(s)), &b, semiring)`: the contraction with one
+//! factor scaled by a **real operand**, on the factor the kernel wrote it on.
 //!
 //! *Which* operand is not stated: the scales' own axes say it. A scale over the output's columns
 //! is a fact about the rhs's columns and nothing else could fold it in; anything else scales the
-//! lhs. One verb, then, and the same kernel body serves both: `(a ⊗ s) · b` and `a · (b ⊗ s)` are
-//! the same sum of terms, differing only in where the factor folds in cheapest.
+//! lhs. One verb serves both: `(a ⊗ s) · b` and `a · (b ⊗ s)` are one sum, folded where cheapest.
 //!
-//! The point is what the kernel signature says. The values are a tensor of values, the scales are
-//! a tensor of scales, both are named at the call, and the arithmetic that folds one into the
-//! other is a verb the kernel writes. Nothing decodes behind a read and nothing rides a binding's
-//! side channel, so the scales' element type is just the type of the tensor bound, which is why
-//! `f16` scales work here without a widening pass anywhere.
+//! The point is what the kernel signature says: the values are a tensor of values, the scales a
+//! tensor of scales, both named at the call, and the fold is a verb the kernel writes. Nothing
+//! decodes behind a read or rides a side channel, so `f16` scales work with no widening pass.
 //!
 //! The scales resolve at their own granularity through their own projection: a plain `KB` for a
 //! per-block scale, `KI` too for a per-element one, an omitted axis for a broadcast.
@@ -153,8 +150,6 @@ fn two_level_scaled_matmul<E: Numeric, S: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     // The operand is the hierarchy: block scales, under the factor that covers a tile of their
     // tiles. Nothing states a scheme.
-    // The operand is the hierarchy: block scales, under the factor that covers a tile of their
-    // tiles. Said twice, and nothing states a scheme.
     let blocks = blocks.tile(comptime!(space.clone()));
     let global = global.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
@@ -542,10 +537,9 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
 /// **A scale over no axis at all.** The base of the hierarchy: one number covering everything,
 /// which is what a per-tensor level is.
 ///
-/// It is spelled the way every other granularity is — by which axes the operand distinguishes. The
-/// nest still names `[M, KB]`, so the scales' matrix has the same shape any other level's would;
-/// the projection addresses neither, so every position reads the same value. Nothing divides, and
-/// nothing states "per tensor" anywhere.
+/// Spelled the way every other granularity is, by which axes the operand distinguishes. The nest
+/// still names `[M, KB]`, so the scales' matrix has the shape any other level's would; the
+/// projection addresses neither, so every position reads the same value. Nothing says "per tensor".
 #[test]
 fn a_scale_over_no_axis_covers_everything() {
     let (rows, cols, block, blocks) = (4, 4, 8, 2);
@@ -737,10 +731,9 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
     }
 }
 
-/// **The one that pays for the design.** The scales are an `f16` tensor and the kernel reads
-/// them as one: no widening pass, no scheme saying otherwise, no way for the two to disagree.
-/// A scale is whatever its tensor holds because it is a tensor. The values stay `f32`, and the
-/// halves in `s` are exact in both.
+/// **The one that pays for the design.** The scales are an `f16` tensor and the kernel reads them
+/// as one: no widening pass, no scheme saying otherwise, no way for the two to disagree. A scale
+/// is whatever its tensor holds because it is a tensor. The values stay `f32`, `s` exact in both.
 #[test]
 fn f16_scales_are_read_as_f16() {
     let (rows, cols, block, blocks) = (4, 4, 8, 4);
@@ -1283,9 +1276,11 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
 }
 
 /// **Scales served as lines along the columns, into a promoted accumulator.** The twin of
-/// [`lhs_scales_are_served_several_at_a_time`], and the case the two old asserts disagreed about:
-/// the memory nest admitted a wide scale line where its step folded one contracted value, the
-/// promoted block where the scales rode the rhs, and nothing exercised the second.
+/// [`lhs_scales_are_served_several_at_a_time`].
+///
+/// The case the two old asserts disagreed about: the memory nest admitted a wide scale line where
+/// its step folded one contracted value, the promoted block where the scales rode the rhs, and
+/// nothing exercised the second.
 ///
 /// The block walks its columns under a constant ordinal, which is what a wide read needs — a fold
 /// is a lane of the read it arrived in, and a lane index is not addressable at runtime. So lane
@@ -1741,9 +1736,8 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
 }
 
 /// **A packed stage lands on the tensor cores.** `e2m1` values eight to a word, stored `{N, K}`
-/// with the contraction innermost as a weight lies, staged one scale block at a time as the
-/// words they are, then unpacked and scaled into the landing the fragment loads. The stage is a
-/// quarter the size a served one would be, and the answer is the same.
+/// with the contraction innermost as a weight lies, staged one scale block at a time as the words
+/// they are, then unpacked and scaled into the fragment's landing: a quarter the stage, one answer.
 #[test]
 fn a_packed_stage_lands_on_the_tensor_cores() {
     let (rows, cols, block, blocks) = (8, 8, 8, 4);
@@ -1858,9 +1852,10 @@ const NI: Axis = Axis(5);
 
 /// `c = a · (b ⊗ s)` over a weight **stored in tile order**, walked the way the memory-bound
 /// kernel walks it on either arm: the cube grid, the planes, the chunks a plane walks under one
-/// load of its scales, the steps of a chunk, and the level under them — the lanes of a register
-/// block, or the one fragment a plane holds. The scales of a chunk are loaded once, into the
-/// plane's lanes or its own shared window, and every step reads its scale from there.
+/// load of its scales, the steps of a chunk, and below them the block's lanes or the one fragment.
+///
+/// The scales of a chunk are loaded once, into the plane's lanes or its own shared window, and
+/// every step reads its scale from there.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
@@ -2179,15 +2174,15 @@ enum Arm {
 }
 
 /// **A plane holds its scales for a chunk.** The weight lies in tile order and its scales in
-/// lines, `[NB][KB][NI]`; a plane walks the contraction a chunk of thirty-two blocks at a time,
-/// loads the chunk's thirty-two lines once — lane `t` holding line `t`, or the plane's own
-/// shared window holding them all — and every step reads the scale of the value it lands or
-/// contracts at that value's coordinates, a word at a time.
+/// lines, `[NB][KB][NI]`; a plane walks the contraction a chunk of thirty-two blocks at a time and
+/// loads the chunk's thirty-two lines once: lane `t` holds line `t`, or a shared window holds all.
+///
+/// Every step reads the scale of the value it lands or contracts at that value's coordinates, a
+/// word at a time.
 ///
 /// On the register arm a lane holds one column over one block a step, the plane's lanes are a
-/// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane
-/// holds one fragment, eight rows by half a tile's columns, and walks a chunk a fragment's
-/// depth at a time.
+/// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane holds
+/// one fragment, eight rows by half a tile's columns, and walks a chunk one fragment depth a step.
 fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
     let (rows, n_tiles, chunk, chunks) = (8, 2, 32, 2);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
@@ -2288,11 +2283,11 @@ fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
 }
 
 /// `c = a · (b ⊗ s)` over a weight stored in tile order, walked as the compute-bound body walks
-/// it on the tensor cores: a plane holds a partition of fragments — two rows of two columns —
-/// and at every step lands the step's window of each factor once, the activation as it lies,
-/// the weight unpacked and scaled by the chunk's lines; the partition's fragments then load
-/// from the landing a depth at a time, the quant block being the loop inside the partition's
-/// depth: two instructions under one scale.
+/// it on the tensor cores: a plane holds a partition of fragments (two rows of two columns) and at
+/// every step lands each factor's window once, the weight unpacked and scaled by the chunk's lines.
+///
+/// The partition's fragments then load from the landing a depth at a time, the quant block being
+/// the loop inside the partition's depth: two instructions under one scale.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(

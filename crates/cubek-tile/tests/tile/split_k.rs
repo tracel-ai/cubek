@@ -6,9 +6,10 @@
 //!
 //! `K` is declared as two axes, `(KB, KI)`, addressing one physical `K` through
 //! [`PhysicalAxisMap::disjoint`] exactly as a quantization block does. `KB` counts the splits and
-//! rides the cubes; `KI` is the position inside one split and is what the contraction walks. The
-//! output is bound over `[KB, M, N]`, so it *spans* the axis being split, and the whole thing is
-//! a batched matmul whose batch is the split index: no cube shares a cell with any other and
+//! rides the cubes; `KI` is the position inside one split and is what the contraction walks.
+//!
+//! The output is bound over `[KB, M, N]`, so it *spans* the axis being split, and the whole thing
+//! is a batched matmul whose batch is the split index: no cube shares a cell with any other and
 //! nothing is partial. A second pass reduces the `KB` axis away.
 //!
 //! Two kernels and an extra buffer, but the engine is untouched, which is what makes this the
@@ -257,8 +258,7 @@ fn a_split_of_one_is_the_whole_contraction() {
 ///
 /// Probed rather than assumed. `f32` atomic add is there on metal (native and through wgpu's MSL
 /// path), CUDA from sm60, and the CPU runtime, but WGSL only has it behind
-/// `SHADER_FLOAT32_ATOMIC`, so this is a real fork and not a formality. Nothing else in this file
-/// is worth reading if it fails.
+/// `SHADER_FLOAT32_ATOMIC`: a real fork, not a formality; nothing else here matters if it fails.
 #[cube(launch)]
 fn atomic_add_probe(out: &mut Tensor<Atomic<f32>>) {
     if UNIT_POS == 0 {
@@ -302,9 +302,8 @@ fn the_device_folds_floats_atomically_across_cubes() {
 // -- The in-kernel combine --------------------------------------------------
 //
 // The same split, without the second buffer and the second pass: `K` stays one axis, the cubes
-// each take a slice of it, and the drain folds each cube's contribution into the output
-// atomically. What the workspace pipeline above does in two kernels, this does in one, and the
-// two must agree.
+// each take a slice, and the drain folds each cube's contribution into the output atomically.
+// What the workspace pipeline above does in two kernels, this does in one, and the two must agree.
 
 const K: Axis = Axis(4);
 
@@ -471,9 +470,8 @@ fn the_atomic_drain_agrees_with_the_workspace() {
 /// `K` rides the cubes, so a lane owns its columns and a cube owns its slice of the contraction.
 ///
 /// The control on the writer election. A fold from lanes that repeat each other's work has to be
-/// made by one of them, and a fold from lanes that each hold their own cells has to be made by
-/// all of them: an election that cannot tell the two apart is wrong one way or the other, and
-/// this is the half that a blanket "lane zero writes" would silently drop.
+/// made by one of them, and a fold from lanes that each hold their own cells by all of them: an
+/// election that cannot tell them apart is wrong one way; "lane zero writes" would drop this half.
 #[test]
 fn an_atomic_drain_with_lanes_of_their_own() {
     let client = cubecl::test_device().client();
@@ -642,12 +640,12 @@ fn an_atomic_drain_folds_across_planes() {
 
 /// The output contracted *in place*, with no register accumulator at all.
 ///
-/// The verb is still `mm_with`, and it is still true: across all the cubes the operation is `c = a·b`.
-/// What the split moves is the *init* it owns. A cell belongs to several cubes, so none of them
-/// may seed it, and the buffer instead arrives holding the fold's identity: zeroed before the
-/// launch rather than in the kernel. Every write is then a `+=` into a cell that already holds
-/// what the other cubes contracted, and nothing is ever read back, because folding is itself the
-/// read-modify-write.
+/// The verb is still `mm_with`, and it is still true: across all the cubes the operation is
+/// `c = a·b`. What the split moves is the *init* it owns: a cell belongs to several cubes, so
+/// none may seed it, and the buffer arrives holding the fold's identity: zeroed before the launch.
+///
+/// Every write is then a `+=` into a cell that already holds what the other cubes contracted, and
+/// nothing is ever read back, because folding is itself the read-modify-write.
 #[cube(launch)]
 fn atomic_split_matmul_in_place<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -749,10 +747,9 @@ fn a_folding_output_contracts_in_place() {
 
 // -- The in-kernel combine, tensor-core leaf --------------------------------------------------
 //
-// A cmma accumulator stores through its intrinsic, which replaces and elects no writer, so on
-// its own it cannot drain into a store that folds. Opened with a scratch, the partition bounces
-// each fragment through shared memory and the lanes add its cells one atomic at a time — the
-// same fold the register block does, reached through the one door a fragment has.
+// A cmma accumulator stores through its intrinsic, which replaces and elects no writer, so on its
+// own it cannot drain into a store that folds. Opened with a scratch, the partition bounces each
+// fragment through smem, its one door, and the lanes fold its cells atomically, as a block does.
 
 /// [`atomic_split_matmul`]'s tensor-core twin: the cube's slice of `K` staged and contracted in
 /// fragments, the accumulator opened with a scratch and drained through the folding sink.
@@ -912,10 +909,9 @@ fn a_fragment_folds_into_the_output_through_the_scratch() {
 
 // -- A plain copy into a folding destination -------------------------------------------------
 //
-// `copy_from` is the memory-to-memory door, and it picks its path on the destination's shape.
-// A folding destination has no address, so it must take the layout walk; before the write mode
-// entered that condition, a destination that was whole, unmasked and plain took the straight
-// path instead and panicked about addresses rather than about folding.
+// `copy_from` is the memory-to-memory door, and it picks its path on the destination's shape. A
+// folding destination has no address, so it must take the layout walk; before the write mode
+// entered that condition a whole, unmasked, plain one took the straight path and panicked there.
 
 /// Whether this device's buffers take an `f32` atomic add; reported rather than silently passed.
 fn adds_atomically(client: &cubecl::client::Client) -> bool {

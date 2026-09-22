@@ -1,9 +1,10 @@
-//! The attention fold end-to-end on tiles: the score and mix leaves
-//! ([`ops::attention`]) interleaved with the softmax step, the walk owned by
-//! the kernel: the miniature of the routine a client (metabolic) launches.
-//! GQA rides the axes: `q` stacks its group over the same query block
-//! (group-major rows), `k`/`v` simply omit the group axis, and the probe's
-//! `q_rows` maps rows back to query positions for the causal predicate.
+//! The attention fold end-to-end on tiles: the score and mix leaves ([`ops::attention`])
+//! interleaved with the softmax step, the walk owned by the kernel: the miniature of the routine
+//! a client (metabolic) launches.
+//!
+//! GQA rides the axes: `q` stacks its group over the same query block (group-major rows), `k`/`v`
+//! omit the group axis, and the probe's `q_rows` maps rows back to query positions for the causal
+//! predicate.
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
@@ -319,16 +320,13 @@ fn fold_in_place() {
 /// ones, so a plane owns whole fragments where a unit owned columns, and the softmax between them
 /// is unchanged scalar shared-memory work.
 ///
-/// The flow llama.cpp's `fa.metal` runs: Q@K into fragments stored straight to shared memory, the
-/// online softmax on plain floats, the running total rescaled where it lies, then P@V folding onto
-/// it through an accumulator fragment loaded back from shared memory. Nothing persists in a
-/// fragment across a barrier.
-/// The fold on the hardware instruction, written as the matmul kernel is. Each plane owns
-/// `rows / planes` query rows through all three phases: the score is a plane-resident
-/// accumulator stored into the plane's window of the smem score tile, the softmax runs on that
-/// window, and the mix contracts into an accumulator opened once before the walk, kept in
-/// fragments across it and rescaled where it sits. K and V are staged per block for the whole
-/// cube, and those two fills are the only cube barriers.
+/// The flow llama.cpp's `fa.metal` runs: Q@K into fragments stored to shared memory, the online
+/// softmax on plain floats with the running total rescaled where it lies, then P@V folding onto an
+/// accumulator fragment loaded back from smem. Nothing persists in a fragment across a barrier.
+///
+/// Here each plane owns `rows / planes` query rows through all three phases: the score fills the
+/// plane's window of the smem score tile, the softmax runs on that window, and the mix folds into
+/// an accumulator kept in fragments across the walk. The per-block K/V fills are the only barriers.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_fold_cmma_kernel<E: Float>(
@@ -430,10 +428,9 @@ fn attention_fold_cmma_kernel<E: Float>(
         let k_cells = k_w.over(&comptime!(Level::every(&[(S, frag), (D, frag)])));
         let v_cells = v_w.over(&comptime!(Level::every(&[(S, frag), (V, frag)])));
 
-        // The probe states the masking once, and the walk takes it as its bound: a block every
-        // row masks throughout is one the walk never steps to, rather than two contractions
-        // whose scores the softmax then discards. Its rows still mask per element, for the last
-        // block's tail and its diagonal.
+        // The probe states the masking once and the walk takes it as its bound: a block every row
+        // masks throughout is never stepped to, rather than contracted and discarded by the
+        // softmax. Its rows still mask per element, for the last block's tail and its diagonal.
         let probe = MaskProbe {
             origin_q: 0,
             row_origin,
@@ -759,10 +756,9 @@ fn fold_cmma_spanned_leading_axis() {
     run_cmma::<f32>((16, 32, 16, 16, 16, 8), 24, true, true, 1, 1);
 }
 
-/// Two planes, each owning eight of sixteen rows through the score, the softmax and the mix,
-/// with the accumulator resident in fragments and rescaled by the plane's own corrections. A
-/// plane reading another's rows, a correction applied to the wrong row, or a drain landing on
-/// the wrong window comes out here as a wrong row.
+/// Two planes, each owning eight of sixteen rows through the score, the softmax and the mix, with
+/// the accumulator resident in fragments and rescaled by the plane's own corrections. A plane
+/// reading another's rows, a misapplied correction, or a misplaced drain shows up as a wrong row.
 #[test]
 fn fold_cmma_two_planes() {
     run_cmma::<f32>((16, 32, 16, 16, 16, 8), 24, true, true, 2, 1);
@@ -1150,11 +1146,9 @@ fn split_fold_idle_teams() {
     run_split((4, 4, 2, 1, 16, 8, 8, 8), 10, false, 1);
 }
 
-/// The streaming fold: the decode shape with no score tile, where each plane (one
-/// per split team on the cube's y dim) streams its S slice through
-/// [`StreamFold`], and the same split ending as the shared-memory fold
-/// (publish, [`merge_splits`](cubek_tile::Tile), weighted drain) closes it.
-/// No barriers until the ending.
+/// The streaming fold: the decode shape with no score tile. Each plane (one per split team on the
+/// cube's y dim) streams its S slice through [`StreamFold`] with no barrier until the same split
+/// ending as the shared-memory fold (publish, [`merge_splits`](cubek_tile::Tile), weighted drain).
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn attention_stream_test_kernel<W: Size>(
@@ -1325,11 +1319,9 @@ fn stream_fold_idle_teams() {
     run_stream((4, 2, 16, 8, 8), 10, 1);
 }
 
-/// Plain MHA decode: one row, a full 128-wide head, scalar reads. The shape the
-/// per-lane budget is tightest on — `per_lane` is at its maximum, so every team
-/// stages a full `CHUNK` of K and V lines on top of the query and accumulator
-/// lines it already holds. The GQA cases above all carry several rows, which
-/// divides `per_lane` down and hides that.
+/// Plain MHA decode: one row, a full 128-wide head, scalar reads. The per-lane budget is tightest
+/// here: `per_lane` is at its maximum, so every team stages a full `CHUNK` of K and V lines on top
+/// of its query and accumulator lines. The GQA cases carry several rows, which divides it down.
 #[test]
 fn stream_fold_decode_mha_wide() {
     run_stream((2, 1, 40, 32, 128), 33, 1);

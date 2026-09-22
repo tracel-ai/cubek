@@ -4,11 +4,13 @@
 //! logical position still determines a cell and every window is still a dense box. An operand
 //! spanning `(KB, KI)` must therefore read exactly as one spanning `K` does, and cost the same.
 //!
-//! Why an axis would be split at all: an axis exists when an operand *distinguishes* it. A
-//! quantized operand's scales vary over the block index and not over the position inside the
-//! block, so those are two axes. The first two tests pin a split *contracted* axis with no scales
-//! at all, then one adds them; the last two split an axis the *output* spans, which is the shape a
-//! per-column-block scale needs and the one the accumulator's edges had to be derived to allow.
+//! An axis exists when an operand *distinguishes* it: a quantized operand's scales vary over the
+//! block index and not over the position inside the block, so those are two axes, which is why an
+//! axis gets split at all.
+//!
+//! The first two tests split a *contracted* axis, without scales and then with them; the last two
+//! split an axis the *output* spans, the shape a per-column-block scale needs and the one the
+//! accumulator's edges had to be derived to allow.
 
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -341,14 +343,12 @@ fn scales_omit_the_axis_inside_the_block() {
 }
 
 // A partition whose stride misses its block is refused where the projection and the nest first
-// meet (`Projection::validate_composition`). That refusal is unit-tested host-side in
-// `physical::projection::base`, not here: this one would fire inside the kernel, on a worker
-// thread, where `#[should_panic]` never sees it and the launch just returns zeros.
+// meet (`Projection::validate_composition`), unit-tested host-side in `physical::projection::base`
+// rather than here: in the kernel it fires on a worker thread `#[should_panic]` never sees.
 
 /// **An axis the output spans, split.** `N` is spelled `(NB, NI)` and the accumulator spans both,
-/// so its column edge is two axes rather than one. Reading the trailing axis alone would take `NB`
-/// for the row edge and contract against a matrix that is not there; the edge instead reaches out
-/// from the innermost axis for as long as the axes are not the lhs's, and here neither is.
+/// so its column edge is two axes. Reading the trailing axis alone would take `NB` for the row
+/// edge and contract against nothing; the edge instead spans every innermost axis not the lhs's.
 #[test]
 fn a_split_output_axis_contracts_the_same() {
     let (rows, blocks, inside, depth) = (4, 2, 4, 8);
@@ -653,10 +653,9 @@ fn wide_scaled_matmul<E: Numeric, SW: Size>(
     }
 }
 
-/// **The scales read as a line.** Their innermost axis is `NB`, the block index, which is an axis
-/// they actually vary over, so a read of four serves four *different* scales covering four blocks
-/// of columns. Which lane a value line takes is its ordinal along the shared edge, and the block
-/// walks its columns under a constant one.
+/// **The scales read as a line.** Their innermost axis is `NB`, the block index, an axis they
+/// actually vary over, so a read of four serves four *different* scales covering four blocks of
+/// columns. A value line's lane is its ordinal along the shared edge, constant across the block.
 #[test]
 fn scales_are_served_several_at_a_time() {
     let (rows, blocks, inside, depth, lanes) = (4, 4, 2, 8, 4);

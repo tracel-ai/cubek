@@ -7,20 +7,16 @@ use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
 /// The fractional part a rational coordinate mapping leaves behind, scaled:
 /// `coefficient * frac((coord[axis] * numerator_scale + numerator_offset) / divisor)`.
 ///
-/// The one term a resampling filter argument needs that is not affine, and so cannot be composed
-/// out of [`AffineCoordinate`](super::AffineCoordinate) and [`Sum`](super::Sum): `frac` is a
-/// floor, and the floor of a negative numerator is not the truncating division a kernel emits.
-/// The fraction is carried in integers rather than evaluated in floats because the residue is then
-/// exact however far out the coordinate runs. `coefficient` folds a sign in, so the subtraction in
-/// `x = tap - phase` needs no negation recipe.
+/// The one non-affine term a resampling filter argument needs, so not composable out of
+/// [`AffineCoordinate`](super::AffineCoordinate) and [`Sum`](super::Sum): `frac` is a floor, not
+/// the truncating division a kernel emits. Integers keep the residue exact however far out it runs.
 ///
-/// The three terms name the same fraction [`PhysicalAxisMap`](crate::PhysicalAxisMap) does and
-/// take its sign discipline: an unsigned scale and divisor, a signed offset. They are plain
-/// runtime values rather than comptime ones so that a single path serves a ratio fixed when the
-/// kernel is compiled and one fixed at launch, which is what [`Fold`] is for: a constant scale,
-/// offset or divisor folds away at expand time exactly as a comptime field would, and a genuinely
-/// runtime one stays. Like a [`PhysicalAxisMap`], this cannot run an axis backwards; a flip
-/// belongs in the coordinate handed to the recipe, not in the fraction.
+/// The three terms name the same fraction [`PhysicalAxisMap`](crate::PhysicalAxisMap) does, with
+/// its sign discipline (unsigned scale and divisor, signed offset). They are runtime values under
+/// [`Fold`], so a constant folds away at expand time like a comptime field; a runtime one stays.
+///
+/// `coefficient` folds a sign in, so `x = tap - phase` needs no negation recipe. Like a
+/// [`PhysicalAxisMap`], this cannot run an axis backwards; a flip belongs in the coordinate.
 #[derive(CubeType, Clone)]
 pub struct Phase<T: Float> {
     /// Multiplies the whole fraction, unlike the two terms below, which sit inside the numerator.

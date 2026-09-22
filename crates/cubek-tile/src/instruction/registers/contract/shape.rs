@@ -141,10 +141,9 @@ impl ContractShape {
     /// The extents `col` unravels over: the column group, the innermost counted in the cells one
     /// block column holds rather than in scalars, so the product is `nr`.
     ///
-    /// Several axes wherever the lhs stops the column group short of the row edge, which is every
-    /// contraction whose accumulator carries axes no operand pairs it over — a depthwise
-    /// convolution's `[batch, out_h, out_w, channel]` against a filter spanning the channel and
-    /// the taps alone.
+    /// Several axes wherever the lhs stops the column group short of the row edge: every
+    /// contraction whose accumulator carries axes no operand pairs it over, like a depthwise
+    /// convolution's `[batch, out_h, out_w, channel]` against a filter over channel and taps alone.
     pub(crate) fn column_line_extents(&self) -> Vec<usize> {
         line_extents(
             &self.space,
@@ -167,7 +166,7 @@ impl ContractShape {
     }
 
     /// The block's size in scalars, which is what [`RegisterBlock::budget`] counts: `mr * nr`
-    /// lines of `contracted_per_step * aw` (exactly one of the two exceeds 1), or `spread` sink cells. Past
+    /// lines of `contracted_per_step * aw` (exactly one exceeds 1), or `spread` sink cells. Past
     /// the budget a schedule rolls its loops rather than keeping the block in registers.
     pub fn scalars(&self) -> usize {
         self.mr * self.nr * self.contracted_per_step * self.aw * self.spread
@@ -212,9 +211,8 @@ mod tests {
     /// the channel all in it.
     ///
     /// The gather nest resolves an operand's read by `acc.position(axis)`, so the coordinate it
-    /// assembles has to carry one entry per axis of the accumulator's space. It used to carry
-    /// `batch… , row, col` regardless, which is one entry short per extra column axis and read
-    /// past the end of its own list.
+    /// assembles must carry one entry per axis of the accumulator's space, not a fixed
+    /// `batch…, row, col` that falls one entry short per extra column axis.
     #[test]
     fn the_cell_coordinate_covers_every_accumulator_axis() {
         let acc = Space::new(&[(B, 1), (OH, 1), (OW, 4), (C, 4)]);

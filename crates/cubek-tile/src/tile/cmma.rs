@@ -22,9 +22,8 @@ pub struct CmmaData<T: Numeric> {
     #[cube(comptime)]
     pub shape: (usize, usize),
     /// This plane's window of shared memory, one tile wide, that the fragment bounces through
-    /// where its intrinsic cannot do the work: a row-wise op, or a drain into a store that folds.
-    /// Opened on the accumulator ([`with_scratch`](Tile::with_scratch)) and carried by every
-    /// fragment taken off it.
+    /// where its intrinsic cannot do the work (a row-wise op, a drain into a folding store). Opened
+    /// on the accumulator ([`with_scratch`](Tile::with_scratch)) and carried by every fragment.
     pub scratch: ComptimeOption<Shared<[T]>>,
     /// Units in one plane, stated with the scratch: what a bounce deals the tile's cells across.
     #[cube(comptime)]

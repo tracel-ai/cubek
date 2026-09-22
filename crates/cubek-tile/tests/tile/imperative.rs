@@ -55,11 +55,12 @@ fn ring_matmul<E: Numeric>(
 /// [`ring_matmul`] with the fill the kernel's own: same schedule, and the operands are written
 /// into the slot by this kernel rather than by the ring.
 ///
-/// What it proves is that the two halves are separable. The prologue, the lap that prefetches one
-/// region ahead of the one it computes, and the publish on the draining consume are the part
-/// worth sharing; where the bytes come from and what happens to them on the way in is the
-/// kernel's. Here the fill is the ring's own sources and the answer is unchanged, which is the
-/// honest control: a fill that read somewhere else would be testing the caller, not the seam.
+/// What it proves is that the two halves are separable: the prologue, the lap that prefetches one
+/// region ahead of the one it computes, and the publish on the draining consume are the part worth
+/// sharing; where the bytes come from and what happens to them on the way in is the kernel's.
+///
+/// Here the fill is the ring's own sources and the answer is unchanged, which is the honest
+/// control: a fill that read somewhere else would be testing the caller, not the seam.
 #[cube(launch)]
 fn ring_matmul_filled_by_the_kernel<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,

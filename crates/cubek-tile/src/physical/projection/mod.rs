@@ -21,9 +21,7 @@
 //!
 //! A projection is written one buffer dim at a time ([`Projection::dims`], in [`build`]) and,
 //! once the buffer's real extents and strides are in hand, asked which axis is contiguous and
-//! whether the dims alias ([`query`]). It holds no extents and no strides of its own: which dim
-//! carries `k` is a fact about the operand, and how far `k` steps is a fact about the
-//! allocation, and they arrive from different places.
+//! whether the dims alias ([`query`]). It holds no extents or strides: those are the allocation's.
 
 mod base;
 mod build;

@@ -1,10 +1,8 @@
 //! The `mr × nr` register block: seed it from the accumulator, contract into it, commit it back.
 //!
-//! The block is a parameter, not something this owns, which is the only difference between its
-//! two callers: the memory-backed nest ([`contract`](super::contract)) seeds a local one
-//! and commits it back per visit, while a promoted [`RegisterData`] *is* the
-//! accumulator and keeps it across the whole walk. How the block is contracted is the same either
-//! way.
+//! The block is a parameter, not owned here, which is the only difference between its two
+//! callers: the memory-backed nest ([`contract`](super::contract)) seeds a local one and commits
+//! it back per visit, while a promoted [`RegisterData`] *is* the accumulator across the walk.
 
 use cubecl::prelude::*;
 
@@ -18,9 +16,8 @@ use crate::*;
 /// is the same either way — the lines of the contraction, in order.
 ///
 /// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
-/// contracted axis and the block's lanes are partials of one cell that [`commit`] folds. At one,
-/// the rhs lines along the accumulator and the lhs's line is taken a lane at a time: with fixed
-/// comptime extracts when `lane_fanout` (GPU), else a lane at a time at runtime.
+/// contracted axis and the block's lanes are one cell's partials, folded by [`commit`]. At one, the
+/// rhs lines along the accumulator and the lhs is read lane by lane (comptime under `lane_fanout`).
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn contract<
@@ -153,10 +150,9 @@ pub(crate) fn contract<
 /// At `contracted_per_step > 1` both reads are whole lines off the contracted axis, which is why
 /// the rhs is addressed `(n, k_line)` there and `(k, n)` otherwise.
 ///
-/// `fixed` names the component to take when the walk unrolled its lanes, so `extract` names a
+/// `fixed` names the component to take when the walk unrolled its lanes, so `extract` is a
 /// constant and the backend folds the fan-out's `mr` repeated line reads into one; `None` takes
-/// `lane` at runtime. `k_line` stays a parameter so each lane body sees one loop-invariant line
-/// index.
+/// `lane` at runtime. `k_line` stays a parameter so each lane body sees a loop-invariant index.
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<
@@ -212,10 +208,9 @@ fn rank1_update<
         };
         #[unroll(unroll)]
         for n in 0..nr {
-            // One step of the accumulation's own semiring, a single `fma` where that is the
-            // ordinary one: `+= a * b` would lower to a separate mul + dependent add (no
-            // fast-math contraction on the CPU backend), doubling the FP instruction count and
-            // serializing the accumulate.
+            // One step of the semiring, a single `fma` for the ordinary one: `+= a * b` would
+            // lower to a separate mul + dependent add (no fast-math contraction on the CPU
+            // backend), doubling the FP instruction count and serializing the accumulate.
             c[i * nr + n] = semiring.step::<Vector<E, V>>(a, b[n], c[i * nr + n]);
         }
     }
@@ -237,10 +232,9 @@ fn assert_spread(contracted_per_step: usize, spread: usize, accumulator_width: u
     );
 }
 
-/// Whether a spread block's lanes have to be tested against the sink's extent before they touch
-/// it. The N-D nest rounds `nr` up, so the last column's spare lanes address cells past `cols`
-/// exactly when `spread` does not divide it. Nothing masks them downstream: an unchecked
-/// [`AccumulateView`] writes straight through.
+/// Whether a spread block's lanes must be tested against the sink's extent before they touch it.
+/// The N-D nest rounds `nr` up, so the last column's spare lanes address cells past `cols` exactly
+/// when `spread` does not divide it, and an unchecked [`AccumulateView`] writes straight through.
 ///
 /// The nest reads this too: those same spare lanes address a column past the *operands'* last
 /// line, so a walk that has dropped its guard would read one line outside them.
@@ -251,14 +245,12 @@ pub(crate) fn spread_guard(spread: usize, cols: usize) -> bool {
 /// Seed the `mr × nr` register block from the accumulator, once per batch matrix, so the steps
 /// never touch memory. The algebra is the view's, stated where it was built.
 ///
-/// Where a step consumes more than one, the block's lanes are partials of one cell, so its value seeds
-/// lane 0 alone and the rest start at the identity.
+/// Where a step consumes more than one, the block's lanes are partials of one cell, so its value
+/// seeds lane 0 alone and the rest start at the identity.
 ///
-/// At `spread > 1` they instead hold neighbouring cells of a scalar sink. A padded shared-memory
-/// operand serves whole lines even when its global source and sink are scalar, so each block
-/// column gathers `spread` sink cells into its lanes. `cols` is the sink's own innermost extent,
-/// which the block's `nr * spread` lanes overhang when `spread` does not divide it
-/// ([`spread_guard`]).
+/// At `spread > 1` they instead hold neighbouring cells of a scalar sink: a padded shared-memory
+/// operand serves whole lines even when source and sink are scalar, so each block column gathers
+/// `spread` sink cells. `cols` is the sink's innermost extent; see [`spread_guard`] for overhang.
 #[cube]
 pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
@@ -316,9 +308,10 @@ pub(crate) fn seed<E: Numeric, V: Size, A: Size>(
     c
 }
 
-/// The twin of [`seed`]: commit the block back once the whole contraction is folded into it,
-/// collapsing the block's lanes first where they hold partials of one cell (`contracted_per_step > 1`), or
-/// scattering them across scalar sink cells where they hold neighbours (`spread > 1`).
+/// The twin of [`seed`]: commit the block back once the contraction is folded into it, first
+/// collapsing lanes holding one cell's partials (`contracted_per_step > 1`) or scattering lanes
+/// holding neighbours (`spread > 1`).
+///
 /// Through [`AccumulateView`], so a lane-split accumulator reduces across lanes on the way out
 /// rather than the leaf knowing it was split.
 #[cube]

@@ -315,9 +315,8 @@ fn copy_quantized_per_tensor_packed_matches_reference() {
 }
 
 /// Block-quantized: each `bm×bn` block carries its own scale, and one flat fill spans the whole
-/// grid: the per-line lookup picks each line's scale. The last case's tiles overhang the tensor,
-/// running the checked path; only the valid region is asserted, so it pins that masking leaves
-/// live values (and their scales) intact, not that the overhang itself is suppressed.
+/// grid, the per-line lookup picking each line's scale. The last case's tiles overhang the tensor
+/// (checked path); only the valid region is asserted: masking must not touch live values or scales.
 #[test]
 fn copy_quantized_block_matches_reference() {
     run_quantized_block(8, 8, 4, 4, None); // square 2×2 grid of blocks
@@ -332,10 +331,11 @@ fn copy_quantized_block_matches_reference() {
 /// so it runs on every backend.
 ///
 /// Each case's inner block is a multiple of the served line, as the launch requires (a line may
-/// not split a `u32`, nor straddle two scales). A whole word is one served line, so a scheme's
-/// packing factor must fit the device's vector width: a case that doesn't is skipped loudly,
-/// the same gate a selector applies when it picks widths from the device (only WGSL-bound
-/// targets cap at 4; cpu/cuda serve any width).
+/// not split a `u32`, nor straddle two scales).
+///
+/// A whole word is one served line, so a scheme's packing factor must fit the device's vector
+/// width: a case that doesn't is skipped loudly, the same gate a selector applies when it picks
+/// widths from the device (only WGSL-bound targets cap at 4; cpu/cuda serve any width).
 #[test]
 fn copy_quantized_packed_u32_matches_reference() {
     // Q8S packs 4 values per u32.
@@ -348,10 +348,10 @@ fn copy_quantized_packed_u32_matches_reference() {
 }
 
 /// Packed-u32 lookup-quantized ([`QuantMode::Lookup`]): each 4-bit field is an index into a
-/// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not
-/// affine in the index: a decode that fell back to the integer cast would reconstruct the
-/// index itself and miss every entry. Block scales beside it pin that the two lookups (block →
-/// scale, field → entry) stay independent.
+/// 16-entry table, so `out == table[q] * scale[i/bm, j/bn]`. The table is deliberately not affine
+/// in the index: a decode that fell back to the integer cast would miss every entry.
+///
+/// Block scales beside it pin that the two lookups (block → scale, field → entry) stay independent.
 #[test]
 fn copy_quantized_lookup_matches_reference() {
     let (m, n, bm, bn) = (8usize, 8usize, 4usize, 8usize);
@@ -422,9 +422,10 @@ fn copy_quantized_lookup_matches_reference() {
 
 /// Sub-word packed-u32: the output's line is **narrower than a word**, so the source serves
 /// one-line-per-word (a scalar `u32` binding) and the fill unpacks each word across
-/// `num_quants / w` lines (`scan_words`). This is the regime a vec4 device reads 4- and 2-bit
-/// caches in; it needs no width skip, which is the point. The innermost block covers whole
-/// words, `scan_words`' scale rule.
+/// `num_quants / w` lines (`scan_words`), whose scale rule is that a block covers whole words.
+///
+/// This is the regime a vec4 device reads 4- and 2-bit caches in; it needs no width skip, which
+/// is the point.
 #[test]
 fn copy_quantized_subword_matches_reference() {
     run_quantized_subword(8, 8, QuantValue::Q4S, 4, 8, 4); // 8 per word, 2 lines each
@@ -649,7 +650,7 @@ fn copy_quantized_two_level_matches_reference() {
     run_quantized_block(16, 8, 4, 4, Some(0.25));
     run_quantized_block(6, 8, 4, 4, Some(0.5)); // M's last block is half-filled: masked overhang
     // The whole window fits inside one block: `QuantInfo::uniform()` holds, so this exercises
-    // `uniform_scale()`'s whole-scale fold instead of the per-position one under `KnownScale::Global`.
+    // `uniform_scale()`'s whole-scale fold, not the per-position one under `KnownScale::Global`.
     run_quantized_block(4, 4, 4, 4, Some(0.5));
 }
 
@@ -662,8 +663,7 @@ fn copy_quantized_two_level_zero_global_scale_zeroes_output() {
 
 /// A two-level scheme with no global binding is refused by the builder, host-side and on the
 /// caller's thread: a missing per-tensor scale would otherwise reconstruct every value short by
-/// that factor. (The kernel-side backstop in `QuantTileArg::tile` cannot be pinned here: it fires
-/// on the compile server, where a panic is swallowed rather than propagated.)
+/// that factor. (`QuantTileArg::tile`'s backstop fires on the compile server, which swallows it.)
 #[test]
 #[should_panic(expected = "takes as many scale bindings")]
 fn two_level_without_global_scale_refused_by_the_builder() {
@@ -703,8 +703,7 @@ fn two_level_scheme(bm: usize, bn: usize) -> QuantScheme {
 
 /// Copy a `bm×bn` block-scaled Q8S input and check each element used its own block's scale:
 /// `out == q * scale[i/bm, j/bn]`, or with `global` set (two-level), `out == q * scale[..] *
-/// global`, the global scale bound as a third 1-element tensor. The space tiles into block-sized
-/// leaves, so a tensor that doesn't fill its last block overhangs it.
+/// global`, bound as a third 1-element tensor; block-sized leaves, so a short last block overhangs.
 fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<f32>) {
     let client = cubecl::test_device().client();
     if !i8::supported_uses(&client).contains(TypeUsage::Conversion) {

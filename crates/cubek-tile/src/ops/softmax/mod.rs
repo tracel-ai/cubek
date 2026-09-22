@@ -2,12 +2,9 @@
 //! along the score axis absent from the state's space (label-driven, like
 //! matmul's contraction).
 //!
-//! Deliberately leaf-scoped: softmax runs on already-lowered tiles, inside a
-//! verb that owns the walk: attention's forward interleaves the step with
-//! the value mma and rescales its accumulator by the returned correction; the
-//! backward's row ops join here later. No self-lowering: if a standalone
-//! softmax verb ever needs to walk levels and normalize, its schedules land
-//! then, on a real client.
+//! Deliberately leaf-scoped: softmax runs on already-lowered tiles, inside a verb that owns the
+//! walk (attention's forward interleaves the step with the value mma and rescales its accumulator
+//! by the returned correction). No self-lowering: a standalone softmax verb's schedules land later.
 //!
 //! Nothing but the step. The row plumbing a caller wraps it in is
 //! [`rows`](super::rows) and the split ending is attention's; either one

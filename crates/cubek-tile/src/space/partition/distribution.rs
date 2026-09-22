@@ -38,9 +38,8 @@ pub enum ComputeScope {
 }
 
 /// The tiles instance `pos` of `instances` takes of a `grid` dealt in runs of `run`: the whole
-/// run where the host proved the grid `divides`, else the run cut short where the grid ends
-/// inside it (contiguous), or the turns left to it (interleaved). Saturating, so an instance
-/// past the grid takes nothing.
+/// run where the host proved the grid `divides`, else the run cut where the grid ends (contiguous)
+/// or the turns left to it (interleaved). Saturating: an instance past the grid takes nothing.
 #[cube]
 pub(crate) fn instance_tiles(
     grid: usize,

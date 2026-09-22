@@ -16,21 +16,21 @@ use crate::*;
 
 /// What a storage tile is to the window an operand is read through.
 ///
-/// A storage-tiled tensor's storage tile corresponds to a tile of the kernel's space, a level of its
-/// nest, the way a scale block is an axis of a scaled matmul: the space owns the block size, so
-/// a window that descended through that level lies inside one storage tile by construction rather than
-/// by a divisibility check. Settled by the launch, the one place the buffer's real extents and
-/// the kernel's levels are both in hand, which refuses a tensor whose storage tile is no level's tile.
-/// Read in the kernel as the comptime fact it is; [`at`](crate::Tile::at) turns
-/// [`Tiled`](Storage::Tiled) into [`Contiguous`](Storage::Contiguous) on the way down.
+/// A storage-tiled tensor's storage tile is the tile of a level of the kernel's nest, as a scale
+/// block is an axis of a scaled matmul: the space owns the block size, so a window that descended
+/// through that level lies inside one storage tile by construction, not by a divisibility check.
+///
+/// Settled by the launch, which has the buffer's real extents and the kernel's levels in hand
+/// and refuses a tensor whose storage tile is no level's tile. A comptime fact in the kernel;
+/// [`at`](crate::Tile::at) makes [`Tiled`](Storage::Tiled) [`Contiguous`](Storage::Contiguous).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
     /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
     /// window lies inside it.
     Strided,
-    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this window
-    /// sits above that level and spans several storage tiles, so only a layout walk addresses its
-    /// cells. Descending through level `i` makes it [`Held`](Storage::Contiguous).
+    /// Storage-tiled, the storage tile being the tile of level `i` of the kernel's nest; this
+    /// window sits above that level and spans several storage tiles, so only a layout walk
+    /// addresses its cells. Descending through level `i` makes it [`Contiguous`](Self::Contiguous).
     Tiled(usize),
     /// Storage-tiled and inside one storage tile: one contiguous run from its origin, addressed
     /// affinely by the storage tile's own strides, which is what a fragment load and a stage fill
@@ -39,9 +39,8 @@ pub enum Storage {
 }
 
 /// The comptime half of an operand: which axes of the kernel's one [`Space`] its buffer spans and
-/// how they address its physical axes ([`Projection`], carrying the storage tiling in its own
-/// repetition). What a kernel feeds [`Tile::of`](crate::Tile::of) alongside that space, which `of`
-/// projects onto the logical axes, so no operand carries its own copy of the space.
+/// how they address its physical axes ([`Projection`], the storage tiling in its own repetition).
+/// [`Tile::of`](crate::Tile::of) projects that space onto them, so no operand carries a copy.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TileSpec {
     /// How this operand's logical axes address its buffer's physical ones.
@@ -53,9 +52,8 @@ pub struct TileSpec {
     /// filled from this operand, which emits its fill straight-line when it knows the count.
     pub units: usize,
     /// How this operand's values sit in its binding ([`Packing::Plain`] unless stated): the one
-    /// fact a packed operand needs and a plain binding cannot carry, since the binding names the
-    /// stored element and a `u32` says nothing about the values inside it. Stated by
-    /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
+    /// fact a packed operand needs and a plain binding cannot carry, since a `u32` says nothing
+    /// of the values in it. Stated by [`packed`](Self::packed) or a quantized operand's scheme.
     pub packing: Packing,
     /// What this operand's storage tiles are to the windows it is read through. Settled by
     /// the launch; [`Strided`](Storage::Strided) for every untiled operand, which is every operand
@@ -65,9 +63,8 @@ pub struct TileSpec {
 
 impl TileSpec {
     /// An operand's spec from its mapping; the optional halves take safe defaults (unchecked, cube
-    /// size unknown) and have setters of their own. [`Projection::validate`] does
-    /// not run here: its innermost-identity rule turns on the served vector width, which a spec
-    /// does not carry and only [`Tile::of`](crate::Tile::of) knows.
+    /// size unknown) and have setters. [`Projection::validate`] does not run here: its rule on the
+    /// innermost identity needs the served width, which only [`Tile::of`](crate::Tile::of) knows.
     pub fn new(projection: Projection) -> Self {
         TileSpec {
             projection,
@@ -90,9 +87,8 @@ impl TileSpec {
     }
 
     /// State that this operand's binding holds `u32` words packing several values each, one per
-    /// `field`-wide slot, innermost axis first; the tile then serves those values, unpacking at
-    /// the read. Values and nothing else: scales are a second tensor and folding them in is a verb
-    /// the kernel writes, so a packed operand is sayable on its own and a q4 kernel needs no scheme.
+    /// `field`-wide slot, innermost axis first; the tile unpacks at the read. Values only: scales
+    /// are a second tensor, folded in by a verb the kernel writes, so a q4 kernel needs no scheme.
     pub fn packed(self, field: impl Into<Field>) -> Self {
         self.packing(Packing::Packed {
             field: field.into(),
@@ -107,7 +103,7 @@ impl TileSpec {
     }
 
     /// What this operand's storage tiles are to the windows it is read through; settled by
-    /// the launch, [`Strided`](Storage::Strided) by default (which is what every untiled operand is).
+    /// the launch, [`Strided`](Storage::Strided) by default (every untiled operand).
     pub fn storage(mut self, storage: Storage) -> Self {
         self.storage = storage;
         self
@@ -132,10 +128,9 @@ impl TileSpec {
         self
     }
 
-    /// State the boundary mode for every coordinate axis. An all-`None` list collapses to the
-    /// empty one, so "nothing is checked" has one representation. Shaped over
-    /// [`coordinate_rank`](Projection::coordinate_rank), not the buffer's physical rank, which
-    /// storage tiling splits into fragments no [`Window`](crate::Window) addresses.
+    /// State the boundary mode for every coordinate axis; an all-`None` list collapses to the empty
+    /// one, so "nothing is checked" has one representation. Shaped over the
+    /// [`coordinate_rank`](Projection::coordinate_rank), not the storage-tiled physical rank.
     pub fn boundaries(mut self, boundaries: &[Option<Boundary>]) -> Self {
         let coord_rank = self.projection.coordinate_rank();
         assert!(
@@ -163,10 +158,9 @@ impl TileSpec {
     }
 }
 
-/// One strided operand as a single launch argument: the plain tensor (whose element type
-/// carries the served width) paired with its comptime [`TileSpec`], so a tensor can never
-/// be launched against another operand's spec. Only per-operand facts live here; the
-/// kernel's one [`Space`] arrives separately and [`tile`](TileArg::tile) projects it.
+/// One strided operand as a single launch argument: the plain tensor (its element type carrying
+/// the served width) paired with its comptime [`TileSpec`], so a tensor is never launched against
+/// another's spec. The one [`Space`] arrives on its own; [`tile`](TileArg::tile) projects it.
 #[derive(CubeType, CubeLaunch)]
 pub struct TileArg<'a, E: Numeric, V: Size> {
     pub tensor: &'a Tensor<Vector<E, V>>,
@@ -175,10 +169,8 @@ pub struct TileArg<'a, E: Numeric, V: Size> {
 }
 
 /// An output several instances accumulate into, as a single launch argument: [`TileArg`]'s twin
-/// for a destination whose writes add rather than replace. Bound as `Atomic<E>`, which carries no
-/// served width, so the width is stated where the tile is served ([`tile`](Self::tile)), as
-/// [`tile_packed`](TileArg::tile_packed) states its value type: the tile addresses lines of that
-/// width and the drain adds each line's scalars one atomic at a time.
+/// for a destination whose writes add, not replace. `Atomic<E>` carries no served width, so
+/// [`tile`](Self::tile) states it; the drain adds each line's scalars one atomic at a time.
 ///
 /// **The buffer arrives holding the monoid's identity.** A cell here belongs to several instances
 /// and none of them may seed it, so the seeding happens once at the launch. Nothing can check it:
@@ -220,9 +212,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 
     /// [`tile`](Self::tile) with the element stated instead of inferred: `E` is what the binding
     /// *stores* and `O` what the tile reads out of it, unpacked where the binding states a
-    /// [`packing`](TileSpec::packed) and read as it lies where it does not. The two differ for a
-    /// packed binding, whose element is the word rather than the value, so `O` cannot be read off
-    /// the binding and is written at the call.
+    /// [`packing`](TileSpec::packed); a packed element is the word, so `O` cannot be read off it.
     ///
     /// This is what a kernel writes when how its operand is stored is the binding's business and
     /// not its own: a factor packed into words and a factor lying at its own element are the same
@@ -236,10 +226,9 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
         .under(comptime!(space.levels().to_vec()))
     }
 
-    /// [`tile`](Self::tile) for a gather whose affine map is not all comptime: `coefficients` holds
-    /// one value per [`Scale::Dynamic`](crate::Scale) term and one per
-    /// [`Divisor::Dynamic`](crate::Divisor) axis, `offsets` one signed value per
-    /// [`Offset::Dynamic`](crate::Offset) axis. [`Tile::of_gathered`] states the order.
+    /// [`tile`](Self::tile) for a partly runtime gather map: `coefficients` holds one value per
+    /// [`Scale::Dynamic`](crate::Scale) term and [`Divisor::Dynamic`](crate::Divisor) axis, and
+    /// `offsets` one per [`Offset::Dynamic`](crate::Offset), in [`Tile::of_gathered`]'s order.
     pub fn tile_gathered(
         &self,
         #[comptime] space: Partitioning,
@@ -259,8 +248,7 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
 
 /// One quantized operand as a single launch argument: the storage-typed values tensor, its scales,
 /// and the comptime spec + scheme. A quantized tensor is one thing, so its pieces travel together;
-/// [`TileArg`] is its plain twin. The kernel's one [`Space`] arrives separately and
-/// [`tile`](QuantTileArg::tile) projects it.
+/// [`TileArg`] is its plain twin; [`tile`](QuantTileArg::tile) projects the kernel's [`Space`].
 #[derive(CubeType, CubeLaunch)]
 pub struct QuantTileArg<'a, E: Numeric, V: Size> {
     pub values: &'a Tensor<Vector<E, V>>,
@@ -313,10 +301,9 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
     }
 }
 
-/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor
-/// owns the box, the [`TmaDynLayout`] the coordinate rules) paired with its comptime
-/// [`TileSpec`], [`TileArg`]'s twin (a tensor map cannot ride a plain tensor binding).
-/// Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
+/// The TMA [`Delivery`]'s argument: the tensor-map [`ViewMut`] carrier (the descriptor owns the
+/// box, the [`TmaDynLayout`] the coordinate rules) with its comptime [`TileSpec`]; [`TileArg`]'s
+/// twin. Built by [`TmaTileArgLaunch::tensor_map`](crate::TmaTileArgLaunch::tensor_map).
 #[derive(CubeType, CubeLaunch)]
 pub struct TmaTileArg<E: Numeric> {
     pub view: ViewMut<'static, E, CoordsDyn>,
@@ -348,8 +335,7 @@ impl<E: Numeric> TmaTileArg<E> {
 pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantScheme) {
     // `Native` holds one element per value; `PackedU32` carries `num_quants` of them per `u32`,
     // which the view unpacks on read. A packed store must pack along the innermost (contiguous,
-    // vectorized) axis, the one whose lanes the view lays down contiguously. Sub-byte
-    // native stores aren't wired.
+    // vectorized) axis, whose lanes the view lays down contiguously. Sub-byte native isn't wired.
     match scheme.store {
         QuantStore::Native => {}
         QuantStore::PackedU32(dim) => {
@@ -390,10 +376,9 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
 }
 
 impl<E: Numeric> TmaTileArgLaunch<E> {
-    /// Load a TMA tensor-map as a tile argument for the operand over `axes`. `dims` is the
-    /// operand's logical runtime `(batch, rows, cols)`; `transposed` flags a col-major descriptor
-    /// whose inner pair the layout swaps back. Width and storage do not apply to a tensor map, so
-    /// the spec is built here rather than by the caller.
+    /// Load a TMA tensor-map as a tile argument over `axes`. `dims` is the operand's logical
+    /// runtime `(batch, rows, cols)`; `transposed` flags a col-major descriptor whose inner pair
+    /// the layout swaps back. Width and storage don't apply to a tensor map, so the spec is built.
     pub fn tensor_map(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
@@ -412,11 +397,9 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
         Self::new(view, TileSpec::direct(axes))
     }
 
-    /// Load a storage-tiled operand's tensor-map as a tile argument over `axes`. The descriptor
-    /// is the physical `[.., R/tr, C/tc, tr, tc]` the data is stored in and its box is one
-    /// storage tile, so where [`tensor_map`](Self::tensor_map) collapses an operand to
-    /// `(batch, row, col)` this one keeps the stored rank and splits the coordinate instead.
-    /// `dims` is the operand's logical runtime `(rows, cols)`.
+    /// Load a storage-tiled operand's tensor-map over `axes`; `dims` is its logical `(rows, cols)`.
+    /// The descriptor is the stored `[.., R/tr, C/tc, tr, tc]` and its box one storage tile, so
+    /// unlike [`tensor_map`](Self::tensor_map) it keeps the stored rank and splits the coordinate.
     pub fn tensor_map_stored(
         tensor_map: TensorMapArg<Tiled>,
         axes: &[Axis],
@@ -435,10 +418,11 @@ impl<E: Numeric> TmaTileArgLaunch<E> {
 }
 
 /// In-kernel tensor-map layout for a storage-tiled operand: splits the logical `(row, col)` into
-/// the descriptor's physical `(row / tr, col / tc, row % tr, col % tc)`. The same arithmetic
-/// [`Storage::Tiled`] does on the cooperative path, and the box origin of a load is tile-aligned
-/// (the storage tile is the stage, which the routine enforces), so the inner pair is always `0`.
-/// `shape()` stays logical, so a tile's `bound` aligns with its space.
+/// the descriptor's `(row / tr, col / tc, row % tr, col % tc)`, as [`Storage::Tiled`] does on the
+/// cooperative path. `shape()` stays logical, so a tile's `bound` aligns with its space.
+///
+/// A load's box origin is tile-aligned (the storage tile is the stage, which the routine
+/// enforces), so the inner pair is always `0`.
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct TmaStoredLayout {
     /// Logical `(rows, cols)` of the operand.
@@ -482,9 +466,8 @@ impl Layout for TmaStoredLayout {
 }
 
 /// In-kernel tensor-map layout: aligns the operand's logical [`CoordsDyn`] to the descriptor's 3-D
-/// `(batch, row, col)`. A rank-2 operand gets batch `0`, a unit batch broadcasts, and a
-/// `transposed` descriptor has its inner pair swapped back. `shape()` stays logical, so a tile's
-/// `bound` aligns with its space whatever the descriptor order.
+/// `(batch, row, col)`: a rank-2 operand gets batch `0`, a unit batch broadcasts, a `transposed`
+/// descriptor's inner pair swaps back. `shape()` stays logical, so a tile's `bound` fits its space.
 #[derive(CubeType, CubeLaunch, Clone)]
 pub struct TmaDynLayout {
     /// Logical `(batch, rows, cols)` of the operand.

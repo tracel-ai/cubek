@@ -32,11 +32,9 @@ impl Extent {
     }
 }
 
-/// Every axis's extent: the comptime `kinds` (`Static(n)` | `Dynamic`) plus, for the `Dynamic` ones,
-/// their runtime `sizes`. The kinds stay comptime so static tile counts fold and the walk unrolls;
-/// the sizes are the runtime half a `Dynamic` axis needs, which a comptime `Extent` can't hold. Only
-/// the top operation space carries any sizes (filled from the operands); `divide` yields `Static`
-/// children, so the whole interior has none.
+/// Every axis's extent: the comptime `kinds` (`Static(n)` | `Dynamic`) plus, for the `Dynamic`
+/// ones, their runtime `sizes`. Kinds stay comptime so static tile counts fold and the walk
+/// unrolls. Only the top operation space carries sizes; `divide` yields `Static` children.
 #[derive(CubeType, CubeLaunch, Clone, Debug)]
 pub struct Extents {
     #[cube(comptime)]
@@ -56,9 +54,9 @@ impl Extents {
 
 #[cube]
 impl Extents {
-    /// Axis `p`'s tile count for a sub-tile `edge`: a `Static` axis folds to a comptime constant (so
-    /// the walk loop unrolls), a `Dynamic` axis ceil-divides its runtime size. The `Static`/`Dynamic`
-    /// match is comptime, so an all-`Static` extents never touches `sizes`.
+    /// Axis `p`'s tile count for a sub-tile `edge`: a `Static` axis folds to a comptime constant
+    /// (so the walk loop unrolls), a `Dynamic` axis ceil-divides its runtime size. The match is
+    /// comptime, so an all-`Static` extents never touches `sizes`.
     pub fn count(&self, #[comptime] p: usize, #[comptime] edge: usize) -> usize {
         match comptime!(self.kinds.get(self.kinds.axis_at(p))) {
             Extent::Static(n) => comptime!(n.div_ceil(edge)).runtime(),
@@ -176,10 +174,9 @@ impl Space {
 }
 
 impl Space {
-    /// This space as a kernel argument, cut by no level: the comptime extents, and for a
-    /// [`Dynamic`](Extent::Dynamic) axis its size read off `concrete`, the same space with every
-    /// extent real. A launch that states levels hands the kernel
-    /// [`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg) instead.
+    /// This space as a kernel argument, cut by no level: the comptime extents, plus each
+    /// [`Dynamic`](Extent::Dynamic) axis's size read off `concrete` (this space, extents real). A
+    /// launch with levels hands [`Launcher::partitioning_arg`](crate::Launcher::partitioning_arg).
     pub fn launch_arg(&self, concrete: &Space) -> PartitioningLaunch {
         PartitioningLaunch::new(self.space_launch(concrete), Vec::new())
     }
@@ -244,10 +241,9 @@ impl Space {
         self.with_dynamic(&axes)
     }
 
-    /// Stamp the real `extents` onto this space's axes, the launch's
-    /// concrete twin of a kernel-form space built with [`dynamic`](Space::dynamic),
-    /// which is what geometry, overhang and the launch grid are read off. Every listed axis must
-    /// be one of this space's.
+    /// Stamp the real `extents` onto this space's axes: the launch's concrete twin of a
+    /// kernel-form space built with [`dynamic`](Space::dynamic), which geometry, overhang and the
+    /// launch grid are read off. Every listed axis must be one of this space's.
     pub fn with_extents(mut self, extents: &[(Axis, usize)]) -> Self {
         for &(axis, _) in extents {
             assert!(
@@ -270,8 +266,7 @@ impl Space {
     }
 
     /// Every axis is [`Static`](Extent::Static), so the walk is fully comptime. True at every
-    /// interior tiling level, since [`divide`](Space::divide) yields `Static` children; only the top
-    /// merge can be dynamic.
+    /// interior level, since a level's child is `Static`; only the top merge can be dynamic.
     pub(crate) fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
     }
@@ -290,8 +285,7 @@ impl Space {
 
     /// Whether `axis` overhangs its tiling under `levels`: some level's edge fails to divide the
     /// extent handed to it (this space's at the first level, the parent edge below), leaving a
-    /// partial tile that needs masking. A dynamic axis panics: the answer
-    /// is the concrete space's, never the kernel-form one's.
+    /// partial tile that needs masking. A dynamic axis panics: only the concrete space can answer.
     pub(crate) fn overhangs(&self, levels: &[Level], axis: Axis) -> bool {
         assert!(
             !self.is_dynamic(axis),
@@ -316,10 +310,9 @@ impl Space {
             })
     }
 
-    /// The smallest space containing every `part`, axes in first-appearance order. A
-    /// shared axis is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else
-    /// conflict); an omitted axis broadcasts along all of it. E.g.
-    /// `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
+    /// The smallest space containing every `part`, axes in first-appearance order. A shared axis
+    /// is broadcast-merged via [`merge_level`] (`n ∪ n = n`, `1 ∪ n = n`, else conflict); an
+    /// omitted axis broadcasts along all of it. E.g. `{M,K} ∪ {K,N} ∪ {M,N} = {M,N,K}`.
     pub fn merge(parts: &[&Space]) -> Space {
         let mut entries: SmallVec<[(Axis, Extent); MAX_AXES]> = SmallVec::new();
 
@@ -345,10 +338,8 @@ impl Space {
     /// How many contracted values one step consumes off a `width`-wide line of this operand.
     ///
     /// A line folds into one accumulator cell only where it runs along the fastest of
-    /// `contracted`, which is absent from the accumulator, so its lanes are partials of one cell
-    /// rather than cells that must stay apart. Skipping the test merges cells that must stay
-    /// separate: wrong numbers, no crash. The width must divide the axis, which is why a folded
-    /// walk needs no masked tail.
+    /// `contracted`, absent from the accumulator, so its lanes are partials of one cell; skipping
+    /// the test silently merges distinct cells. The width must divide the axis: no masked tail.
     pub(crate) fn contracted_per_step(&self, contracted: &[Axis], width: usize) -> usize {
         let lined = self.axis_at(self.rank() - 1);
         let folds = width > 1
@@ -358,14 +349,12 @@ impl Space {
     }
 
     /// The axes `operands` jointly contract against `output`: [`contracting`](Space::contracting)
-    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. How many
-    /// there are is what picks a leaf's instruction, so every site that deduces a 2-D single-`K`
-    /// shape asks here rather than reading an operand's rank.
+    /// over their [`merge`](Space::merge), so an axis only one operand spans still counts. Their
+    /// number picks a leaf's instruction, so a site deducing a 2-D single-`K` shape asks here.
     ///
     /// An axis is kept if it varies or every operand shares it. One that does neither, as a routed
     /// axis ([`Walk::routed`](crate::Walk::routed)) leaves, is a fixed coordinate, not a sum. A
-    /// shared axis stays even at one value, since separable factors are named by contracted
-    /// position.
+    /// shared axis stays even at one value: separable factors are named by contracted position.
     pub fn contracted(operands: &[&Space], output: &Space) -> SmallVec<[Axis; MAX_AXES]> {
         let merged = Space::merge(operands);
         // Read raw: a `Dynamic` extent is not known to be one, and asking its comptime size panics.
@@ -393,10 +382,9 @@ impl Space {
 
     /// Whether `lhs` and `rhs` enumerate their contracted axes in the same order.
     ///
-    /// A fragment groups its `k` edge by extent alone ([`MatrixAxes::whole`](crate::MatrixAxes::whole)), so
-    /// two operands listing the same axes in different orders contract mismatched positions with
-    /// no shape mismatch to catch it. Each operand's order is its own [`TileSpec`](crate::TileSpec)
-    /// axis list, which is stated per operand, so nothing upstream forces them to agree.
+    /// Fragments group `k` by extent alone ([`MatrixAxes::whole`](crate::MatrixAxes::whole)), so
+    /// operands listing the same axes in different orders contract mismatched positions, unseen by
+    /// shape checks; each operand's [`TileSpec`](crate::TileSpec) axis order is its own.
     ///
     /// A routed axis sits in one operand's list only, so each list is narrowed to the joint
     /// [`contracted`](Space::contracted) axes first. Compared raw, every routed contraction would
@@ -559,9 +547,8 @@ mod contraction_tests {
     }
 
     /// A cube cut whose edge is the whole axis deals out one tile, so it is not a split at all.
-    /// The reason the question is asked of the level's whole space: a mapping parameterised by
-    /// its split count writes the same cut with `splits` of one, and refusing that would refuse
-    /// the control it is compared against.
+    /// The level's whole space is asked because a mapping parameterised by its split count writes
+    /// the same cut at `splits` one, and refusing it refuses the control it is compared against.
     #[test]
     fn a_cube_cut_of_the_whole_axis_is_not_a_split() {
         let space = Space::new(&[(M, 4), (N, 4), (K, 8)]);

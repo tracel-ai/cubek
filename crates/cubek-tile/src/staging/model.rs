@@ -2,23 +2,21 @@
 //! sides. No device: the point is to answer, before a kernel is ever launched, the question a
 //! device answers by hanging.
 //!
-//! The model is the acquire/release pairs of [`Staging`](crate::Staging) read as a state
-//! machine. A producer unit waits `empty` on the parity its `writes` was not born at, fills if
-//! it is the elected one, arrives `full`, and flips. A consumer unit waits `full` on its
-//! `reads`, reads, arrives `empty`, and flips. Both walk the same regions, slot
-//! `region % depth`, and neither knows where the other is.
+//! The model is [`Staging`](crate::Staging)'s acquire/release pairs read as a state machine.
+//! A producer unit waits `empty` on the parity its `writes` was not born at, fills if elected,
+//! arrives `full`, flips; a consumer waits `full` on its `reads`, reads, arrives `empty`, flips.
+//!
+//! Both walk the same regions, slot `region % depth`, and neither knows where the other is.
 //!
 //! What it checks is what a wrong arrival count does: nobody reads a slot before it holds its
-//! region, nobody refills one while a reader is still in it, both sides take exactly as many
-//! steps as there are regions, each slot's two parities end where they started, and — the one
-//! that matters — no reachable state leaves every unfinished unit waiting.
+//! region, nobody refills one while a reader is in it, both sides take one step per region, each
+//! slot's parities end where they started, and, above all, no reachable state deadlocks.
 
 use std::collections::HashSet;
 
 /// One mbarrier: the arrivals that complete a phase, how many have come, and the parity of the
-/// phase in progress. A wait on the parity in progress blocks; any other parity passes. That is
-/// why a producer's first wait, on the parity its counter was *not* born at, goes straight
-/// through a barrier nobody has arrived on.
+/// phase in progress. A wait on the parity in progress blocks; any other passes, which is why a
+/// producer's first wait, on the parity its counter was *not* born at, goes straight through.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Mbarrier {
     arrivals: u32,
@@ -324,8 +322,7 @@ fn a_slot_freed_by_fewer_units_than_it_waits_for_hangs() {
 
 /// And why `full` counts every producer. Published by the elected unit alone, a filling plane
 /// that has not yet reached its first wait finds `empty` already flipped by the consumers, waits
-/// for a parity that has gone by, and never moves again. Counting its arrival is what holds the
-/// window open until it gets there.
+/// for a parity that has gone by, and never moves again; counting its arrival holds the window.
 #[test]
 #[should_panic(expected = "deadlocks")]
 fn a_slot_published_by_the_elected_unit_alone_lets_a_second_filling_plane_drift() {

@@ -1,20 +1,14 @@
 //! The [`Walk`]: the regions one [`Level`] of a [`Space`] hands the instance running the code.
-//! A kernel's loops rarely name one: `for cube in space` and `for plane in cube` iterate the
-//! [`Partitioning`](crate::Partitioning)'s levels in turn, and a walk is what such a loop builds
-//! ([`Region::walk`]). A level the kernel states beside its loops is walked with
-//! [`over`](Region::over).
+//! Kernel loops rarely name one: `for cube in space` and `for plane in cube` each build a walk
+//! of the next level ([`Region::walk`]); [`over`](Region::over) walks a level stated beside them.
 //!
-//! A walk is a sequence with random access and nothing else: it computes once how many regions
-//! this cube or plane owns at the level ([`total`](Walk::total)) and how an index maps to one
-//! ([`region`](Walk::region)): decode the index as an odometer over the level's walked axes,
-//! last declared axis fastest, and add this instance's share on the distributed axes. It never
-//! iterates the instances themselves, the hardware does that, and it holds no current region:
-//! `for region in walk` is `for i in 0..total { region(i) }`. What a walk can be told is its
-//! order ([`reversed`](Walk::reversed)), whether it unrolls ([`unrolled`](Walk::unrolled)), the
-//! run of the flat grid it takes ([`window`](Walk::window)), and one axis's coordinate outright
-//! ([`routed`](Walk::routed)), which is how a value the kernel read from data places a window
-//! that no loop coordinate could. Holding several regions at once (double buffering) is a
-//! schedule's doing ([`pipelined`](crate::pipelined)), which indexes the walk by hand.
+//! A walk is a sequence with random access and nothing else: how many regions this instance owns
+//! at the level ([`total`](Walk::total)) and which one an index names ([`region`](Walk::region)).
+//! It holds no current region: `for region in walk` is `for i in 0..total { region(i) }`.
+//!
+//! Its knobs: order ([`reversed`](Walk::reversed)), unrolling ([`unrolled`](Walk::unrolled)), a run
+//! of the flat grid ([`window`](Walk::window)), one axis's coordinate ([`routed`](Walk::routed)).
+//! Holding several at once is a schedule's job: [`pipelined`](crate::pipelined) indexes it by hand.
 //!
 //! Each region is a [`Region`], the path of levels from the space to that box; a [`Tile`]
 //! windows itself to it with `at`, applying the steps below its own depth.
@@ -47,10 +41,9 @@ pub struct Walk {
     /// Per-axis coordinate the kernel routed rather than the odometer counted, `0` on every axis
     /// it did not ([`routed`](Walk::routed)).
     route: Coords<u32>,
-    /// Which axes [`route`](Self::route) speaks for, so the rest fold their digit as ever and
-    /// pay nothing. A routed axis takes that coordinate whole: an instance position folded in
-    /// would hand each lane of a distributed axis a different one, which is not what naming a
-    /// coordinate means.
+    /// Which axes [`route`](Self::route) speaks for, so the rest fold their digit as ever and pay
+    /// nothing. A routed axis takes that coordinate whole: folding in an instance position would
+    /// hand each lane of a distributed axis a different one, which is not what naming one means.
     #[cube(comptime)]
     routed_at: Vec<usize>,
     /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
@@ -76,9 +69,8 @@ pub struct Walk {
 }
 
 /// This instance's run of a level dealt as one index ([`Level::shared_by`]): the regions it
-/// touches, and for the first and last, how much of their walk below is its own. Counted in
-/// steps of the level below, the steps its instances take *together*, so a run is measured the
-/// same whatever that level cuts across the plane.
+/// touches and, for the first and last, how much of their walk below is its own. Counted in the
+/// level below's steps, the ones its instances take *together*, however that level cuts the plane.
 #[derive(CubeType)]
 pub struct Run {
     /// The regions the run touches, in order.
@@ -130,10 +122,9 @@ impl Walk {
         let mut positions = Coords::<usize>::new();
         let mut scales = Coords::<usize>::new();
 
-        // Per-axis instance counts, `1` for `Sequential`: the grid itself where every worker
-        // takes one tile, the stated worker count where the grid is dealt across them in runs.
-        // Folded, so a constant grid's decode below folds too (`/1` and `%1` vanish, `%` gets a
-        // constant divisor).
+        // Per-axis instance counts, `1` for `Sequential`: the grid itself where every worker takes
+        // one tile, the stated count where the grid is dealt across workers in runs. Folded, so a
+        // constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a constant divisor).
         let mut instances = Coords::<usize>::new();
         #[unroll]
         for p in 0..rank {
@@ -174,11 +165,9 @@ impl Walk {
                 // later same-scope axes' instance counts (the earlier axis is the more
                 // significant digit); `1` when this axis owns its scope.
                 //
-                // Both halves of that product, because the odometer is the level's and this
-                // space may be a projection of it: the axes here carry a possibly-runtime count,
-                // and the ones this space does not span a comptime one. Dropping the second half
-                // reads a contracted axis as weight `1` and aliases every outer digit onto a
-                // single value; see [`Level::inner_weight_unspanned`].
+                // Both halves: the odometer is the level's and this space may be a projection of
+                // it, so axes here carry a possibly-runtime count and unspanned ones a comptime
+                // one; dropping them aliases outer digits ([`Level::inner_weight_unspanned`]).
                 let picks = comptime!(
                     ((p + 1)..rank)
                         .filter(|&q| level.distribution(space.axis_at(q)).scope() == dist.scope())
@@ -248,10 +237,9 @@ impl Walk {
     /// This walk taking one step along `axis`, at the coordinate `coord` states rather than the
     /// one the odometer would have counted.
     ///
-    /// What routing is: an operand's window on that axis is placed by a value the kernel read
-    /// (an expert per token, a physical page per logical one) instead of by a loop, and the axis
-    /// keeps the extent it truly has while the walk visits one coordinate of it. Everything below
-    /// reads the ordinary coordinate it is, so `at` is unchanged and no operand carries anything.
+    /// What routing is: an operand's window on that axis is placed by a value the kernel read (an
+    /// expert per token, a physical page per logical one), not by a loop; the axis keeps its true
+    /// extent while the walk visits one coordinate, ordinary to everything below (`at` unchanged).
     ///
     /// The caller owns the coordinate, as it owns [`window`](Walk::window)'s range: a value past
     /// the axis's extent windows past the buffer, and nothing here can check it.
@@ -271,10 +259,9 @@ impl Walk {
             // One of it, so its digit folds to the constant `0` and the routed coordinate is
             // the whole of what `resolve` pushes for this axis.
             //
-            // Clamped to the tiles the axis has: the coordinate came from data, so it can name
-            // one it does not. Reading the wrong tile of this operand beats reading past its
-            // buffer, and a refusal is not available here (a panic inside a cube verb dies on a
-            // kernel-expansion worker thread, where no caller sees it).
+            // Clamped to the tiles the axis has: the coordinate came from data, so it can name one
+            // it does not. Reading the wrong tile beats reading past the buffer, and a refusal is
+            // unavailable here (a panic in a cube verb dies on a kernel-expansion thread, unseen).
             if comptime!(p == at) {
                 // The axis's own tiles, not `counts`, which on a distributed axis is this
                 // instance's share of them and would clamp every lane to its first.
@@ -323,9 +310,8 @@ impl Walk {
     }
 
     /// Unravel a runtime step `idx` to its per-axis coordinates: each axis's odometer
-    /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position. A
-    /// constant `idx` (an unrolled walk's) folds through, so a static walk's regions
-    /// carry comptime coordinates and can select fragments.
+    /// [`digit`](Walk::digit), [`fold`](Walk::fold)ed with its instance position. A constant `idx`
+    /// (an unrolled walk's) folds through, so a static walk's regions can select fragments.
     fn resolve(&self, idx: usize) -> Coords<u32> {
         let mut coords = Coords::<u32>::new();
 
@@ -348,12 +334,12 @@ impl Walk {
             self.counts
                 .fproduct(comptime!(((p + 1)..rank).collect::<Vec<_>>())),
         );
-        // `% count` is a no-op when `idx` has no more significant digit: a range fact,
-        // which folding (which only sees values) cannot know. The digits above this one are
-        // absent when every earlier count is the constant one — a stated count of one, an
-        // axis dealt one tile a worker, or one the level does not name — which the product of
-        // those counts says as a constant. A count of one is the exception: there `% 1`
-        // folds to the constant `0`, which `quot` alone would not.
+        // `% count` is a no-op when `idx` has no more significant digit: a range fact that
+        // folding (which only sees values) cannot know. Those digits are absent when every earlier
+        // count is the constant one (stated, one tile a worker, or unnamed), as their product says.
+        //
+        // A count of one is the exception: there `% 1` folds to the constant `0`, which `quot`
+        // alone would not.
         let count = self.counts.at(p);
         let one = count.constant();
         let earlier = self
@@ -515,10 +501,9 @@ fn swizzled_positions(
 
 /// Where this space holds the cube level's two in-plane axes, `(x, y)`.
 ///
-/// Refuses what the joint decode cannot state: an axis that does not own its whole grid
-/// dimension. A swizzle permutes the grid, and a dimension several axes share carries digits
-/// this has no way to put back — which is what [`Level::shared_by`] and a batch axis folded
-/// onto an in-plane dimension produce.
+/// Refuses what the joint decode cannot state: an axis not owning its whole grid dimension. A
+/// swizzle permutes the grid, and a dimension shared by axes ([`Level::shared_by`], a batch axis
+/// folded onto an in-plane dimension) carries digits this has no way to put back.
 fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
     let at = |wanted: CubeAxis| {
         let found: Vec<usize> = (0..space.rank())
@@ -588,11 +573,9 @@ impl Walk {
     /// This walk over the `steps` regions starting at flat step `base`, rather than all of its
     /// own from zero.
     ///
-    /// The window is how a level deals its grid out as contiguous runs instead of as a
-    /// rectangular block per axis: every axis stays `Sequential`, so the counts are the whole
-    /// grid and the flat index already carries every coordinate, and an instance's share is a
-    /// range of that index. `base` and `steps` are runtime values, so a run whose length only
-    /// the launch knows walks the same loop a static one does.
+    /// How a level deals its grid out as contiguous runs, not a rectangular block per axis: every
+    /// axis stays `Sequential`, so the flat index carries every coordinate and an instance's share
+    /// is a range of it. `base` and `steps` are runtime, so launch-sized runs walk the same loop.
     ///
     /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
     /// reads coordinates that are not in the grid, and nothing here can check it.

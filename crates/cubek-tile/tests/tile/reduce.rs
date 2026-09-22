@@ -1,9 +1,8 @@
 //! Multi-axis reduce: contractions over more than one abstract axis.
 //!
 //! The first client is the simplest one that cannot be a matmul: a matmul whose `K` is declared as
-//! *two* axes. Nothing about the data or the arithmetic changes, only how many axes the operands
-//! contract, so the answer must be exactly the plain matmul's. That isolates the multi-axis reduce
-//! nest from the projection machinery, which the conv tests exercise separately.
+//! *two* axes. Only how many axes the operands contract changes, so the answer must be exactly the
+//! plain matmul's, isolating the multi-axis reduce nest from the projection machinery of conv.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -138,8 +137,7 @@ fn reduce_kernel_v4<E: Numeric>(
 
 /// Reduce an axis-index recipe so a trailing partial tile must be masked without a backing window.
 /// `read` decides whether the recipe is evaluated at the leaf or first materialized into shared
-/// memory; either way the source's partial-tile mask must survive, rather than folding values from
-/// the padded overhang.
+/// memory; either way the partial-tile mask must survive rather than folding the padded overhang.
 #[cube(launch)]
 fn procedural_reduce_kernel<E: Float>(
     output: &TileArg<'_, E, Const<1>>,
@@ -709,7 +707,7 @@ fn test_reduce_axis_min_double_buffered() {
     check_2d_reduce(2, 8, 16, 4, 4, Monoid::Min);
 }
 
-/// Reduction over an outer axis while retaining the innermost axis (which lines along vector width).
+/// Reduction over an outer axis, keeping the innermost axis (which lines along the vector width).
 #[test]
 fn test_reduce_axis_sum_outer_axis_retained_innermost_v1() {
     let (m, k, tm, tk) = (8, 16, 4, 16);
@@ -1440,10 +1438,11 @@ fn resident_max_over_lane_split_k() {
 /// one. `LaneShare::Group` where that test is `LaneShare::Plane`.
 ///
 /// The drain is shared with the promoted matmul's, where reading the odometer off a projected
-/// nest (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave
-/// every group the same output row and left the rest untouched. `reduce_axis` reaches the same
-/// code, so it gets the same coverage: all the data is negative, so an identity leaking in from an
-/// unwritten cell wins the maximum and the assert catches it.
+/// nest (the accumulator spans `{M, N}`, so the contracted `K` is not in its axis list) gave every
+/// group the same output row. `reduce_axis` reaches the same code, so it gets the same coverage.
+///
+/// All the data is negative, so an identity leaking in from an unwritten cell wins the maximum
+/// and the assert catches it.
 #[test]
 #[ignore = "known-failing reproducer: the segmented share is still wrong on this path, and \
             whether that is a cubek defect or an unsupported combination is not yet established \

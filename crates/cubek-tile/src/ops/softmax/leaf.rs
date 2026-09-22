@@ -1,12 +1,11 @@
 //! The softmax leaf, composed from the row ops at the legacy `softmax_at`
 //! granularity.
 //!
-//! Row ownership is the state's statement ([`RowShare`]) and this leaf's only
-//! branch: a worker owns a fixed contiguous slice of the score tile's rows and
-//! keeps their running state in its own registers, where the worker is a unit
-//! ([`rowwise`](super::rowwise)) or a plane whose lanes split the reduced axis
-//! ([`planewise`](super::planewise)). Neither arm reads a cell another worker
-//! wrote, so neither needs a sync; no fragment-layout knowledge either way.
+//! Row ownership is the state's statement ([`RowShare`]) and this leaf's only branch: a worker
+//! owns a contiguous slice of the score tile's rows and keeps their running state in registers.
+//!
+//! The worker is a unit ([`rowwise`](super::rowwise)) or a plane whose lanes split the reduced
+//! axis ([`planewise`](super::planewise)); neither arm reads another worker's cell, so no syncs.
 
 use cubecl::prelude::*;
 
@@ -14,13 +13,12 @@ use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
-    /// One online-softmax fold step on this final score tile, in place:
-    /// scale and mask, row-max against the running max, exponentiate,
-    /// row-sum, cast-write the unnormalized P tile, state update. Returns
-    /// `corr = exp(m_old - m_new)` per owned row, the caller's accumulator
-    /// rescale factor (1 for unowned slots). The caller owns the walk and
-    /// the epilogue ([`RowState::recip_l`], [`RowState::lse`]). The reduced
-    /// axis is the score axis absent from `state`'s space.
+    /// One online-softmax fold step on this final score tile, in place: scale and mask, row-max
+    /// against the running max, exponentiate, row-sum, cast-write the unnormalized P tile, state
+    /// update. Returns the accumulator rescale `exp(m_old - m_new)` per owned row (1 if unowned).
+    ///
+    /// The caller owns the walk and the epilogue ([`RowState::recip_l`], [`RowState::lse`]). The
+    /// reduced axis is the score axis absent from `state`'s space.
     ///
     /// [`softmax_in_place`](Tile::softmax_in_place) is the same step without
     /// the P tile: the exponentiated scores *are* the probabilities, at the
@@ -41,11 +39,9 @@ impl<EA: Float> Tile<EA> {
         corr
     }
 
-    /// [`softmax`](Tile::softmax) with the probabilities left where the scores
-    /// were: after it, `self` holds the unnormalized P of this step, and is
-    /// what the value matmul contracts. One tile, one
-    /// pass over it fewer, and no cast — the mix reads P at the accumulate
-    /// element, which its hardware arm takes against values at theirs.
+    /// [`softmax`](Tile::softmax) with the probabilities left where the scores were: after it,
+    /// `self` holds this step's unnormalized P, which the value matmul contracts. One tile, one
+    /// pass fewer, no cast: the mix reads P at the accumulate element, as its hardware arm does.
     pub fn softmax_in_place(
         &mut self,
         state: &mut RowState<EA>,

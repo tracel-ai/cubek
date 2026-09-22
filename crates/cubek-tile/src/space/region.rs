@@ -1,7 +1,6 @@
-//! Where a loop is: a [`Region`] is the path of levels a kernel's loops took from a root space
-//! to the box the innermost one handed out, one [`Step`] per level. A tile windows itself to a
-//! region with `at`, applying the steps below its own depth, so the root tile and any window of
-//! it read the same region.
+//! Where a loop is: a [`Region`] is the path of levels a kernel's loops took from a root space to
+//! the box the innermost one handed out, one [`Step`] per level. A tile windows itself to a region
+//! with `at`, applying the steps below its own depth, so the root tile and any window read alike.
 
 use super::{Level, Partitioning, Space};
 use crate::{Axis, Coords, Fold, FoldExpand, MatrixAxes, Walk};
@@ -53,9 +52,8 @@ impl Step {
 }
 
 /// The path a kernel's loops took to a box: the levels from a root space down, outermost first,
-/// and the coordinates each loop handed out. `base` is the depth of the first level, counted in
-/// the partitioning the root sits in, so a tile at any depth on the path applies the steps below
-/// it. Iterating a region deals the partitioning's next level: `for plane in cube`.
+/// and the coordinates each loop handed out. `base` is the first level's depth in the root's
+/// partitioning; a tile at any depth applies the steps below it. Iterating deals the next level.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct Region {
@@ -123,12 +121,12 @@ impl Region {
         Walk::of(&self.child(), comptime!(self.next()), self.clone())
     }
 
-    /// The region one level below the root at trailing-two coordinates `(c0, c1)` under
-    /// `level`, `0` elsewhere, for a tile at `depth`: what a leaf states when it cuts an operand
-    /// its own way. The coordinates carry their own constness ([`fcast`](crate::Fold::fcast)
-    /// keeps a constant constant): comptime ones fold to constants and can select fragments, ones
-    /// the kernel computed (the visit a worker picked out of a grid by hardware position) window
-    /// memory.
+    /// The region one level below the root at trailing-two coordinates `(c0, c1)` under `level`,
+    /// `0` elsewhere, for a tile at `depth`: what a leaf states to cut an operand its own way.
+    ///
+    /// The coordinates carry their own constness ([`fcast`](crate::Fold::fcast) keeps a constant
+    /// constant): comptime ones fold to constants and can select fragments; kernel-computed ones
+    /// (the visit a worker picked out of a grid by hardware position) window memory.
     pub fn trailing(
         #[comptime] depth: usize,
         #[comptime] space: Space,

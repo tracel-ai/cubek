@@ -22,24 +22,20 @@ impl<EA: Float> Tile<EA> {
     /// space says where `split` sits: outermost gives a team one contiguous run
     /// of rows, innermost lets the drain contract it as a matmul's `k`.
     ///
-    /// `self` must be shared memory: the merge passes each cell's state to the
-    /// rest of its row through the weights themselves, and `sync_cube` orders
-    /// only the workgroup address space. `m` and `l` are read, never written,
-    /// so they may be global.
+    /// `self` must be shared memory: the merge passes each cell's state to the rest of its row
+    /// through the weights themselves, and `sync_cube` orders only the workgroup address space.
+    /// `m` and `l` are read, never written, so they may be global.
     ///
-    /// A fully-masked row gets weights of exactly zero, and a split that folded
-    /// nothing published `(min, 0)` so it weighs zero on its own. A unit per
-    /// cell where the cube has that many, syncing between its three passes;
-    /// otherwise one unit per row, cyclic over the cube. Every unit of the cube
-    /// calls it, and the caller syncs on both sides. A single split degenerates
-    /// to the plain epilogue.
+    /// A fully-masked row gets weights of exactly zero, and a split that folded nothing published
+    /// `(min, 0)` so it weighs zero on its own. A unit per cell where the cube has that many,
+    /// syncing between its three passes; otherwise one unit per row, cyclic over the cube.
+    ///
+    /// Every unit of the cube calls it, and the caller syncs on both sides. A single split
+    /// degenerates to the plain epilogue.
     pub fn merge_splits(&mut self, m: &Tile<EA>, l: &Tile<EA>, #[comptime] split: Axis) {
-        // The cell path passes values *between* units: each cell parks its `m`,
-        // then its `weight * l`, in the weights for its row's other cells to
-        // scan, ordered only by the `sync_cube` between the passes. That
-        // barrier orders the workgroup address space, so the weights have to
-        // live there. Whether that path runs is not known here — it turns on
-        // `CUBE_DIM` — so the requirement is the whole call's, not the branch's.
+        // The cell path passes values *between* units: each cell parks its `m`, then its
+        // `weight * l`, in the weights for its row's other cells to scan, ordered only by
+        // `sync_cube`, which orders workgroup memory; it turns on `CUBE_DIM`, so the call needs it.
         let shared = self.is_shared();
         comptime!(assert!(
             shared,
@@ -82,11 +78,9 @@ impl<EA: Float> Tile<EA> {
         let workers = CUBE_DIM as usize;
         let cells = comptime!(rows * splits);
         if cells <= workers {
-            // A unit per cell, which is every merge a split walk closes: the
-            // states load at once, and the row's maximum and normalizer are
-            // scans of the tile this merge writes, where a unit per row read
-            // every split's state in turn through the operand's layout — 26
-            // µs for 32 splits on GP100, as long as the walk it closed.
+            // A unit per cell, which is every merge a split walk closes: the states load at once,
+            // and the row's maximum and normalizer are scans of the tile this merge writes. A unit
+            // per row read each split in turn (26 µs for 32 splits on GP100, as long as the walk).
             let cell = UNIT_POS as usize;
             let owns = cell < cells;
             let t = (cell / stride) % splits;

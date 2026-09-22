@@ -2,9 +2,8 @@
 //! ([`PlanePartition`]).
 //!
 //! A plane tile is owned by a plane and sliced across its lanes, never unit-addressable: cmma's
-//! `Matrix` is `MatrixScope::Plane`, and manual mma's registers index by `UNIT_POS_PLANE`. The two
-//! are one concept with two encodings ([`CmmaData`], [`MmaData`]), so the partition over them is
-//! encoding-blind and written once. Cube-level MMA is a different scope and does not belong here.
+//! `Matrix` is `MatrixScope::Plane`, manual mma's registers index by `UNIT_POS_PLANE`. One concept,
+//! two encodings ([`CmmaData`], [`MmaData`]), so the partition over them is written once.
 
 use cubecl::{
     cmma::{MatrixIdent, MatrixLayout},
@@ -316,9 +315,8 @@ impl<T: Numeric> PlanePartition<T> {
     /// fragment where the block is `1 × 1`.
     ///
     /// A partition selects under comptime coordinates (an unrolled walk folds regions to
-    /// constants). An uncut level selects the whole partition. A runtime coordinate reaches here
-    /// only from a `Dynamic` (top, instance) level, which cuts nothing on `m`/`n` and passes the
-    /// whole partition down to the static levels below; a rolled *cut* is refused.
+    /// constants); an uncut level selects the whole partition. A runtime coordinate reaches here
+    /// only from a `Dynamic` (top) level, which cuts nothing on `m`/`n`; a rolled *cut* is refused.
     pub(crate) fn at_step(&self, step: &Step, #[comptime] space: Space) -> TileKind<T> {
         let edges = comptime!(MatrixAxes::edges(&space));
         let a0 = comptime!(space.axis_at(edges.row_split));
@@ -396,10 +394,9 @@ impl<T: Numeric> PlanePartition<T> {
     /// `self[r, :] *= corr[r]` over the partition's rows, each tile bounced through the scratch:
     /// stored, scaled a cell per lane, loaded back.
     ///
-    /// The syncs are cube-wide, as every other fragment bounce here is: a plane sync does not
-    /// order a fragment store against the lanes' own writes on every backend. They sit outside
-    /// the skip, so a plane whose factors are all one still reaches each one, and only its work
-    /// is skipped; `corr` is plane-uniform, so that skip is.
+    /// The syncs are cube-wide, as every fragment bounce here is: a plane sync does not order a
+    /// fragment store against the lanes' own writes on every backend. They sit outside the skip,
+    /// so a plane whose factors are all one still reaches each; the skip is uniform, as `corr` is.
     pub(crate) fn rescale_rows(&self, corr: &Array<T>, #[comptime] lanes: usize) {
         let mut scratch = #[comptime]
         match &self.scratch {
@@ -518,11 +515,9 @@ impl<T: Numeric> PlanePartition<T> {
         let a0 = comptime!(window.axis_at(edges.row_split));
         let a1 = comptime!(window.axis_at(edges.col_split));
 
-        // The operand's role is which of the accumulator's axes it shares: `A` spans the rows,
-        // `B` the columns. Its fragments run along that axis, one deep along the contraction —
-        // counted in the window's own axis order, since that is how `at` addresses them.
-        // Of the matrix pair, the contracted axis is the one the accumulator lacks; a split
-        // contraction's other digits stand outside the pair at extent one.
+        // The operand's role is which accumulator axis it shares: `A` the rows, `B` the columns.
+        // Its fragments run along that axis, one deep along the contraction, in the window's own
+        // axis order (how `at` addresses them). The contracted axis is the one `out` lacks.
         let (contracted, free) = comptime!(match (out.contains(a0), out.contains(a1)) {
             (false, true) => (a0, a1),
             (true, false) => (a1, a0),
@@ -553,10 +548,9 @@ impl<T: Numeric> PlanePartition<T> {
         } else {
             (k, rows_along_free)
         });
-        // The role's rows: `A` is `m×k` and `B` is `k×n`, so an operand whose window lists the
-        // axes in that order is row-major, and one listing them the other way — a weight
-        // stored `{n, k}`, read in lines along its contraction — is the same fragment loaded
-        // col-major off the same rows.
+        // The role's rows: `A` is `m×k` and `B` is `k×n`, so a window listing the axes in that
+        // order is row-major, and one listing them the other way (a weight stored `{n, k}`) is the
+        // same fragment loaded col-major off the same rows.
         let layout = comptime!(if (ident == MatrixIdent::A) == (contracted == a1) {
             MatrixLayout::RowMajor
         } else {
@@ -589,11 +583,9 @@ impl<T: Numeric> PlanePartition<T> {
 
     /// This region of an operand, in the form `instruction` reads it.
     ///
-    /// **The one loader a kernel whose instruction is data wants**, and the twin of
-    /// [`Tile::accumulator`](crate::Tile::accumulator). A register block takes its lines out of
-    /// whatever tile it is handed, so the tile *is* the answer and nothing is loaded; the matrix
-    /// forms want their own fragments. A kernel that states its instruction once therefore reads
-    /// its operands the same way whichever form it was given.
+    /// **The one loader a kernel whose instruction is data wants**, twin of
+    /// [`Tile::accumulator`](crate::Tile::accumulator). A register block reads lines out of the
+    /// tile it is handed, so the tile *is* the answer; the matrix forms want their own fragments.
     pub fn operand<Acc: Numeric>(
         src: &Tile<T>,
         acc: &Tile<Acc>,
@@ -721,9 +713,8 @@ pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize)
 }
 
 /// The one level that cuts an operand's window into the partition's grid of fragments on its
-/// trailing two axes, every other axis whole: what a partition fills from, and the kernel never
-/// walks. Stated from the leaf up — one fragment's edges, then how many of them — and held to
-/// the window it fills from.
+/// trailing two axes, every other axis whole: what a partition fills from, never walked. Stated
+/// from the leaf up (one fragment's edges, then how many) and held to the window it fills from.
 fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -> Level {
     let edges = MatrixAxes::edges(window);
     let (p0, p1) = (edges.row_split, edges.col_split);

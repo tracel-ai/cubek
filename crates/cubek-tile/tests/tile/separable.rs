@@ -318,8 +318,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
 
 /// A quantized rhs is read through a dequantizing view over its *storage* buffer, which the view
 /// reinterprets at `served / pack` elements per line. The two cases below sit on either side of
-/// that ratio: packed-u32 serves exactly one storage word per line, native serves `QV` of them,
-/// and only the second tells a correct width apart from a hardcoded scalar one.
+/// that ratio, one word per line (packed-u32) or `QV` (native); only native catches a scalar width.
 const QCOLS: usize = 4;
 const QV: usize = 4;
 const QSCALE: f32 = 0.05;
@@ -580,8 +579,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
 ///
 /// Both halves of the split the separable schedule runs on are load-bearing here. `row` stays
 /// inside the floor, so it has to be anchored; `tap` has a coefficient the divisor factors out, so
-/// it is stepped by `1` on top of that anchor. A schedule folding the whole map per tap would get
-/// the same answer, which is the point: this pins the hand-folded one against it.
+/// it steps by `1` on that anchor. This pins the hand fold against folding the whole map per tap.
 const ROW_NUM: usize = 3;
 const RESAMPLE: usize = 2;
 const RTAPS: usize = 2;
@@ -924,11 +922,12 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
 
 /// The staged twin of [`masked_normalization_dedarkens_a_boundary_zero_gmem_input`].
 ///
-/// `TapMask::Masked` has to drop the taps that overhang the input, and the fill has already
+/// `TapMask::Masked` has to drop the taps that overhang the input, but the fill has already
 /// replaced those with zeros by the time the leaf reads them: a staged window cannot tell a padded
-/// zero from a real sample. The stage therefore records the window it was filled from, and the
-/// mask is put to that rectangle instead. The expected values are the gmem test's, because staging
-/// is a placement decision and must not move a number.
+/// zero from a real sample, so the stage records its source window and masks to that rectangle.
+///
+/// The expected values are the gmem test's, because staging is a placement decision and must
+/// not move a number.
 #[test]
 fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
     let client = cubecl::test_device().client();

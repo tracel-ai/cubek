@@ -2,11 +2,10 @@
 //!
 //! A convolution's window axes are not physical axes of the input. They address the same physical
 //! axis its output axes address, at their own coefficient: `Ih = Oh*stride + Rh*dilation`. So the
-//! input tile spans more logical axes than its buffer has physical ones, consecutive tiles overlap
-//! by the receptive field,
-//! and one input element is read by several output positions. That mapping is the operand's
-//! [`Projection`]; everything else (the space, the walk, `Tile::at`, the leaf) is the same
-//! machinery matmul runs on.
+//! input tile spans more logical axes than its buffer has physical ones, and tiles overlap.
+//!
+//! That mapping is the operand's [`Projection`]; everything else (the space, the walk, `Tile::at`,
+//! the leaf) is the same machinery matmul runs on.
 #![allow(non_snake_case)]
 
 use cubecl::{
@@ -40,10 +39,8 @@ enum Stage {
 }
 
 /// The same body matmul runs: the operands' spaces say what is contracted, their projections say
-/// how they are addressed, and the leaf does the rest. One level, read where the operands lie.
-/// `V` is the input's line width: the gathered operand lines along its fastest contracted axis,
-/// which is the one the leaf splits into a line index and a lane, so the width has to be a real
-/// one somewhere to exercise that fold at all.
+/// how they are addressed, and the leaf does the rest. `V` is the input's line width along its
+/// fastest contracted axis, which the leaf splits into line index and lane; a real width is needed.
 #[cube(launch)]
 fn conv_kernel<E: Numeric, V: Size>(
     input: &TileArg<'_, E, V>,
@@ -70,8 +67,7 @@ fn conv_kernel<E: Numeric, V: Size>(
 
 /// [`conv_kernel`] with both inputs staged into shared memory per region. A gathered operand's
 /// region is copied into a stage shaped like the physical *window* it reads, compacted onto the
-/// lattice its stride and dilation reach, and the leaf gathers out of the stage exactly as it
-/// gathered out of gmem.
+/// lattice its stride and dilation reach, and the leaf gathers out of the stage as out of gmem.
 #[cube(launch)]
 fn conv_kernel_smem<E: Numeric, V: Size>(
     input: &TileArg<'_, E, V>,
@@ -380,9 +376,8 @@ impl Conv1d {
     }
 
     /// `check` with the input served in `in_v`-wide lines and, when `checked`, both the input and
-    /// the output bounds-masked: the two axes of the gather path a plain `check` leaves at their
-    /// degenerate values. `stage` says whether the leaf gathers straight out of gmem or out of a
-    /// compacted stage, and how deeply that stage is buffered.
+    /// the output bounds-masked: the two gather-path axes a plain `check` leaves degenerate.
+    /// `stage` picks gathering from gmem or from a compacted stage, and how deeply it is buffered.
     fn check_at(&self, tile_oh: usize, tile_co: usize, in_v: usize, checked: bool, stage: Stage) {
         self.check_at_with_block(
             tile_oh,
@@ -834,9 +829,8 @@ fn conv1d_vectorized_strided_and_dilated() {
 }
 
 /// An output extent the tile edge does not divide: the last tile's receptive field runs past the
-/// input's real length. The masking happens under the projection, so the tap that overhangs must
-/// read `0` and the output cell that does not exist must not be written, leaving every valid
-/// position equal to the reference.
+/// input's real length. The masking happens under the projection, so the overhanging tap must
+/// read `0` and the nonexistent output cell must not be written; every valid position matches.
 #[test]
 fn conv1d_masked_overhang() {
     Conv1d {
@@ -871,6 +865,7 @@ impl Conv1d {
     /// [`check_at`](Conv1d::check_at) driven end to end by [`Launcher`]: the input reaches the
     /// launch through [`StridedTileSource::gathered`] instead of a hand-built [`TileSpec`], so the
     /// kernel projects from the kernel-form nest and one compiled kernel serves every shape.
+    ///
     /// `padding` shifts the window's origin, which the builder's derived check has to arm on by
     /// itself. `dynamic` is the axis set the kernel takes at runtime, `None` for all of them.
     fn check_launched_over(
@@ -1006,9 +1001,8 @@ impl Conv1d {
 }
 
 /// The two axes the input gathers over, `OH` and `RH`, kept static while the rest goes runtime:
-/// the launch a gathered operand was restricted to before any operand could state a gathered axis'
-/// size. It has to keep working, since an axis no operand witnesses still has to reach the kernel
-/// static.
+/// the launch a gathered operand was restricted to before any operand could state a gathered
+/// axis' size. It must keep working: an axis no operand witnesses still reaches the kernel static.
 #[test]
 fn conv1d_launched_static_window() {
     Conv1d {
@@ -1411,8 +1405,7 @@ impl Conv1d {
 
     /// A padded convolution whose padding is an `Offset::Dynamic`, so the window origin is placed
     /// at runtime and the underflow guard is armed without knowing the sign. `dynamic_scales` also
-    /// hands the stride and the dilation over at runtime. `staged` reads both inputs out of a
-    /// shared-memory stage instead of where they lie.
+    /// hands stride and dilation over at runtime; `staged` reads both inputs out of a smem stage.
     fn check_dynamic_padded(
         &self,
         tile_oh: usize,
@@ -1787,10 +1780,11 @@ fn conv2d_single_tile() {
 // ---- staged ----------------------------------------------------------------
 
 // The same convolutions with the input staged in shared memory. A gathered operand's region is
-// copied into a shared-memory tile shaped like the physical *window* it reads (`span(oh, rh) × ci`),
-// compacted onto the lattice its stride and dilation reach, so each input element is stored once. The
-// stage keeps the operand's own projection, so the leaf gathers out of smem exactly as it gathered
-// out of gmem, and every case here must agree with its direct (in-place) twin.
+// copied into a shared-memory tile shaped like the physical *window* it reads, `span(oh, rh) × ci`,
+// compacted onto the lattice its stride and dilation reach, so each input element is stored once.
+//
+// The stage keeps the operand's own projection, so the leaf gathers out of smem exactly as it
+// gathered out of gmem, and every case here must agree with its direct (in-place) twin.
 
 /// Stride 1: consecutive windows overlap by `rh - 1`, so the window the stage holds
 /// (`oh + rh - 1`) is smaller than the `oh × rh` logical cells reading it.
@@ -1983,9 +1977,8 @@ fn conv1d_staged_masked_overhang_strided() {
 }
 
 /// A single tap at stride 2 reaches only every second input position, so the stage keeps half of
-/// the window it spans and the fill steps by two. One of the three non-unit-step cases, with
-/// `conv1d_staged_vectorized_strided_and_dilated` (`gcd(2, 2) = 2`, above) and
-/// `conv2d_staged_mixed_steps`.
+/// the window it spans and the fill steps by two. One of the three non-unit-step cases:
+/// `conv2d_staged_mixed_steps`, `conv1d_staged_vectorized_strided_and_dilated` (`gcd(2, 2) = 2`).
 #[test]
 fn conv1d_staged_single_tap_strided() {
     Conv1d {
@@ -2141,9 +2134,8 @@ fn conv2d_staged_mixed_steps() {
 // ---- the projected 2-D view ------------------------------------------------
 
 /// Reads a gathered operand through [`Tile::matrix`] and writes every batch matrix out flat, so
-/// the host can check the projected layout against the same gather done by hand. The 2-D door for
-/// an operand whose logical axes outnumber its buffer's physical ones: the matrix coordinate
-/// resolves through the leading axes first, then folds onto the window through the projection.
+/// the host can check the projected layout against the gather done by hand. The 2-D door for an
+/// operand with more logical than physical axes: leading axes first, then the window projection.
 #[cube(launch)]
 fn projected_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2232,6 +2224,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
 
 /// The 2-D view over the 2-D convolution's input: logical `[OH, OW, RH, RW, CI]` over the physical
 /// `[IH, IW, CI]`, so three leading axes are pinned and the trailing `RW x CI` pair is the matrix.
+///
 /// Three pinned axes is what makes this worth running: the unravel's weights are a product of
 /// several extents, and reading those off the window instead of the nest would silently pick up
 /// the receptive field's span (`IH`, `IW`) rather than the logical edges.
@@ -2267,7 +2260,7 @@ fn conv2d_projected_matrix_view() {
 
     let got = HostData::from_tensor_handle(&client, out_handle, HostDataType::F32);
     for m in 0..matrices {
-        // The pinned axes, unraveled the way the layout unravels them: row-major over `[OH, OW, RH]`.
+        // The pinned axes, unraveled as the layout unravels them: row-major over `[OH, OW, RH]`.
         let (o_h, o_w, r_h) = (m / (ow * rh), (m / rh) % ow, m % rh);
         for r_w in 0..rows {
             for c_i in 0..cols {
@@ -2285,8 +2278,7 @@ fn conv2d_projected_matrix_view() {
 
 /// Reads a gathered operand through [`Tile::fragment_matrix`] and writes the whole matrix out, so
 /// the host can check it against the im2col expansion done by hand. This is the face an mma
-/// fragment reads: the output positions flattened into the row edge, the taps and channels into
-/// the column edge, resolved onto the compact window underneath.
+/// fragment reads: output positions on the row edge, taps and channels on the column edge.
 #[cube(launch)]
 fn fragment_matrix_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2360,10 +2352,9 @@ fn conv2d_fragment_matrix_view() {
 
 // ---- the manual-mma leaf ---------------------------------------------------
 
-/// The resident promote, zero, mma, drain kernel of the matmul tests, with a *gathered* lhs.
-/// The accumulator is sized by the whole contraction (taps times channels), both inputs stage
-/// into shared memory (the input into its compacted window), and the fragment load flattens the
-/// tap and channel axes back into the `k` edge as it reads that window.
+/// The resident promote, zero, mma, drain kernel of the matmul tests, with a *gathered* lhs. The
+/// accumulator is sized by the whole contraction (taps times channels), both inputs stage into
+/// smem (the input into its compacted window); the fragment load folds tap and channel into `k`.
 #[cube(launch)]
 fn conv_mma_kernel<E: Numeric>(
     input: &TileArg<'_, E, Const<1>>,
@@ -2418,10 +2409,9 @@ fn conv1d_mma_leaf_gathered_lhs_ignores_ldmatrix() {
 
 fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let client = cubecl::test_device().client();
-    // The *shape*, not just the feature: a backend can advertise manual mma and
-    // offer only `16x16x16` (gfx1151 does), and running `8x8x8` there is an
-    // instruction the hardware does not have: it reads back zeros, which looks
-    // like a leaf bug and is a missing guard.
+    // The *shape*, not just the feature: a backend can advertise manual mma and offer only
+    // `16x16x16` (gfx1151 does), and running `8x8x8` there is an instruction the hardware does
+    // not have: it reads back zeros, which looks like a leaf bug and is a missing guard.
     let f32_native = f32::elem_type_native();
     let offers_8x8x8 = client.properties().features.matmul.mma.iter().any(|c| {
         c.a_type == f32_native

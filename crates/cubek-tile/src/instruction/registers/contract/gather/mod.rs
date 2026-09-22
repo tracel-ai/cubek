@@ -44,10 +44,8 @@ pub(super) enum RhsRole {
 /// The accumulator scope at which one factor's complete tap walk is computed and cached.
 ///
 /// The same question a memory-backed operand answers through
-/// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones a
-/// single read of it serves, and so how far out of the nest that read lifts. A factor answers it
-/// through its recipe rather than a projection, because it reads its axes instead of addressing
-/// them.
+/// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones one
+/// read serves, so how far the read lifts. A factor answers through its recipe, not a projection.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(super) enum FactorReuse {
     /// Once for the entire accumulator block.
@@ -258,19 +256,17 @@ fn masked_bound_depends_on(
 /// N-D variant of [`direct::contract`](super::direct::contract) for operations with
 /// multiple contracted axes or projected operands.
 ///
-/// The outer product it runs is an optimization, not the definition of the contraction: it holds
-/// only while the lhs is free of the accumulator's column and the rhs free of its row, which is
-/// what lets one read of each serve a whole row or column of cells. A resampling operand breaks
-/// that: the gather makes the value depend on the output position, and a procedural weight
-/// depends on it too, so an operand spanning the other's free axis is read at the cell instead,
-/// and the rank-1 update degenerates to a per-cell `fma`. Only the reads change; what is
-/// contracted, and the accumulator block living in registers across `kc`, do not.
+/// The outer product is an optimization, not the contraction's definition: it holds only while
+/// the lhs is free of the accumulator's column and the rhs of its row, so one read of each serves
+/// a whole row or column of cells.
+///
+/// A resampling or procedural operand's value depends on the output position, so one spanning
+/// the other's free axis is read at the cell and the rank-1 update degenerates to a per-cell
+/// `fma`. Only the reads change; the contraction and the register block across `kc` do not.
 ///
 /// A *separable* lhs takes its own schedule: one factor per contracted axis lets the weights be
-/// walked in 1-D per accumulator cell rather than evaluated over their Cartesian product, which
-/// is the whole cost of an expensive procedural filter. Its rank is the recipe's, so a stated
-/// factorization of one factor takes it too: the per-row walk it caches is worth `nr` weight
-/// evaluations whatever the rank.
+/// walked in 1-D per cell, not over their Cartesian product, where a procedural filter's cost is.
+/// Rank is the recipe's, so one stated factor takes it too: its row cache saves `nr` evaluations.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut MemData<E>,
@@ -332,8 +328,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
         let size!(A) = aw;
         separable::contract::<E, EL, ER, V, A>(acc, lhs, rhs, problem, config, semiring);
     } else if comptime!(contracted_per_step > 1) {
-        // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a folded step,
-        // `aw`-wide neighbouring cells otherwise.
+        // The block's lines are the rhs's: `contracted_per_step`-wide K-partials of one cell at a
+        // folded step, `aw`-wide neighbouring cells otherwise.
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
         nd::nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, problem, config, semiring);

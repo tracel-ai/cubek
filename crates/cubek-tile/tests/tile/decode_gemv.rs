@@ -4,12 +4,12 @@
 //! orientation a decode step streams, where the contraction runs along the buffer's contiguous
 //! direction. `K` is spelled `(KB, KI)`, so one scale per block is the operand omitting `KI`.
 //!
-//! Two shapes, and the engine picks which by what it will accept. Where the accumulator sits in
-//! memory the activation is read one `K`-contiguous line a step, which is what lets a step fold
-//! whole lines; where it is promoted to registers the block lines its cells along the
-//! accumulator instead, so the activation has to be read cell by cell. Both compute the same
-//! answer and neither is a ladder rung of the other. [`cubek-matmul`'s QuantGemv routine] is
-//! built on the first.
+//! Two shapes, and the engine picks which by what it will accept. With the accumulator in memory
+//! the activation is read one `K`-contiguous line a step, which lets a step fold whole lines;
+//! promoted to registers, the block lines its cells along the accumulator, so reads are per cell.
+//!
+//! Both compute the same answer and neither is a ladder rung of the other.
+//! [`cubek-matmul`'s QuantGemv routine] is built on the first.
 
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
@@ -79,8 +79,7 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
 ///
 /// The activation is read *scalar* here, and has to be: a promoted block lines its cells along
 /// the accumulator, so a rhs lined along the contraction folds a whole step into one cell and
-/// `RegisterData::mma_scaled` refuses it. Which is why the shipping shape below keeps its
-/// accumulator in memory: the two are a trade, not a ladder.
+/// `RegisterData::mma_scaled` refuses it; the shipping shape thus keeps its accumulator in memory.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
 fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
@@ -147,10 +146,8 @@ fn a_promoted_accumulator_spans_the_whole_decode_walk() {
 }
 
 /// **A lane level that cuts nothing is a loop of one.** Every lane of the plane is handed the
-/// plane's own box, and the leaf runs on all of them alike: the plan of a kernel whose planes own
-/// their cells and deal nothing further down, written with the same three loops as the plan
-/// that does. What the walk hands each lane is the whole box, not an empty one, and the answer
-/// is the same as under a real lane cut.
+/// plane's whole box (not an empty one) and the leaf runs on all of them alike: planes that own
+/// their cells, written with the same three loops as a real lane cut, and giving the same answer.
 #[test]
 fn a_lane_level_that_cuts_nothing_hands_every_lane_the_plane() {
     serving_geometry(false, false);

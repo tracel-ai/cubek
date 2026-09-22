@@ -2,10 +2,9 @@
 //! turns the tile's *logical* coordinate (one per axis of its [`Space`](crate::Space)) into the
 //! *physical* coordinate its window is boxed in, applying the operand's [`Projection`].
 //!
-//! Under the direct mapping the two coincide and this layout is never built; the matmul leaves keep
-//! reading through [`TileMatrix`](super::TileMatrix). Under a gathering mapping they differ in
-//! rank: a 2-D convolution input carries five logical axes over three physical ones, and two
-//! logical coordinates (an output step and a tap) address the same physical axis.
+//! Under the direct mapping the two coincide and this layout is never built; the matmul leaves read
+//! through [`TileMatrix`](super::TileMatrix). Under a gathering mapping they differ in rank: a 2-D
+//! convolution input has five logical axes over three physical, a step and a tap sharing one.
 //!
 //! [`StepUp`] is the other half, one level down: physical to physical, undoing the lattice a
 //! [`Compaction`] quotients a gathered window by, so a fill of the compacted stage lands on the
@@ -44,8 +43,7 @@ impl<C: Coordinates, L> TileLayout<C> for L where L: LogicalLayout + Layout<Coor
 
 /// Any [`LogicalLayout`] with an operand's [`Projection`] applied under it: the inner layout
 /// resolves a reader's coordinate to the tile's *logical* one, then [`AxisProjection`] folds that
-/// onto the window's *physical* one, so the two ranks meet in one place rather than once per
-/// reader. Under the direct mapping the fold is the identity and collapses away.
+/// onto the window's *physical* one. Under the direct mapping the fold is the identity.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct Projected<L: LogicalLayout> {
@@ -90,8 +88,9 @@ impl<L: LogicalLayout> Layout for Projected<L> {
 /// window's own [`Boundary`](crate::Boundary) still governs what an out-of-range tap reads.
 ///
 /// Static terms a static divisor divides exactly leave the numerator before the floor
-/// ([`static_offset_step`](crate::PhysicalAxisMap)), so a resampling map's taps advance by their
-/// static physical step while the spatial projection stays under the one necessary divide.
+/// ([`static_offset_step`](crate::PhysicalAxisMap)), so a resampling map's taps advance by a static
+/// physical step under the one necessary divide.
+///
 /// Constant offsets belong to the [`Window`](crate::Window) and are omitted here, all but the
 /// phase a division starts the floor at, which the [`RuntimeMap`](crate::RuntimeMap) carries.
 #[derive(CubeType, Clone)]
@@ -152,9 +151,8 @@ impl AxisProjection {
 }
 
 /// A term's coefficient in the units its physical axis is addressed in: scalars for every axis but
-/// the innermost, which is addressed in *lines*, so its coefficients divide by the width too. This
-/// is where a line that would straddle a coarser axis is refused: a coefficient the width does not
-/// divide says the axes above the line change within one, which no single read can serve.
+/// the innermost, addressed in *lines*, whose coefficients divide by the width. A coefficient the
+/// width does not divide is refused: the axes above the line change within it; no read serves that.
 fn line_scale(
     space: &Space,
     projection: &Projection,
@@ -178,8 +176,7 @@ fn line_scale(
 
 /// The static physical step a term contributes once taken out of its axis's evaluation: under a
 /// floor only what the divisor factors out, elsewhere the coefficient itself, `None` for a dynamic
-/// coefficient the kernel reads at runtime. Panics for a term a rational axis keeps inside its
-/// floor: its contribution is not additive there, so no walk can step past it.
+/// coefficient. Panics for a term a rational axis keeps inside its floor: it is not additive there.
 fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
     if map.is_rational() {
         return Some(map.static_offset_step(term).unwrap_or_else(|| {
@@ -199,9 +196,8 @@ fn split_step(map: &PhysicalAxisMap, term: usize) -> Option<usize> {
 #[cube]
 impl AxisProjection {
     /// The source coordinate of `pos` with every axis in `moving` held at zero: the part of the
-    /// map a walk over those axes leaves alone, which [`advance`](Self::advance) puts back. The
-    /// rational axes are what the split buys, their numerator being the same expression at every
-    /// point of the walk, so a gather takes one floor per accumulator cell rather than per tap.
+    /// map a walk over those axes leaves alone, which [`advance`](Self::advance) puts back. This
+    /// gives a gather one floor per accumulator cell rather than per tap on its rational axes.
     pub fn anchor(&self, pos: CoordsDyn, #[comptime] moving: Vec<Axis>) -> CoordsDyn {
         let mut out = CoordsDyn::new();
 
@@ -281,9 +277,8 @@ impl AxisProjection {
     }
 
     /// `anchor` moved to where `pos` places the `moving` axes, which must be the ones it was
-    /// [anchored](Self::anchor) against. Every one enters linearly, so the move is an exact
-    /// addition: by the term's own coefficient outside a division, and by the static step the
-    /// divisor factors out of the floor under one.
+    /// [anchored](Self::anchor) against. Every one enters linearly, so the move is an exact add:
+    /// the term's own coefficient outside a division, the divisor's static step under one.
     pub fn advance(
         &self,
         anchor: &CoordsDyn,
@@ -357,8 +352,7 @@ impl Layout for AxisProjection {
 
 /// A [`Layout`] scaling a *physical* coordinate by one step per axis: `src[pa] = pos[pa] * step`.
 /// The inverse of the lattice a [`Compaction`] quotients a gathered operand's window by, so a fill
-/// walking the compacted stage lands on the source cells it keeps. Only built when the compaction
-/// has a step to undo; a dense window is read without this layer at all.
+/// walking the compacted stage lands on the source cells it keeps. Not built for a dense window.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct StepUp {
@@ -417,8 +411,7 @@ impl Layout for StepUp {
 impl<T: Numeric> Tile<T> {
     /// The whole logical box as a *writable* N-D view: the mutable twin of [`nd`](Tile::nd), for a
     /// caller writing one cell at a time at its logical coordinate. Refused where two logical
-    /// positions can share a cell, the only way a write aliases; a
-    /// [partition](Composition::Disjoint) cannot, since its windows tile.
+    /// positions can share a cell, so a write aliases; a [partition](Composition::Disjoint) cannot.
     pub(crate) fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
         let space = comptime!(self.space.clone());
         let g = self.mem_mut("nd_mut");
@@ -431,10 +424,10 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// The whole logical box, read through whatever [`Packing`] this tile carries, under the
-    /// guard the reader states. The N-D twin of [`matrix_packed`](Tile::matrix_packed), and the
-    /// only read surface a gathered operand has, its logical rank exceeding its buffer's. A
-    /// procedural tile is read here too, evaluated at the coordinate. Under [`Guard::Proved`]
-    /// the view carries neither the overhang mask nor the window's clamp;
+    /// guard the reader states: the N-D twin of [`matrix_packed`](Tile::matrix_packed), the only
+    /// read surface a gathered operand has, and where a procedural tile evaluates its coordinate.
+    ///
+    /// Under [`Guard::Proved`] the view carries neither the overhang mask nor the window's clamp;
     /// [`guard_provable`](Tile::guard_provable) says when a reader may claim that.
     pub(crate) fn nd_packed<W: Size>(
         &self,
@@ -494,8 +487,7 @@ impl<T: Numeric> Tile<T> {
 
     /// Whether [`Guard::Proved`] would drop a guard no box check can stand in for. A
     /// [`Boundary::Clamp`] axis is the one such guard: a clamped read is in bounds *after*
-    /// remapping, so the window reports it in bounds whatever the raw coordinate was and nothing a
-    /// reader can measure recovers it. The remaining kinds carry no boundary at all.
+    /// remapping, so nothing a reader can measure recovers it. The other kinds carry no boundary.
     pub(crate) fn guard_provable(&self) -> comptime_type!(bool) {
         match &self.tile_kind {
             TileKind::Gmem(data) | TileKind::Smem(data) => {
@@ -602,8 +594,7 @@ pub(crate) fn axis_projection(
 
 /// The extents of `space` in `from..to`, the innermost axis converted to a line count by dividing
 /// by `vector_size`. Rounded up, matching the buffer these index into: a padded stage's innermost
-/// extent need not fill whole lines, and the box a read is checked against must include the
-/// partial last one the stage really holds.
+/// extent need not fill whole lines, and a checked read's box must include the partial last one.
 pub(crate) fn line_extents(
     space: &Space,
     vector_size: usize,

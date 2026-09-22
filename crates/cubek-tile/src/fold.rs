@@ -1,9 +1,6 @@
-//! Constness-preserving kernel arithmetic. A cubecl expand element already knows
-//! whether it holds a constant (`Variable::Constant`), but the stock operators always
-//! emit an instruction, so a computed constant degrades to a runtime value, the crack
-//! every comptime twin field grew out of. These fold instead: constant operands compute
-//! at expand time, identities pass through, so comptime-ness rides plain `u32`/`usize`
-//! values through walks and layouts, and one code path serves both.
+//! Constness-preserving kernel arithmetic. An expand element knows whether it is a constant
+//! (`Variable::Constant`), but the stock operators always emit an instruction, degrading a computed
+//! constant to runtime. Here constants compute at expand time and identities pass through.
 
 use cubecl::ir::{
     ConstantValue, ExpandValue, Scope,
@@ -216,10 +213,9 @@ impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
     }
 }
 
-/// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose
-/// expand's `IntoMut` is the identity. Elements are never reassigned after
-/// construction, so a `let mut` holder (staging slot, windowed tile) must not copy
-/// them into mutable slots; `Sequence` does, and that copy erases constness.
+/// An immutable coordinate/extent list: [`CoordsDyn`]'s stored-data sibling, whose expand's
+/// `IntoMut` is the identity. Elements are never reassigned, so a `let mut` holder (staging slot,
+/// windowed tile) must not copy them into mutable slots as `Sequence` does; that erases constness.
 pub struct Coords<C: Int> {
     _c: core::marker::PhantomData<C>,
 }
@@ -281,20 +277,17 @@ impl<C: Int> Coords<C> {
 }
 
 /// `n / d` rounded toward minus infinity, for a numerator that may sit below the buffer's origin
-/// (a padded or fractionally placed window). The stock `/` truncates toward zero, which lands one
-/// cell too high there. Only reached for a genuinely runtime numerator or divisor: a comptime pair
-/// divides on the host, where [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin) is the
-/// same floor.
+/// (a padded window), where the stock `/` lands one cell too high. Reached only for a runtime
+/// operand; the comptime floor is [`PhysicalAxisMap::origin`](crate::PhysicalAxisMap::origin).
 #[cube]
 pub(crate) fn floor_div(n: i32, d: i32) -> i32 {
     let q = n / d;
     select(n % d < 0, q - 1, q)
 }
 
-/// [`floor_div`] together with the remainder it leaves, `n - d * floor(n/d)`. For a positive `d`
-/// that remainder is non-negative, which the stock `%` is not: it is the phase a floored division
-/// hands on, whether to a child window or to a resampling filter. Returned as a pair because the
-/// quotient is computed on the way and a caller wanting both should not divide twice.
+/// [`floor_div`] with the remainder it leaves, `n - d * floor(n/d)`, non-negative for a positive
+/// `d` where the stock `%` is not: the phase a floored division hands on to a child window or a
+/// resampling filter. A pair, since the quotient is computed on the way.
 #[cube]
 pub(crate) fn floor_div_rem(n: i32, d: i32) -> (i32, i32) {
     let q = floor_div(n, d);

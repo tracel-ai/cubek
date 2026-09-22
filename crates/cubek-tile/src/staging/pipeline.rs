@@ -1,7 +1,6 @@
 //! The [`Pipeline`]: the fill-vs-read rendezvous for one staging slot, and the [`Sync`] strategy
-//! deduced from the operands' delivery. The [`Barrier`](Sync::Barrier) strategy mirrors
-//! cubek-matmul's `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are
-//! degenerate cases.
+//! deduced from the operands' delivery. [`Barrier`](Sync::Barrier) mirrors cubek-matmul's
+//! `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -24,9 +23,8 @@ pub enum Sync {
 
 impl Sync {
     /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill.
-    /// `Barrier` dominates `Cube` because TMA transaction completion must be included in the
-    /// slot's publication, and a filled slot starts there: `Cube` rendezvouses on `sync_cube`,
-    /// which needs every unit of the cube, and the two roles never meet there.
+    /// `Barrier` dominates `Cube` because TMA transaction completion must be in the slot's
+    /// publication, while `Cube` rendezvouses on `sync_cube`, where the two roles never meet.
     pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Sync {
         assert!(
             !deliveries.is_empty(),
@@ -126,11 +124,9 @@ impl Pipeline {
         }
     }
 
-    /// Units that arrive on `full`. A bulk copy into a slot no plane was set aside for is
-    /// published by the one unit that issued it. A slot that also holds a cooperative fill needs
-    /// every unit that wrote it. And a slot filled by planes of their own needs every one of
-    /// their units: nothing else holds a filling plane in step with the elected one, and a plane
-    /// that falls a lap behind waits on a parity that has already gone by.
+    /// Units that arrive on `full`: the one unit that issued a bulk copy into a slot no plane was
+    /// set aside for; every unit that wrote a cooperative fill; every unit of planes filling on
+    /// their own, since nothing else keeps them in step and a plane a lap behind waits forever.
     ///
     /// The elected unit is one of the arrivals, and it declares the transaction bytes before it
     /// arrives, so the phase cannot complete on the others' arrivals with the bytes still to
@@ -168,9 +164,8 @@ impl Pipeline {
     }
 
     /// Fill staged `dst` from `src`, the one operation a `fill` body performs. A `Barrier` slot
-    /// stages under its `full` mbarrier; a `Cube` slot is a plain blocking
-    /// [`copy_from`](Tile::copy_from). In-place operands never reach it: they allocate no
-    /// destination, so their read goes to the source instead of through a fill.
+    /// stages under `full`, a `Cube` slot is a blocking [`copy_from`](Tile::copy_from);
+    /// in-place operands allocate no destination and never reach it, reading the source instead.
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
         // sides carry (a gathered source is addressed per axis).

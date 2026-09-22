@@ -1,11 +1,9 @@
 //! The one buffered walk: `depth` [`Staging`] slots driven as a circular software pipeline, so
 //! `depth - 1` regions are in flight while one computes.
 //!
-//! Single and double buffering are this schedule at `depth` 1 and 2, not two hand-written walks.
-//! At depth 1 a region's fill is the last event before its own read, so the consume publishes it;
-//! at any greater depth the fill that runs one lap ahead does. That difference, the prologue, and
-//! the drain are the whole protocol, and it lives here once ([`pipelined`]). A kernel supplies
-//! only the ring and what consuming a slot computes.
+//! Single and double buffering are this schedule at `depth` 1 and 2. At depth 1 a region's fill is
+//! the last event before its read, so the consume publishes it; deeper, the fill a lap ahead does.
+//! That, prologue and drain are the protocol ([`pipelined`]); a kernel supplies ring and consume.
 
 use cubecl::frontend::branch::{if_else_expand, if_expand};
 use cubecl::ir::Scope;
@@ -117,18 +115,15 @@ where
 /// [`pipelined`] with the fill the caller's too: `fill` writes a slot for a region, `compute`
 /// reads it back.
 ///
-/// **The schedule is the part worth sharing, not the fill.** The prologue, the lap that
-/// prefetches one region ahead of the one it computes, and which consume publishes a slot that
-/// no later fill will, are the protocol — and a kernel that wanted its own fill used to have to
-/// re-derive all of it to get one. What a fill *does* is the kernel's: it writes the slot's
-/// buffers through [`Staging::fill`], from wherever and through whatever transform.
+/// **The schedule is the part worth sharing, not the fill.** The prologue, the lap prefetching
+/// one region ahead of the one it computes, and which consume publishes a slot no later fill
+/// will, are the protocol. What a fill *does* is the kernel's, written through [`Staging::fill`].
 ///
 /// # Panics
 ///
-/// A ring with a fixed operand — one whose window the walk leaves invariant, filled once above
-/// the loop. Hoisting that fill is the ring reading its own sources, which is exactly what this
-/// entry hands over, so the two cannot both be true. Build the ring over a walk that streams
-/// every operand, or use [`pipelined`].
+/// A ring with a fixed operand (one whose window the walk leaves invariant, filled once above
+/// the loop): hoisting that fill is the ring reading its own sources, which this entry hands
+/// over, so the two cannot both be true. Stream every operand, or use [`pipelined`].
 pub fn pipelined_with<T: CubeType, Fill, F>(
     _walk: Walk,
     _ring: &mut Ring<T>,

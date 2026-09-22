@@ -1,10 +1,9 @@
 //! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine) and
 //! its type-level twin [`DeliveryFamily`], which lets one kernel body serve every argument type.
 //!
-//! How the operand is *stored* is a separate fact, and it rides the spec's
-//! [`Storage`](crate::Storage): a storage-tiled operand states the level its tile is the tile of,
-//! and every mover here serves it. The two are orthogonal on purpose, so a weight packed to the
-//! stage can move under the TMA engine as well as under the units.
+//! How the operand is *stored* is a separate fact, riding the spec's [`Storage`](crate::Storage):
+//! a storage-tiled operand states the level its tile is the tile of; every mover here serves it.
+//! Orthogonal on purpose, so a weight packed to the stage can move under TMA as well as the units.
 
 use cubecl::prelude::*;
 
@@ -43,10 +42,9 @@ impl Delivery {
         }
     }
 
-    /// Reject a plan the TMA descriptor path can't encode, so a bad plan fails here as a
-    /// clean error instead of at descriptor encoding on the driver. `boxes` are the
-    /// bulk-copy box dims (one stage per box); `batched` = any surviving batch dim.
-    /// A no-op unless this is [`Delivery::Tma`].
+    /// Reject a plan the TMA descriptor path can't encode: a bad plan fails here as a clean error
+    /// instead of at descriptor encoding on the driver. `boxes` are the bulk-copy box dims (one
+    /// stage per box), `batched` any surviving batch dim. A no-op unless this is [`Delivery::Tma`].
     pub fn validate_tma(&self, boxes: &[usize], batched: bool) -> Result<(), String> {
         if !self.is_tma() {
             return Ok(());
@@ -67,12 +65,12 @@ impl Delivery {
     }
 }
 
-/// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a
-/// kernel serves that argument as a [`Tile`]. Each argument bundles its own comptime
-/// [`TileSpec`] ([`TileArg`] strided or storage-tiled, [`TmaTileArg`] tensor map), so a tensor
-/// can never pair with another operand's spec; only the kernel's one [`Space`] crosses the
-/// seam. A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled or TMA
-/// unchanged; the launch entry picks the family. One family covers both operands, since
+/// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a kernel
+/// serves it as a [`Tile`]. Each argument bundles its comptime [`TileSpec`] ([`TileArg`] strided
+/// or storage-tiled, [`TmaTileArg`] tensor map); only the kernel's one [`Space`] crosses the seam.
+///
+/// A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled or TMA unchanged; the
+/// launch entry picks the family. One family covers both operands, since
 /// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
@@ -104,10 +102,8 @@ impl TensorDelivery for Cooperative {
 }
 
 /// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
-/// in-kernel by [`Tile::of`]. Serves a plain operand and a storage-tiled one alike: the spec's
-/// [`Storage`] says which, and a stated storage tile only makes each stage one contiguous run
-/// instead of a row at a time. So an activation and a weight packed to the stage ride here
-/// together.
+/// in-kernel by [`Tile::of`]. Serves plain and storage-tiled operands alike: the spec's [`Storage`]
+/// says which; a storage tile only makes each stage one contiguous run instead of a row at a time.
 pub struct Cooperative;
 
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.

@@ -1,14 +1,13 @@
 //! Writing a [`Projection`] one buffer dim at a time.
 //!
-//! [`Projection::new`] takes two parallel lists — the logical axes and one map per physical
-//! dim — and nothing at the call site says how they relate. This states the same value the
-//! way a reader thinks of it: **one line per buffer dim, in buffer order, each saying what
-//! that dim's index is computed from**. The logical axis list falls out of the dims.
+//! [`Projection::new`] takes two parallel lists, logical axes and one map per physical dim, that
+//! say nothing of how they relate. This states the same value as **one line per buffer dim, in
+//! buffer order, each saying what that dim's index is computed from**; the axis list falls out.
 //!
 //! ```text
 //! Projection::dims()
 //!     .dim(B)                                        // dim 0 = b
-//!     .dim(window(&[(OH, stride), (RH, dilation)]).pad(pad))   // dim 1 = oh·stride + rh·dilation − pad
+//!     .dim(window(&[(OH, stride), (RH, dilation)]).pad(pad)) // dim 1 = oh*stride+rh*dilation-pad
 //!     .dim(window(&[(OW, stride), (RW, dilation)]).pad(pad))   // dim 2
 //!     .dim(C)                                        // dim 3 = c
 //!     .build()
@@ -17,8 +16,10 @@
 //! Three kinds of dim, and the argument says which:
 //!
 //! * an [`Axis`] — the dim *is* that coordinate;
+//!
 //! * [`split`] — several axes cut one dim into blocks, `kb·block + ki`, and cannot land on the
 //!   same cell. Stated in **extents**, coarsest first, so no coefficient is computed by hand;
+//!
 //! * [`window`] — several axes slide over one dim, `oh·stride + rh·dilation`, and may land on
 //!   the same cell. Stated in coefficients, because a stride and a dilation *are* the
 //!   coefficients, with [`pad`](WindowDim::pad) for the constant term.
@@ -65,11 +66,9 @@ impl DimsBuilder {
 
     /// The projection, with its logical axes derived from the dims.
     ///
-    /// The order is the one [`Projection::validate`] requires and nothing else: the innermost
-    /// dim's axes come **last**, because that dim is addressed in vector lines and the line runs
-    /// along the operand's last logical axis. Every other axis follows first mention, and a
-    /// [`spanning`](Self::spanning) axis sits after the addressed ones but before the innermost
-    /// dim's, so it never takes the line position.
+    /// [`Projection::validate`]'s order: the innermost dim's axes come **last**, since that dim is
+    /// addressed in vector lines along the operand's last axis. Others follow first mention, a
+    /// [`spanning`](Self::spanning) axis after the addressed ones but before the innermost dim's.
     ///
     /// # Panics
     ///
@@ -120,11 +119,9 @@ impl From<Axis> for PhysicalAxisMap {
 /// One dim cut into blocks by several axes, stated in **extents**, coarsest first:
 /// `split(&[(KB, blocks), (KI, block)])` is `kb·block + ki`.
 ///
-/// The coefficients are derived — each axis steps by the product of the extents finer than it
-/// — so the caller states the sizes it already knows and never a stride-within-a-dim. And
-/// because they are derived that way, no two positions can share a cell: this is
-/// [`Composition::Disjoint`] by construction, which is what keeps every window dense and every
-/// read on the direct path.
+/// The coefficients are derived, each axis stepping by the product of the extents finer than it,
+/// so the caller states sizes it knows and never a stride-within-a-dim, and no two positions can
+/// share a cell: [`Composition::Disjoint`] by construction, keeping every window dense.
 ///
 /// # Panics
 ///

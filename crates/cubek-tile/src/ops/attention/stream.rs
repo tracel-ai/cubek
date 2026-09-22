@@ -2,27 +2,19 @@
 //! streamed straight through registers, no score tile, no shared memory, no
 //! barriers until the ending.
 //!
-//! The fold is the online softmax: a per-row running `(max, sum)` state
-//! ([`RowState`]) plus a value accumulator. Streaming means each K/V row is
-//! read from gmem once, folded in immediately, and dropped. Plane-scoped by
-//! construction (a lane butterfly closes each dot): the cube's x dim must be
-//! exactly one plane; split teams ride the y dim, each folding its own slice of
-//! the key positions.
+//! The fold is the online softmax: a per-row running `(max, sum)` state ([`RowState`]) plus a
+//! value accumulator; each K/V row is read from gmem once, folded in, and dropped. Plane-scoped
+//! (a butterfly closes each dot): x dim is one plane; split teams ride y, each folding a key slice.
 //!
 //! # Teams within the plane
 //!
-//! A plane does not spend all its lanes on one key position. It splits into
-//! `lanes / span` **teams** of `span` lanes, each folding every
-//! `teams`-th position of the block with a state of its own, and the teams
-//! meet once, at the ending, the way split planes do. The span is sized so a
-//! lane holds a few lines of the head rather than one, which is what the walk
-//! is bound by on a GPU: instructions per position, not bytes.
+//! A plane splits into `lanes / span` **teams** of `span` lanes, each folding every `teams`-th
+//! position with its own state; the teams meet once, at the ending. The span is sized so a lane
+//! holds a few lines of the head, not one: on a GPU the walk is bound by instructions, not bytes.
 //!
-//! A plane on one position runs one butterfly per score — five shuffles on a
-//! 32-wide plane, one position's worth of work each — and at a 128-wide f16
-//! head leaves half its lanes idle (16 lines of 8). On GP100 that walked a
-//! 2245-position head at 20 GB/s. A team of 8 lanes closes its score in three
-//! shuffles that four teams issue together, and every lane is loaded.
+//! A plane on one position runs one butterfly per score (five shuffles on a 32-wide plane) and
+//! at a 128-wide f16 head idles half its lanes (16 lines of 8): 20 GB/s on GP100. A team of 8
+//! lanes closes its score in three shuffles that four teams issue together, every lane loaded.
 
 use cubecl::prelude::*;
 
@@ -42,23 +34,17 @@ const CHUNK: usize = 4;
 /// the same registers; see [`STAGE_FLOATS`].
 const LANE_FLOATS: usize = 64;
 
-/// Elements of K and V together a lane stages for one step. The second half of
-/// the register budget, and the reason [`CHUNK`] is a ceiling rather than the
-/// count: a step stages `2 · chunk · per_lane` lines, and `per_lane` is largest
-/// exactly where [`LANE_FLOATS`] has already spent its own budget — one row
-/// over a wide head. Left unbounded, a 128-wide MHA decode staged 256 elements
-/// on top of 64 floats of query and accumulator, which spills on any target
-/// whose lane file this walk was sized to stay inside.
+/// Elements of K and V together a lane stages for one step: the second half of the register
+/// budget, and why [`CHUNK`] is a ceiling, not the count. A step stages `2 · chunk · per_lane`
+/// lines, and `per_lane` peaks where [`LANE_FLOATS`] is already spent (one row over a wide head).
 ///
-/// Bounding the *product* is what keeps both decompositions: capping `per_lane`
-/// instead would push the span to the whole plane and leave one team, and
-/// capping `chunk` against what is left of `LANE_FLOATS` would leave one
-/// position in flight and make the walk latency-bound again.
+/// Unbounded, a 128-wide MHA decode staged 256 elements over 64 of query and accumulator, and
+/// spilled. Bounding the *product* keeps both decompositions: capping `per_lane` instead would
+/// leave one team on the whole plane; capping `chunk`, one position in flight, latency-bound again.
 ///
-/// Counted in elements, not weighted by `EI`: K and V are often half the
-/// accumulator's width, so this is conservative where it is wrong. The number
-/// wants tuning against a real lane file — it is set to leave two positions in
-/// flight at the widest head this fold is meant for.
+/// Counted in elements, not weighted by `EI`: K and V are often half the accumulator's width, so
+/// this is conservative where it is wrong. The number wants tuning against a real lane file; it
+/// is set to leave two positions in flight at the widest head this fold is meant for.
 const STAGE_FLOATS: usize = 128;
 
 /// Lanes on one key position: enough to hold a head's lines at
@@ -74,12 +60,12 @@ fn team_span(lines: usize, lanes: usize, rows: usize, width: usize) -> usize {
 
 /// One plane's share of the streamed fold.
 ///
-/// Holds the plane's query rows and output accumulators in registers. The
-/// plane splits into teams of `span` lanes (see the module doc): lane `l` is
-/// team `l / span` and owns lines `l % span, l % span + span, ...` of every
-/// row, and each team carries a running [`RowState`] of its own, replicated
-/// across its lanes, until [`store`](Self::store) or
-/// [`publish`](Self::publish) closes the teams into one.
+/// Holds the plane's query rows and output accumulators in registers. The plane splits into teams
+/// of `span` lanes (module doc): lane `l` is team `l / span` and owns lines `l % span + i·span`
+/// of every row.
+///
+/// Each team carries a running [`RowState`] of its own, replicated across its lanes, until
+/// [`store`](Self::store) or [`publish`](Self::publish) closes the teams into one.
 #[derive(CubeType)]
 pub struct StreamFold<EA: Float, N: Size> {
     q: Array<Vector<EA, N>>,
@@ -155,19 +141,13 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// Fold one K/V block in. Each team takes every `teams`-th position,
-    /// [`CHUNK`] of them per step: their K and V lines loaded first, then the
-    /// dots, each closed across the team's lanes, one state update for the
-    /// chunk, and the value rows rescaled-and-accumulated. Positions at or
-    /// past `cols_bound` (the ragged tail) are neither read nor folded, so the
-    /// block need not divide anything.
+    /// Fold one K/V block in. Each team takes every `teams`-th position, [`CHUNK`] per step: K and
+    /// V lines loaded first, then the dots closed across the team's lanes, one state update for the
+    /// chunk, the value rows rescaled and accumulated. Positions at/past `cols_bound` are skipped.
     ///
-    /// **The chunk is what keeps the walk from being latency-bound.** One
-    /// position at a time, each step is a dependent chain — load K, reduce,
-    /// update the state, load V — with one position's lines in flight. A chunk
-    /// puts every load of the step in flight before the first is used, and its
-    /// reductions and exponentials are independent chains the scheduler
-    /// interleaves.
+    /// **The chunk keeps the walk from being latency-bound.** One position at a time, each step
+    /// is a dependent chain (load K, reduce, update, load V) with one position's lines in flight; a
+    /// chunk puts every load in flight first, and its reductions and exponentials interleave.
     pub fn absorb<EI: Numeric>(
         &mut self,
         k: &Tile<EI>,
@@ -312,11 +292,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     /// plane's `(m, l)` and, for its lines, the plane's accumulator — the
     /// split-plane merge, run across lane bits instead of shared memory.
     ///
-    /// Run once and only once. A second pass finds `m` already uniform, so its
-    /// weight is `exp(0) = 1`, and folds the already-folded `l` and `acc`
-    /// across the teams again — scaling both by `teams`, silently and with
-    /// nothing out of range to catch it. The two endings consume the fold for
-    /// exactly this reason, so there is no way to reach it twice.
+    /// Run once and only once. A second pass finds `m` already uniform, so its weight is
+    /// `exp(0) = 1`, and folds the already-folded `l` and `acc` across the teams again, silently
+    /// scaling both by `teams`. The two endings consume the fold so it cannot be reached twice.
     fn close_teams(&mut self) {
         let teams = comptime!(self.lanes / self.span);
         if comptime!(teams > 1) {
@@ -350,11 +328,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// The fused ending: the teams close, every plane parks its state and
-    /// accumulator lines in shared memory, one `sync_cube`, then plane 0
-    /// merges the states across splits and writes the normalized output,
-    /// vectorized and cast to the output element. Fully-masked rows store
-    /// exact zeros.
+    /// The fused ending: the teams close, every plane parks its state and accumulator lines in
+    /// shared memory, one `sync_cube`, then plane 0 merges the states across splits and writes
+    /// the normalized output, vectorized and cast. Fully-masked rows store exact zeros.
     ///
     /// Consumes the fold: an ending closes the teams, which is not a thing that
     /// can be done twice (see [`close_teams`](Self::close_teams)).
@@ -435,11 +411,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         }
     }
 
-    /// The split ending: close the teams, then publish the plane's running
-    /// state (lane 0 writes, the states are plane-uniform) and its
-    /// accumulator lines into the team's windows of the split-wide buffers.
-    /// The caller syncs, merges ([`Tile::merge_splits`]) and drains with the
-    /// weights folded in.
+    /// The split ending: close the teams, then publish the plane's running state (lane 0 writes; it
+    /// is plane-uniform) and its accumulator lines into the team's split-wide buffer windows.
+    /// The caller syncs, merges ([`Tile::merge_splits`]) and drains with the weights folded in.
     ///
     /// Consumes the fold, as [`store`](Self::store) does and for the same
     /// reason: the teams close exactly once.

@@ -69,7 +69,8 @@ impl<T: Numeric> TmaData<T> {
     }
 
     /// TMA transport leaf, blocking: bulk-copy into `dst` (shared memory) and wait. Owns its
-    /// mbarrier locally; the pipelined path leaves it to the caller via [`stage_into`](TmaData::stage_into).
+    /// mbarrier locally; the pipelined path leaves it to the caller via
+    /// [`stage_into`](TmaData::stage_into).
     pub(crate) fn load_into(&self, dst: &mut MemData<T>) {
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();

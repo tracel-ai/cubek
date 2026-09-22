@@ -12,12 +12,12 @@ use crate::*;
 /// quant-transparent [`matrix_packed`](Tile::matrix_packed). Each factor resolves its own
 /// [`Packing`], so neither side constrains the other's, and each carries its own scales.
 ///
-/// The 2-D nest reads each operand as a batch matrix, which describes it only when one axis is
-/// contracted *and* a logical coordinate is a physical one. Either condition failing takes the
-/// N-D nest, so a stencil contracting a single axis is a gather just as much as a two-axis
-/// reduce is. A scaled factor takes the 2-D nest alone: the N-D nest reads its operands through
-/// compacted gather windows, where a step has no single scalar `k` to address a scale with, and
-/// that is a second design question rather than a second copy of this one.
+/// The 2-D nest reads each operand as a batch matrix, which fits only when one axis is
+/// contracted *and* a logical coordinate is a physical one; otherwise the N-D nest, so a
+/// single-axis stencil is a gather as much as a two-axis reduce is.
+///
+/// A scaled factor takes the 2-D nest alone: the N-D nest reads through compacted gather
+/// windows, where a step has no single scalar `k` to address a scale with.
 #[cube]
 pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
     acc: &mut MemData<E>,
@@ -106,12 +106,13 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
 /// accumulator: one where the rhs lines along the accumulator, its whole line where it lines
 /// along the contraction, so a block's lines are then partials of one cell.
 ///
-/// Asked per operand ([`Space::contracted_per_step`]) because the answer differs per operand: an lhs lined
+/// Asked per operand ([`Space::contracted_per_step`]) because the answer differs: an lhs lined
 /// along the contracted axis folds, an rhs lined along the accumulator's innermost axis holds
-/// cells that must stay apart. Both must serve the same count, and the block's lanes mean one
-/// axis, so a folded step needs a scalar-contracted_per_step accumulator. Settled once per block,
-/// whether the block is the memory leaf's or opened ahead of the walk
-/// ([`Tile::block_accumulator`]).
+/// cells that must stay apart.
+///
+/// Both must serve the same count, and the block's lanes mean one axis, so a folded step needs a
+/// scalar-contracted_per_step accumulator. Settled once per block, whether the memory leaf's or
+/// opened ahead of the walk ([`Tile::block_accumulator`]).
 pub(crate) fn contracted_per_step(
     lhs: &Space,
     rhs: &Space,

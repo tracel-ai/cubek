@@ -1,9 +1,8 @@
 //! The scale-free unpacking read: a stored `u32`'s fields served as values.
 //!
-//! A packed operand is values and nothing else, so unpacking is not dequantization missing a
-//! scale: it is the whole read. [`Packing::Packed`](crate::Packing::Packed) names the field, this view unpacks it, and no
-//! scheme, scale binding or block grid is anywhere in the path. What folds a scale back in, where
-//! there is one, is a verb the kernel writes ([`Tile::mm_scaled`](crate::Tile::mm_scaled)).
+//! A packed operand is values and nothing else, so unpacking is the whole read, not dequantization
+//! missing a scale. [`Packing::Packed`](crate::Packing::Packed) names the field and this view
+//! unpacks it; a scale is folded in by the kernel ([`Tile::mm_scaled`](crate::Tile::mm_scaled)).
 //!
 //! A line is whole words: every field of every word it reads is served, and a scales operand is
 //! no exception — the walk that reads a word of scales owns the tiles of every field in it.
@@ -28,11 +27,9 @@ use cubecl::{
 /// Unpack one line of stored words into the `NF` values it holds: `NQ` words, each carrying
 /// `NF / NQ` consecutive fields from its low bits.
 ///
-/// Four shapes, because a field decodes four ways. A `Q*` field is an integer: the width says
-/// how many bits one holds and the top one is its sign, so `Q4S` is `[-8, 7]` in four bits. An
-/// `e2m1` field is a float code, read back by reinterpreting the byte two of them share. An 8-bit
-/// float code is a byte, read back through its format's decoder. A whole float is its own bits,
-/// reinterpreted out of the slot it sits in.
+/// Four shapes, because a field decodes four ways. A `Q*` field is a sign-extended integer of
+/// `width` bits (`Q4S` is `[-8, 7]`). An `e2m1` field is read by reinterpreting the byte two share;
+/// an 8-bit float code by its format's decoder; a whole float by reinterpreting its own slot.
 #[cube]
 pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
@@ -93,10 +90,9 @@ fn unpack_int_line<F: Numeric, NQ: Size, NF: Size>(
 /// The pair is the unit rather than the value: two `e2m1` codes share a byte, which is
 /// [`QuantValue::native_packing`], read here as the loop's step.
 ///
-/// Decoded in software, as `cubek-quant`'s field read and cubecl's own quantized view both are.
-/// The `e2m1x2` cast lowers on CUDA alone, so a read reaching for it compiles on one vendor and
-/// dies in codegen everywhere else — on a worker thread, which surfaces as a zeroed output
-/// rather than as an error.
+/// Decoded in software, as `cubek-quant`'s field read and cubecl's own quantized view both are:
+/// the `e2m1x2` cast lowers on CUDA alone and dies in codegen everywhere else, on a worker thread,
+/// which surfaces as a zeroed output rather than as an error.
 #[cube]
 fn unpack_fp4_line<F: Numeric, NQ: Size, NF: Size>(words: Vector<u32, NQ>) -> Vector<F, NF> {
     let pair = comptime!(QuantValue::E2M1.native_packing());

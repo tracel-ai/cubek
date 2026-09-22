@@ -8,28 +8,24 @@ use crate::{
     *,
 };
 
-// The block's line width, as a scope-registered size rather than a generic. `RA` names the
-// vector element `data` is allocated at; `alloc` binds it to the promoting tile's width with
-// `register_size`, and every op reads the block as `Vector<T, RA>`. This is exactly how
-// `MmaData` carries `NA`/`NL`/`NR`: the width stays a storage detail of the leaf and never
-// reaches `PlaneTile` / `TileKind` / `Tile` as a generic. (An earlier version allocated
-// `Array::<T>` scalar and re-viewed it as lines; that reinterpret has nothing behind it and the
-// CPU backend refuses a vectorized operand: allocate at the vector element instead.)
+// The block's line width, a scope-registered size rather than a generic, as `MmaData` carries
+// `NA`/`NL`/`NR`: `alloc` binds it with `register_size`, every op reads `Vector<T, RA>`, and it
+// never reaches `PlaneTile` / `TileKind` / `Tile`.
+//
+// Allocate at the vector element: a scalar `Array::<T>` re-viewed as lines has nothing behind the
+// reinterpret, and the CPU backend refuses a vectorized operand built that way.
 define_size!(pub(crate) RA);
 
 /// An `mr × nr` block of `RA`-wide accumulators living in registers, the software instruction's
 /// encoding of a [`PlaneTile`].
 ///
 /// The block exists so the software leaf can accumulate the way the hardware ones do: created by
-/// [`block_accumulator`](Tile::block_accumulator) and passed in, it outlives a single leaf call
-/// and only meets memory on drain. An accumulator allocated inside the instruction would
-/// round-trip its partials through the output's element on every visit, so a deep contraction
-/// into `f16` would lose precision it does not have to.
+/// [`block_accumulator`](Tile::block_accumulator) and passed in, it outlives a leaf call and meets
+/// memory only on drain, so a deep contraction into `f16` never round-trips partials through it.
 ///
-/// Its lines are the rhs's. Lined along the accumulator, a line is `RA` neighbouring cells;
-/// lined along the contraction, it is `RA` partials of *one* cell ([`fold`](Self::fold)), which
-/// the drain collapses before it writes. The second is what a weight stored along `K` deals a
-/// lane, and the block carries it so that sum, too, stays in `T` across the walk.
+/// Its lines are the rhs's. Lined along the accumulator, a line is `RA` neighbouring cells; lined
+/// along the contraction (a weight stored along `K`), it is `RA` partials of *one* cell
+/// ([`fold`](Self::fold)), collapsed on drain so that sum, too, stays in `T` across the walk.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RegisterData<T: Numeric> {
@@ -58,10 +54,9 @@ pub struct RegisterData<T: Numeric> {
     /// Execution configuration for this register leaf.
     #[cube(comptime)]
     pub(crate) config: RegisterBlock,
-    /// How this block's partials merge: the `⊕` it accumulates under. Stated where the block is
-    /// built ([`Tile::block_accumulator`]), because comptime state cannot be set afterwards, and
-    /// read on drain next to [`lanes`](Self::lanes): that one says partials exist, this one says
-    /// what combining them means. A matmul's is [`Sum`](Monoid::Sum).
+    /// How this block's partials merge: the `⊕` it accumulates under, [`Sum`](Monoid::Sum) for a
+    /// matmul. Stated where the block is built ([`Tile::block_accumulator`]), since comptime state
+    /// cannot be set afterwards; read on drain with [`lanes`](Self::lanes), which says they exist.
     #[cube(comptime)]
     pub(crate) monoid: Monoid,
 }
@@ -128,13 +123,12 @@ impl<T: Numeric> RegisterData<T> {
     /// Add `src`'s block into this one, casting each line up to `T`.
     ///
     /// The promotion a narrow leaf drains through. A block accumulating in the operands' own
-    /// element is what reaches a device's packed instruction — `hfma2` on an `f16` block, which
-    /// is twice the arithmetic of the `f32` one and the only way past that ceiling on a target
-    /// with no matrix units — but the sum it can carry is bounded by the element: `f16` counts
-    /// integers exactly to 2048, so a long reduction accumulated in it stops advancing part way
-    /// through. Draining the narrow block into a wide one **inside** the walk keeps both: the
-    /// packed instruction on the leaf's own steps, and the wide sum across them, with the error
-    /// bounded by the leaf's depth rather than by the whole contraction.
+    /// element reaches a device's packed instruction (`hfma2` on `f16`, twice the arithmetic of
+    /// `f32`), but `f16` counts integers exactly to 2048, so a long reduction in it stalls.
+    ///
+    /// Draining the narrow block into a wide one **inside** the walk keeps both: the packed
+    /// instruction on the leaf's own steps and the wide sum across them, with the error bounded by
+    /// the leaf's depth rather than by the whole contraction.
     ///
     /// Both blocks are the same `mr × nr` grid at the same fold, since the narrow one is opened
     /// against the same sink; the add is line-wise and needs no view of either.
@@ -177,20 +171,16 @@ impl<T: Numeric> RegisterData<T> {
     /// Write the block into `mem`'s window, casting down to its element: the same manual,
     /// row-major store the mma fragment does, over lines instead of lane positions.
     ///
-    /// Under a folded [`LaneShare`] each lane holds only part of every cell, so the block is not
-    /// the answer until those lanes are combined: fold first, then let one of them write. This is
-    /// what [`AccumulateView::commit`] does for the memory-backed leaf, and skipping it is
-    /// every lane writing its own fraction over the last. The share is the window's: `mem` was
-    /// descended through every level, so it carries what the lanes are to these cells, and the
-    /// block, opened above those levels, never knew.
+    /// Under a folded [`LaneShare`] each lane holds only part of every cell, so fold first, then
+    /// let one lane write, as [`AccumulateView::commit`] does; skipping it is every lane writing
+    /// its fraction over the last. The share is `mem`'s (descended every level), not the block's.
     ///
-    /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election: lanes
-    /// that repeat each other's work would each add the same contribution.
+    /// A write that folds ([`Write::Accumulate`]) rather than replaces adds one more election:
+    /// lanes that repeat each other's work would each add the same contribution.
     ///
-    /// The write goes through the sink's masked matrix view, the same door
-    /// [`AccumulateView::commit`] uses: a block is sized to the leaf, so it may overhang the real
-    /// extent, and the lines past the edge belong to the next row. The mask is a comptime flag,
-    /// so a block that fits emits a straight-line store.
+    /// The write goes through the sink's masked matrix view, as [`AccumulateView::commit`] does: a
+    /// block is sized to the leaf, so it may overhang the real extent, and the lines past the edge
+    /// belong to the next row. The mask is a comptime flag, so a block that fits stores straight.
     ///
     /// A line of one cell's partials ([`fold`](Self::fold)) is collapsed after the lanes are
     /// combined and lands in a scalar cell; a line of neighbouring cells lands as it is.
@@ -217,10 +207,9 @@ impl<T: Numeric> RegisterData<T> {
         // Bounded by the window extent.
         let mut sink = mem.matrix_mut::<A>(0usize, comptime!(self.axes), space);
 
-        // Split comptime rather than branching per line: a value-producing `match` plus a
-        // lane guard emits a binding the CPU backend cannot resolve ("Value should have been
-        // declared before"), and a `Whole` share (every CPU, whose planes are one lane) has
-        // no reason to emit either.
+        // Split comptime rather than branching per line: a value-producing `match` plus a lane
+        // guard emits a binding the CPU backend cannot resolve ("Value should have been declared
+        // before"), and a `Whole` share (every CPU, whose planes are one lane) needs neither.
         match comptime!(Drain::of(lanes, mem_write)) {
             Drain::EachLane =>
             {

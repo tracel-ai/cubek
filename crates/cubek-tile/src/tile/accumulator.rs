@@ -17,9 +17,8 @@ use crate::instruction::registers::contract;
 use crate::*;
 
 /// The shape a plane-resident accumulator is opened at: the `m_tiles × n_tiles` fragments one
-/// plane holds, each `m × n` and contracting `k` a step. Stated where the accumulator opens,
-/// before the loops that walk it exist; the walk then checks itself against it (a level's grid
-/// must divide the partition, the leaf must be one fragment).
+/// plane holds, each `m × n` and contracting `k` a step. Stated before the loops that walk it
+/// exist; the walk checks itself against it (grid divides partition, leaf is one fragment).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Fragments {
     pub m_tiles: usize,
@@ -63,12 +62,12 @@ impl Fragments {
 /// anything that must touch them one at a time spills the tile to shared memory first. How much is
 /// resident is a trade and not a fact: barriers against bytes.
 ///
-/// **There is no size between the two.** A middle size would have to hand each tile a slot chosen
-/// by whoever drains it, and a drain walks the partition in its walk's order while the partition
-/// indexes its tiles in its own — not the same order, and nothing makes them agree. At these two
-/// sizes a tile's slot is a fact about the tile: its own index, or the one slot there is.
-/// Serialized because a caller's setting rides a persisted autotune key, so the
-/// value a winner was measured at has to come back.
+/// **There is no size between the two.** A middle size would hand each tile a slot chosen by its
+/// drain, whose walk order and the partition's index order nothing makes agree. At these two sizes
+/// a tile's slot is a fact about the tile: its own index, or the one slot there is.
+///
+/// Serialized because a caller's setting rides a persisted autotune key, so the value a winner was
+/// measured at has to come back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Resident {
     /// No window. A fragment stores straight to memory through its own intrinsic, which is the
@@ -117,12 +116,9 @@ impl Resident {
 
     /// Whether a fragment goes through shared memory on its way out at all.
     ///
-    /// **Two reasons to want that, and only one of them is forced.** A destination that folds
-    /// leaves no choice: the intrinsic's store overwrites, so the cells have to become addressable
-    /// before they can be added. A destination that merely replaces can want it too, because a
-    /// bounced drain writes through the layout in lines the lanes deal between them where the
-    /// intrinsic writes wherever the fragment's own layout puts each lane. Which is faster is a
-    /// measurement, so this is a setting rather than a consequence of the write mode.
+    /// **Forced for a destination that folds**: the intrinsic's store overwrites, so the cells must
+    /// become addressable before they can be added. A replacing destination may want it too, since
+    /// a bounced drain writes lines the lanes deal between them; which is faster is a measurement.
     pub fn bounces(self) -> bool {
         !matches!(self, Resident::None)
     }
@@ -171,10 +167,9 @@ pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
 impl<Acc: Numeric> Tile<Acc> {
     /// What one plane sums into, in the form `instruction` names.
     ///
-    /// **The one opener a kernel whose instruction is data wants.** A derivation that elects a
-    /// form from what the device offers hands it here, and the kernel above never matches on it:
-    /// the register block reads both operands to line its cells, the fragment forms read the lhs
-    /// alone to size the contraction, and that difference is this call's rather than a caller's.
+    /// **The one opener a kernel whose instruction is data wants.** A derivation electing a form
+    /// from what the device offers hands it here; the kernel never matches on it. The register
+    /// block reads both operands to line its cells; the fragment forms read the lhs alone, for `k`.
     ///
     /// The named constructors below are this one with the form written out, for a kernel that
     /// knows its form statically.
@@ -195,10 +190,9 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// The plane-resident accumulator this output contracts in through the tensor-core
-    /// instruction: a partition of cmma fragments mirroring this tile's grid, uninitialized. The
-    /// kernel opens it before the walk it spans and stores it after, one fragment per cell
-    /// ([`copy_cast_from`](Tile::copy_cast_from)). `lhs` sizes the contraction depth.
+    /// The plane-resident accumulator this output contracts in through the tensor-core instruction:
+    /// an uninitialized partition of cmma fragments mirroring this tile's grid, stored after the
+    /// walk one fragment per cell ([`copy_cast_from`](Tile::copy_cast_from)). `lhs` sizes `k`.
     pub fn cmma_accumulator<EA: Numeric, EL: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -239,12 +233,9 @@ impl<Acc: Numeric> Tile<Acc> {
     /// [`cmma_accumulator`](Tile::cmma_accumulator) through the software instruction: a register
     /// block per fragment of the grid, run under `config`.
     ///
-    /// The block's lines are the rhs's, which is why it reads both operands where the hardware
-    /// forms read the lhs alone. An rhs lined along the accumulator gives lines of neighbouring
-    /// cells, as wide as this tile's; one lined along the contraction gives each cell a line of
-    /// its own partials, folded on drain, and this tile is then scalar. Either way the sum stays
-    /// in `EA` across the walk, so a half-precision output summing a long reduction is served
-    /// here whatever axis its weight is stored along.
+    /// The block's lines are the rhs's, so it reads both operands where the hardware forms read
+    /// the lhs alone. An rhs lined along the accumulator gives lines of neighbouring cells; one
+    /// lined along `k` gives each cell a line of partials folded on drain, and the tile is scalar.
     pub fn block_accumulator<EA: Numeric, EL: Numeric, ER: Numeric>(
         &self,
         lhs: &Tile<EL>,
@@ -302,10 +293,9 @@ impl<Acc: Numeric> Tile<Acc> {
         )
     }
 
-    /// This plane-resident accumulator opened with a scratch: a window of shared memory per
-    /// plane, `planes` of them for the cube's planes of `lanes` units, that a fragment bounces
-    /// through where its cells have to be touched one at a time. Stated where the accumulator
-    /// opens, since the scratch is part of its residence.
+    /// This plane-resident accumulator opened with a scratch: a window of shared memory per plane
+    /// (`planes` of them, `lanes` units each) that a fragment bounces through where its cells must
+    /// be touched one at a time. Stated where the accumulator opens: the scratch is its residence.
     ///
     /// `resident` is how much of the partition the window holds, which is a trade rather than a
     /// fact: barriers against bytes ([`Resident`]).
@@ -370,12 +360,13 @@ impl<Acc: Numeric> Tile<Acc> {
         }
     }
 
-    /// This operand with a landing: a window of shared memory the plane owns, that the fragment
-    /// leaf lands the operand's `values ⊗ scales` in before loading them as fragments
-    /// ([`mma_scaled`](Tile::mma_scaled) on a cmma accumulator, or [`Scaled::landed`] where
-    /// the kernel lands a step whole). Stated where the operand is opened, since the landing is
-    /// part of its residence, like [`with_scratch`](Tile::with_scratch); sized where it lands,
-    /// by the window landed, one per plane of the cube.
+    /// This operand with a landing: a plane-owned window of shared memory the fragment leaf lands
+    /// `values ⊗ scales` in before loading them as fragments ([`mma_scaled`](Tile::mma_scaled) on a
+    /// cmma accumulator, or [`Scaled::landed`] where the kernel lands a step whole).
+    ///
+    /// Stated where the operand is opened, since the landing is part of its residence, like
+    /// [`with_scratch`](Tile::with_scratch); sized where it lands, by the window landed, one per
+    /// plane of the cube.
     ///
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
@@ -397,9 +388,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// This operand landed where `instruction` needs it, and untouched where it does not.
     ///
     /// A fragment loads a window as it lies, so a factor reaching one lands first
-    /// ([`with_landing`](Tile::with_landing)); a register block reads its operand through its
-    /// layout and lands nothing. Which instructions want a landing is this crate's to know, so
-    /// a kernel that serves both arms opens its operands once instead of branching per operand.
+    /// ([`with_landing`](Tile::with_landing)); a register block reads through its layout and lands
+    /// nothing. This crate knows which instructions land, so a kernel opens its operands once.
     pub fn landed_for(self, #[comptime] instruction: Instruction) -> Tile<Acc> {
         match comptime!(instruction) {
             Instruction::Registers { .. } => self,

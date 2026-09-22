@@ -2,21 +2,16 @@
 //! into the cell rather than replace it.
 //!
 //! Cutting a contraction at cube scope leaves every cube holding a slice of each output cell it
-//! touches. Adding the slices up is the only thing that is missing, and this is the way that costs
-//! no second pass: each cube adds its own slice into the cell atomically and never learns that
-//! the others exist.
+//! touches. Each cube adds its slice into the cell atomically, so the slices sum with no second
+//! pass and no cube learns that the others exist.
 //!
-//! It rides the machinery a fused epilogue already uses. A sink is
-//! "[a destination] written through its layout and never read", which is exactly what a partial
-//! is, so the walk, the layout, the masking and the drain are the ones a plain store gets, and
-//! only the last step differs: [`ErasedTensor`] ends the walk in a call, and this backing's call
-//! is [`Atomic::fetch_add`] rather than an assignment.
+//! A partial is a sink (a destination written through its layout and never read), so the walk,
+//! layout, masking and drain are those of a plain store. Only the last step differs: the
+//! [`ErasedTensor`] backing ends the walk in [`Atomic::fetch_add`] rather than an assignment.
 //!
-//! Two things the caller owns, neither checkable here. The buffer holds the monoid's identity
-//! before the launch, since the first cube to arrive adds onto what is there. And the order the
-//! adds land in is the order the cubes run in, so the sum is not bit-identical run to run; a
-//! launch that needs reproducibility gives the output an axis for the split instead, which makes
-//! every instance's slice a cell of its own and needs no combine at all.
+//! Two things the caller owns, neither checkable here: the buffer holds the monoid's identity
+//! before the launch, and the adds land in cube order, so the sum is not bit-identical run to run.
+//! A launch that needs reproducibility gives the output an axis for the split instead.
 
 use core::marker::PhantomData;
 

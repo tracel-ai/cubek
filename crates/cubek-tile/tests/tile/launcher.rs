@@ -383,10 +383,9 @@ fn spec_derives_what_a_bound_operand_derives() {
     assert_eq!(derived.spec, bound.spec);
 }
 
-/// The knobs a bound operand tunes are the same knobs an unbound one tunes, which is why what
-/// comes back is the builder rather than a finished spec. A fused operand that knows its bounds
-/// better than the concrete overhang does states it *on* the derivation; hand-building a spec
-/// beside it is the drift `build_spec` exists to remove.
+/// A bound operand tunes the same knobs an unbound one does, so what comes back is the builder,
+/// not a finished spec. A fused operand that knows its bounds better than the concrete overhang
+/// states it *on* the derivation; a spec hand-built beside it is the drift `build_spec` removes.
 #[test]
 fn spec_tunes_what_a_bound_operand_tunes() {
     let client = cubecl::test_device().client();
@@ -418,10 +417,10 @@ fn spec_tunes_what_a_bound_operand_tunes() {
 }
 
 /// The geometry comes back with the spec, because that is the pair [`Tile::of_sink`] takes and
-/// re-deriving it at the call site is the drift `build_spec` removes. Nothing is dropped here
-/// (no batch axes are stated, so there is no broadcast dim to drop), and the caller still reads
-/// the settled pair rather than assuming the stated one survived. See
-/// [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
+/// re-deriving it at the call site is the drift `build_spec` removes. No batch axes are stated, so
+/// nothing is dropped, yet the caller reads the settled pair rather than trusting the stated one.
+///
+/// See [`spec_settles_a_broadcast_batch_dim_away`] for the case where the two differ.
 #[test]
 fn spec_returns_the_geometry_it_settled_on() {
     let client = cubecl::test_device().client();
@@ -448,11 +447,9 @@ fn spec_returns_the_geometry_it_settled_on() {
     );
 }
 
-/// A leading broadcast dim is refused, not silently folded away. `geometry` labels the
-/// operand's own axes, and no batches are stated here, so a dim past them has no axis to belong
-/// to: the derivation that *would* drop it is the one that never runs here, and a caller who
-/// states a rank the projection cannot address learns it at the launch rather than through a
-/// store landing at the wrong offsets.
+/// A leading broadcast dim is refused, not silently folded away. `geometry` labels the operand's
+/// own axes and no batches are stated, so a dim past them has no axis to belong to and the
+/// derivation that *would* drop it never runs; the rank fails at launch, not as a misplaced store.
 #[test]
 #[should_panic(expected = "batch dims but only 0 batch axes given")]
 fn spec_refuses_a_dim_it_cannot_label() {
@@ -477,8 +474,8 @@ fn spec_refuses_a_dim_it_cannot_label() {
 /// stated and the settled pair actually part company over.
 ///
 /// [`batches`](cubek_tile::StridedTileSource::batches) right-aligns above the operand's own axes
-/// here exactly as it does for a bound operand, and a size-one batch dim drops out there. A caller that handed [`Tile::of_sink`] the geometry it *stated* would address a rank
-/// the projection no longer has; the settled one is a dim shorter, and that is the one returned.
+/// as for a bound operand, and a size-one batch dim drops out. A caller handing [`Tile::of_sink`]
+/// the *stated* geometry would address a rank the projection lost; the settled one is returned.
 #[test]
 fn spec_settles_a_broadcast_batch_dim_away() {
     let client = cubecl::test_device().client();
@@ -510,10 +507,9 @@ fn spec_settles_a_broadcast_batch_dim_away() {
 
 /// A width the operand cannot be served in is refused where it is stated, not left to truncate.
 ///
-/// The kernel re-expresses the geometry in lines: a coarser stride becomes `stride / v`. A `v`
-/// that does not divide it addresses a fraction of the operand: in bounds, no fault, wrong
-/// numbers, and the only reason a bound operand never sees it is that `Launcher::vector_size`
-/// derives a width that divides. A stated one has nothing deriving it.
+/// The kernel re-expresses the geometry in lines, a coarser stride becoming `stride / v`. A `v`
+/// that does not divide it addresses a fraction of the operand: in bounds, no fault, wrong numbers.
+/// `Launcher::vector_size` derives a dividing width for a bound operand; a stated one has none.
 #[test]
 #[should_panic(expected = "cannot be served 2 wide")]
 fn spec_refuses_a_width_the_geometry_cannot_serve() {
@@ -721,9 +717,8 @@ fn arg_gathered_validates_the_innermost_dim() {
 }
 
 /// An axis sharing its dim with another has no extent of its own to read back here, but the
-/// operand is free to ride it [`Dynamic`] anyway: whoever maps it identically states its size when
-/// the op walks it. The builder sees one operand, so it is not the place to rule on that; an axis
-/// no operand answers for is reported by `witnessed_space`, at expansion.
+/// operand may ride it [`Dynamic`] anyway: whoever maps it identically states its size when the op
+/// walks it. The builder sees one operand; `witnessed_space` flags an unanswered axis at expansion.
 #[test]
 fn arg_gathered_dynamic_axis_is_accepted() {
     let client = cubecl::test_device().client();

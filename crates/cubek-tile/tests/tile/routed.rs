@@ -1,11 +1,11 @@
 //! Expert routing as a coordinate the kernel states.
 //!
 //! A token's expert is a value read from a table, not a loop coordinate. [`Walk::routed`] takes
-//! one step along the expert axis at that value, so the axis keeps the extent it truly has (three
-//! experts, three experts) while the walk visits one of them. Everything below reads the ordinary
-//! coordinate it is: the weights operand carries nothing, and `at` is the same call it is
-//! everywhere else. The leaf sees one value of the axis, so it contracts nothing, and the block it
-//! opens folds along `K` exactly as an unrouted one does.
+//! one step along the expert axis at that value, so the axis keeps the extent it truly has while
+//! the walk visits one of them; the weights operand carries nothing, and `at` is the same call.
+//!
+//! The leaf sees one value of the axis, so it contracts nothing, and the block it opens folds
+//! along `K` exactly as an unrouted one does.
 #![allow(non_snake_case)]
 
 use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle, zspace::Shape};
@@ -276,18 +276,16 @@ fn a_routed_walk_contracts_each_token_against_the_expert_its_table_names() {
 }
 
 /// Staging under a routed coordinate: the stage is filled from the expert the route named, not
-/// from the first one and then reused. A window displacement that lived on the operand would owe a
-/// refusal here, because a staged operand would inherit it; here the coordinate is the walk's, and
-/// the stage is filled per region like any other.
+/// from the first one and then reused. A window displacement living on the operand would owe a
+/// refusal (a staged operand inherits it); here the coordinate is the walk's, the stage per region.
 #[test]
 fn a_routed_operand_stages_the_expert_the_table_named() {
     assert_routed(&run_staged(&ROUTES), &ROUTES, FEATURES);
 }
 
 /// A routing table names a tile the axis does not have. The coordinate came from data, so this is
-/// not a mistake the caller can be told about: a refusal inside a cube verb dies on a worker
-/// thread. The walk clamps instead, so the read stays inside the weights and lands on the last
-/// expert rather than past the buffer.
+/// not a mistake the caller can be told about (a refusal inside a cube verb dies on a worker
+/// thread). The walk clamps instead, so the read stays inside the weights, on the last expert.
 #[test]
 fn a_route_past_the_last_expert_clamps_to_it() {
     const OVER: [u32; TOKENS] = [99, 0, 2, 1];
@@ -396,11 +394,11 @@ fn run_block(routes: &[u32]) -> HostData {
 /// a step consumes a whole line of each operand and the block's lanes are one cell's partials.
 ///
 /// The expert axis holds one value under the route, so it contracts nothing. Counted as a
-/// contracted axis it becomes the fastest one, which is then not the axis the operands line along,
-/// and the fold every `K`-stored weight needs is off the table: a route could only run one scalar
-/// cell at a time, which no vectorization reaches. A refusal inside a cube verb dies on the
-/// expansion worker, so a regression here reads as the output keeping its fill value rather than
-/// as a message.
+/// contracted axis it becomes the fastest one, not the axis the operands line along, and the fold
+/// every `K`-stored weight needs is gone: a route could only run one scalar cell at a time.
+///
+/// A refusal inside a cube verb dies on the expansion worker, so a regression here reads as the
+/// output keeping its fill value rather than as a message.
 #[test]
 fn a_routed_walk_folds_its_contraction_into_a_register_block() {
     assert_routed(&run_block(&ROUTES), &ROUTES, DEPTH);
@@ -463,10 +461,9 @@ fn launch_routed_on(axis: Axis) -> f32 {
     HostData::from_tensor_handle(&client, out_handle, HostDataType::F32).get_f32(&[0])
 }
 
-/// A comptime refusal inside a `#[cube]` verb does NOT reach the caller: kernel expansion runs
-/// on a worker thread, so `Walk::routed`'s assert panics there and the launch returns as if
-/// nothing happened (visible only under `CUBECL_DEBUG_LOG`). Measured 2026-09-08; the refusal a
-/// routed axis owes has to run on the host, so there is no `should_panic` twin to this test.
+/// A comptime refusal inside a `#[cube]` verb does NOT reach the caller: expansion runs on a
+/// worker thread, so `Walk::routed`'s assert panics there and the launch returns as if nothing
+/// happened (see `CUBECL_DEBUG_LOG`; measured 2026-09-08). The routed refusal must be host-side.
 #[test]
 fn routing_an_axis_of_the_space_is_the_only_case_checked_here() {
     assert_eq!(launch_routed_on(EXPERT), 1.0);

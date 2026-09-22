@@ -24,10 +24,9 @@ pub struct Unset;
 
 /// The fields an [`StridedTileSource`] accumulates; the typestate lives in the wrapper, not here.
 struct TileSourceData<'a> {
-    /// The tensor this operand is served from, when there is one. `None` for a
-    /// destination that has no address: a fused store writes through a call, so
-    /// the launch has nothing to bind, and only the comptime half is derived
-    /// ([`build_spec`](StridedTileSource::build_spec)).
+    /// The tensor this operand is served from, when there is one. `None` for a destination with
+    /// no address: a fused store writes through a call, so the launch has nothing to bind and only
+    /// the comptime half is derived ([`build_spec`](StridedTileSource::build_spec)).
     binding: Option<TensorBinding>,
     /// The operand's physical extents and strides. The source of truth for the
     /// whole derivation: a bound operand copies them off its binding, an
@@ -40,8 +39,8 @@ struct TileSourceData<'a> {
     concrete: Option<(&'a Space, &'a [Axis])>,
     subspace: &'a [Axis],
     batch_axes: &'a [Axis],
-    /// The operand's own affine mapping, when it states one ([`gathered`](StridedTileSource::gathered));
-    /// `None` derives it from the labeled dims instead.
+    /// The operand's own affine mapping, when it states one
+    /// ([`gathered`](StridedTileSource::gathered)); `None` derives it from the labeled dims.
     projection: Option<Projection>,
     v: usize,
     boundary: Option<Option<Boundary>>,
@@ -51,8 +50,7 @@ struct TileSourceData<'a> {
     units: usize,
     /// The kernel's levels, outermost first; set by [`Launcher::arg`](crate::Launcher::arg) for a
     /// launch that states them. What a storage-tiled operand's storage tile is matched against
-    /// ([`Storage`]): the launch is the one place the buffer's real extents and the kernel's
-    /// levels are both in hand.
+    /// ([`Storage`]); only the launch has the buffer's real extents and the levels both in hand.
     levels: &'a [Level],
     /// Present when the operand is quantized; [`realize`](StridedTileSource::realize) validates it.
     quant: Option<Quantization>,
@@ -61,11 +59,9 @@ struct TileSourceData<'a> {
     stored: bool,
 }
 
-/// Typestate builder for a strided tile kernel operand, started with
-/// [`Launcher::arg`](crate::Launcher::arg) or [`StridedOperand::source`]. `Sp`/`Sub` make
-/// [`build`](Self::build) exist only once both required setters are [`Set`]; `Q` records whether
-/// [`quantized`](Self::quantized) was called, so `build` returns a [`StridedOperand`] or a
-/// [`QuantOperand`] and no call site ever probes an option.
+/// Typestate builder for a strided operand, from [`Launcher::arg`](crate::Launcher::arg) or
+/// [`StridedOperand::source`]. `Sp`/`Sub` make [`build`](Self::build) exist once both are [`Set`];
+/// `Q` ([`quantized`](Self::quantized)) makes `build` [`StridedOperand`] or [`QuantOperand`].
 pub struct StridedTileSource<'a, Sp, Sub, Q> {
     data: TileSourceData<'a>,
     _state: PhantomData<(Sp, Sub, Q)>,
@@ -127,16 +123,16 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
         }
     }
 
-    /// Sets an explicit affine [`Projection`] for a gathered operand (convolution, resample),
-    /// mapping logical axes to buffer dimensions. Mutually exclusive with
-    /// [`subspace`](Self::subspace) and [`batches`](Self::batches), and refuses a storage-tiled
-    /// binding.
+    /// Sets an explicit affine [`Projection`] for a gathered operand (convolution, resample), from
+    /// logical axes to buffer dimensions. Mutually exclusive with [`subspace`](Self::subspace) and
+    /// [`batches`](Self::batches), and refuses a storage-tiled binding.
     ///
     /// Checking follows [`may_underflow`](Projection::may_underflow); a window off the buffer's
     /// *tail* is not detected, so a gather that overruns (a rational mapping's last window always
-    /// does) must state [`checked(true)`](Self::checked). An axis sharing a physical dim has no
-    /// extent here, so a [`Dynamic`](crate::Extent) one needs another operand to witness it.
-    /// Dynamic scales, divisors and offsets declare a bound the launch must stay within.
+    /// does) must state [`checked(true)`](Self::checked).
+    ///
+    /// An axis sharing a physical dim has no extent here, so a [`Dynamic`](crate::Extent) one needs
+    /// another operand to witness it; dynamic scales, divisors and offsets declare a launch bound.
     pub fn gathered(mut self, projection: Projection) -> StridedTileSource<'a, Sp, Set, Q> {
         self.data.projection = Some(projection);
         StridedTileSource {
@@ -145,12 +141,12 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
         }
     }
 
-    /// Bind the subspace dims in the order they step, coarsest stride first, whatever order the
-    /// binding names them in: a transposed view binds as the buffer it is, the same bytes and
-    /// never a copy, so its unit-strided dim is innermost and can be served in lines. The labels
-    /// follow their dims, so `subspace(&[K, N])` over an `[n, k]` buffer viewed `[k, n]` binds
-    /// `[N, K]`. Batch dims stay where they are: a broadcast one strides by zero, and where it
-    /// sorts says nothing about which way the operand's own dims run.
+    /// Bind the subspace dims in the order they step, coarsest first: a transposed view binds as
+    /// the buffer it is (same bytes, no copy), so its unit-strided dim is innermost, serving lines.
+    /// Labels follow dims: `subspace(&[K, N])` over `[n, k]` viewed `[k, n]` binds `[N, K]`.
+    ///
+    /// Batch dims stay where they are: a broadcast one strides by zero, and where it sorts says
+    /// nothing about which way the operand's own dims run.
     pub fn stored(mut self) -> Self {
         self.data.stored = true;
         self
@@ -173,9 +169,10 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
 
     /// Force the overhang bounds-check on or off, using [`Boundary::Zero`] when checked. Default:
     /// derived from the concrete space by the [`Launcher`](crate::Launcher). Overwrites whatever
-    /// mode stood, so sequence a `Clamp` [`with_boundary`](Self::with_boundary) *after* this, not
-    /// before. States the mode, not the axis list: [`build`](Self::build) still lands it only on
-    /// the axes that can leave the buffer, which is what keeps a vectorized innermost axis.
+    /// mode stood, so sequence a `Clamp` [`with_boundary`](Self::with_boundary) *after* this.
+    ///
+    /// States the mode, not the axis list: [`build`](Self::build) still lands it only on the axes
+    /// that can leave the buffer, which is what keeps a vectorized innermost axis.
     pub fn checked(mut self, check: bool) -> Self {
         self.data.boundary = Some(if check { Some(Boundary::Zero) } else { None });
         self
@@ -220,11 +217,9 @@ impl<'a, Sp, Sub, Q> StridedTileSource<'a, Sp, Sub, Q> {
 }
 
 impl<'a, Sp, Sub> StridedTileSource<'a, Sp, Sub, Unset> {
-    /// Mark the operand as quantized: its binding holds the scheme's storage element (declared
-    /// **in values**), and `scales` + `scheme` let reads dequantize into the served type.
-    /// `scales` holds one binding per scheme level, innermost first. `dequant_at` says how far the
-    /// quantized form travels, and rides here because that form ends at exactly one boundary, so
-    /// one call says it once. Flips the typestate: `build` now yields a [`QuantOperand`].
+    /// Mark the operand as quantized, so `build` yields a [`QuantOperand`]: its binding holds the
+    /// scheme's storage element (declared **in values**); `scales` (one per level, innermost first)
+    /// and `scheme` let reads dequantize to the served type, `dequant_at` where that form ends.
     pub fn quantized(
         mut self,
         scales: &[TensorBinding],
@@ -238,12 +233,12 @@ impl<'a, Sp, Sub> StridedTileSource<'a, Sp, Sub, Unset> {
         }
     }
 
-    /// [`quantized`](Self::quantized) for a lookup scheme
-    /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)): each stored field indexes
-    /// `table` and a read reconstructs `table[field] * scale`. The table must hold `2^bits` f32
-    /// entries, unchecked here: the unpack's mask bounds every index to that range.
-    /// Public for the same reason [`quantized`](Self::quantized) is: it is the only way to
-    /// declare a lookup operand, since the table has no other binding point.
+    /// [`quantized`](Self::quantized) for a lookup scheme, where a read reconstructs
+    /// `table[field] * scale` ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)). `table`
+    /// holds `2^bits` f32 entries, unchecked here: the unpack's mask bounds every index.
+    ///
+    /// Public for the same reason [`quantized`](Self::quantized) is: the only way to declare a
+    /// lookup operand, since the table has no other binding point.
     pub fn quantized_lookup(
         mut self,
         scales: TensorArg,
@@ -261,8 +256,7 @@ impl<'a, Sp, Sub> StridedTileSource<'a, Sp, Sub, Unset> {
 
 /// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
 /// back in, and how far the quantized form travels before something decodes it. One thing, because
-/// none of the three says anything on its own: a scheme without scales cannot be applied, and an
-/// [`DequantAt`] without a scheme has nothing to bound.
+/// none says anything alone: scales need a scheme, a [`DequantAt`] without one bounds nothing.
 pub struct Quantization {
     /// The innermost level's scales, the only ones addressed per position.
     pub scales: TensorArg,
@@ -279,9 +273,8 @@ pub struct Quantization {
 
 impl Quantization {
     /// `scales` holds one binding per scheme level, innermost first. Only the innermost level is
-    /// addressed per position; a global level is read once from its first element. Checks only
-    /// that the slice holds 1 or 2 bindings; matching `scheme`'s level count is
-    /// [`validate`](Self::validate)'s job.
+    /// addressed per position; a global level reads once from its first element. Checks only for
+    /// 1 or 2 bindings; matching `scheme`'s level count is [`validate`](Self::validate)'s job.
     pub fn new(scales: &[TensorBinding], scheme: QuantScheme, dequant_at: DequantAt) -> Self {
         let (inner, global) = match scales {
             [inner] => (inner, None),
@@ -345,19 +338,17 @@ impl StridedOperand {
         TileArgLaunch::new(self.tensor, self.spec)
     }
 
-    /// The width the binding is typed at: the launch value for the kernel's `Size` generic.
-    /// [`vector_size`](Self::vector_size) is what the operand *serves*, which a packed store
-    /// holds in fewer words. The two are the same for a binding that states no packing, which is
-    /// why a kernel can take this for every operand without knowing which it has.
+    /// The width the binding is typed at: the launch value for the kernel's `Size` generic, while
+    /// [`vector_size`](Self::vector_size) is what the operand *serves*, held by a packed store in
+    /// fewer words. The two agree without packing, so a kernel can take this for every operand.
     pub fn bound_width(&self) -> usize {
         self.spec.packing.physical(self.vector_size)
     }
 }
 
 /// What [`build_spec`](StridedTileSource::build_spec) settles for an operand with no tensor to
-/// bind: the comptime [`TileSpec`], the served width, and the derived geometry. That geometry is
-/// what a bound operand's `TensorArg` would have shipped, not what the caller stated (labeling
-/// drops broadcast batch dims), and [`Tile::of_sink`](crate::Tile::of_sink) addresses through it.
+/// bind: the comptime [`TileSpec`], the served width, and the geometry a bound `TensorArg` would
+/// ship, broadcast dims dropped; [`Tile::of_sink`](crate::Tile::of_sink) addresses through it.
 pub struct DerivedSpec {
     pub spec: TileSpec,
     /// Served width (values per line).
@@ -403,8 +394,6 @@ impl StridedOperand {
     /// Start describing a strided tile kernel operand sourced from `binding`. Set the required
     /// [`space`](StridedTileSource::space) and either [`subspace`](StridedTileSource::subspace) or
     /// [`gathered`](StridedTileSource::gathered); `build` will not compile until both are set.
-    /// Residency defaults to reading in place, so an operand a fragment load cannot address must
-    /// state where it is materialized.
     pub fn source<'a>(binding: TensorBinding) -> StridedTileSource<'a, Unset, Unset, Unset> {
         StridedTileSource::new(binding)
     }
@@ -463,10 +452,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             false => subspace,
         };
 
-        // How the bound tensor says it is stored: the tiling is a fact of the tensor, read off
-        // its binding rather than stated at the launch. An unbound operand (a fused store) has
-        // none to ask. A gathered operand states its mapping outright and the arm below refuses a
-        // tiled binding, so it never carries one.
+        // How the bound tensor says it is stored: the tiling is a fact of the tensor, read off its
+        // binding rather than stated at the launch. An unbound operand (a fused store) has none to
+        // ask; a gathered operand states its mapping and the arm below refuses a tiled binding.
         let stored = binding.as_ref().map(|b| b.tiling).unwrap_or_default();
         let resolved = match projection {
             Some(_) => None,
@@ -504,7 +492,7 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
             None => labeled(&mut geometry, subspace, batch_axes, resolved.clone()),
         };
 
-        // Derive boundary check: use explicit override if set, otherwise check for overhang or underflow.
+        // The boundary check: the stated override, else whether the operand overhangs/underflows.
         let boundary = boundary.unwrap_or_else(|| match concrete {
             Some((concrete, overhangs)) => {
                 let overhangs = addressed
@@ -517,11 +505,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         });
 
         projection.validate(v);
-        // The width against the *settled* geometry, which is the one the kernel re-expresses in
-        // lines. `Launcher::vector_size` derives a width that divides; a caller that states one
-        // (a pinned width, a fused destination the negotiation never saw) reaches here, and
-        // the failure it prevents is silent: `stride / v` truncates in bounds and addresses a
-        // fraction of the operand.
+        // The width against the *settled* geometry, the one the kernel re-expresses in lines.
+        // `Launcher::vector_size` derives a width that divides; a stated one (pinned, or a fused
+        // destination the negotiation never saw) is gated here: `stride / v` truncates silently.
         if let Err(why) = geometry.serves_lines(v) {
             panic!("StridedTileSource::vectorize: this operand cannot be served {v} wide: {why}");
         }
@@ -534,12 +520,11 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
 
         // Whether coordinate axis `pa` is inside the buffer by construction. Only an identity map
         // can be: it reaches exactly as far as its own coordinate, so it stays inside whenever its
-        // tiling divides. Its `Offset::Static(0)` is also what keeps it clear of the *underflow*
-        // half of the derivation above: a negative or `Dynamic` offset makes a map non-identity,
-        // so the axis whose origin can fall below zero is never one settled here. An affine map
-        // reaches further than any axis extent describes, and how far is the caller's to size the
-        // buffer for, which is the trust the derivation above already runs on; no proof here can
-        // retire its policy.
+        // tiling divides, and its zero offset keeps it clear of the *underflow* half above.
+        //
+        // A non-identity map (a negative or `Dynamic` offset, an affine reach past any stated
+        // extent) is the caller's to size the buffer for, the trust the derivation above runs on;
+        // no proof here can retire its policy.
         let settled = |pa: usize| match coords.physical_axis(pa).identity_axis() {
             // An axis the concrete space does not describe is unproven, not proven: the
             // derivation above already skips it when *arming* the mode, so nothing here may use
@@ -585,10 +570,9 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
         }
         Realized {
             tensor: binding.map(|mut binding| {
-                // The derivation may have dropped broadcast batch dims; the arg ships the
-                // geometry it settled on, not the one it arrived with, and its tiling restated
-                // over those dims: a `Tiling` counts fragments off the leading logical dims, so
-                // one counted from a dropped dim would claim a layout the arg no longer has.
+                // The derivation may have dropped broadcast batch dims: the arg ships the settled
+                // geometry, its tiling restated over those dims: a `Tiling` counts fragments off
+                // the leading dims, so one counted off a dropped dim claims a layout the arg lacks.
                 binding.shape = geometry.shape().into();
                 binding.strides = geometry.strides().into();
                 binding.tiling = match &resolved {
@@ -612,15 +596,14 @@ impl<'a, Q> StridedTileSource<'a, Set, Set, Q> {
 }
 
 /// Which level of the kernel's nest a storage-tiled operand's storage tile is the tile of. A tensor
-/// stored tiles-of-tiles deep names one level per nesting, coarse to fine, and the innermost
-/// is the one [`at`](crate::Tile::at) descends into. Matched on the subspace axes alone: a batch
-/// dim is stored one physical dim each regardless, and the cube's slice of it lies inside that.
+/// stored tiles-of-tiles deep names one level per nesting, coarse to fine; [`at`](crate::Tile::at)
+/// descends to the innermost. Matched on the subspace axes alone: a batch dim is one physical dim.
 ///
 /// # Panics
 ///
-/// When the launch states no levels, or when some nesting's storage tile is no level's tile: the space
-/// owns the storage tile's size, so a tensor that arrived disagreeing is refused here, on the caller's
-/// thread, rather than read across a storage tile boundary.
+/// When the launch states no levels, or some nesting's storage tile is no level's tile: the
+/// space owns the storage tile's size, so a tensor that disagrees is refused here, on the
+/// caller's thread, rather than read across a storage tile boundary.
 fn storage_level(
     geometry: &Geometry,
     subspace: &[Axis],
@@ -813,9 +796,8 @@ impl<'a> StridedTileSource<'a, Set, Set, Unset> {
     }
 
     /// The untensored half: everything [`build`](Self::build) would derive but the tensor argument
-    /// itself, for a destination with no address (a fused store writes through a call). The tile
-    /// that walks it is projected, checked and staged exactly as a bound one is, so this is that
-    /// same derivation rather than a restatement a caller would drift from. See [`DerivedSpec`].
+    /// itself, for a destination with no address (a fused store writes through a call). The tile is
+    /// projected, checked and staged as a bound one, by the same derivation. See [`DerivedSpec`].
     pub fn build_spec(self) -> DerivedSpec {
         let Realized {
             vector_size,

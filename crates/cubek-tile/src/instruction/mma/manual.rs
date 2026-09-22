@@ -1,7 +1,6 @@
-//! The manual-mma leaf: `acc += lhs · rhs` via [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition),
-//! the raw-mma twin of [`cmma`](super::cmma). The accumulator is a register fragment; the operands
-//! arrive as fragments or as memory windows (smem or gmem), the latter loaded into transient `A`/`B`
-//! fragments here.
+//! The manual-mma leaf, the raw-mma twin of [`cmma`](super::cmma): `acc += lhs · rhs` via
+//! [`MmaDefinition::execute`](cubecl::cmma::MmaDefinition). The accumulator is a register
+//! fragment; operands are fragments or smem/gmem windows, the latter loaded into `A`/`B` here.
 
 use cubecl::prelude::*;
 

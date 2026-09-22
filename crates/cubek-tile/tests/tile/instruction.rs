@@ -239,7 +239,7 @@ fn test_logsumexp_step() {
     assert_eq!(output.get_f32(&[1]), 1.0);
     assert_eq!(output.get_f32(&[3]), 1.0);
 
-    // Step 1: score 5.0 -> m = 5.0, corr = exp(2-5) = exp(-3), w = exp(5-5) = 1.0, l = 1.0*exp(-3) + 1.0
+    // Step 1: score 5.0 -> m = 5.0, corr = exp(2-5), w = exp(5-5) = 1.0, l = 1.0*exp(-3) + 1.0
     assert_eq!(output.get_f32(&[4]), 5.0);
     let expected_corr = (-3.0f32).exp();
     let expected_l = 1.0 * expected_corr + 1.0;

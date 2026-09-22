@@ -1,11 +1,11 @@
 //! Numerics tests for the attention softmax leaf.
 //!
-//! The kernel below is a miniature of the future Fold body: walk S blocks,
-//! stage each score block into an smem tile, run `Tile::softmax`,
-//! rescale a running accumulator by the returned correction (val_dim = 1
-//! surrogate for the value matmul), then the epilogue normalizes by `l` and
-//! stores `lse = m + ln(l)`. Checked against direct (non-online) host math,
-//! including exact zeros and exact -inf lse on fully-masked rows.
+//! The kernel below is a miniature of the future Fold body: walk S blocks, stage each score
+//! block into an smem tile, run `Tile::softmax`, rescale a running accumulator by the returned
+//! correction (a val_dim = 1 value matmul), then normalize by `l` and store `lse = m + ln(l)`.
+//!
+//! Checked against direct (non-online) host math, including exact zeros and exact -inf lse on
+//! fully-masked rows.
 
 use cubecl::features::Plane;
 use cubecl::std::tensor::layout::CoordsDyn;
@@ -44,10 +44,9 @@ fn softmax_walk_kernel(
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
-    // One worker per row-slice, where a worker is a unit or a whole plane. A
-    // plane is handed its own window of the tiles (the leaf indexes no
-    // planes); a unit reads its rows off the whole tile. `lanes == 1` is the
-    // unit arm, so everything below reads the same either way.
+    // One worker per row-slice, where a worker is a unit or a whole plane. A plane is handed its
+    // own window of the tiles (the leaf indexes no planes); a unit reads its rows off the whole
+    // tile. `lanes == 1` is the unit arm, so everything below reads the same either way.
     let planes = comptime!(units / lanes);
     let rpu = comptime!(rows.div_ceil(planes));
     let kept_space = comptime!(Space::new(&[(Q, rpu)]));
@@ -114,10 +113,9 @@ fn softmax_walk_kernel(
             score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale)
         };
 
-        // The block update `O = corr·O + P·V`, on a scalar accumulator.
-        // Each lane sums the columns it owns and the plane closes it, which is
-        // the value matmul's own shape; at one lane the reduction is the
-        // identity.
+        // The block update `O = corr·O + P·V`, on a scalar accumulator. Each lane sums the columns
+        // it owns and the plane closes it, which is the value matmul's own shape; at one lane the
+        // reduction is the identity.
         let p_view = p.view::<Const<1>>();
         for ri in 0..rpu {
             let r = worker * rpu + ri;
@@ -348,11 +346,11 @@ fn run_at(
 
 const V: Axis = Axis(2);
 
-/// The fold with a shared-memory `{Q, V}` accumulator, the shape the attention
-/// routine takes: softmax row owners publish their correction through a rank-1
-/// factors tile ([`store_rows`](cubek_tile::Tile)), the whole cube rescales the
-/// accumulator ([`scale_rows`](cubek_tile::Tile)), and the value accumulate
-/// runs under a *different* ownership (cyclic) than the softmax rows: the
+/// The fold with a shared-memory `{Q, V}` accumulator, the shape the attention routine takes:
+/// row owners publish their correction in a rank-1 factors tile ([`store_rows`](cubek_tile::Tile))
+/// and the whole cube rescales the accumulator by it ([`scale_rows`](cubek_tile::Tile)).
+///
+/// The value accumulate runs under a *different* ownership (cyclic) than the softmax rows: the
 /// cross-unit handoff the smem path exists for.
 #[cube(launch)]
 #[allow(clippy::too_many_arguments)]
@@ -659,10 +657,9 @@ fn plane_block_narrower_than_the_plane() {
     run_planar((32, 4, 8, 2), 11, false, None);
 }
 
-/// Plane ownership over a fully-masked prefix: `l` stays exactly zero, the
-/// drain divides by it through the masked guard, and `lse` is -inf. The
-/// plane arm reaches that guard through a reduction where the unit arm does
-/// not, so it is worth its own case.
+/// Plane ownership over a fully-masked prefix: `l` stays exactly zero, the drain divides by it
+/// through the masked guard, and `lse` is -inf. The plane arm reaches that guard through a
+/// reduction where the unit arm does not, so it is worth its own case.
 #[test]
 fn plane_fully_masked_rows() {
     run_planar((32, 16, 8, 2), 0, false, None);

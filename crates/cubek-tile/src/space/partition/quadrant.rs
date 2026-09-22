@@ -2,10 +2,8 @@
 //! laid out so their cuts line up.
 //!
 //! The lhs sits left of the out and the rhs above it, so the lhs's row cuts *are* the out's row
-//! cuts and the rhs's column cuts are the out's column cuts. One glyph a tile, and the filled
-//! ones are the region a single worker of that level touches — a row band in the lhs, a column
-//! band in the rhs, and the one cell where they meet in the out. Which is why the three figures
-//! are worth drawing together: the bands explain the cell.
+//! cuts and the rhs's column cuts its column cuts. One glyph a tile; the filled ones are one
+//! worker's region at that level: a row band, a column band, and the out cell where they meet.
 //!
 //! Only three axes are injected. Everything else is read off the levels, and every axis the
 //! figure does not span rides the level's header as a multiplier, since the drawing is one sheet

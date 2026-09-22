@@ -12,7 +12,7 @@ pub struct Sum<A: CubeType, B: CubeType> {
 }
 
 /// Construct a [`Sum`]. `#[cube]` cannot parse a two-parameter generic in a struct literal, which
-/// this sidesteps; only the literal is affected, so the type itself still spells out in a turbofish.
+/// this sidesteps; only the literal is affected, the type still spells out in a turbofish.
 #[cube]
 pub fn sum_of<A: CubeType, B: CubeType>(lhs: A, rhs: B) -> Sum<A, B> {
     Sum::<A, B> { lhs, rhs }

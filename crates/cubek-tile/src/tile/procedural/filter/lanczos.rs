@@ -39,9 +39,8 @@ pub struct Lanczos<C: CubeType> {
 impl<T: Float, C: Recipe<T>> Recipe<T> for Lanczos<C> {
     fn evaluate(&self, coordinates: &RecipeCoords) -> T {
         // Zero lobes would leave an empty support and divide by zero in the coefficient below.
-        // Checked here rather than in a constructor, which a struct literal can bypass. It fires
-        // while the kernel expands, so it surfaces on the client's compilation thread, not at the
-        // call site.
+        // Checked here rather than in a constructor, which a struct literal can bypass; it fires
+        // while the kernel expands, on the client's compilation thread, not at the call site.
         comptime!(assert!(self.lobes > 0, "Lanczos: lobes must be non-zero"));
         let lobes = comptime!(self.lobes as f32);
         let x = self.coordinate.evaluate(coordinates);

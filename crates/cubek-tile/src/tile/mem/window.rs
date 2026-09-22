@@ -10,13 +10,12 @@ use cubecl::{
 
 use crate::*;
 
-/// In-kernel twin of cubecl's `TiledViewLayout`, which has no in-kernel constructor: splits each
-/// coordinate into the digits its [`projection`](Projection) spreads over the physical axes, then
-/// dots the physical strides. Folding arithmetic, so a static store (smem) splits and dots by
-/// constants, and an untiled projection (one physical axis per logical one, so every digit is the
-/// whole coordinate) reduces to the plain strided dot. `Coordinates` are already physical (any
-/// gather is resolved a layer up, by [`AxisProjection`]), so `projection` here is always
-/// [`Projection::of_tiling`]'s synthetic per-position map, not the operand's own.
+/// In-kernel twin of cubecl's `TiledViewLayout`: splits each coordinate into the digits its
+/// [`projection`](Projection) spreads over the physical axes, then dots the physical strides. The
+/// arithmetic folds, so a static store dots by constants and an untiled projection is a plain dot.
+///
+/// `Coordinates` are already physical (a gather is resolved a layer up, by [`AxisProjection`]), so
+/// `projection` is [`Projection::of_tiling`]'s synthetic per-position map, not the operand's own.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct GmemLayout {
@@ -115,10 +114,9 @@ impl Window {
         #[comptime] signed: bool,
         #[comptime] boundaries: SmallVec<[Option<Boundary>; MAX_AXES]>,
     ) -> Self {
-        // Both walks index `origin`, `pos` and `boundaries` by one counter, so a rank slip there
-        // would silently apply one axis's mode to another rather than fail. `bound` is left out:
-        // a sub-window inherits its parent's, which on a stage is the buffer's own rank (a tiled
-        // stage's fragments) rather than the coordinate rank the origin is at.
+        // Both walks index `origin`, `pos` and `boundaries` by one counter, so a rank slip would
+        // apply one axis's mode to another rather than fail. `bound` is left out: a sub-window
+        // inherits its parent's, which on a tiled stage is the fragment rank, not the coordinate's.
         let origin_rank = origin.len();
         let extent_rank = extent.len();
         comptime!(assert!(
@@ -170,11 +168,9 @@ impl Window {
 
 /// Where a gathered stage sits inside the buffer it was filled from.
 ///
-/// A stage is addressed by [`Compaction`](crate::Compaction)'s projection, which keeps the source
-/// map's terms and drops its offset, so a staged coordinate `c` lands on `origin + c * step` in
-/// the source. The fill wrote the boundary's value wherever that landed outside, and the staged
-/// window cannot say which cells those were; this is what lets a reader put the question to the
-/// source rectangle instead.
+/// A stage is addressed by [`Compaction`](crate::Compaction)'s projection (the source map's terms
+/// without its offset), so staged coordinate `c` lands on `origin + c * step` in the source. The
+/// fill wrote the boundary's value wherever that landed outside; only this window can say where.
 ///
 /// Invariant under [`at`](MemData::at): a region step moves the staged window and the source
 /// window by the same physical delta, so only the staged origin has to move and this stays as it

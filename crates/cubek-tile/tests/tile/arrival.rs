@@ -1,10 +1,8 @@
 //! The last cube in merges what the others left, for a merge no atomic add can spell.
 //!
 //! The shape under test is attention's: every cube reduces a slice of one row to a running max
-//! and the sum of the exponentials it implies, and combining two of those is not addition — the
-//! sums are on different scales until a common max is chosen and both are rescaled to it. Adding
-//! the partial sums straight gives a different, wrong answer, which is what makes this a test of
-//! [`last_cube_in`] rather than of the drain beside it.
+//! and the sum of the exponentials it implies. Two of those combine only after both are rescaled
+//! to a common max; adding the partial sums straight is wrong, so this tests [`last_cube_in`].
 //!
 //! Two rows run at once, each with a counter of its own, because that is how a real launch is
 //! shaped: the cubes fall into independent groups and every group's last cube merges its own.
