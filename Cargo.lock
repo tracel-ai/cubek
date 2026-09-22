@@ -229,7 +229,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "benchmarks"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubek",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "cubek"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubek-attention",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-attention"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-convolution"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-fft"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-interpolate"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-matmul"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1118,7 +1118,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-pool"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1129,7 +1129,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-quant"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-random"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1156,7 +1156,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-reduce"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-std"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "cubecl",
  "cubecl-common",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-test-utils"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "bytemuck",
  "cubecl",
@@ -1194,7 +1194,7 @@ dependencies = [
 
 [[package]]
 name = "cubek-tile"
-version = "0.3.0-pre.3"
+version = "0.3.0-pre.4"
 dependencies = [
  "bytemuck",
  "cubecl",
