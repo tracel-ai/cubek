@@ -744,5 +744,5 @@ fn fragment_level(window: &Space, frag: (usize, usize), tiles: (usize, usize)) -
             window.extent(axis)
         );
     }
-    Tiling::leaf(&leaf).walk(&counts).levels().remove(0)
+    Levels::leaf(&leaf).walk(&counts).build().remove(0)
 }

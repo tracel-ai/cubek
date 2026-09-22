@@ -94,9 +94,9 @@ fn space(form: Form) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 3)])
+            Levels::leaf(&[(ROW, 2), (COL, 3)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         form,
     )
@@ -408,9 +408,9 @@ fn matmul_space() -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, edge), (N, edge), (K, edge)])
+            Levels::leaf(&[(M, edge), (N, edge), (K, edge)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     )
@@ -421,15 +421,15 @@ fn run_matmul(backed: Backed) -> HostData {
     let dtype = f32::elem_type_native();
     let launcher = matmul_space();
 
-    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .untiled()
         .arange();
-    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
         .untiled()
         .arange();
     // Poisoned, not zeroed: the kernel owns `out = A·B` whatever the buffer held, and a drain
     // that folded the destination in instead of writing it would show up as the poison.
-    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .untiled()
         .uniform(4242, 10., 100.);
 
@@ -547,9 +547,9 @@ fn masked_space(form: Form) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 2)])
+            Levels::leaf(&[(ROW, 2), (COL, 2)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         form,
     )

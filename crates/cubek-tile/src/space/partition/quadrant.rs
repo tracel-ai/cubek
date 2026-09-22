@@ -161,7 +161,7 @@ fn glyph(level: &Level) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Space, Tiling};
+    use crate::{Levels, Space};
 
     const B: Axis = Axis(0);
     const M: Axis = Axis(1);
@@ -178,11 +178,11 @@ mod tests {
     fn staged() -> Partitioning {
         Partitioning::new(
             Space::new(&[(B, 4), (M, 512), (N, 1024), (K, 4096)]),
-            Tiling::leaf(&[(M, 64), (N, 64), (K, 1024)])
+            Levels::leaf(&[(M, 64), (N, 64), (K, 1024)])
                 .walk(&[(K, 4)])
                 .cubes(&[M, N])
                 .batches(&[B])
-                .levels(),
+                .build(),
         )
     }
 
@@ -224,9 +224,9 @@ mod tests {
     fn a_grid_too_wide_to_draw_elides_its_far_edge() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 4096)]),
-            Tiling::leaf(&[(M, 64), (N, 64), (K, 32)])
+            Levels::leaf(&[(M, 64), (N, 64), (K, 32)])
                 .walk(&[(K, 128)])
-                .levels(),
+                .build(),
         );
         let drawing = partitioning.quadrant(MNK).to_string();
 
@@ -240,9 +240,9 @@ mod tests {
     fn a_dynamic_side_elides() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 4096)]).with_dynamic(&[K]),
-            Tiling::leaf(&[(M, 64), (N, 64), (K, 32)])
+            Levels::leaf(&[(M, 64), (N, 64), (K, 32)])
                 .walk_every(&[K])
-                .levels(),
+                .build(),
         );
 
         assert!(partitioning.quadrant(MNK).to_string().contains(" ⋯"));

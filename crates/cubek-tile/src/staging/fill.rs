@@ -516,8 +516,8 @@ mod tests {
     /// be planned against it. `lhs` spans `M`/`K`, `rhs` spans `K`/`N`, so a `K` walk moves both.
     fn spaces() -> (Space, Space, Space) {
         let space = Space::new(&[(M, 8), (N, 8), (K, 8)]);
-        let lhs = space.project(&[M, K]);
-        let rhs = space.project(&[K, N]);
+        let lhs = space.subspace(&[M, K]);
+        let rhs = space.subspace(&[K, N]);
         (space, lhs, rhs)
     }
 
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn a_slot_of_a_filled_walk_carries_the_count() {
         let (space, lhs, rhs) = spaces();
-        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+        let level = Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[M, N, K])
             .filled_by(2)
             .level();
@@ -578,7 +578,7 @@ mod tests {
     #[should_panic(expected = "cannot be filled by a subset of the cube")]
     fn a_walk_cannot_set_planes_aside_to_fill_a_slot_it_also_fills_cooperatively() {
         let (space, lhs, rhs) = spaces();
-        let level = Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+        let level = Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[M, N, K])
             .filled_by(1)
             .level();

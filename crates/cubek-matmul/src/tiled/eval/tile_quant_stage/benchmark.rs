@@ -139,11 +139,11 @@ impl TileQuantStageBench {
     fn levels(&self) -> Vec<Level> {
         let plane_size = self.client.properties().hardware.plane_size_max as usize;
         let un = self.pack;
-        Tiling::leaf(&[(N, un), (K, self.tk)])
+        Levels::leaf(&[(N, un), (K, self.tk)])
             .lanes(&[(N, plane_size)])
             .walk_every(&[K])
             .cubes(&[N])
-            .levels()
+            .build()
     }
 
     fn space(&self) -> Space {
@@ -158,14 +158,14 @@ impl Benchmark for TileQuantStageBench {
 
     fn prepare(&self) -> Self::Input {
         let space = self.space();
-        let a = TileInput::builder(&self.client, space.project(&[M, K]))
+        let a = TileInput::builder(&self.client, space.subspace(&[M, K]))
             .untiled()
             .arange();
-        let b = TileInput::builder(&self.client, space.project(&[K, N]))
+        let b = TileInput::builder(&self.client, space.subspace(&[K, N]))
             .untiled()
             .packed(&self.scheme, DequantAt::Read)
             .arange();
-        let c = TileInput::builder(&self.client, space.project(&[M, N]))
+        let c = TileInput::builder(&self.client, space.subspace(&[M, N]))
             .untiled()
             .zeros();
         Arc::new((a, b, c))

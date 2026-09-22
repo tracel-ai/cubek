@@ -2,25 +2,25 @@
 //! One entry of a [`Partitioning`](crate::Partitioning): a [`Region`](crate::Region) hands it to
 //! `at`, a [`Launcher`](crate::Launcher) sizes its grid from it, so grid and loops cannot disagree.
 //!
-//! Built only by [`Tiling`](crate::Tiling), leaf up: a level's tile on an axis is the product of
+//! Built only by [`Levels`](crate::Levels), leaf up: a level's tile on an axis is the product of
 //! what was stated below it, and its [`Count`] is what it stated. A level names only the axes it
 //! touches; the rest pass down whole. [`Level::every`], a walk over a region, goes through it too.
 
 use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
-use crate::{Axis, AxisMap, Extent, LaneShare, MatrixAxes, Space, SplitShare, Tiling};
+use crate::{Axis, AxisMap, Extent, LaneShare, Levels, MatrixAxes, Space, SplitShare};
 
 /// How many tiles a level takes along one of its axes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Count {
     /// This many, stated: a walk's steps, or a scope's workers with one tile each. A count
     /// cannot fail to divide, and a tile under it cannot overhang.
-    Of(usize),
+    Stated(usize),
     /// Every tile the level above hands down, one per step or per worker: the count only the
     /// launch knows, and the one place a tile can reach past the extent.
-    Every,
+    All,
     /// Every tile, dealt across this many workers in runs: a closed axis returning to the cube
     /// level to be split, and the one run whose length the kernel computes.
-    Across(usize),
+    AllAcross(usize),
 }
 
 /// What a walk counts along one axis of a level: a constant, or the extent handed down in
@@ -35,8 +35,8 @@ impl Count {
     /// The count where it is a stated number: `Of` and `Across` are, `Every` is the launch's.
     pub(crate) fn stated(self) -> Option<usize> {
         match self {
-            Count::Of(n) | Count::Across(n) => Some(n),
-            Count::Every => None,
+            Count::Stated(n) | Count::AllAcross(n) => Some(n),
+            Count::All => None,
         }
     }
 
@@ -44,8 +44,8 @@ impl Count {
     /// or every tile the extent holds, the last one partial where it does not divide.
     pub(crate) fn tiles(self, extent: usize, tile: usize) -> usize {
         match self {
-            Count::Of(n) => n,
-            Count::Every | Count::Across(_) => extent.div_ceil(tile),
+            Count::Stated(n) => n,
+            Count::All | Count::AllAcross(_) => extent.div_ceil(tile),
         }
     }
 
@@ -53,7 +53,7 @@ impl Count {
     /// every tile of a [`Dynamic`](Extent::Dynamic) axis is the launch's to count.
     pub(crate) fn tiles_const(self, extent: Extent, tile: usize) -> Option<usize> {
         match (self, extent) {
-            (Count::Of(n), _) => Some(n),
+            (Count::Stated(n), _) => Some(n),
             (_, Extent::Static(extent)) => Some(self.tiles(extent, tile)),
             (_, Extent::Dynamic) => None,
         }
@@ -63,8 +63,8 @@ impl Count {
     /// is handed, in that tile.
     pub(crate) fn grid(self, tile: usize) -> GridCount {
         match self {
-            Count::Of(n) => GridCount::Const(n),
-            Count::Every | Count::Across(_) => GridCount::Extent(tile),
+            Count::Stated(n) => GridCount::Const(n),
+            Count::All | Count::AllAcross(_) => GridCount::Extent(tile),
         }
     }
 }
@@ -98,15 +98,15 @@ impl Level {
     /// [`Region::over`](crate::Region::over) asks for, and the shape a stated count never has.
     ///
     /// The leaf-up spelling of the same thing, stated once instead of twice:
-    /// `Tiling::leaf(tile).walk_every(its axes).level()`. It goes through
-    /// [`Tiling`](crate::Tiling) like every other level, so there is still one builder.
+    /// `Levels::leaf(tile).walk_every(its axes).level()`. It goes through
+    /// [`Levels`](crate::Levels) like every other level, so there is still one builder.
     pub fn every(tile: &[(Axis, usize)]) -> Level {
         let axes: Vec<Axis> = tile.iter().map(|&(axis, _)| axis).collect();
-        Tiling::leaf(tile).walk_every(&axes).level()
+        Levels::leaf(tile).walk_every(&axes).level()
     }
 
     /// A level of `scope` over `entries`, each `(axis, tile, count, who takes it)`. The
-    /// builder's constructor: [`Tiling`](crate::Tiling) is the only caller, and it states the
+    /// builder's constructor: [`Levels`](crate::Levels) is the only caller, and it states the
     /// tile as the product of the levels below.
     pub(crate) fn new(scope: LevelScope, entries: &[(Axis, usize, Count, Distribution)]) -> Level {
         for (i, &(axis, ..)) in entries.iter().enumerate() {
@@ -119,24 +119,24 @@ impl Level {
             assert!(tile > 0, "Level: {axis:?} has a tile of nothing");
             match (count, dist) {
                 (
-                    Count::Across(_),
+                    Count::AllAcross(_),
                     Distribution::Spatial {
                         scope: ComputeScope::Cube(_),
                         ..
                     },
                 ) => {}
-                (Count::Across(_), _) => {
+                (Count::AllAcross(_), _) => {
                     panic!("Level: {axis:?} is dealt across workers in runs, which only cubes take")
                 }
                 (
-                    Count::Every,
+                    Count::All,
                     Distribution::Spatial {
                         scope: ComputeScope::Unit,
                         ..
                     },
                 )
                 | (
-                    Count::Every,
+                    Count::All,
                     Distribution::Spatial {
                         scope: ComputeScope::Plane,
                         ..
@@ -176,7 +176,7 @@ impl Level {
                 axis,
                 Entry {
                     tile: 1,
-                    count: Count::Every,
+                    count: Count::All,
                     dist: Distribution::Spatial {
                         scope: ComputeScope::Cube(CubeAxis::Z),
                         spread: Spread::Contiguous,
@@ -213,7 +213,7 @@ impl Level {
         let axes = self.axes();
         for &axis in &axes {
             let entry = self.entries.get(axis);
-            let plain = entry.count == Count::Every
+            let plain = entry.count == Count::All
                 && matches!(
                     entry.dist,
                     Distribution::Spatial {
@@ -361,7 +361,7 @@ impl Level {
     }
 
     /// Whether this level's tile on `axis` fails to divide the extent `space` hands it, leaving a
-    /// partial tile that needs masking. Only [`Every`](Count::Every) or [`Across`](Count::Across)
+    /// partial tile that needs masking. Only [`Every`](Count::All) or [`Across`](Count::AllAcross)
     /// can: a stated count built the extent below it. Host-side, static extents.
     pub(crate) fn overhangs(&self, space: &Space, axis: Axis) -> bool {
         match self.tile(axis) {
@@ -407,7 +407,7 @@ impl Level {
     /// a worker, which every grid divides. What lets the kernel skip clamping a run.
     pub(crate) fn divides(&self, space: &Space, axis: Axis) -> bool {
         match self.count(axis) {
-            Some(Count::Across(workers)) => match space.extent_raw(axis) {
+            Some(Count::AllAcross(workers)) => match space.extent_raw(axis) {
                 Extent::Static(extent) => {
                     extent.div_ceil(self.tile_of(axis)).is_multiple_of(workers)
                 }
@@ -596,7 +596,7 @@ impl Level {
                     scope: ComputeScope::Unit,
                     ..
                 }
-            ) && self.entries.get(axis).count != Count::Of(1)
+            ) && self.entries.get(axis).count != Count::Stated(1)
         })
     }
 }

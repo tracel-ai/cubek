@@ -186,7 +186,7 @@ impl Quantization {
         if !spec.projection.untiled().is_direct() {
             return Err(Refusal::QuantizedGather);
         }
-        self.validate(&space.project(spec.axes()), width);
+        self.validate(&space.subspace(spec.axes()), width);
         Ok(())
     }
 

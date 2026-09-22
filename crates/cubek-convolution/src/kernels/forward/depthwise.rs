@@ -123,7 +123,7 @@ impl DepthwiseSpace {
             tile_c.is_multiple_of(plane_c),
             "DepthwiseSpace: {plane_size} lanes of {width} channels do not divide a tile of {tile_c}"
         );
-        let lanes = Tiling::leaf(&[(C, width), (OW, cols), (OH, 1)])
+        let lanes = Levels::leaf(&[(C, width), (OW, cols), (OH, 1)])
             .lanes(&[(C, plane_size)])
             .interleaved(C);
         let lines = match tile_c / plane_c {
@@ -134,7 +134,7 @@ impl DepthwiseSpace {
             .planes(&[(OH, rows)])
             .cubes(&[C, OW, OH])
             .batches(&[B])
-            .levels()
+            .build()
     }
 
     pub fn space(&self) -> Space {

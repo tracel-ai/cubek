@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, Fragments, Level, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg, Tiling,
+    Axis, Fragments, Level, Levels, Monoid, Partitioning, RegisterBlock, Semiring, Space, TileArg,
 };
 
 use crate::tiled::{K, M, N, cpu_gemm::base::CpuGemmBlueprint};
@@ -18,12 +18,12 @@ pub const REGISTER_BLOCK: RegisterBlock = RegisterBlock::new(256).split_edge();
 /// and read their leaf and overhangs off the same list.
 pub fn cpu_gemm_levels(bp: &CpuGemmBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (leaf, p) = (bp.instruction, bp.planes);
-    Tiling::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
+    Levels::leaf(&[(M, leaf.m), (N, leaf.n), (K, leaf.k)])
         .walk_every(&[K])
         .planes(&[(M, p.m), (N, p.n)])
         .cubes(&[M, N])
         .batches(batch)
-        .levels()
+        .build()
 }
 
 impl CpuGemmBlueprint {

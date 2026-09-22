@@ -406,9 +406,9 @@ impl Conv1d {
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
                     .walk_every(&[OH, CO, RH, CI])
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );
@@ -561,9 +561,9 @@ fn conv1d_padded_underflow_masks_to_zero() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -642,9 +642,9 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -719,9 +719,9 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -893,9 +893,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
                     .walk_every(&[OH, CO, RH, CI])
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );
@@ -1160,9 +1160,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
                     .walk_every(&[OH, CO, RH, CI])
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );
@@ -1435,9 +1435,9 @@ impl Conv1d {
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                Tiling::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
+                Levels::leaf(&[(OH, tile_oh), (CO, tile_co), (RH, self.rh), (CI, self.ci)])
                     .walk_every(&[OH, CO, RH, CI])
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );
@@ -1684,7 +1684,7 @@ impl Conv2d {
                     (RW, self.rw),
                     (CI, self.ci),
                 ]),
-                Tiling::leaf(&[
+                Levels::leaf(&[
                     (OH, tile_oh),
                     (OW, tile_ow),
                     (CO, tile_co),
@@ -1693,7 +1693,7 @@ impl Conv2d {
                     (CI, self.ci),
                 ])
                 .walk_every(&[OH, OW, CO, RH, RW, CI])
-                .levels(),
+                .build(),
             ),
             Form::Static,
         );
@@ -2200,9 +2200,9 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
-            Tiling::leaf(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
+            Levels::leaf(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)])
                 .walk_every(&[OH, OW, RH, RW, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -2449,9 +2449,9 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         &client,
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -2566,7 +2566,7 @@ impl Resize1d {
     /// it: a count nests a second descent, which is where a rational window's leftover phase has
     /// to accumulate rather than restart.
     fn space(&self, oh: usize, oh_counts: &[usize]) -> Launcher {
-        let leaf = Tiling::leaf(&[(OH, oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
+        let leaf = Levels::leaf(&[(OH, oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]);
         let tiling = oh_counts.iter().fold(leaf, |tiling, &count| {
             tiling.walk(&[(OH, count), (CO, 1), (RH, 1), (CI, 1)])
         });
@@ -2574,7 +2574,7 @@ impl Resize1d {
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
-                tiling.walk_every(&[OH, CO, RH, CI]).levels(),
+                tiling.walk_every(&[OH, CO, RH, CI]).build(),
             ),
             Form::Static,
         )
@@ -3017,9 +3017,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -3096,9 +3096,9 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
-            Tiling::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
+            Levels::leaf(&[(OH, 3), (CO, 4), (RH, rh), (CI, ci)])
                 .walk_every(&[OH, CO, RH, CI])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

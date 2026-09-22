@@ -80,10 +80,10 @@ fn run() -> HostData {
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
-            Tiling::leaf(&[(B, 1), (P, 1)])
+            Levels::leaf(&[(B, 1), (P, 1)])
                 .walk_every(&[P])
                 .walk_every(&[B])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -209,10 +209,10 @@ fn run_blocked(ends: &[u32]) -> HostData {
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
-            Tiling::leaf(&[(B, 1), (P, BLOCK)])
+            Levels::leaf(&[(B, 1), (P, BLOCK)])
                 .walk_every(&[P])
                 .walk_every(&[B])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

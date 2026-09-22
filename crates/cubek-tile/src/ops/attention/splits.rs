@@ -49,13 +49,13 @@ impl<EA: Float> Tile<EA> {
             "merge_splits: {split:?} is not an axis of the weights"
         ));
         let splits = comptime!(space.extent(split));
-        let rows = comptime!(space.tile_size() / splits);
+        let rows = comptime!(space.cells() / splits);
         // The states can arrive partitioned differently from the weights (a
         // global buffer beside a shared-memory tile); only the layout has to agree.
         let m_space = comptime!(m.space.clone());
         let l_space = comptime!(l.space.clone());
         comptime!(assert!(
-            m_space.laid_out_like(&space) && l_space.laid_out_like(&space),
+            m_space == space && l_space == space,
             "merge_splits: the states must be laid out like the weights they merge into"
         ));
 

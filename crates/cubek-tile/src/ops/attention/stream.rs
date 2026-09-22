@@ -101,9 +101,9 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         let w = q.vector_size();
         let rank = comptime!(q.space.rank());
         let d = comptime!(q.space.extent_at(rank - 1));
-        let rows = comptime!(row_space.tile_size());
+        let rows = comptime!(row_space.cells());
         comptime!(assert!(
-            q.space.tile_size() == rows * d && d.is_multiple_of(w),
+            q.space.cells() == rows * d && d.is_multiple_of(w),
             "StreamFold: q is {{rows..., head_dim}} with the line width dividing the head dim"
         ));
         let lines = comptime!(d / w);
@@ -347,7 +347,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             "StreamFold::store: the output shares the fold's line width"
         ));
         comptime!(assert!(
-            out.space.tile_size() == rows * lines * this.width,
+            out.space.cells() == rows * lines * this.width,
             "StreamFold::store: the output window is rows x head_dim"
         ));
 
@@ -428,7 +428,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
 
         let d = comptime!(this.lines * this.width);
         comptime!(assert!(
-            acc_win.space.tile_size() == rows * d,
+            acc_win.space.cells() == rows * d,
             "StreamFold::publish: the accumulator window is {{rows, head_dim}}"
         ));
         let per_lane = comptime!(this.per_lane);

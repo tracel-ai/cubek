@@ -383,9 +383,9 @@ impl Harness {
                 &cubecl::test_device().client(),
                 Partitioning::new(
                     Space::new(&[(ROW, ROWS), (COL, COLS)]),
-                    Tiling::leaf(&[(ROW, 2), (COL, 3)])
+                    Levels::leaf(&[(ROW, 2), (COL, 3)])
                         .walk_every(&[ROW, COL])
-                        .levels(),
+                        .build(),
                 ),
                 Form::Static,
             ),
@@ -694,9 +694,9 @@ fn direct_copy_masks_the_trailing_partial_tile() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 4)])
+            Levels::leaf(&[(ROW, 2), (COL, 4)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -728,9 +728,9 @@ fn divided_direct_copy_preserves_the_parent_bound() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
-            Tiling::leaf(&[(ROW, 2), (COL, 4)])
+            Levels::leaf(&[(ROW, 2), (COL, 4)])
                 .walk_every(&[ROW, COL])
-                .levels(),
+                .build(),
         ),
         Form::DynamicAlong(&[ROW]),
     );

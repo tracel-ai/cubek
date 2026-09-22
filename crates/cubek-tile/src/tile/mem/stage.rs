@@ -796,7 +796,7 @@ impl StageStorage {
                         })
                         .collect::<Vec<_>>(),
                 );
-                if nested.laid_out_like(space) {
+                if &nested == space {
                     return Vec::new();
                 }
                 vec![nested]
@@ -819,10 +819,10 @@ mod tests {
     fn space() -> (Space, Vec<Level>) {
         (
             Space::new(&[(M, 16), (N, 16)]),
-            Tiling::leaf(&[(M, 4), (N, 4)])
+            Levels::leaf(&[(M, 4), (N, 4)])
                 .walk(&[(M, 2), (N, 2)])
                 .walk_every(&[M, N])
-                .levels(),
+                .build(),
         )
     }
 
@@ -859,7 +859,7 @@ mod tests {
         let extents = StageForm::dense_extents(&space, 1, &nesting);
         assert_eq!(extents, vec![2, 2, 2, 2, 4, 4]);
         // The nesting only regroups the buffer, never resizes it.
-        assert_eq!(extents.iter().product::<usize>(), space.tile_size());
+        assert_eq!(extents.iter().product::<usize>(), space.cells());
     }
 
     /// The strides a buffer's extents imply, row-major: `[grid…, tile…]` or plain, the same rule.
@@ -869,7 +869,7 @@ mod tests {
         let form = StageForm::dense(&space, 4, StageStorage::Strided);
         assert_eq!(form.extents, vec![16, 4]);
         assert_eq!(form.strides(), vec![4, 1]);
-        assert_eq!(form.cells(), space.tile_size() / 4);
+        assert_eq!(form.cells(), space.cells() / 4);
 
         let tiled = StageForm::dense(
             &space,
@@ -942,7 +942,7 @@ mod tests {
         let tiled = StageStorage::Tiled {
             block: space.leaf(&levels).extents(),
         };
-        assert!(tiled.nesting(&space)[0].laid_out_like(&space.leaf(&levels)));
+        assert!(tiled.nesting(&space)[0] == space.leaf(&levels));
         assert!(StageStorage::Strided.nesting(&space).is_empty());
         assert!(tiled.nesting(&space.leaf(&levels)).is_empty());
     }

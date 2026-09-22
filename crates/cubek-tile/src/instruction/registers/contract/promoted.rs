@@ -90,13 +90,14 @@ impl<T: Numeric> RegisterData<T> {
         // than off the last axis, so a split column group stays one edge.
         let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs_values.space));
         let cols = comptime!(acc_axes.cols(&out));
-        let lhs_axes = comptime!(MatrixAxes::of(&lhs_values.space, mr, kc));
+        let lhs_axes =
+            comptime!(MatrixAxes::new(&lhs_values.space, mr, kc).unwrap_or_else(|e| panic!("{e}")));
         // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator
         // `(k, col)`.
         let rhs_axes = comptime!(if fold > 1 {
-            MatrixAxes::of(&rhs_values.space, cols, kc)
+            MatrixAxes::new(&rhs_values.space, cols, kc).unwrap_or_else(|e| panic!("{e}"))
         } else {
-            MatrixAxes::of(&rhs_values.space, kc, cols)
+            MatrixAxes::new(&rhs_values.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
         });
 
         let config = comptime!(self.config);

@@ -276,7 +276,7 @@ impl<T: Numeric> Tile<T> {
     /// The `i`-th batch matrix over the trailing two axes, in `Vector<T, W>` lines (`W` =
     /// [`vector_size`](Tile::vector_size)), read through whatever [`Packing`] this tile carries.
     pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
-        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing_pair(&self.space)), i)
+        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing(&self.space)), i)
     }
 
     /// The `i`-th batch matrix over the axes `axes` names, read through whatever [`Packing`]

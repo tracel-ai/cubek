@@ -2,8 +2,8 @@ use super::geometry::TileGeometry;
 use cubecl::client::Client;
 use cubecl::{CubeCount, CubeDim};
 use cubek_tile::{
-    Axis, Compaction, Level, Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Space,
-    Tiling,
+    Axis, Compaction, Level, Levels, Partitioning, PhysicalAxisMap, Projection, RegisterBlock,
+    Space,
 };
 
 pub const BATCH: Axis = Axis(0);
@@ -85,7 +85,7 @@ impl InterpolateSpace {
         .into_iter()
         .filter(|&(_, lanes)| lanes > 1)
         .collect();
-        Tiling::leaf(&[
+        Levels::leaf(&[
             (OUTPUT_W, geometry.cols_per_lane),
             (CHANNEL, geometry.channel_block),
             (OUTPUT_H, geometry.rows_per_plane),
@@ -95,7 +95,7 @@ impl InterpolateSpace {
         .walk_every(&[CHANNEL])
         .cubes(&[OUTPUT_W, OUTPUT_H])
         .batches(&[BATCH])
-        .levels()
+        .build()
     }
 
     pub fn space(&self) -> Space {

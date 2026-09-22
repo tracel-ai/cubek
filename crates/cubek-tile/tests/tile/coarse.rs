@@ -72,9 +72,9 @@ fn space(cut: usize) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
-            Tiling::leaf(&[(M, ROWS), (N, COLS), (K, cut)])
+            Levels::leaf(&[(M, ROWS), (N, COLS), (K, cut)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     )

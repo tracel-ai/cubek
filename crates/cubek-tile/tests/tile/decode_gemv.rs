@@ -218,17 +218,17 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
         Partitioning::new(
             Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
             match lanes_cut {
-                true => Tiling::leaf(&[(M, rows_per_lane), (KI, factor), (KB, 1)])
+                true => Levels::leaf(&[(M, rows_per_lane), (KI, factor), (KB, 1)])
                     .walk_every(&[KB])
                     .lanes(&[(M, groups), (KI, group_lanes)])
                     .interleaved(KI),
-                false => Tiling::leaf(&[(M, rows_per_plane), (KB, 1)])
+                false => Levels::leaf(&[(M, rows_per_plane), (KB, 1)])
                     .walk_every(&[KB])
                     .lanes(&[]),
             }
             .planes(&[(M, num_planes)])
             .cubes(&[M])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );

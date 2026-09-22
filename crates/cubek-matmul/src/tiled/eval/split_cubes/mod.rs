@@ -35,9 +35,9 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, Grid, Launcher, Monoid, Partitioning,
-    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
-    Tiling,
+    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, Grid, Launcher, Levels, Monoid,
+    Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -216,9 +216,9 @@ impl Mapping {
             Mapping::DataParallel | Mapping::Atomic { .. } => {
                 let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    Tiling::leaf(&[(N, COLS), (K, k / splits)])
+                    Levels::leaf(&[(N, COLS), (K, k / splits)])
                         .cubes(&[N, K])
-                        .levels(),
+                        .build(),
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
@@ -226,10 +226,10 @@ impl Mapping {
             Mapping::Workspace { .. } => {
                 let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
-                    Tiling::leaf(&[(N, COLS)])
+                    Levels::leaf(&[(N, COLS)])
                         .cubes(&[N])
                         .batches(&[KB])
-                        .levels(),
+                        .build(),
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
@@ -240,10 +240,10 @@ impl Mapping {
             Mapping::AtomicLanes { .. } => {
                 let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
-                    Tiling::leaf(&[(N, COLS), (K, k / splits / plane_size)])
+                    Levels::leaf(&[(N, COLS), (K, k / splits / plane_size)])
                         .lanes(&[(K, plane_size)])
                         .cubes(&[N, K])
-                        .levels(),
+                        .build(),
                 );
                 let concrete = partitioning.space().clone();
                 Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
@@ -257,9 +257,9 @@ impl Mapping {
         {
             let partitioning = Partitioning::new(
                 Space::new(&[(M, m), (N, n), (KB, self.splits())]),
-                Tiling::leaf(&[(M, 1), (N, FOLD_COLS)])
+                Levels::leaf(&[(M, 1), (N, FOLD_COLS)])
                     .cubes(&[M, N])
-                    .levels(),
+                    .build(),
             );
             let concrete = partitioning.space().clone();
             Launcher::new(client, partitioning, &concrete, Grid::FromLevels)

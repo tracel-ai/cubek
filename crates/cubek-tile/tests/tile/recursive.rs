@@ -7,6 +7,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equa
 use cubek_tile::{Axis, Partitioning, Space, TileArg};
 
 use super::references;
+use crate::tile::uncut;
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -34,7 +35,7 @@ fn recursive_two_level_tiled_view() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         f32::elem_type_native(),
     );
 

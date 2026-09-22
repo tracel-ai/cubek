@@ -237,11 +237,11 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
         let axes = MatrixAxes::accumulator(&out, &lhs.space);
         let cols = axes.cols(&out);
         let rhs_matrix = if rhs_along_k {
-            MatrixAxes::find(&rhs.space, cols, kc)
+            MatrixAxes::new(&rhs.space, cols, kc)
         } else {
-            MatrixAxes::find(&rhs.space, kc, cols)
+            MatrixAxes::new(&rhs.space, kc, cols)
         };
-        MatrixAxes::find(&lhs.space, axes.rows(&out), kc).is_some() && rhs_matrix.is_some()
+        MatrixAxes::new(&lhs.space, axes.rows(&out), kc).is_ok() && rhs_matrix.is_ok()
     });
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered && flat,
@@ -286,7 +286,7 @@ fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[compt
         Space::contraction_agrees(&lhs.space, &rhs.space, &out),
         "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \
          so their `k` edges do not line up",
-        lhs.space.contracting(&out),
-        rhs.space.contracting(&out)
+        lhs.space.difference(&out),
+        rhs.space.difference(&out)
     ));
 }

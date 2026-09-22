@@ -106,8 +106,8 @@ impl Walk {
             let dist = comptime!(level.distribution(axis));
             if comptime!(matches!(dist, Distribution::Spatial { .. })) {
                 match comptime!(level.count(axis).unwrap()) {
-                    Count::Across(workers) => instances.push(workers.runtime()),
-                    Count::Of(_) | Count::Every => instances.push(grid.at(p)),
+                    Count::AllAcross(workers) => instances.push(workers.runtime()),
+                    Count::Stated(_) | Count::All => instances.push(grid.at(p)),
                 }
             } else {
                 instances.push(1usize);
@@ -161,11 +161,11 @@ impl Walk {
                 // One tile a worker, or this worker's run of a grid dealt across them, cut short
                 // where the grid does not divide.
                 let run = match comptime!(level.count(axis).unwrap()) {
-                    Count::Across(workers) => grid
+                    Count::AllAcross(workers) => grid
                         .at(p)
                         .plus(comptime!(workers - 1).runtime())
                         .divided_by(workers.runtime()),
-                    Count::Of(_) | Count::Every => 1usize.runtime(),
+                    Count::Stated(_) | Count::All => 1usize.runtime(),
                 };
                 counts.push(instance_tiles(
                     grid.at(p),

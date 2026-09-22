@@ -100,7 +100,7 @@ impl<E: Float> RowState<E> {
     /// `space` is the kept axes; `units` the number of units sharing the
     /// tile, unit u owning rows `[u*rpu, (u+1)*rpu)`.
     pub fn new(#[comptime] space: Space, #[comptime] units: usize) -> RowState<E> {
-        let rows = comptime!(space.tile_size().div_ceil(units));
+        let rows = comptime!(space.cells().div_ceil(units));
         RowState::<E>::of(space, comptime!(RowShare::Unit { rows }))
     }
 
@@ -115,7 +115,7 @@ impl<E: Float> RowState<E> {
     /// ops offered); one lane is the degenerate case and gives back [`new`](RowState::new)'s arm,
     /// which is what a CPU runtime gets.
     pub fn over_plane(#[comptime] space: Space, #[comptime] lanes: usize) -> RowState<E> {
-        let rows = comptime!(space.tile_size());
+        let rows = comptime!(space.cells());
         RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
     }
 

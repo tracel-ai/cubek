@@ -170,11 +170,11 @@ mod tests {
     #[test]
     fn a_stored_tile_that_is_a_level_passes_and_one_that_is_none_is_refused() {
         let space = Space::new(&[(M, 64), (N, 64), (K, 32)]);
-        let levels = cubek_tile::Tiling::leaf(&[(M, 8), (N, 8), (K, 4)])
+        let levels = cubek_tile::Levels::leaf(&[(M, 8), (N, 8), (K, 4)])
             .walk_every(&[K])
             .planes(&[(M, 2), (N, 4)])
             .cubes(&[M, N])
-            .levels();
+            .build();
         let cube_tile = binding(&[2, 4, 16, 32], Tiling::new(&[2, 2]).unwrap());
         validate_stored_tile(&cube_tile, "out", &space, &levels, (M, N)).unwrap();
         let no_level = binding(&[4, 4, 16, 16], Tiling::new(&[2, 2]).unwrap());

@@ -175,7 +175,7 @@ impl<T: Numeric> CmmaData<T> {
         let lines = comptime!(m * lines_per_row);
         let lanes = comptime!(self.lanes);
         let lane = UNIT_POS_X as usize % lanes;
-        let axes = comptime!(MatrixAxes::trailing_pair(&space));
+        let axes = comptime!(MatrixAxes::trailing(&space));
         let mut sink = mem.matrix_mut::<W>(0usize, axes, space);
         #[unroll]
         for t in 0..comptime!(lines.div_ceil(lanes)) {

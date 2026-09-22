@@ -2,7 +2,7 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Level, Partitioning, RegisterBlock, Semiring, Space, TileArg, Tiling, scale_tile,
+    Level, Levels, Partitioning, RegisterBlock, Semiring, Space, TileArg, scale_tile,
 };
 
 use crate::tiled::{
@@ -44,7 +44,7 @@ pub fn quant_gemv_space(problem: &QuantGemvProblem) -> Space {
 /// Below them there is none: a lane's turn is one tile, and stepping it in single blocks would
 /// read a word of scales in halves.
 pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) -> Vec<Level> {
-    Tiling::leaf(&[
+    Levels::leaf(&[
         (M, bp.rows_per_lane),
         (KB, problem.scales_per_word()),
         (KI, problem.block),
@@ -54,7 +54,7 @@ pub fn quant_gemv_levels(bp: &QuantGemvBlueprint, problem: &QuantGemvProblem) ->
     .walk_every(&[KB])
     .planes(&[(M, bp.rows_per_cube / bp.rows_per_plane)])
     .cubes(&[M])
-    .levels()
+    .build()
 }
 
 impl QuantGemvBlueprint {

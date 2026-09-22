@@ -1,5 +1,7 @@
 //! Which of a space's axes form the matrix a 2-D reader sees.
 
+use core::fmt::{self, Display, Formatter};
+
 use crate::{Extent, Space};
 
 /// Which of a tile's axes form the matrix a 2-D reader sees: a batch prefix pinned to one matrix,
@@ -20,7 +22,7 @@ impl MatrixAxes {
     /// The trailing pair: leading axes batch, the last two the matrix. What a tile whose axes are
     /// already `[batch…, row, col]` reads through, which is every operand of an unpartitioned
     /// problem.
-    pub(crate) fn trailing_pair(space: &Space) -> Self {
+    pub(crate) fn trailing(space: &Space) -> Self {
         let rank = space.rank();
         MatrixAxes {
             row_split: rank - 2,
@@ -87,10 +89,10 @@ impl MatrixAxes {
     /// outwards. An empty row group is legal exactly when `rows` is `1`: the row coordinate is
     /// then always `0` and the axes above sit in the batch prefix, which pins them the same way.
     ///
-    /// `None` where no grouping of this tile's axes is that matrix, which is the question "does a
+    /// Refused where no grouping of this tile's axes is that matrix, which is the question "does a
     /// 2-D reading describe this operand at all": a contraction the operand does not carry as one
     /// run of axes has no `k` edge, and is read a cell at a time instead.
-    pub fn find(space: &Space, rows: usize, cols: usize) -> Option<Self> {
+    pub fn new(space: &Space, rows: usize, cols: usize) -> Result<Self, NoMatrix> {
         let rank = space.rank();
         let mut col_split = rank;
         let mut trailing = 1;
@@ -99,7 +101,7 @@ impl MatrixAxes {
             trailing *= space.extent_at(col_split);
         }
         if trailing != cols {
-            return None;
+            return Err(NoMatrix::new(space, rows, cols));
         }
         let mut row_split = col_split;
         let mut middle = 1;
@@ -108,7 +110,7 @@ impl MatrixAxes {
             middle *= space.extent_at(row_split);
         }
         if middle != rows {
-            return None;
+            return Err(NoMatrix::new(space, rows, cols));
         }
         // A degenerate leading axis multiplies nothing, so it belongs to the row group rather than
         // to a batch prefix that would pin it to the same `0`. Absorbing it keeps one answer per
@@ -116,18 +118,18 @@ impl MatrixAxes {
         while row_split > 0 && space.extent_at(row_split - 1) == 1 {
             row_split -= 1;
         }
-        Some(MatrixAxes {
+        Ok(MatrixAxes {
             row_split,
             col_split,
         })
     }
 
-    /// [`of`](Self::of) over a tile's *whole* box, no batch prefix: every axis lands in one group
+    /// [`new`](Self::new) over a tile's *whole* box, no batch prefix: every axis lands in one group
     /// or the other, and the column group holds the innermost (vectorized) axis whole. What an mma
     /// fragment reads, where `cols` is stated in scalars and the view serves it as lines.
     pub fn whole(space: &Space, rows: usize, cols: usize, vector_size: usize) -> Self {
         let rank = space.rank();
-        let axes = MatrixAxes::of(space, rows, cols);
+        let axes = MatrixAxes::new(space, rows, cols).unwrap_or_else(|e| panic!("{e}"));
         assert!(
             axes.row_split == 0,
             "MatrixAxes::whole: this tile has axes above its {rows} rows, so its box is a \
@@ -148,20 +150,38 @@ impl MatrixAxes {
         );
         axes
     }
+}
 
-    /// [`find`](Self::find) where the caller has already established that the matrix exists.
-    pub fn of(space: &Space, rows: usize, cols: usize) -> Self {
-        MatrixAxes::find(space, rows, cols).unwrap_or_else(|| {
-            let extents = (0..space.rank())
-                .map(|p| space.extent_at(p))
-                .collect::<Vec<_>>();
-            panic!(
-                "MatrixAxes: no grouping of this tile's axes gives a {rows}x{cols} matrix (its \
-                 extents are {extents:?})"
-            )
-        })
+/// Why a space has no `rows x cols` reading: no grouping of its axes multiplies out to it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NoMatrix {
+    pub rows: usize,
+    pub cols: usize,
+    pub extents: Vec<usize>,
+}
+
+impl NoMatrix {
+    fn new(space: &Space, rows: usize, cols: usize) -> Self {
+        NoMatrix {
+            rows,
+            cols,
+            extents: (0..space.rank()).map(|p| space.extent_at(p)).collect(),
+        }
     }
 }
+
+impl Display for NoMatrix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "MatrixAxes: no grouping of this tile's axes gives a {}x{} matrix (its extents are \
+             {:?})",
+            self.rows, self.cols, self.extents
+        )
+    }
+}
+
+impl std::error::Error for NoMatrix {}
 
 #[cfg(test)]
 mod tests {

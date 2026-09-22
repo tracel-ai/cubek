@@ -27,7 +27,7 @@ impl<EA: Float> Tile<EA> {
     pub fn store_rows(&mut self, values: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         let rpu = comptime!(share.rows());
-        let rows = comptime!(self.space.tile_size());
+        let rows = comptime!(self.space.cells());
         comptime!(assert!(
             (0..self.space.rank())
                 .filter(|&p| self.space.extent_at(p) > 1)
@@ -128,7 +128,7 @@ impl<EA: Float> Tile<EA> {
             w == 1 && wf == 1,
             "scale_rows: vectorized tiles not supported yet"
         ));
-        let total = comptime!(self.space.tile_size());
+        let total = comptime!(self.space.cells());
         let size!(W) = w;
         let size!(WF) = wf;
         let f = factors.flat::<WF>();

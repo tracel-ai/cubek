@@ -173,7 +173,18 @@ impl Partitioning {
     /// Whether `axis` overhangs its tiling: some level's edge fails to divide the extent handed
     /// to it, leaving a partial tile that needs masking.
     pub fn overhangs(&self, axis: Axis) -> bool {
-        self.space.overhangs(&self.levels, axis)
+        assert!(
+            !self.space.is_dynamic(axis),
+            "Partitioning::overhangs: axis {axis:?} is Dynamic; ask the concrete space"
+        );
+        let mut space = self.space.clone();
+        for level in &self.levels {
+            if level.overhangs(&space, axis) {
+                return true;
+            }
+            space = level.child(&space);
+        }
+        false
     }
 
     /// Every axis some tile reaches past the end of, whose accesses are masked.
@@ -203,7 +214,7 @@ impl Partitioning {
                     // The stated workers, or one per tile of an every-level: `tiles` is `ceil`,
                     // so an indivisible axis adds the cube for its partial tile.
                     total *= match level.count(axis) {
-                        Some(Count::Across(workers)) => workers,
+                        Some(Count::AllAcross(workers)) => workers,
                         _ => level.tiles(&space, axis),
                     } as u32;
                 }
@@ -254,7 +265,7 @@ impl Partitioning {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Tiling;
+    use crate::Levels;
 
     const M: Axis = Axis(0);
     const N: Axis = Axis(1);
@@ -265,12 +276,12 @@ mod tests {
     fn staged(fillers: usize) -> Partitioning {
         Partitioning::new(
             Space::new(&[(M, 256), (N, 256), (K, 512)]),
-            Tiling::leaf(&[(M, 64), (N, 64), (K, 64)])
+            Levels::leaf(&[(M, 64), (N, 64), (K, 64)])
                 .planes(&[(M, 2), (N, 2)])
                 .walk_every(&[K])
                 .filled_by(fillers)
                 .cubes(&[M, N])
-                .levels(),
+                .build(),
         )
     }
 
@@ -314,9 +325,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "only a walk's regions are staged")]
     fn a_level_that_deals_its_tiles_cannot_be_filled_by_anyone() {
-        Tiling::leaf(&[(M, 64)])
+        Levels::leaf(&[(M, 64)])
             .planes(&[(M, 2)])
             .filled_by(1)
-            .levels();
+            .build();
     }
 }

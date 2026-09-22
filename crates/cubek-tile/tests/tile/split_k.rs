@@ -114,7 +114,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
-            Tiling::leaf(&[(KB, 1)]).cubes(&[KB]).levels(),
+            Levels::leaf(&[(KB, 1)]).cubes(&[KB]).build(),
         ),
         Form::Static,
     );
@@ -158,7 +158,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (KB, splits)]),
-            Tiling::leaf(&[(M, 1)]).cubes(&[M]).levels(),
+            Levels::leaf(&[(M, 1)]).cubes(&[M]).build(),
         ),
         Form::Static,
     );
@@ -373,7 +373,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(K, k / splits)]).cubes(&[K]).levels(),
+            Levels::leaf(&[(K, k / splits)]).cubes(&[K]).build(),
         ),
         Form::Static,
     );
@@ -512,10 +512,10 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(N, per_lane), (K, k / splits)])
+            Levels::leaf(&[(N, per_lane), (K, k / splits)])
                 .lanes(&[(N, plane_size)])
                 .cubes(&[K])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -597,9 +597,9 @@ fn an_atomic_drain_folds_across_planes() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(K, k / num_planes)])
+            Levels::leaf(&[(K, k / num_planes)])
                 .planes(&[(K, num_planes)])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -706,7 +706,7 @@ fn a_folding_output_contracts_in_place() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(K, k / splits)]).cubes(&[K]).levels(),
+            Levels::leaf(&[(K, k / splits)]).cubes(&[K]).build(),
         ),
         Form::Static,
     );
@@ -852,11 +852,11 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, m), (N, n), (K, edge)])
+            Levels::leaf(&[(M, m), (N, n), (K, edge)])
                 .walk_every(&[K])
                 .cubes(&[M, N, K])
                 .across(K, splits)
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -974,9 +974,7 @@ fn a_copy_into_a_folding_output_adds() {
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols)]),
-            Tiling::leaf(&[(M, rows), (N, cols)])
-                .cubes(&[M, N])
-                .levels(),
+            Levels::leaf(&[(M, rows), (N, cols)]).cubes(&[M, N]).build(),
         ),
         Form::Static,
     );

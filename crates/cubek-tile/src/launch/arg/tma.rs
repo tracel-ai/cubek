@@ -27,7 +27,7 @@ impl<E: Numeric> TmaTileArg<E> {
     pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
         TmaData::from_tensor_map(
             self.view.clone(),
-            comptime!(space.space().project(self.spec.axes())),
+            comptime!(space.space().subspace(self.spec.axes())),
             comptime!(self.spec.units),
         )
         .under(comptime!(space.levels().to_vec()))

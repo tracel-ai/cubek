@@ -170,21 +170,21 @@ fn check_ring_matmul_with(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+            Levels::leaf(&[(M, tile), (N, tile), (K, tile)])
                 .walk(&[(M, m / tile), (N, n / tile), (K, block_k / tile)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
 
-    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .tile(&[tile, tile])
         .arange();
-    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
         .tile(&[tile, tile])
         .arange();
-    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 
@@ -234,11 +234,11 @@ fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+            Levels::leaf(&[(M, tile), (N, tile), (K, tile)])
                 .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
                 .walk_every(&[M, N, K])
                 .filled_by(1)
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -254,20 +254,20 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, tile), (N, tile), (K, tile)])
+            Levels::leaf(&[(M, tile), (N, tile), (K, tile)])
                 .walk(&[(M, m / tile), (N, n / tile), (K, 1)])
                 .walk_every(&[M, N, K])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
-    let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
+    let a = TileInput::builder(&client, launcher.space().subspace(&[M, K]))
         .tile(&[tile, tile])
         .arange();
-    let b = TileInput::builder(&client, launcher.space().project(&[K, N]))
+    let b = TileInput::builder(&client, launcher.space().subspace(&[K, N]))
         .tile(&[tile, tile])
         .arange();
-    let c = TileInput::builder(&client, launcher.space().project(&[M, N]))
+    let c = TileInput::builder(&client, launcher.space().subspace(&[M, N]))
         .tile(&[tile, tile])
         .uniform(7, -100.0, 100.0);
 

@@ -94,11 +94,11 @@ fn run(table: &[u32]) -> HostData {
                 (OFFSET, PAGE_SIZE),
                 (D, FEATURES),
             ]),
-            Tiling::leaf(&[(B, 1), (LP, 1), (PAGE, 1)])
+            Levels::leaf(&[(B, 1), (LP, 1), (PAGE, 1)])
                 .walk_every(&[PAGE])
                 .walk_every(&[LP])
                 .walk_every(&[B])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

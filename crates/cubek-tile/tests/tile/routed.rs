@@ -189,10 +189,10 @@ fn per_token_operands(client: &Client) -> (Launcher, TensorHandle, TensorHandle)
         client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
-            Tiling::leaf(&[(M, 1), (EXPERT, 1)])
+            Levels::leaf(&[(M, 1), (EXPERT, 1)])
                 .walk_every(&[EXPERT])
                 .walk_every(&[M])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -347,11 +347,11 @@ fn run_block(routes: &[u32]) -> HostData {
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, DEPTH), (EXPERT, EXPERTS)]),
-            Tiling::leaf(&[(M, 1), (EXPERT, 1), (K, LINE)])
+            Levels::leaf(&[(M, 1), (EXPERT, 1), (K, LINE)])
                 .walk_every(&[K])
                 .walk_every(&[EXPERT])
                 .walk_every(&[M])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -431,7 +431,7 @@ fn launch_routed_on(axis: Axis) -> f32 {
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (EXPERT, EXPERTS)]),
-            Tiling::leaf(&[(EXPERT, 1)]).walk_every(&[EXPERT]).levels(),
+            Levels::leaf(&[(EXPERT, 1)]).walk_every(&[EXPERT]).build(),
         ),
         Form::Static,
     );
@@ -502,9 +502,9 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         &client,
         Partitioning::new(
             Space::new(&[(EXPERT, lanes)]),
-            Tiling::leaf(&[(EXPERT, 1)])
+            Levels::leaf(&[(EXPERT, 1)])
                 .lanes(&[(EXPERT, lanes)])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

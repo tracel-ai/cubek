@@ -79,12 +79,12 @@ fn separable_kernel<E: Float>(
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = if comptime!(separable) {
         Tile::<E>::procedural_separable::<Weights<E>>(
-            comptime!(space.space().project(&weight_axes)),
+            comptime!(space.space().subspace(&weight_axes)),
             weights::<E>(),
         )
     } else {
         Tile::<E>::procedural::<Weights<E>>(
-            comptime!(space.space().project(&weight_axes)),
+            comptime!(space.space().subspace(&weight_axes)),
             weights::<E>(),
         )
     };
@@ -115,7 +115,7 @@ fn separable_kernel_staged<E: Float>(
     let input = input.tile(comptime!(space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&weight_axes)),
+        comptime!(space.space().subspace(&weight_axes)),
         weights::<E>(),
     );
 
@@ -183,7 +183,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (ROW, ROWS),
                 (COL, COLS),
                 (TAP[0], TAPS[0]),
@@ -191,7 +191,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
                 (TAP[2], TAPS[2]),
             ])
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -275,7 +275,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (ROW, ROWS),
                 (COL, COLS),
                 (TAP[0], TAPS[0]),
@@ -283,7 +283,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
                 (TAP[2], TAPS[2]),
             ])
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -340,7 +340,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     let input = input.tile::<E>(comptime!(space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&weight_axes)),
+        comptime!(space.space().subspace(&weight_axes)),
         weights::<E>(),
     );
 
@@ -405,7 +405,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (ROW, ROWS),
                 (COL, QCOLS),
                 (TAP[0], TAPS[0]),
@@ -413,7 +413,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
                 (TAP[2], TAPS[2]),
             ])
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -507,7 +507,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
                 (TAP[1], TAPS[1]),
                 (TAP[2], TAPS[2]),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (ROW, ROWS),
                 (COL, pack),
                 (TAP[0], TAPS[0]),
@@ -515,14 +515,14 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
                 (TAP[2], TAPS[2]),
             ])
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
 
     let input = TileInput::builder(
         &client,
-        launcher.space().project(&[TAP[0], TAP[1], TAP[2], COL]),
+        launcher.space().subspace(&[TAP[0], TAP[1], TAP[2], COL]),
     )
     .untiled()
     .packed(&scheme, DequantAt::Read)
@@ -626,7 +626,7 @@ fn resample_kernel<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&[ROW, TAP[0]])),
+        comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     );
     let weights = if comptime!(normalized) {
@@ -677,9 +677,9 @@ fn check_resampling(normalized: bool) {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+            Levels::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -741,7 +741,7 @@ fn procedural_mask_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let rhs = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(space.space().project(&[TAP[0], COL])),
+        comptime!(space.space().subspace(&[TAP[0], COL])),
         affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
     );
     let mut output = output.tile(comptime!(space.clone()));
@@ -753,7 +753,7 @@ fn procedural_mask_kernel<E: Float>(
         let mut factors = Sequence::new();
         factors.push(affine_along(TAP[0], E::new(1.0_f32), E::new(0.0_f32)));
         let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
-            comptime!(child.project(&[ROW, TAP[0]])),
+            comptime!(child.subspace(&[ROW, TAP[0]])),
             separable_product(factors),
         )
         .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -775,9 +775,9 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
-            Tiling::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2)])
+            Levels::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -814,7 +814,7 @@ fn resample_kernel_masked<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&[ROW, TAP[0]])),
+        comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -843,7 +843,7 @@ fn resample_kernel_masked_staged<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&[ROW, TAP[0]])),
+        comptime!(space.space().subspace(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -882,9 +882,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+            Levels::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -965,9 +965,9 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+            Levels::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -1039,7 +1039,7 @@ fn column_spanning_resample_kernel<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&[ROW, COL, TAP[0]])),
+        comptime!(space.space().subspace(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
@@ -1079,9 +1079,9 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+            Levels::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -1136,7 +1136,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.space().project(&[ROW, COL, TAP[0]])),
+        comptime!(space.space().subspace(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -1175,9 +1175,9 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
-            Tiling::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
+            Levels::leaf(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)])
                 .walk_every(&[ROW, COL, TAP[0]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -1245,7 +1245,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     // Factor 1: taps at k=0 (2.0) and k=1 (2.0), sum = 4.0
     factors.push(affine_along(TAP[1], E::new(2.0_f32), E::new(0.0_f32)));
     let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
-        comptime!(space.space().project(&[ROW, TAP[0], TAP[1]])),
+        comptime!(space.space().subspace(&[ROW, TAP[0], TAP[1]])),
         separable_product(factors),
     )
     .normalized(
@@ -1288,9 +1288,9 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
-            Tiling::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
+            Levels::leaf(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)])
                 .walk_every(&[ROW, COL, TAP[0], TAP[1]])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

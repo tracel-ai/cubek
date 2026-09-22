@@ -221,7 +221,7 @@ impl Display for Partitioning {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Space, Tiling};
+    use crate::{Levels, Space};
 
     const B: Axis = Axis(0);
     const M: Axis = Axis(1);
@@ -233,14 +233,14 @@ mod tests {
     fn staged() -> Partitioning {
         Partitioning::new(
             Space::new(&[(B, 4), (M, 512), (N, 1024), (K, 4096)]),
-            Tiling::leaf(&[(M, 16), (N, 16), (K, 16)])
+            Levels::leaf(&[(M, 16), (N, 16), (K, 16)])
                 .walk(&[(M, 2), (N, 2)])
                 .walk(&[(K, 2)])
                 .planes(&[(M, 2), (N, 2)])
                 .walk_every(&[K])
                 .cubes(&[M, N])
                 .batches(&[B])
-                .levels(),
+                .build(),
         )
     }
 
@@ -280,10 +280,10 @@ mod tests {
     fn a_dynamic_axis_prints_a_question() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 512), (K, 4096)]).with_dynamic(&[K]),
-            Tiling::leaf(&[(M, 64), (K, 32)])
+            Levels::leaf(&[(M, 64), (K, 32)])
                 .walk_every(&[K])
                 .cubes(&[M])
-                .levels(),
+                .build(),
         );
         let table = partitioning.table(&[(M, "m"), (K, "k")]).to_string();
 
@@ -296,10 +296,10 @@ mod tests {
     fn a_shared_level_still_prints_as_the_cube_grid() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 512), (N, 1024)]),
-            Tiling::leaf(&[(M, 64), (N, 64)])
+            Levels::leaf(&[(M, 64), (N, 64)])
                 .cubes(&[M, N])
                 .shared_by(8)
-                .levels(),
+                .build(),
         );
 
         assert!(partitioning.to_string().contains('▣'));
@@ -312,10 +312,10 @@ mod tests {
     fn an_overhanging_axis_counts_its_partial_tile() {
         let partitioning = Partitioning::new(
             Space::new(&[(M, 500), (K, 4096)]),
-            Tiling::leaf(&[(M, 128), (K, 32)])
+            Levels::leaf(&[(M, 128), (K, 32)])
                 .walk_every(&[K])
                 .cubes(&[M])
-                .levels(),
+                .build(),
         );
 
         assert_eq!(

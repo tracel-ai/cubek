@@ -7,6 +7,7 @@
 //! Checked against direct (non-online) host math, including exact zeros and exact -inf lse on
 //! fully-masked rows.
 
+use crate::tile::uncut;
 use cubecl::features::Plane;
 use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
@@ -266,7 +267,7 @@ fn run_at(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        gmem_space.launch_arg(&gmem_space),
+        uncut(&client, &gmem_space, &gmem_space).partitioning_arg(),
         block_space,
         units,
         lanes,
@@ -541,7 +542,7 @@ fn run_smem_acc(
         lse_handle.clone().binding().into_tensor_arg(),
         scale,
         bound_s as u32,
-        gmem_space.launch_arg(&gmem_space),
+        uncut(&client, &gmem_space, &gmem_space).partitioning_arg(),
         block_space,
         units,
         causal,

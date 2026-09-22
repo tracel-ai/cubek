@@ -10,9 +10,9 @@ use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Fragments, Level, MaskProbe, MemData, Monoid, Partitioning, RegisterBlock, Resident,
-    RowShare, RowState, Semiring, Space, StageStorage, StreamFold, TeamUnit, TileArg,
-    TileArgLaunch, TileSpec, Tiling,
+    Axis, Fragments, Level, Levels, MaskProbe, MemData, Monoid, Partitioning, RegisterBlock,
+    Resident, RowShare, RowState, Semiring, Space, StageStorage, StreamFold, TeamUnit, TileArg,
+    TileArgLaunch, TileSpec,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -216,7 +216,7 @@ fn run(
                 (R, 1),
                 (C, 1),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (G, g),
                 (QP, qp),
                 (S, block),
@@ -226,7 +226,7 @@ fn run(
                 (C, 1),
             ])
             .walk_every(&[G, QP, S, D, V, R, C])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -422,7 +422,7 @@ fn attention_fold_cmma_kernel<E: Float>(
     sync_cube();
 
     for plane in space.over(&comptime!(
-        Tiling::leaf(&[(QP, rows_p)])
+        Levels::leaf(&[(QP, rows_p)])
             .planes(&[(QP, planes)])
             .level()
     )) {
@@ -658,7 +658,7 @@ fn run_cmma<E: Float + CubeElement>(
                 (R, 1),
                 (C, 1),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (G, 1),
                 (QP, rows),
                 (S, block),
@@ -668,7 +668,7 @@ fn run_cmma<E: Float + CubeElement>(
                 (C, 1),
             ])
             .walk_every(&[G, QP, S, D, V, R, C])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -1073,7 +1073,7 @@ fn run_split_at(
                 (R, 1),
                 (C, 1),
             ]),
-            Tiling::leaf(&[
+            Levels::leaf(&[
                 (G, g),
                 (QP, qp),
                 (S, block),
@@ -1083,7 +1083,7 @@ fn run_split_at(
                 (C, 1),
             ])
             .walk_every(&[G, QP, S, D, V, R, C])
-            .levels(),
+            .build(),
         ),
         Form::Static,
     );
@@ -1226,7 +1226,7 @@ fn attention_stream_test_kernel<W: Size>(
 
     let rank = comptime!(q.space.rank());
     let d = comptime!(q.space.extent_at(rank - 1));
-    let rows = comptime!(q.space.tile_size() / d);
+    let rows = comptime!(q.space.cells() / d);
 
     let kept = comptime!(Space::new(&[(R, rows)]));
     let size!(N) = q.vector_size();
@@ -1293,9 +1293,9 @@ fn run_stream(
         &client,
         Partitioning::new(
             Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
-            Tiling::leaf(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)])
+            Levels::leaf(&[(G, g), (QP, 1), (S, block), (D, d), (V, val_dim)])
                 .walk_every(&[G, QP, S, D, V])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -1426,7 +1426,7 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
         &client,
         Partitioning::new(
             Space::new(&[(S, VISIT_S), (D, VISIT_D)]),
-            Tiling::leaf(&[(S, VISIT_BLOCK)]).walk_every(&[S]).levels(),
+            Levels::leaf(&[(S, VISIT_BLOCK)]).walk_every(&[S]).build(),
         ),
         Form::Static,
     );

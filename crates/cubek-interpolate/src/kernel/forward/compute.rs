@@ -65,7 +65,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         comptime!(
             space
                 .space()
-                .project(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
+                .subspace(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
         ),
         separable_product(factors),
     );

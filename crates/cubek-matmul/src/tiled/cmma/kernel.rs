@@ -10,8 +10,8 @@
 
 use cubecl::prelude::*;
 use cubek_tile::{
-    Axis, DeliveryFamily, Fragments, Level, Monoid, Partitioning, PlanePartition, Ring, Semiring,
-    Space, StageStorage, TileArg, Tiling, pipelined,
+    Axis, DeliveryFamily, Fragments, Level, Levels, Monoid, Partitioning, PlanePartition, Ring,
+    Semiring, Space, StageStorage, TileArg, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -24,7 +24,7 @@ use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
 /// list, so the two cannot drift.
 pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
     let (c, i, p) = (bp.partition, bp.instruction, bp.planes);
-    Tiling::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
+    Levels::leaf(&[(M, i.m), (N, i.n), (K, i.k)])
         // The partition's grid of fragments, one instruction each.
         .walk(&[(M, c.m), (N, c.n)])
         // The instruction's `K` steps through the stage.
@@ -38,7 +38,7 @@ pub fn cmma_levels(bp: &CmmaBlueprint, batch: &[Axis]) -> Vec<Level> {
         .cubes(&[M, N])
         .ordered(bp.order)
         .batches(batch)
-        .levels()
+        .build()
 }
 
 impl CmmaBlueprint {

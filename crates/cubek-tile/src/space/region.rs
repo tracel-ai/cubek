@@ -6,56 +6,11 @@ use super::{Level, Partitioning, Space};
 use crate::{Axis, Coords, Known, KnownExpand, MatrixAxes, Walk};
 use cubecl::{prelude::*, unexpanded};
 
-/// One level's cut of one space: the tile coordinates a loop over `level` handed out, and the
-/// space they index.
-#[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
-pub struct Step {
-    coords: Coords<u32>,
-    #[cube(comptime)]
-    pub(crate) space: Space,
-    #[cube(comptime)]
-    pub(crate) level: Level,
-    /// Where `level` sits in the nest, outermost `0`: what a storage tile's level is matched
-    /// against on the way down ([`Storage`](crate::Storage)).
-    #[cube(comptime)]
-    pub(crate) depth: usize,
-}
-
-#[cube]
-impl Step {
-    pub(crate) fn new(
-        coords: Coords<u32>,
-        #[comptime] space: Space,
-        #[comptime] level: Level,
-        #[comptime] depth: usize,
-    ) -> Step {
-        Step {
-            coords,
-            space,
-            level,
-            depth,
-        }
-    }
-
-    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
-    /// the tile spans all of it).
-    pub(crate) fn coord(&self, #[comptime] axis: Axis) -> usize {
-        if comptime!(self.space.contains(axis)) {
-            self.coords
-                .at(comptime!(self.space.position(axis)))
-                .retyped::<usize>()
-        } else {
-            0usize.runtime()
-        }
-    }
-}
-
 /// The comptime shape of a [`Region`]'s path: the levels taken from a root space down, outermost
 /// first, where the first sits in the root's partitioning, and the partitioning itself, whose
 /// level at the path's depth is the one below.
 #[derive(Clone, Debug)]
-pub struct Path {
+pub(crate) struct Path {
     /// The first level's depth in the root's partitioning.
     base: usize,
     /// The root space and every level of the partitioning it sits in, the path's own included.
@@ -271,6 +226,51 @@ impl Region {
     /// than the partitioning's next ([`walk`](Region::walk)).
     pub fn over(&self, #[comptime] level: &Level) -> Walk {
         Walk::of(&self.child(), comptime!(level.clone()), self.clone())
+    }
+}
+
+/// One level's cut of one space: the tile coordinates a loop over `level` handed out, and the
+/// space they index.
+#[derive(CubeType, Clone)]
+#[expand(derive(Clone))]
+pub(crate) struct Step {
+    coords: Coords<u32>,
+    #[cube(comptime)]
+    pub(crate) space: Space,
+    #[cube(comptime)]
+    pub(crate) level: Level,
+    /// Where `level` sits in the nest, outermost `0`: what a storage tile's level is matched
+    /// against on the way down ([`Storage`](crate::Storage)).
+    #[cube(comptime)]
+    pub(crate) depth: usize,
+}
+
+#[cube]
+impl Step {
+    pub(crate) fn new(
+        coords: Coords<u32>,
+        #[comptime] space: Space,
+        #[comptime] level: Level,
+        #[comptime] depth: usize,
+    ) -> Step {
+        Step {
+            coords,
+            space,
+            level,
+            depth,
+        }
+    }
+
+    /// The coordinate along `axis`; `0` when the axis is absent (broadcast by omission:
+    /// the tile spans all of it).
+    pub(crate) fn coord(&self, #[comptime] axis: Axis) -> usize {
+        if comptime!(self.space.contains(axis)) {
+            self.coords
+                .at(comptime!(self.space.position(axis)))
+                .retyped::<usize>()
+        } else {
+            0usize.runtime()
+        }
     }
 }
 

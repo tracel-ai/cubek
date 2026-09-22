@@ -143,12 +143,12 @@ impl Depthwise {
                     (RH, self.rh),
                     (RW, self.rw),
                 ]),
-                Tiling::leaf(&[(C, 1), (OW, 1), (OH, 1)])
+                Levels::leaf(&[(C, 1), (OW, 1), (OH, 1)])
                     .walk(&[(OW, tile_ow), (OH, tile_oh)])
                     .planes(&[(C, tile_c)])
                     .cubes(&[C, OW, OH])
                     .batches(&[B])
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );

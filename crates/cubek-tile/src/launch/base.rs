@@ -5,7 +5,9 @@
 use cubecl::ir::OpaqueType;
 use cubecl::prelude::*;
 
-use crate::{Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Space, Unlabelled};
+use crate::{
+    Arg, Axis, Geometry, Partitioning, PartitioningLaunch, Space, SpaceLaunch, Unlabelled,
+};
 
 /// How many cubes of how many units the launch runs: stated by a blueprint, or read off the
 /// partitioning's levels (a test, a benchmark mapping, a kernel with no blueprint).
@@ -116,10 +118,20 @@ impl Launcher {
     /// The kernel's partitioning argument: the kernel-form space, its dynamic extents sized by this
     /// launch, under the levels the launch states. What `for cube in partitioning` iterates.
     pub fn partitioning_arg(&self) -> PartitioningLaunch {
-        PartitioningLaunch::new(
-            self.partitioning.space().space_launch(&self.concrete),
-            self.partitioning.levels().to_vec(),
-        )
+        PartitioningLaunch::new(self.space_arg(), self.partitioning.levels().to_vec())
+    }
+
+    /// The kernel-form space as a kernel argument: its shape, plus each dynamic axis's size read
+    /// off the concrete space (positional over every axis, empty when the space is static).
+    fn space_arg(&self) -> SpaceLaunch {
+        let kernel = self.partitioning.space();
+        let mut sizes = SequenceArg::new();
+        if !kernel.is_static() {
+            for axis in kernel.axes() {
+                sizes.push(self.concrete.extent(axis));
+            }
+        }
+        SpaceLaunch::new(kernel.shape().clone(), sizes)
     }
 
     /// The partitioning's levels over the concrete space: what overhang, leaf edges and the grid

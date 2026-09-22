@@ -360,7 +360,7 @@ impl<T: Numeric> Tile<T> {
             bounded
                 && self.space.contains(axis)
                 && self.space.is_dynamic(axis)
-                && bound_states(&projection, axis).is_some()
+                && Witness::new(&projection, axis).is_some()
         )
     }
 
@@ -507,7 +507,15 @@ impl<T: Numeric> Tile<T> {
     /// Only an axis this tile [`witnesses`](Tile::witnesses) has one.
     pub(crate) fn runtime_extent(&self, #[comptime] axis: Axis) -> usize {
         let projection = self.projection();
-        let p = comptime!(bound_position(&projection, axis));
+        let p = comptime!(
+            Witness::new(&projection, axis)
+                .unwrap_or_else(|| panic!(
+                    "Tile::runtime_extent: no bound of this operand is {axis:?}'s own extent (it \
+                     gathers over it, or splits it across storage fragments); ask an operand that \
+                     witnesses it"
+                ))
+                .dim()
+        );
         let raw = match &self.tile_kind {
             TileKind::Gmem(g) | TileKind::Smem(g) => g.window.bound.at(p).retyped::<usize>(),
             TileKind::TmaGmem(t) => t.bound[p].retyped::<usize>(),
@@ -601,7 +609,7 @@ impl<T: Numeric> Tile<T> {
     /// The one value this tile holds, read through whatever packing its binding states. What a
     /// scale covering everything is: a tile every axis of which it spans at an extent of one.
     pub(crate) fn only(&self) -> T {
-        let axes = comptime!(MatrixAxes::trailing_pair(&self.space));
+        let axes = comptime!(MatrixAxes::trailing(&self.space));
         let matrix = self.matrix_packed::<Const<1>>(axes, 0usize);
         let origin = 0u32.runtime();
         matrix.read((origin, origin)).extract(0usize)
@@ -987,6 +995,52 @@ impl<T: Numeric> TileExpand<T> {
     }
 }
 
+/// `space` with each [`Dynamic`](crate::Extent) axis sized by the first of `a`, `b`, `c` that
+/// [`witnesses`](Tile::witnesses) it: the runtime space an operation's loops walk. A fully-`Static`
+/// space short-circuits. One tile may stand for all three ([`runtime_space`](Tile::runtime_space)).
+#[cube]
+pub(crate) fn witnessed_space<A: Numeric, B: Numeric, C: Numeric>(
+    #[comptime] space: Space,
+    a: &Tile<A>,
+    b: &Tile<B>,
+    c: &Tile<C>,
+) -> Space {
+    let mut sizes = Sequence::<usize>::new();
+    if comptime!(!space.is_static()) {
+        #[unroll]
+        for p in 0..comptime!(space.rank()) {
+            let axis = comptime!(space.axis_at(p));
+            // `sizes` is positional, so every axis pushes, but [`Extents::count`] folds a `Static`
+            // axis to its comptime extent. Fold it here too rather than asking an operand: one
+            // `Dynamic` axis must not make the `Static` ones unreadable on a tile with no bound.
+            let size = match comptime!(space.extent_raw(axis)) {
+                Extent::Static(n) => comptime!(n).runtime(),
+                Extent::Dynamic => {
+                    let by_a = a.witnesses(axis);
+                    let by_b = b.witnesses(axis);
+                    let by_c = c.witnesses(axis);
+                    if comptime!(by_a) {
+                        a.runtime_extent(axis)
+                    } else if comptime!(by_b) {
+                        b.runtime_extent(axis)
+                    } else if comptime!(by_c) {
+                        c.runtime_extent(axis)
+                    } else {
+                        panic!(
+                            "witnessed_space: {axis:?} is Dynamic and no operand states its size; \
+                             every operand spanning it gathers over it, holds it Static, or is a \
+                             fragment. Keep it Static in the kernel space, or give the operation \
+                             an operand that maps it identically"
+                        )
+                    }
+                }
+            };
+            sizes.push(size);
+        }
+    }
+    Space::with_sizes(space, sizes)
+}
+
 /// Where a tile sits in its partitioning: its space, and the levels below its depth. The same
 /// read on a tile and on the tile as comptime code sees it, so a comptime derivation
 /// ([`Fragments::below`](crate::Fragments::below)) takes either.
@@ -1061,31 +1115,5 @@ impl<T: Numeric> Iterable for &TileExpand<T> {
 
     fn expand_unroll(self, scope: &Scope, body: &mut dyn FnMut(&Scope, RegionExpand)) {
         self.clone().expand_unroll(scope, body)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const A: Axis = Axis(0);
-    const B: Axis = Axis(1);
-
-    /// The discrimination the operation space rests on: a bound is an axis's own extent only when
-    /// one dim carries that axis alone. A gather's dim holds a receptive field its axes reach over,
-    /// and storage tiling splits the extent across dims, so neither bound is it.
-    #[test]
-    fn bound_states_wants_one_dim_carrying_the_axis_alone() {
-        let direct = Projection::direct(&[A, B]);
-        assert_eq!(bound_states(&direct, A), Some(0));
-        assert_eq!(bound_states(&direct, B), Some(1));
-
-        let gathered = Projection::new(&[A, B], &[PhysicalAxisMap::affine(&[(A, 1), (B, 1)])]);
-        assert_eq!(bound_states(&gathered, A), None);
-        assert_eq!(bound_states(&gathered, B), None);
-
-        let tiled = Projection::tiled(&[A, B], StorageTiling::per_axis(&[1, 2]));
-        assert_eq!(bound_states(&tiled, A), Some(0));
-        assert_eq!(bound_states(&tiled, B), None);
     }
 }

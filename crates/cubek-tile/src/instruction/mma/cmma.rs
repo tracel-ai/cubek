@@ -219,7 +219,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let view = values.nd_packed::<VW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
         let scales = self.lookup(
-            comptime!(MatrixAxes::trailing_pair(&space)),
+            comptime!(MatrixAxes::trailing(&space)),
             0usize,
             side,
             comptime!(out.clone()),

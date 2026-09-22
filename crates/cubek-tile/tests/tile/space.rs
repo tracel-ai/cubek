@@ -2,7 +2,7 @@
 
 use super::{Form, implied};
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Launcher, Level, Partitioning, Space, Tiling};
+use cubek_tile::{Axis, Launcher, Level, Levels, Partitioning, Space};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -29,13 +29,13 @@ fn new_builds_plain_axes() {
 #[test]
 fn project_keeps_listed_axes_in_order() {
     let space = Space::new(&[(B0, 12), (M, 16), (K, 8)]);
-    let lhs = space.project(&[B0, M, K]);
+    let lhs = space.subspace(&[B0, M, K]);
     assert_eq!(lhs.rank(), 3);
     assert_eq!(lhs.extent(B0), 12);
     assert_eq!(lhs.extent(M), 16);
 
     // An operand broadcasts a batch axis by simply leaving it out of the projection.
-    let dropped = space.project(&[M, K]);
+    let dropped = space.subspace(&[M, K]);
     assert_eq!(dropped.rank(), 2);
     assert!(!dropped.contains(B0));
 }
@@ -109,10 +109,10 @@ fn a_level_cuts_each_axis_to_its_tile() {
 #[test]
 fn levels_chain_into_a_multi_level_scheme() {
     let space = Space::new(&[(M, 64), (N, 64)]);
-    let levels = Tiling::leaf(&[(M, 4), (N, 4)])
+    let levels = Levels::leaf(&[(M, 4), (N, 4)])
         .walk(&[(M, 4), (N, 4)])
         .walk_every(&[M, N])
-        .levels();
+        .build();
     let level1 = levels[0].child(&space);
     let level2 = levels[1].child(&level1);
 
@@ -161,7 +161,7 @@ fn a_one_value_axis_every_operand_spans_is_contracted() {
 fn a_partitioned_contraction_keeps_its_axes() {
     let lhs = Space::new(&[(M, 4), (K, 2), (K2, 4)]);
     let out = Space::new(&[(M, 4), (N, 4)]);
-    assert_eq!(&lhs.contracting(&out)[..], &[K, K2]);
+    assert_eq!(&lhs.difference(&out)[..], &[K, K2]);
 }
 
 /// An operand the output spans whole contracts nothing.
@@ -169,7 +169,7 @@ fn a_partitioned_contraction_keeps_its_axes() {
 fn an_operand_the_output_spans_contracts_nothing() {
     let lhs = Space::new(&[(M, 4), (N, 4)]);
     let out = Space::new(&[(M, 4), (N, 4)]);
-    assert!(lhs.contracting(&out).is_empty());
+    assert!(lhs.difference(&out).is_empty());
 }
 
 // ---- overhangs -------------------------------------------------------------
@@ -183,11 +183,11 @@ fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Launcher {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
-            Tiling::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
+            Levels::leaf(&[(M, leaf_m), (N, leaf_n), (K, leaf_k)])
                 .walk_every(&[K])
                 .walk(&[(M, planes_m), (N, planes_n)])
                 .walk_every(&[M, N])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     )
@@ -229,7 +229,7 @@ fn overhangs_dynamic_axis_panics() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64)]).all_dynamic(),
-            Tiling::leaf(&[(M, 16)]).walk_every(&[M]).levels(),
+            Levels::leaf(&[(M, 16)]).walk_every(&[M]).build(),
         ),
         Form::Static,
     );
@@ -246,11 +246,11 @@ fn shared_tiles_launch_their_instances() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            Tiling::leaf(&[(M, 16), (N, 32), (K, 4)])
+            Levels::leaf(&[(M, 16), (N, 32), (K, 4)])
                 .walk(&[(K, 4)])
                 .cubes(&[M, N, K])
                 .shared_by(5)
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -268,10 +268,10 @@ fn batches_are_a_dial_each() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
-            Tiling::leaf(&[(M, 16), (N, 32)])
+            Levels::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .batches(&[B0, B1])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -279,11 +279,11 @@ fn batches_are_a_dial_each() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
-            Tiling::leaf(&[(M, 16), (N, 32)])
+            Levels::leaf(&[(M, 16), (N, 32)])
                 .cubes(&[M, N])
                 .batches(&[B0])
                 .batches(&[B1])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -307,11 +307,11 @@ fn one_axis_across_a_count_is_a_dial() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            Tiling::leaf(&[(M, 16), (N, 32)])
+            Levels::leaf(&[(M, 16), (N, 32)])
                 .walk_every(&[N])
                 .cubes(&[M])
                 .across(M, 4)
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -326,10 +326,10 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
-            Tiling::leaf(&[(M, 16), (N, 32), (K, 16)])
+            Levels::leaf(&[(M, 16), (N, 32), (K, 16)])
                 .walk_every(&[M, N, K])
                 .cubes(&[])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -346,10 +346,10 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
 #[test]
 #[should_panic = "combine in registers"]
 fn sharing_tiles_across_lanes_is_refused() {
-    let _ = Tiling::leaf(&[(M, 16), (N, 32), (K, 16)])
+    let _ = Levels::leaf(&[(M, 16), (N, 32), (K, 16)])
         .lanes(&[(M, 4), (N, 4), (K, 4)])
         .shared_by(4)
-        .levels();
+        .build();
 }
 
 /// A share is a run of one index, so its entries say nothing of their own: a count or a spread on
@@ -357,18 +357,18 @@ fn sharing_tiles_across_lanes_is_refused() {
 #[test]
 #[should_panic = "states a count or a spread of its own"]
 fn sharing_tiles_with_a_knob_on_an_entry_is_refused() {
-    let _ = Tiling::leaf(&[(M, 16), (N, 32), (K, 16)])
+    let _ = Levels::leaf(&[(M, 16), (N, 32), (K, 16)])
         .cubes(&[M, N, K])
         .interleaved(M)
         .shared_by(5)
-        .levels();
+        .build();
 }
 
 /// A level states each of its axes once, whichever way it states them.
 #[test]
 #[should_panic = "a level states each of its axes once"]
 fn an_axis_named_twice_is_refused() {
-    let _ = Tiling::leaf(&[(M, 16)]).cubes(&[M, M]).levels();
+    let _ = Levels::leaf(&[(M, 16)]).cubes(&[M, M]).build();
 }
 
 // ---- A level that cuts nothing --------------------------------------------
@@ -382,9 +382,9 @@ fn a_level_that_cuts_nothing_is_kept() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64)]),
-            Tiling::leaf(&[(M, 16), (N, 32)])
+            Levels::leaf(&[(M, 16), (N, 32)])
                 .walk_every(&[M, N])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -392,11 +392,11 @@ fn a_level_that_cuts_nothing_is_kept() {
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64)]),
-            Tiling::leaf(&[(M, 16), (N, 32)])
+            Levels::leaf(&[(M, 16), (N, 32)])
                 // One of the tile below: nothing left to cut, still a level.
                 .walk(&[(M, 1), (N, 1)])
                 .walk_every(&[M, N])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

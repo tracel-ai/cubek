@@ -153,7 +153,7 @@ mod tests {
             Instruction::Cmma,
             8,
             8,
-            MatrixAxes::trailing_pair(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
+            MatrixAxes::trailing(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
             8,
             1,
             1,

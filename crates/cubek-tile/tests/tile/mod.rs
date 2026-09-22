@@ -29,7 +29,7 @@ mod split_k;
 mod stream;
 
 use cubecl::prelude::*;
-use cubek_tile::{Axis, Grid, Launcher, Partitioning};
+use cubek_tile::{Axis, Grid, Launcher, Partitioning, Space};
 
 /// Which extents a test's kernel reads at runtime: the test's statement of what a family decides
 /// once by building its partitioning over `Space::with_dynamic`.
@@ -58,5 +58,19 @@ pub(crate) fn implied(client: &Client, partitioning: Partitioning, form: Form<'_
         kernel_form(&partitioning, form),
         &concrete,
         Grid::FromLevels,
+    )
+}
+
+/// A launch of one cube of one unit over `kernel`, cut by no level, its dynamic axes sized off
+/// `concrete`: what a kernel that reads the space and nothing else is handed.
+pub(crate) fn uncut(client: &Client, kernel: &Space, concrete: &Space) -> Launcher {
+    Launcher::new(
+        client,
+        Partitioning::new(kernel.clone(), Vec::new()),
+        concrete,
+        Grid::Stated {
+            cube_count: CubeCount::new_single(),
+            cube_dim: CubeDim::new_single(),
+        },
     )
 }

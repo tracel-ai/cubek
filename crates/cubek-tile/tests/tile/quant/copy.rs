@@ -1,4 +1,4 @@
-use crate::tile::{Form, implied};
+use crate::tile::{Form, implied, uncut};
 use cubecl::{
     features::TypeUsage, ir::ElemType, prelude::*, std::tensor::layout::linear::linear_view,
     zspace::Shape,
@@ -10,8 +10,8 @@ use cubek_test_utils::{
 };
 use cubek_tile::Quantization;
 use cubek_tile::{
-    Axis, DequantAt, Partitioning, QuantTileArg, QuantTileArgLaunch, Space, TileArg, TileArgLaunch,
-    TileSpec, Tiling,
+    Axis, DequantAt, Levels, Partitioning, QuantTileArg, QuantTileArgLaunch, Space, TileArg,
+    TileArgLaunch, TileSpec,
 };
 use cubek_tile::{Boundary, BoundaryPolicy};
 
@@ -37,7 +37,7 @@ fn copy_non_quantized_matches_reference() {
         CubeDim::new_single(),
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         dtype,
     );
 
@@ -59,10 +59,10 @@ fn copy_spread_across_cubes_and_planes_matches_reference() {
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            Tiling::leaf(&[(N, 32), (M, 1)])
+            Levels::leaf(&[(N, 32), (M, 1)])
                 .planes(&[(N, 4)])
                 .cubes(&[N, M])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -140,7 +140,7 @@ fn copy_quantized_per_tensor_matches_reference() {
             DequantAt::Read,
         ),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -407,7 +407,7 @@ fn copy_quantized_lookup_matches_reference() {
         pack,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -473,7 +473,7 @@ fn run_quantized_subword(m: usize, n: usize, value: QuantValue, bm: usize, bn: u
         w,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -531,7 +531,7 @@ fn copy_quantized_subword_lookup_matches_reference() {
         w,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         u32::elem_type_native(),
         f32::elem_type_native(),
     );
@@ -600,7 +600,7 @@ fn run_quantized_packed(m: usize, n: usize, value: QuantValue, bm: usize, bn: us
         pack,
         input.arg(),
         output.arg(),
-        space.launch_arg(&space),
+        uncut(&client, &space, &space).partitioning_arg(),
         input_dtype,
         out_dtype,
     );
@@ -754,9 +754,9 @@ fn run_quantized_block(m: usize, n: usize, bm: usize, bn: usize, global: Option<
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n)]),
-            Tiling::leaf(&[(M, bm), (N, bn)])
+            Levels::leaf(&[(M, bm), (N, bn)])
                 .walk_every(&[M, N])
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );

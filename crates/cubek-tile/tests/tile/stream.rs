@@ -96,9 +96,9 @@ impl Harness {
                 &cubecl::test_device().client(),
                 Partitioning::new(
                     Space::new(&[(ROW, ROWS), (COL, COLS)]),
-                    Tiling::leaf(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])
+                    Levels::leaf(&[(ROW, TILE_ROWS), (COL, TILE_COLS)])
                         .walk_every(&[ROW, COL])
-                        .levels(),
+                        .build(),
                 ),
                 Form::Static,
             ),
@@ -397,11 +397,11 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         &client,
         Partitioning::new(
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
-            Tiling::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
+            Levels::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, BLOCK_K)])
                 .walk(&[(MM, 1), (NN, 1), (KK, k / BLOCK_K)])
                 .cubes(&[MM, NN, KK])
                 .shared_by(runs)
-                .levels(),
+                .build(),
         ),
         Form::Static,
     );
@@ -604,12 +604,12 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             &client,
             Partitioning::new(
                 Space::new(&[(MM, m), (NN, n), (KK, k)]),
-                Tiling::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, 1)])
+                Levels::leaf(&[(MM, TILE_M), (NN, TILE_N), (KK, 1)])
                     .walk(&[(KK, k / plane_size)])
                     .lanes(&[(KK, plane_size)])
                     .cubes(&[MM, NN, KK])
                     .shared_by(runs)
-                    .levels(),
+                    .build(),
             ),
             Form::Static,
         );

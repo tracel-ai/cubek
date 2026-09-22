@@ -94,10 +94,10 @@ impl ContractShape {
     /// `k` edge (one axis, several partitioning one, or a convolution's taps beside its channels)
     /// reads as a matrix. One it does not is read a cell at a time.
     pub(crate) fn matrix_axes(&self, lhs: &Space, rhs: &Space) -> Option<(MatrixAxes, MatrixAxes)> {
-        let lhs_axes = MatrixAxes::find(lhs, self.mr, self.kc)?;
+        let lhs_axes = MatrixAxes::new(lhs, self.mr, self.kc).ok()?;
         let rhs_axes = match self.contracted_per_step > 1 {
-            true => MatrixAxes::find(rhs, self.cols, self.kc)?,
-            false => MatrixAxes::find(rhs, self.kc, self.cols)?,
+            true => MatrixAxes::new(rhs, self.cols, self.kc).ok()?,
+            false => MatrixAxes::new(rhs, self.kc, self.cols).ok()?,
         };
         Some((lhs_axes, rhs_axes))
     }
@@ -108,15 +108,15 @@ impl ContractShape {
     /// N-D nest exists, and this same shape is what it runs from. An operand whose contracted axis
     /// is partitioned reads as one `k` edge over several axes, and only the edges say which.
     pub(crate) fn lhs_axes(&self, lhs: &Space) -> MatrixAxes {
-        MatrixAxes::of(lhs, self.mr, self.kc)
+        MatrixAxes::new(lhs, self.mr, self.kc).unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// The rhs's twin. A folded step lines it along the contraction, so its matrix is `(col, k)`;
     /// at one contracted value per step it lines along the accumulator and reads `(k, col)`.
     pub(crate) fn rhs_axes(&self, rhs: &Space) -> MatrixAxes {
         match self.contracted_per_step > 1 {
-            true => MatrixAxes::of(rhs, self.cols, self.kc),
-            false => MatrixAxes::of(rhs, self.kc, self.cols),
+            true => MatrixAxes::new(rhs, self.cols, self.kc).unwrap_or_else(|e| panic!("{e}")),
+            false => MatrixAxes::new(rhs, self.kc, self.cols).unwrap_or_else(|e| panic!("{e}")),
         }
     }
 

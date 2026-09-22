@@ -119,7 +119,7 @@ impl<T: Numeric> Tile<T> {
             strides,
             window_start: 0u32,
             block: comptime!(block),
-            extent: comptime!(window_extents(&space.project(spec.axes()), rank)),
+            extent: comptime!(window_extents(&space.subspace(spec.axes()), rank)),
             dequant_at: comptime!(dequant_at),
             // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
             scale_shape: comptime!(Vec::new()),
@@ -257,7 +257,7 @@ impl<T: Numeric> Tile<T> {
         // ([`MemData::at`]): a fresh tile has been dealt out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
         let lane_work = comptime!(LaneWork::Repeated);
-        let space = comptime!(space.project(spec.axes()));
+        let space = comptime!(space.subspace(spec.axes()));
         let projection = comptime!(spec.projection.clone());
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
