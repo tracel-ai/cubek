@@ -36,13 +36,6 @@ impl<T: Copy> AxisMap<T> {
             .1
     }
 
-    /// A new map with `f` applied to every value, axis order preserved.
-    pub(crate) fn map<U: Copy>(&self, mut f: impl FnMut(Axis, T) -> U) -> AxisMap<U> {
-        AxisMap {
-            entries: self.entries.iter().map(|&(a, v)| (a, f(a, v))).collect(),
-        }
-    }
-
     pub(crate) fn axis_at(&self, i: usize) -> Axis {
         self.entries[i].0
     }

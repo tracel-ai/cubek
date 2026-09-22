@@ -2,10 +2,7 @@
 
 use cubecl::{prelude::*, unexpanded};
 
-use crate::{
-    Axis, ComputeScope, Contraction, Count, CubeAxis, Level, LevelTable, Quadrant, Region,
-    RegionExpand, Space, Walk,
-};
+use crate::{Axis, Count, CubeAxis, Level, LevelTable, Region, RegionExpand, Space, Takers, Walk};
 
 /// A space with the levels that partition it: what a kernel's loops are stated over.
 ///
@@ -157,13 +154,6 @@ impl Partitioning {
         LevelTable::new(self, labels)
     }
 
-    /// This partitioning read as a contraction, which prints one figure a level: what a single
-    /// worker of it touches in each of the three operands. Which axis plays which part is the
-    /// client's to say, the same way its names are.
-    pub fn quadrant(&self, contraction: Contraction) -> Quadrant<'_> {
-        Quadrant::new(self, contraction)
-    }
-
     /// The leaf the levels reach: each level's child of the last, the tile the operands are
     /// cut to at the bottom.
     pub fn leaf(&self) -> Space {
@@ -195,28 +185,82 @@ impl Partitioning {
             .collect()
     }
 
-    /// Instances of `scope` these levels deal the space to: the product, over every level, of
-    /// the instance count of each axis riding it, times the instance count of any work a level
-    /// distributes as one on it ([`Work`](crate::Work)).
-    pub fn instances(&self, scope: ComputeScope) -> u32 {
+    /// The one level whose tiles `takers` take, if any. A partitioning has at most one lanes,
+    /// planes and cubes level; its walks may be several ([`walks`](Self::walks)).
+    pub fn level_of(&self, takers: Takers) -> Option<&Level> {
+        assert!(
+            takers != Takers::Walk,
+            "Partitioning::level_of: a partitioning may walk several levels; ask `walks`"
+        );
+        let mut found = self.levels.iter().filter(|level| level.takers() == takers);
+        let level = found.next();
+        assert!(
+            found.next().is_none(),
+            "Partitioning::level_of: two levels are taken by {takers:?}"
+        );
+        level
+    }
+
+    /// The levels one instance walks, outermost first.
+    pub fn walks(&self) -> impl Iterator<Item = &Level> + '_ {
+        self.levels
+            .iter()
+            .filter(|level| level.takers() == Takers::Walk)
+    }
+
+    /// Instances `takers` deal the space to: the product, over every level they take, of the
+    /// instance count of each axis it deals, or of the workers sharing its grid as one. Cubes
+    /// count per grid dimension ([`cube_instances`](Self::cube_instances)).
+    pub(crate) fn instances(&self, takers: Takers) -> u32 {
+        match takers {
+            Takers::Cubes => [CubeAxis::X, CubeAxis::Y, CubeAxis::Z]
+                .into_iter()
+                .map(|dim| self.cube_instances(dim))
+                .product(),
+            Takers::Planes | Takers::Lanes => {
+                self.count_instances(|level| level.takers() == takers, |_, _| true)
+            }
+            Takers::Walk => 1,
+        }
+    }
+
+    /// Cubes on grid dimension `dim`: the instance count of whichever axis rides it, at any level,
+    /// else one. A grid shared as one index rides `X` whole.
+    fn cube_instances(&self, dim: CubeAxis) -> u32 {
+        self.count_instances(
+            |level| {
+                level.takers() == Takers::Cubes
+                    && (level.shared_by().is_none() || dim == CubeAxis::X)
+            },
+            |level, axis| level.cube_axis(axis) == Some(dim),
+        )
+    }
+
+    /// The product over the `levels` selected of the workers sharing the grid as one, or of the
+    /// tiles each `axes` selected is dealt in. Each level's count is read against the space its
+    /// parents hand it; `tiles` is `ceil`, so an indivisible axis adds the instance for its
+    /// partial tile.
+    fn count_instances(
+        &self,
+        levels: impl Fn(&Level) -> bool,
+        axes: impl Fn(&Level, Axis) -> bool,
+    ) -> u32 {
         let mut total = 1u32;
         let mut space = self.space.clone();
         for level in &self.levels {
-            // Work distributed as one rides its scope whole rather than through any one of its
-            // axes, so its instance count is the dim's and no axis of it contributes.
-            if let Some(work) = level.work()
-                && work.scope() == scope
-            {
-                total *= work.instances() as u32;
-            }
-            for axis in space.axes() {
-                if level.distribution(axis).scope() == Some(scope) {
-                    // The stated workers, or one per tile of an every-level: `tiles` is `ceil`,
-                    // so an indivisible axis adds the cube for its partial tile.
-                    total *= match level.count(axis) {
-                        Some(Count::AllAcross(workers)) => workers,
-                        _ => level.tiles(&space, axis),
-                    } as u32;
+            if levels(level) {
+                match level.shared_by() {
+                    Some(workers) => total *= workers as u32,
+                    None => {
+                        for axis in space.axes() {
+                            if level.deals(axis) && axes(level, axis) {
+                                total *= match level.count(axis) {
+                                    Some(Count::AllAcross(workers)) => workers,
+                                    _ => level.tiles(&space, axis),
+                                } as u32;
+                            }
+                        }
+                    }
                 }
             }
             space = level.child(&space);
@@ -228,15 +272,15 @@ impl Partitioning {
     /// axis is `Spatial { Cube(d), .. }`, at any level, else 1.
     pub fn cube_count(&self) -> CubeCount {
         CubeCount::Static(
-            self.instances(ComputeScope::Cube(CubeAxis::X)),
-            self.instances(ComputeScope::Cube(CubeAxis::Y)),
-            self.instances(ComputeScope::Cube(CubeAxis::Z)),
+            self.cube_instances(CubeAxis::X),
+            self.cube_instances(CubeAxis::Y),
+            self.cube_instances(CubeAxis::Z),
         )
     }
 
     /// Planes one cube holds: the levels' plane cuts, plus any that only fill.
     pub fn planes_per_cube(&self) -> u32 {
-        self.instances(ComputeScope::Plane) + self.fillers()
+        self.instances(Takers::Planes) + self.fillers()
     }
 
     /// Planes the cube holds that fill a walk's stages and take no tile
@@ -252,7 +296,7 @@ impl Partitioning {
     /// Lanes one instance holds, read off the levels' unit cuts. `1` where no level cuts to
     /// units, which is a plan whose leaf the whole plane runs.
     pub fn lanes(&self) -> u32 {
-        self.instances(ComputeScope::Unit)
+        self.instances(Takers::Lanes)
     }
 
     /// The cube this partitioning asks for at `plane_size`: the plane width by the planes a
@@ -304,15 +348,12 @@ mod tests {
         assert_eq!(filled.cube_dim(32), CubeDim::new_2d(32, 5));
 
         assert_eq!(
-            filled.instances(ComputeScope::Plane),
-            plain.instances(ComputeScope::Plane)
+            filled.instances(Takers::Planes),
+            plain.instances(Takers::Planes)
         );
         assert_eq!(filled.lanes(), plain.lanes());
         for dim in [CubeAxis::X, CubeAxis::Y, CubeAxis::Z] {
-            assert_eq!(
-                filled.instances(ComputeScope::Cube(dim)),
-                plain.instances(ComputeScope::Cube(dim))
-            );
+            assert_eq!(filled.cube_instances(dim), plain.cube_instances(dim));
         }
     }
 

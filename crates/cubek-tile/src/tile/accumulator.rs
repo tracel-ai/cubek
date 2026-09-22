@@ -149,7 +149,7 @@ pub(crate) fn plane_windows(space: &Space, levels: &[Level]) -> usize {
     let mut planes = 1;
     for level in levels {
         for axis in level.axes() {
-            if level.distribution(axis).scope() == Some(ComputeScope::Plane) {
+            if level.takers() == Takers::Planes && level.deals(axis) {
                 planes *= level.instances_along(&handed, axis).unwrap_or_else(|| {
                     panic!(
                         "Tile::with_landing: {axis:?} is dealt across the cube's planes at a \

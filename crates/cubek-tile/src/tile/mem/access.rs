@@ -1251,16 +1251,10 @@ impl<T: Numeric> MemData<T> {
                 units: self.access.units,
                 storage: storage_below(self.access.storage, step.depth, &step.level, &space),
             }),
-            comptime!(LaneRoles {
-                share: join_lane_share(self.lanes.share, step.level.lane_share(&space)),
-                work: join_lane_work(self.lanes.work, step.level.rides_lanes()),
-            }),
+            comptime!(LaneShare::new(&step.level, &space).under(self.lanes)),
             // Joined level by level: the level's whole space still has the axis this operand's
             // projection dropped, which is what tells a split from a cut of the whole axis.
-            comptime!(join_split_share(
-                self.split_share,
-                step.level.split_share_of(&step.space, &space)
-            )),
+            comptime!(SplitShare::new(&step.level, &step.space, &space).under(self.split_share)),
         )
     }
 
@@ -1380,7 +1374,7 @@ impl<T: Numeric> MemData<T> {
         map: RuntimeMap,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] access: Access,
-        #[comptime] lanes: LaneRoles,
+        #[comptime] lanes: LaneShare,
         #[comptime] split_share: SplitShare,
     ) -> MemData<T> {
         MemData::<T> {

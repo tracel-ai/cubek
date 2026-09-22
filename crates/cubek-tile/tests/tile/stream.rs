@@ -53,7 +53,7 @@ fn copy_run<E: Numeric>(
     let start = pos * total / cubes;
     let end = (pos + 1) * total / cubes;
 
-    for region in walk.window(start, end - start) {
+    for region in walk.range(start, end - start) {
         dst.at(&region).copy_from(&src.at(&region));
     }
 }
@@ -76,7 +76,7 @@ fn copy_one_run<E: Numeric>(
 
     // Stated at launch but taken as runtime values: a window whose bounds fold to constants
     // would prove the decode only for the case the compiler could have unrolled.
-    for region in walk.window(comptime!(start).runtime(), comptime!(steps).runtime()) {
+    for region in walk.range(comptime!(start).runtime(), comptime!(steps).runtime()) {
         dst.at(&region).copy_from(&src.at(&region));
     }
 }
@@ -276,10 +276,10 @@ fn stream_matmul<E: Numeric>(
         below.extend(leaf.clone());
         below
     });
-    let run = space.over(&outer).run(comptime!(inner.clone()));
-    for i in 0..run.touched() {
-        let region = run.region(i);
-        let (from, steps) = run.steps(i);
+    let portion = space.over(&outer).portion(comptime!(inner.clone()));
+    for i in 0..portion.touched() {
+        let region = portion.region(i);
+        let (from, steps) = portion.steps(i);
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
@@ -291,7 +291,7 @@ fn stream_matmul<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        for cell in region.over(&inner).window(from, steps) {
+        for cell in region.over(&inner).range(from, steps) {
             match comptime!(leaf.clone()) {
                 Some(leaf) => {
                     for step in cell.over(&leaf) {
@@ -324,10 +324,10 @@ fn stream_matmul_staged_rhs<E: Numeric>(
     let a = a.tile(comptime!(space.clone()));
     let b = b.tile(comptime!(space.clone()));
     let c = out.tile::<Const<1>>(comptime!(space.clone()));
-    let run = space.over(&outer).run(comptime!(inner.clone()));
-    for i in 0..run.touched() {
-        let region = run.region(i);
-        let (from, steps) = run.steps(i);
+    let portion = space.over(&outer).portion(comptime!(inner.clone()));
+    for i in 0..portion.touched() {
+        let region = portion.region(i);
+        let (from, steps) = portion.steps(i);
         let c_region = c.at(&region);
         let a_region = a.at(&region);
         let b_region = b.at(&region);
@@ -343,7 +343,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
             Monoid::Sum,
         );
         acc.zero();
-        let cells = region.over(&inner).window(from, steps);
+        let cells = region.over(&inner).range(from, steps);
         let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
         pipelined(cells, &mut ring, |slot, cell| {
             let mut acc_cell = acc.at(cell);

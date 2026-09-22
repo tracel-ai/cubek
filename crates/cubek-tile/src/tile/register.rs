@@ -3,7 +3,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::plane, *};
+use crate::*;
 
 // The block's line width, a scope-registered size rather than a generic, as `MmaData` carries
 // `NA`/`NL`/`NR`: `alloc` binds it with `register_size`, every op reads `Vector<T, RA>`, and it
@@ -240,10 +240,8 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = plane::broadcast::<Vector<T, RA>>(
-                            self.data[comptime!(i * self.nr + n)],
-                            monoid,
-                        );
+                        let combined = LaneShare::Plane
+                            .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
                         if UNIT_POS_X == 0 {
                             sink.write(((i as u32).runtime(), (n as u32).runtime()), cell);
@@ -257,11 +255,8 @@ impl<T: Numeric> RegisterData<T> {
                 for i in 0..comptime!(self.mr) {
                     #[unroll]
                     for n in 0..comptime!(self.nr) {
-                        let combined = plane::group::<T, RA>(
-                            self.data[comptime!(i * self.nr + n)],
-                            comptime!(fold_mask),
-                            monoid,
-                        );
+                        let combined = comptime!(LaneShare::Group { fold_mask })
+                            .fold::<Vector<T, RA>>(self.data[comptime!(i * self.nr + n)], monoid);
                         let cell = cell::<T, Out, A>(combined, fold, monoid);
                         let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                         if lane_in_group == 0 {

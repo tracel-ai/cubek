@@ -18,7 +18,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::plane, *};
+use crate::*;
 
 /// Key positions one team folds per step of [`StreamFold::absorb`] — the loads
 /// it puts in flight before the first is used, and the independent reductions
@@ -305,22 +305,25 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             #[unroll]
             for g in 0..rows {
                 let m = self.state.m[g];
-                let m_all = plane::group::<EA, W1>(Vector::cast_from(m), team_bits, Monoid::Max)
+                let teams = comptime!(LaneShare::Group {
+                    fold_mask: team_bits
+                });
+                let m_all = teams
+                    .fold::<Vector<EA, W1>>(Vector::cast_from(m), Monoid::Max)
                     .extract(0usize);
                 let weight = (m - m_all).exp();
-                let l_all = plane::group::<EA, W1>(
-                    Vector::cast_from(self.state.l[g] * weight),
-                    team_bits,
-                    Monoid::Sum,
-                )
-                .extract(0usize);
+                let l_all = teams
+                    .fold::<Vector<EA, W1>>(
+                        Vector::cast_from(self.state.l[g] * weight),
+                        Monoid::Sum,
+                    )
+                    .extract(0usize);
                 self.state.m[g] = m_all;
                 self.state.l[g] = l_all;
                 #[unroll]
                 for p in 0..per_lane {
-                    self.acc[g * per_lane + p] = plane::group::<EA, N>(
+                    self.acc[g * per_lane + p] = teams.fold::<Vector<EA, N>>(
                         self.acc[g * per_lane + p] * Vector::cast_from(weight),
-                        team_bits,
                         Monoid::Sum,
                     );
                 }
@@ -471,8 +474,12 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
 fn team_fold<E: Float>(value: E, #[comptime] span: usize, #[comptime] monoid: Monoid) -> E {
     if comptime!(span.is_power_of_two()) {
         let size!(W1) = 1usize;
-        plane::group::<E, W1>(Vector::cast_from(value), comptime!(span - 1), monoid).extract(0usize)
+        comptime!(LaneShare::Group {
+            fold_mask: span - 1
+        })
+        .fold::<Vector<E, W1>>(Vector::cast_from(value), monoid)
+        .extract(0usize)
     } else {
-        plane::reduce::<E>(value, span, monoid)
+        comptime!(LaneShare::of_lanes(span, span)).fold::<E>(value, monoid)
     }
 }

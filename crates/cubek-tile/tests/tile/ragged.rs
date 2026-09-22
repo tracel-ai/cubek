@@ -45,7 +45,7 @@ fn ragged_sum_kernel<E: Numeric>(
 
         // The whole of it: the walk over the packed axis takes `end - start` steps from `start`,
         // so an empty sequence takes none and a short one never reads its neighbour's tokens.
-        let tokens = sequence.over(&token).window(start, end - start);
+        let tokens = sequence.over(&token).range(start, end - start);
         for pos in tokens {
             let mut cell = out.at(&pos);
             cell.reduce_axis_accumulate(&packed.at(&pos), comptime!(Monoid::Sum));
@@ -192,7 +192,7 @@ fn blocked_ragged_sum_kernel<E: Numeric>(
 
         for blk in sequence
             .over(&token)
-            .window(0, (end - start).div_ceil(BLOCK))
+            .range(0, (end - start).div_ceil(BLOCK))
         {
             let mut cell = out.at(&blk);
             cell.reduce_axis_accumulate(&seq_view.at(&blk), comptime!(Monoid::Sum));

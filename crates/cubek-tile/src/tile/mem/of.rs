@@ -256,7 +256,6 @@ impl<T: Numeric> Tile<T> {
         // instances and lanes are to these cells is stamped level by level on the way down
         // ([`MemData::at`]): a fresh tile has been dealt out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
-        let lane_work = comptime!(LaneWork::Repeated);
         let space = comptime!(space.subspace(spec.axes()));
         let projection = comptime!(spec.projection.clone());
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
@@ -374,10 +373,7 @@ impl<T: Numeric> Tile<T> {
                     units: spec.units,
                     storage: spec.storage,
                 }),
-                lanes: comptime!(LaneRoles {
-                    share: LaneShare::Whole,
-                    work: lane_work,
-                }),
+                lanes: comptime!(LaneShare::Repeated),
                 split_share,
                 init_from: comptime!(InitFrom::Cell),
                 lands: false,

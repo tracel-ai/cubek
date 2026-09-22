@@ -6,7 +6,7 @@
 //! [`CubeOrder`] permutes which *instance* holds which box: the positions the walk decodes from
 //! the hardware.
 
-use crate::{ComputeScope, Coords, CubeAxis, Known, KnownExpand, Level, Space, hardware_pos};
+use crate::{AxisDeal, Coords, CubeAxis, Known, KnownExpand, Level, Space};
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::Coords2d;
 
@@ -149,8 +149,8 @@ pub(crate) fn swizzled_positions(
         let (count_x, count_y) = (instances.at(x_at), instances.at(y_at));
         // The grid's own linear order, which is the order the hardware starts cubes in and so
         // the one a permutation of it can say anything about.
-        let flat = hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::X)))
-            .plus(hardware_pos(comptime!(ComputeScope::Cube(CubeAxis::Y))).times(count_x));
+        let flat =
+            CubeAxis::position(CubeAxis::X).plus(CubeAxis::position(CubeAxis::Y).times(count_x));
         let (x, y) = cube_positions(flat, (count_x, count_y), comptime!(level.order()));
         out.push(x);
         out.push(y);
@@ -169,9 +169,7 @@ pub(crate) fn swizzled_positions(
 pub(crate) fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
     let at = |wanted: CubeAxis| {
         let found: Vec<usize> = (0..space.rank())
-            .filter(|&p| {
-                level.distribution(space.axis_at(p)).scope() == Some(ComputeScope::Cube(wanted))
-            })
+            .filter(|&p| level.cube_axis(space.axis_at(p)) == Some(wanted))
             .collect();
         assert_eq!(
             found.len(),
@@ -183,7 +181,7 @@ pub(crate) fn in_plane_axes(space: &Space, level: &Level) -> (usize, usize) {
         );
         let p = found[0];
         assert_eq!(
-            level.inner_weight_unspanned(space, space.axis_at(p)),
+            AxisDeal::unspanned_weight(level, space, space.axis_at(p)),
             1,
             "Walk: a {:?} cube level shares the grid's {wanted:?} dimension with an axis this \
              space does not span, whose digit a swizzle has no way to put back",

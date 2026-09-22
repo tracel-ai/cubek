@@ -1,8 +1,6 @@
 //! The axes every tiled routine builds its space over.
 
 use cubecl::{prelude::TensorBinding, zspace::metadata::Metadata};
-#[cfg(test)]
-use cubek_tile::Contraction;
 use cubek_tile::{Axis, Level, Partitioning, Space};
 
 use crate::definition::MatmulSetupError;
@@ -17,17 +15,6 @@ pub(crate) const K: Axis = Axis(2);
 pub(crate) fn batch_axis(i: usize) -> Axis {
     Axis(3 + i as u8)
 }
-
-/// The three axes a partitioning over these is drawn from
-/// ([`Partitioning::quadrant`]): the lhs is `m × k`, the rhs `k × n`, the out `m × n`.
-///
-/// Only tests draw one today. It widens when a caller does.
-#[cfg(test)]
-pub(crate) const MNK: Contraction = Contraction {
-    down: M,
-    across: N,
-    over: K,
-};
 
 /// The space a routine's levels are stated over before any problem: every axis dynamic, so the
 /// counts a shape decides print as unknown and the tiling itself still reads. The axis order is

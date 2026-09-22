@@ -3,10 +3,7 @@
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{
-    Monoid,
-    instruction::{logsumexp, plane},
-};
+use cubek_tile::{LaneShare, Monoid, instruction::logsumexp};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {
@@ -110,30 +107,35 @@ fn test_plane_and_group_kernel(output: &mut Tensor<f32>) {
     let val = (lane_id + 1u32) as f32; // Lane 0: 1.0, Lane 1: 2.0, Lane 2: 3.0, Lane 3: 4.0
 
     // Non-trivial 4-lane plane operations
-    let p_sum = plane::reduce::<f32>(val, 4usize, Monoid::Sum);
-    let p_max = plane::reduce::<f32>(val, 4usize, Monoid::Max);
-    let p_min = plane::reduce::<f32>(val, 4usize, Monoid::Min);
+    let p_sum = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Sum);
+    let p_max = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Max);
+    let p_min = comptime!(LaneShare::Plane).fold::<f32>(val, Monoid::Min);
 
     // Non-trivial 4-lane butterfly group fold (mask 0b11 = folds all 4 lanes)
     let size!(W2) = 2;
     let mut v2 = Vector::<f32, W2>::zeroed();
     v2.insert(0usize, val);
     v2.insert(1usize, val * 2.0f32);
-    let folded_full = plane::group::<f32, W2>(v2, 0b11usize, Monoid::Sum);
+    let folded_full =
+        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // 2-lane sub-group butterfly fold (mask 0b01 = folds (0,1) and (2,3) separately)
-    let folded_pair = plane::group::<f32, W2>(v2, 0b01usize, Monoid::Sum);
+    let folded_pair =
+        comptime!(LaneShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // The same butterfly under max and min
-    let max_full = plane::group::<f32, W2>(v2, 0b11usize, Monoid::Max);
-    let min_full = plane::group::<f32, W2>(v2, 0b11usize, Monoid::Min);
-    let min_pair = plane::group::<f32, W2>(v2, 0b01usize, Monoid::Min);
+    let max_full =
+        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Max);
+    let min_full =
+        comptime!(LaneShare::Group { fold_mask: 0b11 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
+    let min_pair =
+        comptime!(LaneShare::Group { fold_mask: 0b01 }).fold::<Vector<f32, W2>>(v2, Monoid::Min);
 
     // 1-lane fallback paths (lanes = 1, mask = 0)
-    let s_fallback = plane::reduce::<f32>(val, 1usize, Monoid::Sum);
-    let m_fallback = plane::reduce::<f32>(val, 1usize, Monoid::Max);
-    let n_fallback = plane::reduce::<f32>(val, 1usize, Monoid::Min);
-    let g_fallback = plane::group::<f32, W2>(v2, 0usize, Monoid::Sum);
+    let s_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Sum);
+    let m_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Max);
+    let n_fallback = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Min);
+    let g_fallback = comptime!(LaneShare::Whole).fold::<Vector<f32, W2>>(v2, Monoid::Sum);
 
     // Store per-lane results at lane_id * 15
     let base = (lane_id * 15u32) as usize;
@@ -165,10 +167,12 @@ fn test_plane_and_group_fallback_kernel(output: &mut Tensor<f32>) {
     v2.insert(1usize, val * 2.0f32);
 
     let base = (lane_id * 15u32) as usize;
-    output[base + 7] = plane::reduce::<f32>(val, 1usize, Monoid::Sum);
-    output[base + 8] = plane::reduce::<f32>(val, 1usize, Monoid::Max);
-    output[base + 9] = plane::reduce::<f32>(val, 1usize, Monoid::Min);
-    output[base + 10] = plane::group::<f32, W2>(v2, 0usize, Monoid::Sum).extract(0usize);
+    output[base + 7] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Sum);
+    output[base + 8] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Max);
+    output[base + 9] = comptime!(LaneShare::Repeated).fold::<f32>(val, Monoid::Min);
+    output[base + 10] = comptime!(LaneShare::Whole)
+        .fold::<Vector<f32, W2>>(v2, Monoid::Sum)
+        .extract(0usize);
 }
 
 #[test]

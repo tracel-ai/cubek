@@ -471,7 +471,7 @@ impl<T: Numeric> Tile<T> {
             // onto the one tile.
             TileKind::PlaneTile(t) => {
                 comptime!(assert!(
-                    !step.level.cuts_tiles(&self.space),
+                    !MatrixGrid::new(&step.level, &self.space).cuts(),
                     "Tile::at: a level that cuts tiles cannot select into a single plane \
                      tile (it needs a partition, or a memory output)"
                 ));

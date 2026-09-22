@@ -41,10 +41,10 @@ pub struct MemData<T: Numeric> {
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
     pub(crate) access: Access,
-    /// What the plane's lanes are to these cells. Both halves are stamped across
-    /// [`at`](Tile::at)s, since the level that spreads an axis is only known on the way down.
+    /// What the plane's lanes are to these cells, stamped across [`at`](Tile::at)s, since the
+    /// level that spreads an axis is only known on the way down.
     #[cube(comptime)]
-    pub(crate) lanes: LaneRoles,
+    pub(crate) lanes: LaneShare,
     /// What one instance holds of these cells, stamped across [`at`](Tile::at)s like
     /// [`lanes`](Self::lanes), since only each level's whole space still has the axis this
     /// operand's projection dropped. Read by accumulators only; meaningless (`Partial`) elsewhere.
@@ -197,6 +197,29 @@ pub enum Write {
 }
 
 impl Write {
+    /// Refuse an accumulation `split` leaves in pieces unless this write adds them. Called where
+    /// an accumulator is opened and where it is written, the two places a partial can escape.
+    ///
+    /// A replacing destination is silently wrong: a register drain stores, so the last instance
+    /// erases the rest, and one accumulating in place loses the update.
+    /// [`Accumulate`](Write::Accumulate) is the case this lets through.
+    pub(crate) fn admits(self, split: SplitShare, site: &str) {
+        match (split, self) {
+            (SplitShare::Whole, _) | (SplitShare::Partial, Write::Accumulate) => {}
+            (SplitShare::Partial, Write::Replace) => panic!(
+                "{site}: this accumulator's cells are split across planes or cubes and its \
+                 destination replaces rather than accumulates, so every partial but one would be \
+                 lost. \
+                 A contracted axis distributed across planes or cubes gives each instance a \
+                 slice of the contraction, and none of them holds a whole cell. \
+                 Drain into an accumulating destination (bind it as an `AccumulateArg`), \
+                 distribute the contraction across the plane's lanes instead \
+                 (`distribute(lanes(n), ..)`, combined in the plane's registers), or give the \
+                 output an axis of its own for the split."
+            ),
+        }
+    }
+
     /// Refuse an accumulating write from a drain that cannot elect one writer for it.
     ///
     /// A hardware fragment stores through its intrinsic, over a slice of the destination or its

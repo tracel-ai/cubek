@@ -44,16 +44,15 @@
 //! **One reversal, named.** Levels are stated innermost first and a kernel's loops run outermost
 //! first, so [`build`](Levels::build) reverses. That is the only place the two directions meet.
 
-use super::level::LevelScope;
-use super::{ComputeScope, CubeAxis, CubeOrder, Distribution, Spread};
-use crate::{Axis, Count, Level};
+use super::CubeOrder;
+use crate::{Axis, Count, Level, Spread, Takers};
 
 /// One level, as the builder holds it before it is a [`Level`]: the axes it names with the tile
 /// each is built of, and the modifiers stated after it.
 #[derive(Clone, Debug)]
 struct StatedLevel {
     /// Who takes this level's tiles, which is also the loop verb that states it.
-    takers: LevelScope,
+    takers: Takers,
     /// `(axis, the size one tile of this level covers, how many)` — the running size below it,
     /// and the count stated. An every-level states no count and `every` says so.
     tiles: Vec<(Axis, usize, usize)>,
@@ -101,23 +100,23 @@ impl Levels {
 
     /// Every worker steps through this many of the thing below, one at a time.
     pub fn walk(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(LevelScope::Sequential, counts)
+        self.state(Takers::Walk, counts)
     }
 
     /// Every worker steps through as many of the thing below as the axis holds — the count the
     /// levels do not know, and the launch does.
     pub fn walk_every(self, axes: &[Axis]) -> Self {
-        self.every(LevelScope::Sequential, axes)
+        self.every(Takers::Walk, axes)
     }
 
     /// This many of the thing below, one per lane of the plane.
     pub fn lanes(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(LevelScope::Lanes, counts)
+        self.state(Takers::Lanes, counts)
     }
 
     /// This many of the thing below, one per plane of the cube.
     pub fn planes(self, counts: &[(Axis, usize)]) -> Self {
-        self.state(LevelScope::Planes, counts)
+        self.state(Takers::Planes, counts)
     }
 
     /// One cube for every box these axes hold. The outermost level of a launch, and the one whose
@@ -133,7 +132,7 @@ impl Levels {
             "Levels::cubes: {} axes, but a launch grid has three dimensions",
             axes.len()
         );
-        self.every(LevelScope::Cubes, axes)
+        self.every(Takers::Cubes, axes)
     }
 
     /// Deal `axis` — one the cube level just stated — across `cubes` of them, each taking a run
@@ -142,9 +141,9 @@ impl Levels {
     pub fn across(mut self, axis: Axis, cubes: usize) -> Self {
         let stated = self.last("across");
         assert!(
-            stated.takers == LevelScope::Cubes,
-            "Levels::across: only cubes take an axis in runs; the level just stated is a {}",
-            stated.takers.verb()
+            stated.takers == Takers::Cubes,
+            "Levels::across: only cubes take an axis in runs; the level just stated is {:?}",
+            stated.takers
         );
         assert!(
             stated.tiles.iter().any(|&(a, _, _)| a == axis),
@@ -168,9 +167,9 @@ impl Levels {
     pub fn ordered(mut self, order: CubeOrder) -> Self {
         let stated = self.last("ordered");
         assert!(
-            stated.takers == LevelScope::Cubes,
-            "Levels::ordered: only cubes are dealt to a grid; the level just stated is a {}",
-            stated.takers.verb()
+            stated.takers == Takers::Cubes,
+            "Levels::ordered: only cubes are dealt to a grid; the level just stated is {:?}",
+            stated.takers
         );
         stated.order = order.canonicalize();
         self
@@ -224,7 +223,7 @@ impl Levels {
     }
 
     /// State a level of `counts` of the thing below, then grow each axis by its count.
-    fn state(mut self, takers: LevelScope, counts: &[(Axis, usize)]) -> Self {
+    fn state(mut self, takers: Takers, counts: &[(Axis, usize)]) -> Self {
         let tiles = counts
             .iter()
             .map(|&(axis, count)| (axis, self.size(axis), count));
@@ -238,13 +237,13 @@ impl Levels {
 
     /// State a level covering every tile these axes hold, and close them: a count nothing above
     /// can multiply, because nothing above knows it.
-    fn every(mut self, takers: LevelScope, axes: &[Axis]) -> Self {
+    fn every(mut self, takers: Takers, axes: &[Axis]) -> Self {
         let reopened: Vec<Axis> = axes
             .iter()
             .copied()
             .filter(|axis| self.closed.contains(axis))
             .collect();
-        if let (LevelScope::Sequential, Some(axis)) = (takers, reopened.first()) {
+        if let (Takers::Walk, Some(axis)) = (takers, reopened.first()) {
             panic!(
                 "Levels::walk_every: {axis:?} was taken whole by a level below, so a walk above \
                  it has nothing to step through"
@@ -286,7 +285,7 @@ impl Levels {
 }
 
 impl StatedLevel {
-    fn new(takers: LevelScope, tiles: Vec<(Axis, usize, usize)>, every: bool) -> Self {
+    fn new(takers: Takers, tiles: Vec<(Axis, usize, usize)>, every: bool) -> Self {
         StatedLevel {
             takers,
             tiles,
@@ -312,51 +311,34 @@ impl StatedLevel {
     /// The [`Level`] this states: every entry with its built tile, its count and its takers, and
     /// the modifiers applied in the order the level's own builders take them.
     fn level(&self) -> Level {
-        let grid = [CubeAxis::X, CubeAxis::Y, CubeAxis::Z];
-        let entries: Vec<(Axis, usize, Count, Distribution)> = self
+        let cuts: Vec<(Axis, usize, Count, Spread)> = self
             .tiles
             .iter()
-            .enumerate()
-            .map(|(i, &(axis, tile, count))| {
+            .map(|&(axis, tile, count)| {
                 let count = match (self.every, self.across) {
                     (true, Some((across, cubes))) if across == axis => Count::AllAcross(cubes),
                     (true, _) => Count::All,
                     (false, _) => Count::Stated(count),
                 };
-                let dist = match self.takers {
-                    LevelScope::Sequential => Distribution::Sequential,
-                    LevelScope::Lanes => Distribution::Spatial {
-                        scope: ComputeScope::Unit,
-                        spread: self.spread(axis),
-                    },
-                    LevelScope::Planes => Distribution::Spatial {
-                        scope: ComputeScope::Plane,
-                        spread: self.spread(axis),
-                    },
-                    LevelScope::Cubes => Distribution::Spatial {
-                        scope: ComputeScope::Cube(grid[i]),
-                        spread: self.spread(axis),
-                    },
-                };
-                (axis, tile, count, dist)
+                (axis, tile, count, self.spread(axis))
             })
             .collect();
-        let level = Level::new(self.takers, &entries);
+        let level = Level::new(self.takers, &cuts);
         let level = match self.batches.is_empty() {
             true => level,
-            false => level.batches(&self.batches),
+            false => level.batching(&self.batches),
         };
         let level = match self.fillers {
             0 => level,
-            n => level.filled_by(n),
+            n => level.filling(n),
         };
         let level = match self.order.swizzles() {
             false => level,
-            true => level.ordered(self.order),
+            true => level.dealt_in(self.order),
         };
         match self.shared_by {
             None => level,
-            Some(cubes) => level.shared_by(cubes),
+            Some(cubes) => level.sharing(cubes),
         }
     }
 }
@@ -429,10 +411,7 @@ mod tests {
             .build();
         assert_eq!(levels[0].count(K), Some(Count::AllAcross(4)));
         assert_eq!(levels[0].tile(K), Some(16));
-        assert_eq!(
-            levels[0].distribution(K).scope(),
-            Some(ComputeScope::Cube(CubeAxis::Z))
-        );
+        assert_eq!(levels[0].cube_axis(K), Some(crate::CubeAxis::Z));
         assert_eq!(levels[1].count(K), Some(Count::All));
     }
 

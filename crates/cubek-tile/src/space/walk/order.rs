@@ -3,21 +3,26 @@
 use crate::{Known, KnownExpand};
 use cubecl::prelude::*;
 
-/// A new order is a new variant here plus a [`walk_index`] arm.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum WalkOrder {
-    /// step `i` visits odometer index `i` (the identity).
-    RowMajor,
-    /// step `i` visits `total - i - 1`.
+/// The direction a walk's steps take through its grid. A new order is a new variant here plus a
+/// [`step`](StepOrder::step) arm.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum StepOrder {
+    /// Step `i` visits odometer index `i` (the identity).
+    #[default]
+    Forward,
+    /// Step `i` visits `total - i - 1`.
     Reversed,
 }
 
 #[cube]
-pub(crate) fn walk_index(i: usize, total: usize, #[comptime] order: WalkOrder) -> usize {
-    match order {
-        WalkOrder::RowMajor => i,
-        // Folded: an unrolled walk's constant `i` must stay constant through the
-        // reversal, or its regions lose their comptime coordinates.
-        WalkOrder::Reversed => total.minus(i).minus(1),
+impl StepOrder {
+    /// The odometer index step `i` of `total` visits under `order`.
+    pub(crate) fn step(i: usize, total: usize, #[comptime] order: StepOrder) -> usize {
+        match order {
+            StepOrder::Forward => i,
+            // Folded: an unrolled walk's constant `i` must stay constant through the
+            // reversal, or its regions lose their comptime coordinates.
+            StepOrder::Reversed => total.minus(i).minus(1),
+        }
     }
 }

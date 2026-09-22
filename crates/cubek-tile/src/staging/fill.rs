@@ -58,7 +58,7 @@ impl SlotPlan {
         let planned_operands = operands
             .iter()
             .map(|op| {
-                let mode = if can_fix_invariants && level.walk_invariant(op_space, op.space) {
+                let mode = if can_fix_invariants && walk_invariant(level, op_space, op.space) {
                     WindowMode::Fixed
                 } else {
                     WindowMode::Streamed
@@ -504,6 +504,15 @@ impl<T: Numeric> StagingExpand<Tile<T>> {
         self.__expand_release_read_method(scope);
     }
 }
+/// Whether a walk of `level` over `space` leaves `operand`'s window unchanged: every axis the
+/// walk steps (more than one tile) is absent from the operand, as in broadcast omission. A staged
+/// walk fills such an operand once, above the loop. Host-side, static extents.
+fn walk_invariant(level: &Level, space: &Space, operand: &Space) -> bool {
+    space
+        .axes()
+        .all(|axis| level.tiles(space, axis) == 1 || !operand.contains(axis))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

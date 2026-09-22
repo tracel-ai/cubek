@@ -108,7 +108,7 @@ fn attention_fold_kernel<W: Size>(
     };
 
     // The fold: one S block per region.
-    for region in k.over(&blocks).window(0, probe.blocks(block)) {
+    for region in k.over(&blocks).range(0, probe.blocks(block)) {
         let kb = k.at(&region);
         let vb = v.at(&region);
         let s0 = region.coord(S) * block;
@@ -471,7 +471,7 @@ fn attention_fold_cmma_kernel<E: Float>(
             materialized: false,
         };
 
-        for region in k.over(&blocks).window(0, probe.blocks(block)) {
+        for region in k.over(&blocks).range(0, probe.blocks(block)) {
             let s0 = region.coord(S) * block;
             let cols_bound = max(bound_s, s0) - s0;
             // Every plane is through the previous block before its stages are overwritten.
@@ -1407,7 +1407,7 @@ fn visited_blocks_kernel(
         materialized: false,
     };
     let mut visited = 0u32;
-    for _region in k.over(&blocks).window(0, probe.blocks(block)) {
+    for _region in k.over(&blocks).range(0, probe.blocks(block)) {
         visited += 1;
     }
     out[0] = f32::cast_from(visited);

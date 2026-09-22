@@ -4,19 +4,18 @@
 //! the tile block what one of those tiles holds. A row's tile is the row below times the count
 //! beside it, axis by axis: a row that fails to multiply out is a partitioning that answers wrong.
 //!
-//! The level column is the scope's glyph alone: the count block already names the axes a level
-//! touches, and the glyph comes off [`LevelScope`] rather than off the per-axis distributions,
-//! which [`Level::shared_by`] rewrites to `Sequential`.
+//! The level column is the takers' glyph and what they take: how many cubes, planes a cube or
+//! lanes, or how many steps a walk, with the spread and the filling planes where stated.
 
 use std::fmt::{self, Display, Formatter};
 
-use crate::{Axis, Level, LevelScope, Partitioning, Space};
+use crate::{Axis, Level, Partitioning, Space, Spread, Takers};
 
 /// The leaf row's glyph: the tile the levels reach, which no level of its own cuts.
 const LEAF: char = '◦';
-/// The left margin, and the level column — one glyph wide — up to the first block.
+/// The left margin, and the gap after the level's glyph, before what its takers take.
 const MARGIN: &str = "  ";
-const LEVEL: &str = "     ";
+const LEVEL: &str = "  ";
 /// Between two axes of a block, and between the blocks.
 const TIMES: &str = " × ";
 const GAP: &str = "    ";
@@ -67,7 +66,7 @@ impl<'a> LevelTable<'a> {
             .levels()
             .iter()
             .map(|level| {
-                let row = Row::of(glyph(level.scope()), level, &space, &axes);
+                let row = Row::of(level, &space, &axes);
                 space = level.child(&space);
                 row
             })
@@ -78,28 +77,72 @@ impl<'a> LevelTable<'a> {
     }
 }
 
-/// The glyph a level's scope prints as.
-pub(super) fn glyph(scope: LevelScope) -> char {
-    match scope {
-        LevelScope::Cubes => '▣',
-        LevelScope::Planes => '▤',
-        LevelScope::Lanes => '▪',
-        LevelScope::Sequential => '↻',
+/// The glyph a level's takers print as.
+fn glyph(takers: Takers) -> char {
+    match takers {
+        Takers::Cubes => '▣',
+        Takers::Planes => '▤',
+        Takers::Lanes => '▪',
+        Takers::Walk => '↻',
     }
+}
+
+/// What a level's takers take, in words: the instances the level deals to (or the steps a walk
+/// takes) multiplied over its axes, with the spread and the filling planes where it states them.
+fn takers(level: &Level, space: &Space) -> String {
+    let counts: Vec<Option<usize>> = level
+        .axes()
+        .iter()
+        .map(|&axis| level.tiles_const(space, axis))
+        .collect();
+    let total = counts
+        .iter()
+        .try_fold(1usize, |acc, count| count.map(|n| acc * n));
+    let many = match total {
+        Some(n) => n.to_string(),
+        None => "?".to_string(),
+    };
+    let interleaved = level
+        .axes()
+        .iter()
+        .any(|&axis| level.spread(axis) == Some(Spread::Interleaved));
+    let mut note = match level.takers() {
+        Takers::Cubes => match level.shared_by() {
+            Some(cubes) => format!("{cubes} cubes sharing {many} boxes"),
+            None => format!("{many} cubes"),
+        },
+        Takers::Planes => match level.shared_by() {
+            Some(planes) => format!("{planes} planes sharing {many} boxes"),
+            None => format!("{many} planes a cube"),
+        },
+        Takers::Lanes => format!("{many} lanes"),
+        Takers::Walk => format!("{many} steps"),
+    };
+    if interleaved {
+        note += " interleaved";
+    }
+    match level.fillers() {
+        0 => {}
+        1 => note += ", 1 filling plane",
+        n => note += &format!(", {n} filling planes"),
+    }
+    note
 }
 
 /// One line of the table: a level's glyph, what it cuts each axis into, and what one of its
 /// regions holds.
 struct Row {
     glyph: char,
+    takers: String,
     counts: Vec<String>,
     tile: Vec<String>,
 }
 
 impl Row {
-    fn of(glyph: char, level: &Level, space: &Space, axes: &[Axis]) -> Row {
+    fn of(level: &Level, space: &Space, axes: &[Axis]) -> Row {
         Row {
-            glyph,
+            glyph: glyph(level.takers()),
+            takers: takers(level, space),
             counts: axes.iter().map(|&axis| count(level, space, axis)).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -109,6 +152,7 @@ impl Row {
     fn leaf(space: &Space, axes: &[Axis]) -> Row {
         Row {
             glyph: LEAF,
+            takers: String::new(),
             counts: axes.iter().map(|_| "·".to_string()).collect(),
             tile: axes.iter().map(|&axis| extent(space, axis)).collect(),
         }
@@ -170,7 +214,14 @@ impl Display for LevelTable<'_> {
         let tiles = widths(&header, rows.iter().map(|row| row.tile.clone()));
         let (counts_wide, counts_pad) = padded(&counts, "count");
         let (tiles_wide, tiles_pad) = padded(&tiles, "tile");
-        let indent = format!("{MARGIN} {LEVEL}");
+        // The takers column, plus the gap before the count block.
+        let takers_wide = rows
+            .iter()
+            .map(|row| row.takers.chars().count())
+            .max()
+            .unwrap_or(0)
+            + GAP.chars().count();
+        let indent = format!("{MARGIN} {LEVEL}{:takers_wide$}", "");
 
         writeln!(
             f,
@@ -182,8 +233,9 @@ impl Display for LevelTable<'_> {
         for row in &rows {
             writeln!(
                 f,
-                "{MARGIN}{}{LEVEL}{counts_pad}{}{GAP}{tiles_pad}{}",
+                "{MARGIN}{}{LEVEL}{:takers_wide$}{counts_pad}{}{GAP}{tiles_pad}{}",
                 row.glyph,
+                row.takers,
                 block(&row.counts, &counts),
                 block(&row.tile, &tiles)
             )?;
@@ -251,16 +303,16 @@ mod tests {
         assert_eq!(
             staged().table(&labels).to_string(),
             [
-                "        b × m ×  n ×   k    b ×   m ×    n ×    k",
+                "                        b × m ×  n ×   k    b ×   m ×    n ×    k",
                 "",
-                "  ◦     · × · ×  · ×   ·    1 ×  16 ×   16 ×   16",
-                "  ↻     · × 2 ×  2 ×   ·    1 ×  32 ×   32 ×   16",
-                "  ↻     · × · ×  · ×   2    1 ×  32 ×   32 ×   32",
-                "  ▤     · × 2 ×  2 ×   ·    1 ×  64 ×   64 ×   32",
-                "  ↻     · × · ×  · × 128    1 ×  64 ×   64 × 4096",
-                "  ▣     4 × 8 × 16 ×   ·    4 × 512 × 1024 × 4096",
+                "  ◦                     · × · ×  · ×   ·    1 ×  16 ×   16 ×   16",
+                "  ↻  4 steps            · × 2 ×  2 ×   ·    1 ×  32 ×   32 ×   16",
+                "  ↻  2 steps            · × · ×  · ×   2    1 ×  32 ×   32 ×   32",
+                "  ▤  4 planes a cube    · × 2 ×  2 ×   ·    1 ×  64 ×   64 ×   32",
+                "  ↻  128 steps          · × · ×  · × 128    1 ×  64 ×   64 × 4096",
+                "  ▣  512 cubes          4 × 8 × 16 ×   ·    4 × 512 × 1024 × 4096",
                 "",
-                "        └─ count ──────┘    └─ tile ────────────┘",
+                "                        └─ count ──────┘    └─ tile ────────────┘",
             ]
             .join("\n")
         );
@@ -290,8 +342,7 @@ mod tests {
         assert!(table.lines().any(|line| line.contains("× ?")), "{table}");
     }
 
-    /// A level whose tiles are shared reads `Sequential` on every axis, and only its
-    /// [`LevelScope`] still says it is the cube grid.
+    /// A level whose grid is shared still prints as the cube grid, and says who shares it.
     #[test]
     fn a_shared_level_still_prints_as_the_cube_grid() {
         let partitioning = Partitioning::new(
@@ -321,13 +372,13 @@ mod tests {
         assert_eq!(
             partitioning.table(&[(M, "m"), (K, "k")]).to_string(),
             [
-                "            m ×   k      m ×    k",
+                "                      m ×   k      m ×    k",
                 "",
-                "  ◦         · ×   ·    128 ×   32",
-                "  ↻         · × 128    128 × 4096",
-                "  ▣         4 ×   ·    500 × 4096",
+                "  ◦                   · ×   ·    128 ×   32",
+                "  ↻  128 steps        · × 128    128 × 4096",
+                "  ▣  4 cubes          4 ×   ·    500 × 4096",
                 "",
-                "        └─ count ─┘    └─ tile ─┘",
+                "                  └─ count ─┘    └─ tile ─┘",
             ]
             .join("\n")
         );

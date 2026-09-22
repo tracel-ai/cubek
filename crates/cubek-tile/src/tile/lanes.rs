@@ -139,7 +139,7 @@ impl<T: Numeric> Lanes<T> {
             Reach::Window => {
                 let planes = comptime!(plane_windows(&operand.space, &operand.levels));
                 let cells = comptime!(lines * words);
-                let start = hardware_pos(ComputeScope::Plane) * cells;
+                let start = Takers::position(Takers::Planes) * cells;
                 let end = start + cells;
                 ComptimeOption::new_Some(
                     Shared::<[u32]>::new_slice(comptime!(cells * planes))

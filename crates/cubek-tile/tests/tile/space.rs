@@ -254,7 +254,7 @@ fn shared_tiles_launch_their_instances() {
         ),
         Form::Static,
     );
-    assert!(launcher.partitioning().level(0).work().is_some());
+    assert!(launcher.partitioning().level(0).shared_by().is_some());
     // Five cubes, not `4 * 2 * 1`.
     assert!(matches!(launcher.cube_count(), CubeCount::Static(5, 1, 1)));
     assert_eq!(launcher.partitioning().levels().len(), 2);
@@ -294,7 +294,7 @@ fn batches_are_a_dial_each() {
     );
     // No work: the lowering that reads this is the one that picks the per-region accumulator
     // nest.
-    assert!(one_line.partitioning().level(0).work().is_none());
+    assert!(one_line.partitioning().level(0).shared_by().is_none());
     // Both axes ride Z, one cube per (B0, B1) pair, behind the `4 x 2` grid on X and Y.
     assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
@@ -315,7 +315,7 @@ fn one_axis_across_a_count_is_a_dial() {
         ),
         Form::Static,
     );
-    assert!(launcher.partitioning().level(0).work().is_none());
+    assert!(launcher.partitioning().level(0).shared_by().is_none());
     assert!(matches!(launcher.cube_count(), CubeCount::Static(4, 1, 1)));
 }
 
@@ -333,7 +333,7 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
         ),
         Form::Static,
     );
-    assert!(launcher.partitioning().level(0).work().is_none());
+    assert!(launcher.partitioning().level(0).shared_by().is_none());
     assert!(matches!(launcher.cube_count(), CubeCount::Static(1, 1, 1)));
     assert_eq!(
         &launcher.partitioning().level(0).child(launcher.space()),

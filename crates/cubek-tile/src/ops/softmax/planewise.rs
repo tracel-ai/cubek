@@ -15,7 +15,7 @@
 
 use cubecl::prelude::*;
 
-use crate::{instruction::plane, *};
+use crate::*;
 
 #[cube]
 impl<EA: Float> Tile<EA> {
@@ -92,7 +92,7 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Max));
+            acc[ri] = comptime!(LaneShare::of_lanes(lanes, lanes)).fold::<EA>(partial, Monoid::Max);
         }
     }
 
@@ -169,7 +169,7 @@ impl<EA: Float> Tile<EA> {
                     }
                 }
             }
-            acc[ri] = plane::reduce::<EA>(partial, lanes, comptime!(Monoid::Sum));
+            acc[ri] = comptime!(LaneShare::of_lanes(lanes, lanes)).fold::<EA>(partial, Monoid::Sum);
         }
     }
 

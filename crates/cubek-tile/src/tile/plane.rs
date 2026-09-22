@@ -324,12 +324,12 @@ impl<T: Numeric> PlanePartition<T> {
         // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a cut axis
         // takes its constant digit and an uncut one selects the whole partition. A `Dynamic`
         // axis (top level only) stays runtime, yielding `None`.
-        let mi = if comptime!(step.level.single_static_tile(&space, a0)) {
+        let mi = if comptime!(step.level.tiles_const(&space, a0) == Some(1)) {
             comptime!(Some(0u64))
         } else {
             step.coord(a0).constant()
         };
-        let ni = if comptime!(step.level.single_static_tile(&space, a1)) {
+        let ni = if comptime!(step.level.tiles_const(&space, a1) == Some(1)) {
             comptime!(Some(0u64))
         } else {
             step.coord(a1).constant()
@@ -354,7 +354,7 @@ impl<T: Numeric> PlanePartition<T> {
             }
             None => {
                 comptime!(assert!(
-                    !step.level.cuts_tiles(&space),
+                    !MatrixGrid::new(&step.level, &space).cuts(),
                     "Tile::at: a level that cuts a partition must be walked with compile-time \
                      coordinates (an unrolled walk)"
                 ));
@@ -699,17 +699,53 @@ pub(crate) fn partition_shape(space: &Space, levels: &[Level]) -> (usize, usize)
     let mut shape = (1usize, 1usize);
     let mut space = space.clone();
     for level in levels {
-        // Only a partition level contributes a grid; an instance level spreads across hardware.
-        match level.role() {
-            LevelRole::Partition => {
-                let (m, n) = level.partition_grid(&space);
-                shape = (shape.0 * m, shape.1 * n);
-            }
-            LevelRole::Instance => {}
-        }
+        let grid = MatrixGrid::new(level, &space);
+        shape = (shape.0 * grid.rows, shape.1 * grid.cols);
         space = level.child(&space);
     }
     shape
+}
+
+/// The `rows × cols` grid of fragments a walked level cuts a partition into, read off `space`'s
+/// two matrix edges; leading (batch) axes must hand out one tile.
+pub(crate) struct MatrixGrid {
+    rows: usize,
+    cols: usize,
+}
+
+impl MatrixGrid {
+    /// A dealt level spreads its tiles across hardware and cuts the partition nothing: only a
+    /// walked level's grid is a grid of fragments.
+    pub(crate) fn new(level: &Level, space: &Space) -> Self {
+        if level.takers() != Takers::Walk {
+            return MatrixGrid { rows: 1, cols: 1 };
+        }
+        let edges = MatrixAxes::edges(space);
+        for (p, axis) in space.axes().enumerate() {
+            let tiles = level
+                .tiles_const(space, axis)
+                .expect("plane partition level: tile counts must be comptime");
+            assert!(
+                p == edges.row_split || p == edges.col_split || tiles == 1,
+                "plane partition level: leading (batch) axes must hand out one tile"
+            );
+        }
+        MatrixGrid {
+            rows: level
+                .tiles_const(space, space.axis_at(edges.row_split))
+                .unwrap(),
+            cols: level
+                .tiles_const(space, space.axis_at(edges.col_split))
+                .unwrap(),
+        }
+    }
+
+    /// Whether the level cuts the partition into more than one fragment, so each region must be
+    /// selected by a comptime coordinate. A dealt level and a degenerate 1×1 partition (a k-step
+    /// walk) both cut nothing.
+    pub(crate) fn cuts(&self) -> bool {
+        (self.rows, self.cols) != (1, 1)
+    }
 }
 
 /// The one level that cuts an operand's window into the partition's grid of fragments on its

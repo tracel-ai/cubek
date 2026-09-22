@@ -335,7 +335,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
     let lane_share = acc.lane_share();
     let monoid = acc.monoid();
     comptime!(assert!(
-        !guard || matches!(lane_share, LaneShare::Whole),
+        !guard || !lane_share.folds(),
         "block::commit: a spread block skips the lanes overhanging the sink, and a lane-split \
          accumulator ({lane_share:?}) folds across the plane on the way out, which that skip \
          would put under divergent control flow"
@@ -347,7 +347,7 @@ pub(crate) fn commit<E: Numeric, V: Size, A: Size>(
             let cell = c[i * nr + n];
             if comptime!(spread > 1) {
                 let base = (n as u32).times(comptime!(spread as u32));
-                // One commit per lane, which the assert above holds to `LaneShare::Whole`: each
+                // One commit per lane, which the assert above holds to an unfolded share: each
                 // is a bare write, not `spread` plane folds where the plain path does one.
                 #[unroll]
                 for l in 0..spread {

@@ -1,19 +1,20 @@
-//! This instance's run of a level dealt as one index ([`Level::shared_by`](crate::Level)).
+//! This instance's share of a level dealt as one flat index ([`Level::sharing`](crate::Level)):
+//! the regions it touches and, for the first and last, how much of their walk below is its own.
 
 use cubecl::prelude::*;
 
-use crate::{Level, Region, Walk, WalkExpand, hardware_pos};
+use crate::{CubeAxis, Level, Region, Takers, Walk, WalkExpand};
 
-/// This instance's run of a level dealt as one index ([`Level::shared_by`]): the regions it
-/// touches and, for the first and last, how much of their walk below is its own. Counted in the
-/// level below's steps, the ones its instances take *together*, however that level cuts the plane.
+/// This instance's portion of a level dealt as one index: the regions it touches and, for the
+/// first and last, how much of their walk below is its own. Counted in the level below's steps,
+/// the ones its instances take *together*, however that level cuts the plane.
 #[derive(CubeType)]
-pub struct Run {
-    /// The regions the run touches, in order.
+pub struct Portion {
+    /// The regions the portion touches, in order.
     regions: Walk,
     /// The first of them, in the level's flat index.
     first: usize,
-    /// The run's bounds on the joint step index.
+    /// The portion's bounds on the joint step index.
     start: usize,
     end: usize,
     /// Steps of the level below per region.
@@ -21,20 +22,20 @@ pub struct Run {
 }
 
 #[cube]
-impl Run {
-    /// How many regions the run touches.
+impl Portion {
+    /// How many regions the portion touches.
     pub fn touched(&self) -> usize {
         self.regions.total()
     }
 
-    /// The `i`-th region the run touches.
+    /// The `i`-th region the portion touches.
     pub fn region(&self, i: usize) -> Region {
         self.regions.region(i)
     }
 
-    /// Where in the `i`-th region's walk below this run starts, and how many steps of it are the
-    /// run's own: all of them inside the run, part of them at either end. What the region's walk
-    /// is [`window`](Walk::window)ed to.
+    /// Where in the `i`-th region's walk below this portion starts, and how many steps of it are
+    /// its own: all of them inside the portion, part of them at either end. What the region's walk
+    /// is [`range`](Walk::range)d to.
     pub fn steps(&self, i: usize) -> (usize, usize) {
         let base = (self.first + i) * self.stride;
         let from = select(base < self.start, self.start - base, 0);
@@ -45,28 +46,34 @@ impl Run {
 
 #[cube]
 impl Walk {
-    /// This instance's run of the index this level deals as one, counted in steps of `below`,
-    /// the level each region is walked with. Two divisions rather than a length each: the runs
+    /// This instance's portion of the index this level deals as one, counted in steps of `below`,
+    /// the level each region is walked with. Two divisions rather than a length each: the portions
     /// abut, cover the work once, and differ in length by at most one.
-    pub fn run(self, #[comptime] below: Level) -> Run {
-        let work = comptime!(
+    pub fn portion(self, #[comptime] below: Level) -> Portion {
+        let instances = comptime!(
             self.level
-                .work()
-                .cloned()
-                .expect("Walk::run: this level deals no work as one; say `shared_by`")
+                .shared_by()
+                .expect("Walk::portion: this level deals no grid as one; say `shared_by`")
         );
-        let instances = comptime!(work.instances());
         let stride = self.region(0).over(&below).total();
         let steps = self.total() * stride;
-        let pos = hardware_pos(comptime!(work.scope()));
+        // A shared grid rides its takers' first dimension: the cubes' `X`, or the planes.
+        let pos = match comptime!(self.level.takers()) {
+            Takers::Cubes => CubeAxis::position(CubeAxis::X),
+            Takers::Planes => Takers::position(Takers::Planes),
+            Takers::Lanes | Takers::Walk => {
+                panic!("Walk::portion: only cubes or planes share a grid as one index")
+            }
+        };
         let start = pos * steps / instances;
         let end = (pos + 1) * steps / instances;
         let first = start / stride;
-        // Through the region the run's last step falls in. `end` is exclusive, so the step before
-        // it is the one to find; an empty run (more instances than work) touches nothing.
+        // Through the region the portion's last step falls in. `end` is exclusive, so the step
+        // before it is the one to find; an empty portion (more instances than work) touches
+        // nothing.
         let touched = select(start < end, (end - 1) / stride + 1 - first, 0);
-        Run {
-            regions: self.window(first, touched),
+        Portion {
+            regions: self.range(first, touched),
             first,
             start,
             end,

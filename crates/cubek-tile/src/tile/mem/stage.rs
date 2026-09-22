@@ -434,10 +434,7 @@ impl<T: Numeric> MemData<T> {
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
                 }),
-                lanes: comptime!(LaneRoles {
-                    share: LaneShare::Whole,
-                    work: LaneWork::Repeated,
-                }),
+                lanes: comptime!(LaneShare::Repeated),
                 split_share: comptime!(SplitShare::Whole),
                 init_from: comptime!(InitFrom::Cell),
                 source_window: source,
@@ -462,7 +459,7 @@ impl<T: Numeric> MemData<T> {
                 .map(|p| space.extent_at(p))
                 .product::<usize>()
         );
-        let start = hardware_pos(ComputeScope::Plane) * cells;
+        let start = Takers::position(Takers::Planes) * cells;
         let end = start + cells;
         let window =
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);

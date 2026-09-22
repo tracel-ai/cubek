@@ -3,7 +3,7 @@ use cubecl::{
     std::tensor::layout::{Coordinates, Coords2d},
 };
 
-use crate::{instruction::plane, *};
+use crate::*;
 
 /// What an accumulation starts from: the statement a verb makes about the cells it is about to
 /// write ([`Tile::mm`] and [`Tile::reduce_axis`] say [`Identity`](InitFrom::Identity), the
@@ -44,7 +44,7 @@ impl CellRead {
             Write::Replace => match init_from {
                 InitFrom::Identity => CellRead::Never,
                 InitFrom::Cell => match lane_share {
-                    LaneShare::Whole => CellRead::AtSeed,
+                    LaneShare::Repeated | LaneShare::Whole => CellRead::AtSeed,
                     LaneShare::Plane | LaneShare::Group { .. } => CellRead::AtCommit,
                 },
             },
@@ -72,17 +72,15 @@ pub(crate) enum Drain {
 }
 
 impl Drain {
-    pub(crate) const fn of(lanes: LaneRoles, write: Write) -> Self {
-        match lanes.share {
-            LaneShare::Plane => Drain::PlaneFold,
-            LaneShare::Group { fold_mask } => Drain::GroupFold { fold_mask },
+    pub(crate) const fn of(lanes: LaneShare, write: Write) -> Self {
+        match (lanes, write) {
+            (LaneShare::Plane, _) => Drain::PlaneFold,
+            (LaneShare::Group { fold_mask }, _) => Drain::GroupFold { fold_mask },
             // Nothing is folded across the lanes, so nothing has to be combined. Whether they may
             // all write is what a fold turns on: repeated lanes hold the same cells, so a store
             // lands the same value however many make it, but a fold lands it once per lane.
-            LaneShare::Whole => match (lanes.work, write) {
-                (LaneWork::Repeated, Write::Accumulate) => Drain::LaneZero,
-                (LaneWork::Repeated, Write::Replace) | (LaneWork::Own, _) => Drain::EachLane,
-            },
+            (LaneShare::Repeated, Write::Accumulate) => Drain::LaneZero,
+            (LaneShare::Repeated, Write::Replace) | (LaneShare::Whole, _) => Drain::EachLane,
         }
     }
 }
@@ -98,7 +96,7 @@ impl Drain {
 pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
     values: MaskedViewMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
-    lanes: LaneRoles,
+    lanes: LaneShare,
     #[cube(comptime)]
     monoid: Monoid,
     #[cube(comptime)]
@@ -111,18 +109,18 @@ pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = 
 impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
         values: MaskedViewMut<'a, Vector<E, V>, C>,
-        #[comptime] lanes: LaneRoles,
+        #[comptime] lanes: LaneShare,
         #[comptime] split_share: SplitShare,
         #[comptime] write: Write,
         #[comptime] monoid: Monoid,
         #[comptime] init_from: InitFrom,
     ) -> Self {
-        comptime!(split_share.validate(write, "AccumulateView"));
+        comptime!(write.admits(split_share, "AccumulateView"));
         AccumulateView::<'a, E, V, C> {
             values,
             lanes,
             monoid,
-            cell_read: comptime!(CellRead::of(lanes.share, init_from, write)),
+            cell_read: comptime!(CellRead::of(lanes, init_from, write)),
             drain: comptime!(Drain::of(lanes, write)),
         }
     }
@@ -137,7 +135,7 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     /// has to ask: past `Whole`, [`commit`](Self::commit) folds across the plane, and a plane op
     /// under divergent control flow is undefined.
     pub(crate) fn lane_share(&self) -> comptime_type!(LaneShare) {
-        comptime!(self.lanes.share)
+        comptime!(self.lanes)
     }
 
     /// The monoid these cells fold under, stated where the view was built. A register block asks
@@ -168,11 +166,11 @@ impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub fn commit(&mut self, pos: C, value: Vector<E, V>) {
         match comptime!(self.drain) {
             Drain::PlaneFold => {
-                let combined = plane::broadcast::<Vector<E, V>>(value, self.monoid);
+                let combined = self.lanes.fold::<Vector<E, V>>(value, self.monoid);
                 self.commit_shared(pos, combined, UNIT_POS_X == 0);
             }
             Drain::GroupFold { fold_mask } => {
-                let combined = plane::group(value, fold_mask, self.monoid);
+                let combined = self.lanes.fold::<Vector<E, V>>(value, self.monoid);
                 let lane_in_group = UNIT_POS_X & comptime!(fold_mask as u32);
                 self.commit_shared(pos, combined, lane_in_group == 0);
             }

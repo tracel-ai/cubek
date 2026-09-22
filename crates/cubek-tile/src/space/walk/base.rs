@@ -7,7 +7,7 @@
 //! It holds no current region: `for region in walk` is `for i in 0..total { region(i) }`.
 //!
 //! Its knobs: order ([`reversed`](Walk::reversed)), unrolling ([`unrolled`](Walk::unrolled)), a run
-//! of the flat grid ([`window`](Walk::window)), one axis's coordinate ([`routed`](Walk::routed)).
+//! of the flat grid ([`range`](Walk::range)), one axis's coordinate ([`routed`](Walk::routed)).
 //! Holding several at once is a schedule's job: [`pipelined`](crate::pipelined) indexes it by hand.
 //!
 //! Each region is a [`Region`], the path of levels from the space to that box; a [`Tile`]
@@ -16,13 +16,11 @@
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use crate::{
-    Axis, Coords, Count, Known, KnownExpand, Level, Region, RegionExpand, Space, instance_tiles,
-};
+use crate::{Axis, Coords, Known, KnownExpand, Level, Region, RegionExpand, Space};
 
-use super::order::walk_index;
+use super::deal::AxisDeal;
 use crate::space::partition::{GridCount, in_plane_axes, swizzled_positions};
-use crate::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
+use crate::{Spread, StepOrder};
 
 /// The runtime odometer over a [`Space`]'s tiles under one [`Level`].
 #[derive(CubeType)]
@@ -46,7 +44,7 @@ pub struct Walk {
     #[cube(comptime)]
     routed_at: Vec<usize>,
     /// Where in this level's flat step space the walk starts. `0` for a whole walk, so it
-    /// folds away; a run dealt out of the flat grid ([`window`](Walk::window)) starts at its own.
+    /// folds away; a portion of the flat grid ([`range`](Walk::range)) starts at its own.
     base: usize,
     steps: usize,
     /// The path above this walk: what every region it hands out is one level below.
@@ -58,133 +56,130 @@ pub struct Walk {
     /// The level this walk steps: the statement the loop made.
     #[cube(comptime)]
     pub(crate) level: Level,
+    /// How the level deals each axis of the space, in axis order.
+    #[cube(comptime)]
+    deals: Vec<AxisDeal>,
     /// Whether iterating this walk unrolls (the one codegen choice folding cannot
     /// make): fragment outputs demand it, memory outputs prefer the compact loop.
     #[cube(comptime)]
     pub(crate) unroll: bool,
     /// The order the steps visit the odometer in ([`reversed`](Walk::reversed)).
     #[cube(comptime)]
-    order: WalkOrder,
+    order: StepOrder,
 }
 
 #[cube]
 impl Walk {
+    // The loops are `#[unroll]`ed cube loops over a comptime `Vec`, not host iteration.
+    #[allow(clippy::needless_range_loop)]
     pub(crate) fn of(space: &Space, #[comptime] level: Level, parent: Region) -> Walk {
-        let mut counts = Coords::<usize>::new();
-        #[unroll]
-        for p in 0..comptime!(space.rank()) {
-            // A stated count is the constant it states; an every-level's is the extent handed
-            // down in its tile, the one division of a launch (folded where the extent is static).
-            match comptime!(level.grid(space.axis_at(p))) {
-                GridCount::Const(n) => counts.push(n.runtime()),
-                GridCount::Extent(tile) => counts.push(space.count(p, tile)),
-            }
-        }
-        Walk::from_counts(comptime!(space.clone()), level, counts, parent)
-    }
-
-    /// Fold the per-axis grid `grid` into the walk: counts, total steps, and each
-    /// `Spatial` axis's hardware decode (invariant across the walk, so paid once here).
-    fn from_counts(
-        #[comptime] space: Space,
-        #[comptime] level: Level,
-        grid: Coords<usize>,
-        parent: Region,
-    ) -> Walk {
-        let rank = comptime!(space.rank());
-        let mut counts = Coords::<usize>::new();
-        let mut positions = Coords::<usize>::new();
-        let mut scales = Coords::<usize>::new();
-
-        // Per-axis instance counts, `1` for `Sequential`: the grid itself where every worker takes
-        // one tile, the stated count where the grid is dealt across workers in runs. Folded, so a
-        // constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a constant divisor).
-        let mut instances = Coords::<usize>::new();
-        #[unroll]
-        for p in 0..rank {
-            let axis = comptime!(space.axis_at(p));
-            let dist = comptime!(level.distribution(axis));
-            if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-                match comptime!(level.count(axis).unwrap()) {
-                    Count::AllAcross(workers) => instances.push(workers.runtime()),
-                    Count::Stated(_) | Count::All => instances.push(grid.at(p)),
-                }
-            } else {
-                instances.push(1usize);
-            }
-        }
-
+        let host = comptime!(space.clone());
+        let rank = comptime!(host.rank());
         // A cube level dealing its boxes in an order other than the grid's own decodes its two
         // in-plane axes *together*, from the flat dispatch index, because a swizzle is a joint
         // permutation and the loop below reads one hardware dimension per axis.
-        let swizzled = swizzled_positions(
-            comptime!(space.clone()),
-            comptime!(level.clone()),
-            &instances,
-        );
         let in_plane = comptime!(
             level
                 .order()
                 .swizzles()
-                .then(|| in_plane_axes(&space, &level))
+                .then(|| in_plane_axes(&host, &level))
+        );
+        let deals = comptime!(
+            (0..rank)
+                .map(|p| AxisDeal::new(&level, &host, p, in_plane))
+                .collect::<Vec<_>>()
         );
 
+        // The grid per axis: a stated count is the constant it states; an every-level's is the
+        // extent handed down in its tile, the one division of a launch (folded where the extent
+        // is static).
+        let mut grid = Coords::<usize>::new();
         #[unroll]
         for p in 0..rank {
-            let axis = comptime!(space.axis_at(p));
-            let dist = comptime!(level.distribution(axis));
+            match comptime!(level.grid(space.axis_at(p))) {
+                GridCount::Const(n) => grid.push(n.runtime()),
+                GridCount::Extent(tile) => grid.push(space.count(p, tile)),
+            }
+        }
 
-            if comptime!(matches!(dist, Distribution::Spatial { .. })) {
-                // Mixed-radix stride for axes sharing one hardware dim: the product of the
-                // later same-scope axes' instance counts (the earlier axis is the more
-                // significant digit); `1` when this axis owns its scope.
-                //
-                // Both halves: the odometer is the level's and this space may be a projection of
-                // it, so axes here carry a possibly-runtime count and unspanned ones a comptime
-                // one; dropping them aliases outer digits ([`Level::inner_weight_unspanned`]).
-                let picks = comptime!(
-                    ((p + 1)..rank)
-                        .filter(|&q| level.distribution(space.axis_at(q)).scope() == dist.scope())
-                        .collect::<Vec<_>>()
-                );
-                let unspanned = comptime!(level.inner_weight_unspanned(&space, axis));
-                let inner_weight = instances.product(picks) * comptime!(unspanned).runtime();
-                let position = if comptime!(in_plane.is_some_and(|(x, _)| x == p)) {
-                    swizzled.at(0)
-                } else if comptime!(in_plane.is_some_and(|(_, y)| y == p)) {
-                    swizzled.at(1)
-                } else {
-                    hardware_pos(comptime!(dist.scope_unchecked()))
-                        .divided_by(inner_weight)
-                        .remainder(instances.at(p))
-                };
-                // One tile a worker, or this worker's run of a grid dealt across them, cut short
-                // where the grid does not divide.
-                let run = match comptime!(level.count(axis).unwrap()) {
-                    Count::AllAcross(workers) => grid
-                        .at(p)
-                        .plus(comptime!(workers - 1).runtime())
-                        .divided_by(workers.runtime()),
-                    Count::Stated(_) | Count::All => 1usize.runtime(),
-                };
-                counts.push(instance_tiles(
-                    grid.at(p),
-                    position,
-                    instances.at(p),
-                    run,
-                    comptime!(dist.spread()),
-                    comptime!(level.divides(&space, axis)),
-                ));
-                positions.push(position);
-                if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-                    scales.push(run);
-                } else {
-                    scales.push(instances.at(p));
+        // Per-axis instance counts, `1` where the axis is walked: the grid itself where every
+        // worker takes one tile, the stated count where the grid is dealt across workers in runs.
+        // Folded, so a constant grid's decode below folds too (`/1`, `%1` vanish; `%` gets a
+        // constant divisor).
+        let mut instances = Coords::<usize>::new();
+        #[unroll]
+        for p in 0..rank {
+            match comptime!(deals[p].clone()) {
+                AxisDeal::Dealt {
+                    across: Some(workers),
+                    ..
+                } => instances.push(workers.runtime()),
+                AxisDeal::Dealt { .. } => instances.push(grid.at(p)),
+                AxisDeal::Walked => instances.push(1usize),
+            }
+        }
+        let swizzled = swizzled_positions(
+            comptime!(host.clone()),
+            comptime!(level.clone()),
+            &instances,
+        );
+
+        let mut counts = Coords::<usize>::new();
+        let mut positions = Coords::<usize>::new();
+        let mut scales = Coords::<usize>::new();
+        #[unroll]
+        for p in 0..rank {
+            match comptime!(deals[p].clone()) {
+                AxisDeal::Walked => {
+                    counts.push(grid.at(p));
+                    positions.push(0usize);
+                    scales.push(1usize);
                 }
-            } else {
-                counts.push(grid.at(p));
-                positions.push(0usize);
-                scales.push(1usize);
+                AxisDeal::Dealt {
+                    takers,
+                    dim,
+                    spread,
+                    across,
+                    divides,
+                    inner,
+                    unspanned,
+                    swizzled: joint,
+                } => {
+                    // Mixed-radix stride for axes sharing one hardware dim: the product of the
+                    // later same-dimension axes' instance counts (the earlier axis is the more
+                    // significant digit); `1` when this axis owns its dimension. Both halves: the
+                    // odometer is the level's and this space may be a subspace of it, so axes here
+                    // carry a possibly-runtime count and unspanned ones a comptime one.
+                    let inner_weight = instances.product(inner) * comptime!(unspanned).runtime();
+                    let position = match comptime!(joint) {
+                        Some(i) => swizzled.at(i),
+                        None => AxisDeal::hardware(takers, dim)
+                            .divided_by(inner_weight)
+                            .remainder(instances.at(p)),
+                    };
+                    // One tile a worker, or this worker's run of a grid dealt across them, cut
+                    // short where the grid does not divide.
+                    let run = match comptime!(across) {
+                        Some(workers) => grid
+                            .at(p)
+                            .plus(comptime!(workers - 1).runtime())
+                            .divided_by(workers.runtime()),
+                        None => 1usize.runtime(),
+                    };
+                    counts.push(AxisDeal::tiles(
+                        grid.at(p),
+                        position,
+                        instances.at(p),
+                        run,
+                        spread,
+                        divides,
+                    ));
+                    positions.push(position);
+                    match comptime!(spread) {
+                        Spread::Contiguous => scales.push(run),
+                        Spread::Interleaved => scales.push(instances.at(p)),
+                    }
+                }
             }
         }
 
@@ -201,8 +196,9 @@ impl Walk {
             base: 0usize,
             steps,
             parent,
-            order: comptime!(WalkOrder::RowMajor),
-            space,
+            order: comptime!(StepOrder::Forward),
+            deals,
+            space: host,
             level,
             unroll: comptime!(false),
         }
@@ -215,7 +211,7 @@ impl Walk {
     /// expert per token, a physical page per logical one), not by a loop; the axis keeps its true
     /// extent while the walk visits one coordinate, ordinary to everything below (`at` unchanged).
     ///
-    /// The caller owns the coordinate, as it owns [`window`](Walk::window)'s range: a value past
+    /// The caller owns the coordinate, as it owns [`range`](Walk::range)'s bounds: a value past
     /// the axis's extent windows past the buffer, and nothing here can check it.
     pub fn routed(self, #[comptime] axis: Axis, coord: usize) -> Walk {
         let rank = comptime!(self.space.rank());
@@ -262,6 +258,7 @@ impl Walk {
             base: self.base,
             steps,
             parent: self.parent,
+            deals: comptime!(self.deals.clone()),
             space: comptime!(self.space.clone()),
             level: comptime!(self.level.clone()),
             unroll: comptime!(self.unroll),
@@ -278,7 +275,7 @@ impl Walk {
     pub fn region(&self, i: usize) -> Region {
         let idx = self
             .base
-            .plus(walk_index(i, self.steps, comptime!(self.order)));
+            .plus(StepOrder::step(i, self.steps, comptime!(self.order)));
         self.parent
             .below(self.resolve(idx), comptime!(self.level.clone()))
     }
@@ -329,15 +326,18 @@ impl Walk {
 
     /// Fold axis `p`'s instance position into its `digit` per the [`Spread`]: an
     /// instance owns a contiguous run (`digit + pos·share`) or the instances take
-    /// turns (`digit·instances + pos`); a sequential digit passes through.
+    /// turns (`digit·instances + pos`); a walked digit passes through.
     fn fold(&self, digit: usize, #[comptime] p: usize) -> usize {
-        let dist = comptime!(self.level.distribution(self.space.axis_at(p)));
-        if comptime!(matches!(dist, Distribution::Sequential)) {
-            digit
-        } else if comptime!(matches!(dist.spread(), Spread::Contiguous)) {
-            digit.plus(self.positions.at(p).times(self.scales.at(p)))
-        } else {
-            digit.times(self.scales.at(p)).plus(self.positions.at(p))
+        match comptime!(self.deals[p].clone()) {
+            AxisDeal::Walked => digit,
+            AxisDeal::Dealt {
+                spread: Spread::Contiguous,
+                ..
+            } => digit.plus(self.positions.at(p).times(self.scales.at(p))),
+            AxisDeal::Dealt {
+                spread: Spread::Interleaved,
+                ..
+            } => digit.times(self.scales.at(p)).plus(self.positions.at(p)),
         }
     }
 }
@@ -392,29 +392,6 @@ impl Iterable for WalkExpand {
     }
 }
 
-/// The raw hardware position of a `Spatial` axis's scope; [`Walk::from_counts`] folds
-/// it through the axis's shared-dim stride to the per-axis instance coordinate.
-#[cube]
-pub fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
-    match comptime!(unit) {
-        ComputeScope::Cube(dim) => {
-            let cube_pos = match comptime!(dim) {
-                CubeAxis::X => CUBE_POS_X,
-                CubeAxis::Y => CUBE_POS_Y,
-                CubeAxis::Z => CUBE_POS_Z,
-            };
-            cube_pos as usize
-        }
-        // cube_dim = new_2d(plane_size, num_planes): Y is the plane index, X the
-        // plane-relative lane. Lanes agree on UNIT_POS_Y, so they cooperate.
-        ComputeScope::Plane => UNIT_POS_Y as usize,
-        // The plane-relative lane, not flat UNIT_POS: flat would fold in UNIT_POS_Y and
-        // double-count a sibling Plane axis's digit. The plane's `plane_size` lanes ride
-        // the X dim already, so a Unit axis divides them (instances == plane_size).
-        ComputeScope::Unit => UNIT_POS_X as usize,
-    }
-}
-
 /// The settings a walk is told after it is built. They change comptime fields, or swap in the
 /// handles a runtime window states, and emit no instruction of their own, so they are written
 /// once on the expand type rather than as a `#[cube]` rebuild of every field.
@@ -439,7 +416,7 @@ impl Walk {
     ///
     /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
     /// reads coordinates that are not in the grid, and nothing here can check it.
-    pub fn window(self, _base: usize, _steps: usize) -> Walk {
+    pub fn range(self, _base: usize, _steps: usize) -> Walk {
         unexpanded!()
     }
 
@@ -451,7 +428,7 @@ impl Walk {
 
 impl WalkExpand {
     pub fn __expand_reversed_method(mut self, _scope: &Scope) -> Self {
-        self.order = WalkOrder::Reversed;
+        self.order = StepOrder::Reversed;
         self
     }
 
@@ -460,7 +437,7 @@ impl WalkExpand {
         self
     }
 
-    pub fn __expand_window_method(
+    pub fn __expand_range_method(
         mut self,
         _scope: &Scope,
         base: NativeExpand<usize>,
