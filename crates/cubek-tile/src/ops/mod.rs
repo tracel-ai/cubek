@@ -12,8 +12,10 @@ mod normalize;
 mod reduce;
 mod rows;
 mod softmax;
+mod team;
 
 pub use attention::*;
 pub use normalize::*;
 pub use softmax::*;
+pub use team::*;
 // mul, reduce and rows add `Tile` impls only; nothing to re-export.
