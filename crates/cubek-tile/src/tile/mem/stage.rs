@@ -68,7 +68,7 @@ impl<T: Numeric> MemData<T> {
                 tile_kind: TileKind::new_Lanes(Lanes::<T>::new(
                     operand,
                     comptime!(level.clone()),
-                    reach,
+                    comptime!(reach),
                 )),
                 space: comptime!(level.child(&operand.space)),
                 depth: comptime!(operand.depth + 1),
