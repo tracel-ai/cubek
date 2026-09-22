@@ -183,7 +183,7 @@ impl<T: Numeric> RegisterData<T> {
     /// combined and lands in a scalar cell; a line of neighbouring cells lands as it is.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
         if comptime!(self.fold > 1) {
@@ -196,7 +196,7 @@ impl<T: Numeric> RegisterData<T> {
 
     /// [`store_cast_window`](Self::store_cast_window) into a sink addressed in `A`-wide cells:
     /// the block's own width, or scalar where a line folds into one cell.
-    fn drain<Out: Numeric, A: Size>(&self, mem: &mut MemData<Out>, #[comptime] space: Space) {
+    fn drain<Out: Numeric, A: Size>(&self, mem: &mut Memory<Out>, #[comptime] space: Space) {
         let mem_write = comptime!(mem.access.write);
         let lanes = comptime!(mem.lanes);
         let fold = comptime!(self.fold);

@@ -60,9 +60,12 @@ impl<T: Numeric> RegisterData<T> {
         // A contracted axis is one both operands span. The rhs lining along one is the folded
         // step, and the block's lines mean one thing for the whole walk.
         let lined_along_k = comptime!(
-            lhs_values
-                .space
-                .contains(rhs_values.space.axis_at(rhs_values.space.rank() - 1))
+            lhs_values.place.space.contains(
+                rhs_values
+                    .place
+                    .space
+                    .axis_at(rhs_values.place.space.rank() - 1)
+            )
         );
         comptime!(assert!(
             lined_along_k == (fold > 1),
@@ -82,22 +85,26 @@ impl<T: Numeric> RegisterData<T> {
         let size!(L) = lw;
 
         // Every contracted axis multiplied out: a partitioned contraction carries more than one.
-        let operands = comptime!(Space::merge(&[&lhs_values.space, &rhs_values.space]));
+        let operands = comptime!(Space::merge(&[
+            &lhs_values.place.space,
+            &rhs_values.place.space
+        ]));
         let kc = comptime!(operands.contracted_extent(&out));
         let (mr, nr) = comptime!((self.mr, self.nr));
 
         // The accumulator's column edge, which is the rhs's too: read off the operands rather
         // than off the last axis, so a split column group stays one edge.
-        let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs_values.space));
+        let acc_axes = comptime!(MatrixAxes::accumulator(&out, &lhs_values.place.space));
         let cols = comptime!(acc_axes.cols(&out));
-        let lhs_axes =
-            comptime!(MatrixAxes::new(&lhs_values.space, mr, kc).unwrap_or_else(|e| panic!("{e}")));
+        let lhs_axes = comptime!(
+            MatrixAxes::new(&lhs_values.place.space, mr, kc).unwrap_or_else(|e| panic!("{e}"))
+        );
         // Lined along the contraction the rhs reads as `(col, k)`, along the accumulator
         // `(k, col)`.
         let rhs_axes = comptime!(if fold > 1 {
-            MatrixAxes::new(&rhs_values.space, cols, kc).unwrap_or_else(|e| panic!("{e}"))
+            MatrixAxes::new(&rhs_values.place.space, cols, kc).unwrap_or_else(|e| panic!("{e}"))
         } else {
-            MatrixAxes::new(&rhs_values.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
+            MatrixAxes::new(&rhs_values.place.space, kc, cols).unwrap_or_else(|e| panic!("{e}"))
         });
 
         let config = comptime!(self.config);

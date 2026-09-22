@@ -23,7 +23,7 @@
 use std::fmt::Display;
 
 use cubecl::quant::scheme::{QuantValue, ScaleDtype};
-use cubek_tile::{Field, scale_field};
+use cubek_tile::Field;
 
 use crate::definition::MatmulSetupError;
 
@@ -59,7 +59,7 @@ impl QuantGemvProblem {
 
     /// The field one block scale occupies in the word it is stored in.
     pub fn scale_field(&self) -> Field {
-        scale_field(self.scales)
+        Field::of_scale(self.scales)
     }
 
     /// Scales one read of them brings: as many as share a stored word. The unit the blocks are

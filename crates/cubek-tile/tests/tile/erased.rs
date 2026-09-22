@@ -64,14 +64,15 @@ fn sink_kernel<E: Float>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out.tensor);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let src = Tile::<E>::procedural::<Position>(comptime!(space.space().clone()), Position {});
     dst.copy_from(&src);
 }
@@ -180,14 +181,15 @@ fn derived_sink_kernel<E: Float>(
     geometry.push(cols, col_stride);
 
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(out);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         spec,
         Write::Replace,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let src = Tile::<E>::procedural::<Position>(comptime!(space.space().clone()), Position {});
     dst.copy_from(&src);
 }
@@ -269,8 +271,8 @@ fn buffer_matmul<E: Numeric, EA: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         BLOCK,
@@ -308,20 +310,21 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
     // The geometry a sink cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(c.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<1>>(c.tensor);
-    let c = Tile::<E>::of_sink(
+    let c = GlobalOperand::<E>::sink(
         sink,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(c.spec.clone()),
         Write::Replace,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         BLOCK,
@@ -342,7 +345,7 @@ fn sink_matmul<E: Numeric, EA: Numeric>(
 /// The same contraction again, this time reading its **lhs** through an erased source.
 ///
 /// The mirror of [`sink_matmul`], and the reason the read path had to become a view: an operand
-/// tile reads through `matrix_transparent`, composed onto `MemData::read_view` as the drain is
+/// tile reads through `matrix_transparent`, composed onto `Memory::read_view` as the drain is
 /// onto `write_view`. The leaf asks the same layout for the same coordinates, and a call answers.
 #[cube(launch)]
 fn source_matmul<E: Numeric, EA: Numeric>(
@@ -357,21 +360,22 @@ fn source_matmul<E: Numeric, EA: Numeric>(
     // The geometry a source cannot be asked for, taken off the tensor behind it.
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<1>>>(a.tensor, 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<1>>(a.tensor);
-    let a = Tile::<E>::of_source(
+    let a = GlobalOperand::<E>::source(
         source,
         geometry,
         1usize,
         comptime!(space.space().clone()),
         comptime!(a.spec.clone()),
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let mut acc = c.block_accumulator::<EA, E, E>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         BLOCK,
@@ -583,14 +587,15 @@ fn wide_sink_kernel<E: Float>(
     let src = input.tile(comptime!(space.clone()));
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(out.tensor, 2usize);
     let sink = ErasedTensor::<E, WriteOnly>::of_tensor::<Const<2>>(out.tensor);
-    let mut dst = Tile::<E>::of_sink(
+    let mut dst = GlobalOperand::<E>::sink(
         sink,
         geometry,
         2usize,
         comptime!(space.space().clone()),
         comptime!(out.spec.clone()),
         Write::Replace,
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     dst.copy_from(&src);
 }
 
@@ -605,13 +610,14 @@ fn wide_source_kernel<E: Float>(
 ) {
     let geometry = RuntimeGeometry::of_tensor::<Vector<E, Const<2>>>(input.tensor, 2usize);
     let source = ErasedTensor::<E, ReadOnly>::of_tensor::<Const<2>>(input.tensor);
-    let src = Tile::<E>::of_source(
+    let src = GlobalOperand::<E>::source(
         source,
         geometry,
         2usize,
         comptime!(space.space().clone()),
         comptime!(input.spec.clone()),
-    );
+    )
+    .tile(comptime!(space.levels().to_vec()));
     let mut dst = out.tile(comptime!(space.clone()));
     dst.copy_from(&src);
 }

@@ -2384,8 +2384,8 @@ fn conv_mma_kernel<E: Numeric>(
     let mut acc = out.mma_accumulator::<E, E>(
         &input,
         comptime!(Fragments::new(
-            &out.space,
-            &input.space,
+            &out.place.space,
+            &input.place.space,
             std::slice::from_ref(&level)
         )),
         io,
@@ -2939,7 +2939,7 @@ fn conv_kernel_rational_dynamic_stage_read<E: Numeric>(
     offsets.push(offset);
 
     let input = input.tile_gathered(comptime!(space.clone()), coefficients, offsets);
-    let stage = MemData::stage(
+    let stage = Memory::stage(
         &input,
         comptime!(level.clone()),
         StageStorage::Strided,

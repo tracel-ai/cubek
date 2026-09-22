@@ -8,7 +8,7 @@ use crate::{Axis, Boundary, BoundaryPolicy, Field, Packing, Projection, Space, S
 /// The comptime half of an operand: how its logical axes address its buffer ([`Projection`], the
 /// storage tiling in its own repetition), how its edges are checked, how its values sit in words,
 /// and what its storage tiles are to the windows it is read through.
-/// [`Tile::of`](crate::Tile::of) projects the kernel's space onto it, so no operand carries a copy.
+/// [`GlobalOperand::tile`](crate::GlobalOperand::tile) projects the kernel's space onto it, so no operand carries a copy.
 ///
 /// Written by the [`Arg`](crate::Arg) builder's derivation; a kernel that states one by hand
 /// ([`new`](Self::new), [`direct`](Self::direct)) fills the fields it needs.
@@ -34,7 +34,7 @@ pub struct TileSpec {
 impl TileSpec {
     /// An operand's spec from its mapping, unchecked, plain, untiled, cube size unknown.
     /// [`Projection::validate`] does not run here: its rule on the innermost identity needs the
-    /// served width, which only [`Tile::of`](crate::Tile::of) knows.
+    /// served width, which only the tile's construction ([`GlobalOperand`](crate::GlobalOperand)) knows.
     pub fn new(projection: Projection) -> Self {
         TileSpec {
             projection,

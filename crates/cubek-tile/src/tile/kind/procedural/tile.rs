@@ -13,13 +13,11 @@ impl<T: Numeric> Tile<T> {
     #[allow(dead_code)] // Reached through its expand, from [`Tile::procedural`].
     fn procedural_virtual(#[comptime] space: Space, recipe: VirtualRecipe<T>) -> Self {
         Tile::<T> {
-            tile_kind: TileKind::new_Procedural(ProceduralData::<T>::new_virtual(
+            kind: TileKind::new_Procedural(ProceduralData::<T>::new_virtual(
                 comptime!(space.clone()),
                 recipe,
             )),
-            space,
-            depth: comptime!(0usize),
-            levels: comptime!(Vec::new()),
+            place: comptime!(Placement::alone(space)),
         }
     }
 }

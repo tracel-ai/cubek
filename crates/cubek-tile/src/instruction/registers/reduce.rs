@@ -38,7 +38,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {
-    let in_space = comptime!(input.space.clone());
+    let in_space = comptime!(input.place.space.clone());
     let vw = input.vector_size();
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
     let total_acc = comptime!(layout.total_acc);
@@ -78,7 +78,7 @@ fn register_data_body<Acc: Numeric, In: Numeric, V: Size>(
 
 #[cube]
 pub(crate) fn memory<Acc: Numeric, In: Numeric>(
-    acc: &mut MemData<Acc>,
+    acc: &mut Memory<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
@@ -89,12 +89,12 @@ pub(crate) fn memory<Acc: Numeric, In: Numeric>(
 
 #[cube]
 fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
-    acc: &mut MemData<Acc>,
+    acc: &mut Memory<Acc>,
     input: &Tile<In>,
     #[comptime] acc_space: Space,
     #[comptime] monoid: Monoid,
 ) {
-    let in_space = comptime!(input.space.clone());
+    let in_space = comptime!(input.place.space.clone());
     let vw = input.vector_size();
     let layout = comptime!(ReduceLayout::new(&in_space, &acc_space));
     let total_acc = comptime!(layout.total_acc);
@@ -104,7 +104,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
     let size!(W) = ws;
     comptime!(assert!(
         total_acc % ws == 0,
-        "reduce: MemData total_acc must be divisible by store.vector_size"
+        "reduce: Memory total_acc must be divisible by store.vector_size"
     ));
     let total_lines = comptime!(total_acc / ws);
     let mut acc_view = acc.flat_accumulate::<W>(monoid);
@@ -147,7 +147,7 @@ fn memory_body<Acc: Numeric, In: Numeric, V: Size>(
 /// instead of one scalar at a time ([`element_scalars`]).
 #[cube]
 fn element<Acc: Numeric, In: Numeric, V: Size>(
-    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    in_view: &Masked<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
@@ -188,7 +188,7 @@ fn element<Acc: Numeric, In: Numeric, V: Size>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
-    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    in_view: &Masked<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,
@@ -236,7 +236,7 @@ fn element_lines<Acc: Numeric, In: Numeric, V: Size>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn element_scalars<Acc: Numeric, In: Numeric, V: Size>(
-    in_view: &MaskedView<'_, Vector<In, V>, CoordsDyn>,
+    in_view: &Masked<'_, Vector<In, V>, CoordsDyn>,
     #[comptime] in_space: Space,
     #[comptime] acc_space: Space,
     #[comptime] layout: ReduceLayout,

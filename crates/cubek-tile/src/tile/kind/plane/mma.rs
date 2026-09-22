@@ -147,12 +147,12 @@ impl<T: Numeric> MmaData<T> {
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window.
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>) {
+    pub(crate) fn store_window(&self, mem: &mut Memory<T>) {
         self.store_cast_window::<T>(mem)
     }
 
     /// Drain this (accumulator) fragment into `mem`'s window, casting `T` down to the sink element.
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
+    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut Memory<Out>) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
@@ -204,7 +204,7 @@ fn register_rhs_size<R: Numeric>(def: &MmaDefinition<R, R, R>) {
 }
 
 // ===========================================================================
-// Fill / load / store primitives over cubek-tile's `MemData` window: a row-major stage addressed by
+// Fill / load / store primitives over cubek-tile's `Memory` window: a row-major stage addressed by
 // `window_slice()` + scalar `row_stride()`. (Adapted from cubek-std's mma module.)
 
 /// Fill every register slot with `value`.
@@ -243,7 +243,7 @@ fn load_fragment<T: Numeric, N: Size, A: Numeric, B: Numeric, CD: Numeric>(
         }
         LoadMethod::LoadMatrix => {
             comptime!(panic!(
-                "MmaData::load: the ldmatrix fast path is not yet wired for MemData windows; \
+                "MmaData::load: the ldmatrix fast path is not yet wired for Memory windows; \
                  state the register stage with MmaIOConfig::manual()"
             ))
         }
@@ -293,7 +293,7 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
 /// like `ldmatrix` (see [`load_fragment`]).
 #[cube]
 fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut MemData<Out>,
+    mem: &mut Memory<Out>,
     fragment: &Array<Vector<T, NA>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,
@@ -304,7 +304,7 @@ fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>
         StoreMethod::Manual => store_manual::<T, Out, A, B, CD>(mem, fragment, def, ident, layout),
         StoreMethod::StoreMatrix => {
             comptime!(panic!(
-                "MmaData::store: the stmatrix fast path is not yet wired for MemData windows; \
+                "MmaData::store: the stmatrix fast path is not yet wired for Memory windows; \
                  state the register stage with MmaIOConfig::manual()"
             ))
         }
@@ -315,7 +315,7 @@ fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>
 /// window, cast to the sink element.
 #[cube]
 fn store_manual<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut MemData<Out>,
+    mem: &mut Memory<Out>,
     fragment: &Array<Vector<T, NA>>,
     def: &MmaDefinition<A, B, CD>,
     #[comptime] ident: MatrixIdent,

@@ -19,12 +19,12 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// Serve the operand as a [`Tile`]: the kernel's one `space` projected onto this
     /// operand's `spec` axes, under the levels that partition it.
     pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
-        Tile::<E>::of(
+        GlobalOperand::<E>::tensor(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
         )
-        .under(comptime!(space.levels().to_vec()))
+        .tile(comptime!(space.levels().to_vec()))
     }
 
     /// [`tile`](Self::tile) with the element stated instead of inferred: `E` is what the binding
@@ -35,30 +35,30 @@ impl<'a, E: Numeric, V: Size> TileArg<'a, E, V> {
     /// not its own: a factor packed into words and a factor lying at its own element are the same
     /// call.
     pub fn tile_as<O: Numeric>(&self, #[comptime] space: Partitioning) -> Tile<O> {
-        Tile::<O>::of_stored(
+        GlobalOperand::<O>::stored(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
         )
-        .under(comptime!(space.levels().to_vec()))
+        .tile(comptime!(space.levels().to_vec()))
     }
 
     /// [`tile`](Self::tile) for a partly runtime gather map: `coefficients` holds one value per
     /// [`Scale::Dynamic`](crate::Scale) term and [`Divisor::Dynamic`](crate::Divisor) axis, and
-    /// `offsets` one per [`Offset::Dynamic`](crate::Offset), in [`Tile::of_gathered`]'s order.
+    /// `offsets` one per [`Offset::Dynamic`](crate::Offset), in [`GlobalOperand::gathered`]'s order.
     pub fn tile_gathered(
         &self,
         #[comptime] space: Partitioning,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
     ) -> Tile<E> {
-        Tile::<E>::of_gathered(
+        GlobalOperand::<E>::gathered(
             self.tensor,
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
             coefficients,
             offsets,
         )
-        .under(comptime!(space.levels().to_vec()))
+        .tile(comptime!(space.levels().to_vec()))
     }
 }

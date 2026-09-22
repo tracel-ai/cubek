@@ -19,8 +19,8 @@ impl<EA: Float> Tile<EA> {
         state: &RowState<EA>,
     ) {
         let rpu = comptime!(state.share.rows());
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -49,8 +49,8 @@ impl<EA: Float> Tile<EA> {
     /// Per owned row max into `acc`, seeded from the running max `state.m`.
     pub fn row_max(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -77,8 +77,8 @@ impl<EA: Float> Tile<EA> {
     /// guard: a row whose max is below the threshold goes entirely to zero.
     pub fn exp_diff(&mut self, rowwise: &Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let threshold = EA::new(LOGIT_MASKED);
         let w = self.vector_size();
         let size!(W) = w;
@@ -108,8 +108,8 @@ impl<EA: Float> Tile<EA> {
     /// Per owned row sum into `acc`.
     pub fn row_sum(&self, acc: &mut Array<EA>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);

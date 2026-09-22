@@ -404,7 +404,7 @@ impl Projection {
             !self.physical.is_empty() && !self.axes.is_empty(),
             "Projection: an operand must span at least one logical and one physical axis"
         );
-        // The innermost physical axis is addressed in *lines*, not elements: `MemData::at` divides
+        // The innermost physical axis is addressed in *lines*, not elements: `Memory::at` divides
         // its edge by the vector size and `of_impl` counts its physical shape in lines. That
         // arithmetic is only sound when it is one logical axis at coefficient 1.
         //
@@ -648,7 +648,7 @@ mod tests {
     }
 
     /// A spec built from a realized tiled layout is honest about its buffer: its physical rank *is*
-    /// the rank `Tile::of` reads shape and strides over, its positional relabeling the layout's own
+    /// the rank a memory tile reads shape and strides over, its positional relabeling the layout's own
     /// synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the same.
     #[test]
     fn a_tiled_spec_matches_its_buffer() {

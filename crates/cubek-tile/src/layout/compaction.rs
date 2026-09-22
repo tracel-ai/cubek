@@ -83,7 +83,7 @@ impl Compaction {
                 //
                 // A Dynamic one passes untouched: `step` is 1 wherever one moves, and pinning a
                 // non-moving one would drop its slot from the coefficient carrier, which the stage
-                // inherits verbatim ([`MemData::fill_from`](crate::MemData)) so must index alike.
+                // inherits verbatim ([`Memory::fill_from`](crate::Memory)) so must index alike.
                 let scaled: Vec<(Axis, Scale)> = terms
                     .iter()
                     .map(|t| {
@@ -119,7 +119,7 @@ impl Compaction {
     }
 
     /// How the stage's own logical axes address its cells: `projection` with every moving
-    /// coefficient divided by its step; the staged tile's [`projection`](crate::MemData), so its
+    /// coefficient divided by its step; the staged tile's [`projection`](crate::Memory), so its
     /// reads and [`at`](crate::Tile::at) descents run through the machinery a gmem operand's do.
     pub fn projection(&self) -> &Projection {
         &self.projection

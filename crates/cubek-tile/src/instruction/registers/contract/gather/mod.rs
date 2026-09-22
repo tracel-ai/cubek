@@ -269,7 +269,7 @@ fn masked_bound_depends_on(
 /// Rank is the recipe's, so one stated factor takes it too: its row cache saves `nr` evaluations.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] space: Space,
@@ -299,12 +299,12 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     );
 
     let problem = comptime!(GatherProblem::new(
-        &lhs.space,
-        &rhs.space,
+        &lhs.place.space,
+        &rhs.place.space,
         &rhs_projection,
         ContractShape::new(
-            &lhs.space,
-            &rhs.space,
+            &lhs.place.space,
+            &rhs.place.space,
             space,
             contracted_per_step,
             lw,

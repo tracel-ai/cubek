@@ -43,7 +43,7 @@ impl<EA: Float> Tile<EA> {
              shared memory; a global buffer is not ordered by the sync_cube between the \
              passes. The states may still be global."
         ));
-        let space = comptime!(self.space.clone());
+        let space = comptime!(self.place.space.clone());
         comptime!(assert!(
             space.contains(split),
             "merge_splits: {split:?} is not an axis of the weights"
@@ -52,8 +52,8 @@ impl<EA: Float> Tile<EA> {
         let rows = comptime!(space.cells() / splits);
         // The states can arrive partitioned differently from the weights (a
         // global buffer beside a shared-memory tile); only the layout has to agree.
-        let m_space = comptime!(m.space.clone());
-        let l_space = comptime!(l.space.clone());
+        let m_space = comptime!(m.place.space.clone());
+        let l_space = comptime!(l.place.space.clone());
         comptime!(assert!(
             m_space == space && l_space == space,
             "merge_splits: the states must be laid out like the weights they merge into"

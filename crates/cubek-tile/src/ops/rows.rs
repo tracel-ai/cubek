@@ -27,14 +27,14 @@ impl<EA: Float> Tile<EA> {
     pub fn store_rows(&mut self, values: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
         let rpu = comptime!(share.rows());
-        let rows = comptime!(self.space.cells());
+        let rows = comptime!(self.place.space.cells());
         comptime!(assert!(
-            (0..self.space.rank())
-                .filter(|&p| self.space.extent_at(p) > 1)
+            (0..self.place.space.rank())
+                .filter(|&p| self.place.space.extent_at(p) > 1)
                 .count()
                 <= 1,
             "store_rows: a row lane, one cell per score row; this tile spans {:?}",
-            self.space
+            self.place.space
         ));
         let size!(W) = self.vector_size();
         let mut view = self.flat_mut::<W>();
@@ -62,8 +62,8 @@ impl<EA: Float> Tile<EA> {
     /// `state` as [`store_rows`](Tile::store_rows) takes it.
     pub fn rescale_rows(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
-        match &self.tile_kind {
-            TileKind::Gmem(_) | TileKind::Smem(_) => self.rescale_rows_in_memory(corr, state),
+        match &self.kind {
+            TileKind::Memory(_) => self.rescale_rows_in_memory(corr, state),
             TileKind::PlanePartition(p) => {
                 let lanes = comptime!(match share {
                     RowShare::Plane { rows: _, lanes } => lanes,
@@ -84,9 +84,9 @@ impl<EA: Float> Tile<EA> {
 
     fn rescale_rows_in_memory(&mut self, corr: &Array<EA>, state: &RowState<EA>) {
         let share = comptime!(state.share);
-        let rank = comptime!(self.space.rank());
-        let rows = comptime!(self.space.extent_at(rank - 2));
-        let cols = comptime!(self.space.extent_at(rank - 1));
+        let rank = comptime!(self.place.space.rank());
+        let rows = comptime!(self.place.space.extent_at(rank - 2));
+        let cols = comptime!(self.place.space.extent_at(rank - 1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -117,9 +117,9 @@ impl<EA: Float> Tile<EA> {
     /// are `recip_l`. Cyclic over the whole cube so each cell is touched exactly once, whatever
     /// ownership the interleaved matmuls use; the caller syncs on both sides.
     pub fn scale_rows(&mut self, factors: &Tile<EA>) {
-        let cols = comptime!(self.space.extent_at(1));
+        let cols = comptime!(self.place.space.extent_at(1));
         comptime!(assert!(
-            self.space.rank() == 2,
+            self.place.space.rank() == 2,
             "scale_rows: a rank-2 accumulator tile"
         ));
         let w = self.vector_size();
@@ -128,7 +128,7 @@ impl<EA: Float> Tile<EA> {
             w == 1 && wf == 1,
             "scale_rows: vectorized tiles not supported yet"
         ));
-        let total = comptime!(self.space.cells());
+        let total = comptime!(self.place.space.cells());
         let size!(W) = w;
         let size!(WF) = wf;
         let f = factors.flat::<WF>();
@@ -146,8 +146,8 @@ impl<EA: Float> Tile<EA> {
     /// lines.
     pub(crate) fn write_rows_to<EP: Numeric>(&self, dest: &mut Tile<EP>, state: &RowState<EA>) {
         let rpu = comptime!(state.share.rows());
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let wp = dest.vector_size();
         comptime!(assert!(

@@ -19,7 +19,7 @@ impl<A: Numeric> MmaData<A> {
         let io = comptime!(self.io);
 
         match &mut self.fragment {
-            MmaFragment::Acc(acc) => match (&lhs.tile_kind, &rhs.tile_kind) {
+            MmaFragment::Acc(acc) => match (&lhs.kind, &rhs.kind) {
                 (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
                     (PlaneTile::Mma(a), PlaneTile::Mma(b)) => match (&a.fragment, &b.fragment) {
                         (MmaFragment::Lhs(af), MmaFragment::Rhs(bf)) => {
@@ -29,7 +29,7 @@ impl<A: Numeric> MmaData<A> {
                     },
                     _ => panic!("MmaData::mma: operands must be mma fragments"),
                 },
-                (TileKind::Smem(_) | TileKind::Gmem(_), TileKind::Smem(_) | TileKind::Gmem(_)) => {
+                (TileKind::Memory(_), TileKind::Memory(_)) => {
                     let mut la = MmaData::<L>::lhs(m, n, k, layout, io);
                     la.load_window(lhs);
                     let mut rb = MmaData::<R>::rhs(m, n, k, layout, io);

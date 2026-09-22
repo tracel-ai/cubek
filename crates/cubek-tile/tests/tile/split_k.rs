@@ -329,8 +329,8 @@ fn atomic_split_matmul<E: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         REGISTER_BLOCK,

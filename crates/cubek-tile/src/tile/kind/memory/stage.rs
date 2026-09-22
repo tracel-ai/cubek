@@ -10,7 +10,7 @@ use crate::*;
 const TMA_STAGE_ALIGNMENT: usize = 128;
 
 #[cube]
-impl<T: Numeric> MemData<T> {
+impl<T: Numeric> Memory<T> {
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
     /// tile. Workers write cyclic positions across it, so the caller must ensure every unit in the
     /// cube owns this window: a property of the level's distribution, not of buffer coverage.
@@ -19,7 +19,7 @@ impl<T: Numeric> MemData<T> {
             self.store.packing == Packing::Plain
                 && self.projection.is_direct()
                 && self.store.vector_size == 1,
-            "MemData::fill_procedural: procedural sources require a plain, direct scalar destination"
+            "Memory::fill_procedural: procedural sources require a plain, direct scalar destination"
         ));
         // Read the destination's runtime window rather than the comptime space so direct copies
         // also work when another operand witnesses a Dynamic extent.
@@ -47,7 +47,7 @@ impl<T: Numeric> MemData<T> {
     ///
     /// The stage takes the element the operand needs staged: the one it *serves* when the load
     /// decodes it ([`DequantAt::Load`], always so for a plain operand), else the one it is *stored*
-    /// in ([`smem_stored`](MemData::smem_stored)). The operand carries which, so no caller asks.
+    /// in ([`smem_stored`](Memory::smem_stored)). The operand carries which, so no caller asks.
     pub fn stage(
         operand: &Tile<T>,
         #[comptime] level: Level,
@@ -59,20 +59,22 @@ impl<T: Numeric> MemData<T> {
             // `level` sits, so the regions below the level window them as they window the
             // operand.
             StageStorage::Lanes { reach } => Tile::<T> {
-                tile_kind: TileKind::new_Lanes(Lanes::<T>::new(
+                kind: TileKind::new_Lanes(Lanes::<T>::new(
                     operand,
                     comptime!(level.clone()),
                     comptime!(reach),
                 )),
-                space: comptime!(level.child(&operand.space)),
-                depth: comptime!(operand.depth + 1),
-                levels: comptime!(operand.levels.clone()),
+                place: comptime!(Placement::new(
+                    level.child(&operand.place.space),
+                    operand.place.depth + 1,
+                    operand.place.levels.clone()
+                )),
             },
-            _ => MemData::<T>::stage_memory(operand, level, storage, width),
+            _ => Memory::<T>::stage_memory(operand, level, storage, width),
         }
     }
 
-    /// [`stage`](MemData::stage) in shared memory.
+    /// [`stage`](Memory::stage) in shared memory.
     fn stage_memory(
         operand: &Tile<T>,
         #[comptime] level: Level,
@@ -82,7 +84,7 @@ impl<T: Numeric> MemData<T> {
         let dequant_at = operand.dequant_at();
         match comptime!(dequant_at) {
             DequantAt::Load => {
-                let space = comptime!(level.child(&operand.space));
+                let space = comptime!(level.child(&operand.place.space));
                 let projection = operand.projection();
                 let units = operand.units();
                 let source_width = operand.vector_size();
@@ -90,13 +92,13 @@ impl<T: Numeric> MemData<T> {
                     Some(width) => {
                         assert!(
                             source_width == 1,
-                            "MemData::stage: a padded stage assembles its lines from scalar \
+                            "Memory::stage: a padded stage assembles its lines from scalar \
                              source cells, so the operand it pads must be unvectorized (it is \
                              served {source_width} wide)"
                         );
                         assert!(
                             width > 1,
-                            "MemData::stage: a padded stage width must widen the operand's own \
+                            "Memory::stage: a padded stage width must widen the operand's own \
                              1-wide lines (got {width})"
                         );
                         width
@@ -112,9 +114,9 @@ impl<T: Numeric> MemData<T> {
                     false => 0usize,
                 });
                 if comptime!(projection.is_direct()) {
-                    MemData::smem_aligned(space, vector_size, storage, units, alignment)
+                    Memory::smem_aligned(space, vector_size, storage, units, alignment)
                 } else {
-                    MemData::smem_gathered(
+                    Memory::smem_gathered(
                         space,
                         vector_size,
                         storage,
@@ -126,36 +128,34 @@ impl<T: Numeric> MemData<T> {
                     )
                 }
             }
-            DequantAt::Read => MemData::smem_stored(operand, level, storage),
+            DequantAt::Read => Memory::smem_stored(operand, level, storage),
         }
     }
 
-    /// [`stage`](MemData::stage) in the element the operand is *stored* in rather than the one it
+    /// [`stage`](Memory::stage) in the element the operand is *stored* in rather than the one it
     /// serves, under [`DequantAt::Read`]: a quantized operand keeps its stored form (`i8` or packed
-    /// `u32`) plus scales ([`smem_quant`](MemData::smem_quant)), and the leaf dequantizes on read.
+    /// `u32`) plus scales ([`smem_quant`](Memory::smem_quant)), and the leaf dequantizes on read.
     fn smem_stored(
         operand: &Tile<T>,
         #[comptime] level: Level,
         #[comptime] storage: StageStorage,
     ) -> Tile<T> {
-        let space = comptime!(level.child(&operand.space));
+        let space = comptime!(level.child(&operand.place.space));
         let vector_size = operand.vector_size();
         let units = operand.units();
-        match &operand.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
+        match &operand.kind {
+            TileKind::Memory(g) => {
                 #[comptime]
                 match &g.store.quant {
                     // No scheme: the words as they lie where the operand is packed, which is
                     // the only stored form a scheme-less operand has, else a plain stage.
                     ComptimeOption::None => match comptime!(g.store.packing) {
-                        Packing::Plain => MemData::smem(space, vector_size, storage, units),
-                        packing => {
-                            MemData::smem_packed(space, vector_size, storage, units, packing)
-                        }
+                        Packing::Plain => Memory::smem(space, vector_size, storage, units),
+                        packing => Memory::smem_packed(space, vector_size, storage, units, packing),
                     },
                     // The store was allocated at the scheme's own storage ([`scheme_packing`]).
                     ComptimeOption::Some(info) => match comptime!(g.store.packing) {
-                        Packing::Native => MemData::smem_quant::<i8>(
+                        Packing::Native => Memory::smem_quant::<i8>(
                             space,
                             vector_size,
                             storage,
@@ -163,7 +163,7 @@ impl<T: Numeric> MemData<T> {
                             info.table.clone(),
                             comptime!(info.scheme),
                         ),
-                        Packing::Packed { field: _ } => MemData::smem_quant::<u32>(
+                        Packing::Packed { field: _ } => Memory::smem_quant::<u32>(
                             space,
                             vector_size,
                             storage,
@@ -172,7 +172,7 @@ impl<T: Numeric> MemData<T> {
                             comptime!(info.scheme),
                         ),
                         Packing::Plain => {
-                            panic!("MemData::smem_stored: a quantized store is never plain")
+                            panic!("Memory::smem_stored: a quantized store is never plain")
                         }
                     },
                 }
@@ -180,13 +180,13 @@ impl<T: Numeric> MemData<T> {
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
             // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
             // one must not reuse this arm; see `Staging::new`, which refuses that combination.
-            TileKind::TmaGmem(_) => MemData::smem(space, vector_size, storage, units),
+            TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("MemData::smem_stored: a fragment is not a stage source")
+                panic!("Memory::smem_stored: a fragment is not a stage source")
             }
             TileKind::Procedural(_) | TileKind::Lanes(_) => {
                 panic!(
-                    "MemData::smem_stored: a procedural tile and the plane's lanes are not a stage source"
+                    "Memory::smem_stored: a procedural tile and the plane's lanes are not a stage source"
                 )
             }
         }
@@ -203,10 +203,10 @@ impl<T: Numeric> MemData<T> {
         #[comptime] storage: StageStorage,
         #[comptime] units: usize,
     ) -> Tile<T> {
-        MemData::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
+        Memory::smem_aligned(space, vector_size, storage, units, comptime!(0usize))
     }
 
-    /// [`smem`](MemData::smem) with a minimum byte alignment on the shared
+    /// [`smem`](Memory::smem) with a minimum byte alignment on the shared
     /// buffer. A TMA-filled stage needs one ([`TMA_STAGE_ALIGNMENT`]); `0`
     /// leaves the buffer at its element alignment.
     pub fn smem_aligned(
@@ -218,7 +218,7 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        MemData::smem_with_form(
+        Memory::smem_with_form(
             space,
             vector_size,
             units,
@@ -229,12 +229,12 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
+    /// [`smem`](Memory::smem) for a *gathered* operand: the stage holds the physical window its
     /// sub-tile reads, compacted ([`Compaction`]), rather than the logical tile, which would
     /// replicate each physical cell by roughly the tap count; the window holds each one once.
     ///
     /// The stage therefore keeps the operand's own [`Projection`] (with the compaction's lattice
-    /// quotiented out) instead of becoming direct, so [`Tile::nd`] and [`at`](MemData::at) address
+    /// quotiented out) instead of becoming direct, so [`Tile::nd`] and [`at`](Memory::at) address
     /// it exactly as they address gmem, and the fill stays a plain box copy.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn smem_gathered(
@@ -263,14 +263,14 @@ impl<T: Numeric> MemData<T> {
             } else {
                 stage_map
             };
-        let source = MemData::<T>::pending_source_window(
+        let source = Memory::<T>::pending_source_window(
             comptime!(form.steps.clone()),
             comptime!(signed),
             comptime!(boundaries),
         );
         // A gathered stage is never a TMA destination (TMA operands are
         // direct), so it takes no extra alignment.
-        MemData::smem_with_form(
+        Memory::smem_with_form(
             space,
             vector_size,
             units,
@@ -299,7 +299,7 @@ impl<T: Numeric> MemData<T> {
         } else {
             Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()))
         };
-        MemData::smem_over(
+        Memory::smem_over(
             space,
             vector_size,
             units,
@@ -312,7 +312,7 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// [`smem`](MemData::smem) over the words a [`packed`](Packing::Packed) operand is stored in:
+    /// [`smem`](Memory::smem) over the words a [`packed`](Packing::Packed) operand is stored in:
     /// the line narrows by the packing's factor and the buffer keeps `packing`, so every read
     /// unpacks as one of the global window does. No scales: those are an operand of their own.
     pub(crate) fn smem_packed(
@@ -326,7 +326,7 @@ impl<T: Numeric> MemData<T> {
         let size!(WP) = comptime!(packing.physical(vector_size));
         let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        MemData::smem_over(
+        Memory::smem_over(
             space,
             vector_size,
             units,
@@ -339,12 +339,12 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// [`smem`](MemData::smem) staging the element `I` an operand is *stored* in (`i8`, or packed
+    /// [`smem`](Memory::smem) staging the element `I` an operand is *stored* in (`i8`, or packed
     /// `u32`) rather than the one it serves: the line narrows to `vector_size / pack`, so the stage
     /// is that much smaller and the leaf dequantizes at read, not the fill inflating to `T`.
     ///
     /// Carries a compact `Shared` scales buffer beside the values: one f32 per block of the
-    /// sub-tile, refilled per region by [`fill_from`](MemData::fill_from).
+    /// sub-tile, refilled per region by [`fill_from`](Memory::fill_from).
     pub(crate) fn smem_quant<I: Numeric>(
         #[comptime] space: Space,
         #[comptime] vector_size: usize,
@@ -360,7 +360,7 @@ impl<T: Numeric> MemData<T> {
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        MemData::smem_over(
+        Memory::smem_over(
             space,
             vector_size,
             units,
@@ -375,7 +375,7 @@ impl<T: Numeric> MemData<T> {
 
     /// The body every smem constructor shares, taking the allocated slice (so the element is the
     /// caller's) and the buffer's [`StageForm`]: scalar-erases the slice to the served `T` (views
-    /// recover it via [`lines_storage`](MemData::lines_storage)) and windows the whole buffer.
+    /// recover it via [`lines_storage`](Memory::lines_storage)) and windows the whole buffer.
     ///
     /// `units` is the launch's cube size, `0` when unknown ([`Access::units`](super::Access)).
     #[allow(clippy::too_many_arguments)]
@@ -403,7 +403,8 @@ impl<T: Numeric> MemData<T> {
         let bound = extent.clone();
         let gmem_projection = comptime!(form.positional.clone());
         Tile::<T> {
-            tile_kind: TileKind::new_Smem(MemData::<T> {
+            kind: TileKind::new_Memory(Memory::<T> {
+                address: comptime!(AddressSpace::Shared),
                 store: Store::<T> {
                     backing,
                     vector_size,
@@ -440,9 +441,7 @@ impl<T: Numeric> MemData<T> {
                 source_window: source,
                 lands: false,
             }),
-            space: comptime!(space),
-            depth: comptime!(0usize),
-            levels: comptime!(Vec::new()),
+            place: comptime!(Placement::new(space, 0usize, Vec::new())),
         }
     }
 
@@ -465,7 +464,7 @@ impl<T: Numeric> MemData<T> {
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);
         let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let tile = MemData::smem_over(
+        let tile = Memory::smem_over(
             space,
             1usize,
             units,
@@ -480,7 +479,7 @@ impl<T: Numeric> MemData<T> {
     }
 
     /// An unfilled [`SourceWindow`] for a gathered stage: the comptime geometry is the stage's own,
-    /// while the origin and bound are written by each [`fill_from`](MemData::fill_from) from the
+    /// while the origin and bound are written by each [`fill_from`](Memory::fill_from) from the
     /// operand that fill reads.
     fn pending_source_window(
         #[comptime] steps: SmallVec<[usize; Space::MAX_RANK]>,
@@ -522,7 +521,7 @@ fn full_window(#[comptime] form: StageForm) -> (Coords<i32>, Coords<u32>) {
 
 /// The staged scales side-channel for a quantized smem stage: a compact `Shared` buffer, one f32
 /// per block of the sub-tile, row-major, self-relative (`window_start = 0`), refilled per region
-/// by [`fill_from`](MemData::fill_from), read by [`transparent`](MemData::transparent) as gmem's.
+/// by [`fill_from`](Memory::fill_from), read by [`transparent`](Memory::transparent) as gmem's.
 #[cube]
 fn smem_quant_info(
     #[comptime] space: Space,
@@ -549,7 +548,7 @@ fn smem_quant_info(
     ComptimeOption::new_Some(QuantInfo {
         buffer,
         // The fill folds a two-level source's global level into the staged grid
-        // ([`MemData::stage_scales`]), so the stage serves effective scales under the one-level
+        // ([`Memory::stage_scales`]), so the stage serves effective scales under the one-level
         // form of the scheme; keeping the two-level level here would fail cubecl's binding check.
         known: KnownScale::new_None(),
         strides,
@@ -603,14 +602,14 @@ fn smem_scale_grid(
 ///
 /// `space` is the destination's, sizing the source's window; `vector_size` the destination stage's
 /// served width, for [`Compaction::of`]. The assert pins the two *mappings* together, which
-/// a `Tile::copy_from` caller can get wrong; sizes are [`fill_straight`](MemData::fill_straight)'s.
+/// a `Tile::copy_from` caller can get wrong; sizes are [`fill_straight`](Memory::fill_straight)'s.
 pub(crate) fn stage_compaction(
     src: &Projection,
     dst: &Projection,
     vector_size: usize,
     space: &Space,
 ) -> Option<Compaction> {
-    // A `MemData` carries the *coordinate*-space map ([`Projection::untiled`]), where storage
+    // A `Memory` carries the *coordinate*-space map ([`Projection::untiled`]), where storage
     // tiling has already folded back into the one coordinate its fragments are digits of. Direct
     // there is exactly "no gather", so a tiled buffer takes this early return like any other.
     if src.is_direct() && dst.is_direct() {
@@ -633,7 +632,7 @@ pub(crate) fn stage_compaction(
 }
 
 /// A stage's buffer: the physical extents it takes and the two mappings that address them. The one
-/// place a dense stage and a gathered one differ, so [`smem_over`](MemData::smem_over) builds
+/// place a dense stage and a gathered one differ, so [`smem_over`](Memory::smem_over) builds
 /// either without knowing which it is.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct StageForm {
@@ -714,7 +713,7 @@ impl StageForm {
                 let (e, b) = (outer.extent_at(p), block.extent_at(p));
                 assert!(
                     e.is_multiple_of(b),
-                    "MemData::smem: a {b}-element storage block must divide the {e}-element block \
+                    "Memory::smem: a {b}-element storage block must divide the {e}-element block \
                      enclosing it on axis {p}"
                 );
                 extents.push(e / b);
@@ -733,7 +732,7 @@ impl StageForm {
     }
 }
 
-/// A stage's physical shape and strides, in lines like [`Tile::of`]'s.
+/// A stage's physical shape and strides, in lines like a launched operand's ([`GlobalOperand`]).
 #[cube]
 fn storage_layout(#[comptime] form: StageForm) -> (Coords<u32>, Coords<u32>) {
     let strides_c = comptime!(form.strides());

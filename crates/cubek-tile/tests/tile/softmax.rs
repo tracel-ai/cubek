@@ -13,7 +13,7 @@ use cubecl::std::tensor::layout::CoordsDyn;
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Level, MaskProbe, MemData, Partitioning, RowState, Space, StageStorage, TileArg,
+    Axis, Level, MaskProbe, Memory, Partitioning, RowState, Space, StageStorage, TileArg,
     TileArgLaunch, TileSpec,
 };
 
@@ -40,8 +40,8 @@ fn softmax_walk_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(comptime!(space.clone()));
-    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut score = Memory::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = Memory::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -372,8 +372,8 @@ fn softmax_smem_acc_kernel(
 ) {
     let score_gmem = score_in.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(comptime!(space.clone()));
-    let mut score = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
-    let mut p = MemData::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut score = Memory::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
+    let mut p = Memory::<f32>::smem(block_space.clone(), 1usize, StageStorage::Strided, units);
 
     let rows = comptime!(block_space.extent(Q));
     let cols = comptime!(block_space.extent(S));
@@ -382,9 +382,9 @@ fn softmax_smem_acc_kernel(
     let share = comptime!(state.share);
     let rpu = comptime!(share.rows());
 
-    let mut factors = MemData::<f32>::smem(kept_space, 1usize, StageStorage::Strided, units);
+    let mut factors = Memory::<f32>::smem(kept_space, 1usize, StageStorage::Strided, units);
     let acc_space = comptime!(Space::new(&[(Q, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, units);
+    let mut acc = Memory::<f32>::smem(acc_space, 1usize, StageStorage::Strided, units);
     acc.zero();
 
     for blk in 0..num_blocks {

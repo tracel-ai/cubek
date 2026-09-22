@@ -25,12 +25,16 @@ impl<E: Numeric> TmaTileArg<E> {
     /// Serve the tensor map as a [`TmaGmem`](crate::TileKind::TmaGmem) tile over the
     /// kernel's one `space`; the spec's width and storage don't apply to a tensor map.
     pub fn tile(&self, #[comptime] space: Partitioning) -> Tile<E> {
-        TmaData::from_tensor_map(
+        let own = comptime!(space.space().subspace(self.spec.axes()));
+        let data = TmaData::from_tensor_map(
             self.view.clone(),
-            comptime!(space.space().subspace(self.spec.axes())),
+            comptime!(own.rank()),
             comptime!(self.spec.units),
+        );
+        Tile::new(
+            TileKind::new_TmaGmem(data),
+            comptime!(Placement::root(own.clone(), space.levels().to_vec())),
         )
-        .under(comptime!(space.levels().to_vec()))
     }
 }
 

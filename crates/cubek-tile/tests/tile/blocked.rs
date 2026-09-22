@@ -768,8 +768,8 @@ fn promoted_matmul<E: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         BLOCK,
@@ -884,8 +884,8 @@ fn wide_scaled_promoted<E: Numeric, SW: Size>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         BLOCK,

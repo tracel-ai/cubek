@@ -453,8 +453,8 @@ fn packed_cmma_rhs<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &x,
         comptime!(Fragments::new(
-            &c.space,
-            &x.space,
+            &c.place.space,
+            &x.place.space,
             std::slice::from_ref(&level)
         )),
         Monoid::Sum,
@@ -2401,7 +2401,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
             Levels::leaf(&[
                 (M, rows),
                 (N, cols),
-                (KB, float_field(kind).per_word()),
+                (KB, Field::of_float(kind).per_word()),
                 (KI, factor),
             ])
             .walk_every(&[M, N, KB, KI])

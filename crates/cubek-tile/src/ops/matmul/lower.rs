@@ -113,9 +113,9 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] config: RegisterBlock,
         #[comptime] semiring: Semiring,
     ) {
-        let space = comptime!(self.space.clone());
-        match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
+        let space = comptime!(self.place.space.clone());
+        match &mut self.kind {
+            TileKind::Memory(g) => {
                 contract::memory::<Acc, Lhs, LS, Rhs, RS>(g, lhs, rhs, space, config, semiring)
             }
             TileKind::PlaneTile(_)
@@ -139,8 +139,8 @@ pub fn mma_leaf<E: Numeric, Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric
     rhs: &Scaled<Rhs, RS>,
     #[comptime] semiring: Semiring,
 ) {
-    let space = comptime!(acc.space.clone());
-    let tile_kind = &mut acc.tile_kind;
+    let space = comptime!(acc.place.space.clone());
+    let tile_kind = &mut acc.kind;
     match tile_kind {
         TileKind::PlaneTile(t) => t.mma(lhs, rhs, space, semiring),
         // A partition that reaches a final tile carries exactly one tile; a wider one is
@@ -155,7 +155,7 @@ pub fn mma_leaf<E: Numeric, Lhs: Numeric, LS: Numeric, Rhs: Numeric, RS: Numeric
         }
         // A memory accumulator runs the software instruction under a register block the kernel
         // states; this dispatch has none to hand it.
-        TileKind::Gmem(_) | TileKind::Smem(_) => panic!(
+        TileKind::Memory(_) => panic!(
             "mma_leaf: a Gmem/Smem accumulator contracts through the software instruction, which \
              runs under a register block; state it with Tile::mma_with(lhs, rhs, config, semiring)"
         ),
@@ -233,15 +233,15 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
     let lhs_gathered = lhs.gathered();
     let rhs_gathered = rhs.gathered();
     let flat = comptime!({
-        let kc = Space::merge(&[&lhs.space, &rhs.space]).contracted_extent(&out);
-        let axes = MatrixAxes::accumulator(&out, &lhs.space);
+        let kc = Space::merge(&[&lhs.place.space, &rhs.place.space]).contracted_extent(&out);
+        let axes = MatrixAxes::accumulator(&out, &lhs.place.space);
         let cols = axes.cols(&out);
         let rhs_matrix = if rhs_along_k {
-            MatrixAxes::new(&rhs.space, cols, kc)
+            MatrixAxes::new(&rhs.place.space, cols, kc)
         } else {
-            MatrixAxes::new(&rhs.space, kc, cols)
+            MatrixAxes::new(&rhs.place.space, kc, cols)
         };
-        MatrixAxes::new(&lhs.space, axes.rows(&out), kc).is_ok() && rhs_matrix.is_ok()
+        MatrixAxes::new(&lhs.place.space, axes.rows(&out), kc).is_ok() && rhs_matrix.is_ok()
     });
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered && flat,
@@ -260,19 +260,23 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
 ) -> comptime_type!(bool) {
-    match &rhs.tile_kind {
+    match &rhs.kind {
         TileKind::PlaneTile(t) => match t {
             PlaneTile::Cmma(d) => comptime!(d.layout == MatrixLayout::ColMajor),
             PlaneTile::Mma(_) | PlaneTile::Register(_) => comptime!(false),
         },
         // The contracted axis is the lhs's trailing one, as the leaf reads it: an axis the output
         // lacks is not always contracted (a spanned leading axis is not).
-        TileKind::Smem(_) => comptime!(
-            crate::instruction::rhs_layout(&rhs.space, lhs.space.axis_at(lhs.space.rank() - 1))
-                == MatrixLayout::ColMajor
+        // A shared stage is the one memory a fragment reads as it lies; a gmem rhs never
+        // answers as column-major.
+        TileKind::Memory(m) => comptime!(
+            m.address == AddressSpace::Shared
+                && crate::instruction::rhs_layout(
+                    &rhs.place.space,
+                    lhs.place.space.axis_at(lhs.place.space.rank() - 1)
+                ) == MatrixLayout::ColMajor
         ),
-        TileKind::Gmem(_)
-        | TileKind::PlanePartition(_)
+        TileKind::PlanePartition(_)
         | TileKind::TmaGmem(_)
         | TileKind::Procedural(_)
         | TileKind::Lanes(_) => comptime!(false),
@@ -283,10 +287,10 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
 #[cube]
 fn flattened_k<EL: Numeric, ER: Numeric>(lhs: &Tile<EL>, rhs: &Tile<ER>, #[comptime] out: Space) {
     comptime!(assert!(
-        Space::contraction_agrees(&lhs.space, &rhs.space, &out),
+        Space::contraction_agrees(&lhs.place.space, &rhs.place.space, &out),
         "mma: the operands list their contracted axes in different orders ({:?} against {:?}), \
          so their `k` edges do not line up",
-        lhs.space.difference(&out),
-        rhs.space.difference(&out)
+        lhs.place.space.difference(&out),
+        rhs.place.space.difference(&out)
     ));
 }

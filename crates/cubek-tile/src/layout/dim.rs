@@ -7,8 +7,8 @@ use cubecl::zspace::SmallVec;
 use crate::{Axis, Space};
 
 /// How far one unit of a logical axis's coordinate moves along one physical axis, mirroring
-/// [`Extent`](crate::Extent): `Static` folds as [`window_start`](crate::MemData) needs, `Dynamic`
-/// a runtime stride or dilation riding the tile ([`Tile::of_gathered`](crate::Tile::of_gathered)).
+/// [`Extent`](crate::Extent): `Static` folds as [`window_start`](crate::Memory) needs, `Dynamic`
+/// a runtime stride or dilation riding the tile ([`GlobalOperand::gathered`](crate::GlobalOperand::gathered)).
 ///
 /// A `Dynamic` coefficient still declares `max`, the largest value the launch may pass: the field
 /// is then a runtime value but its *bound* is not, which is all a stage needs. Overshoot is dead
@@ -196,7 +196,7 @@ impl PhysicalAxisMap {
     ///
     /// The same arithmetic as [`affine`](Self::affine), deliberately a different constructor: this
     /// one claims no two positions share a cell, which keeps every window dense and every read on
-    /// the direct path. A claim the extents contradict is refused at [`Tile::of`](crate::Tile::of).
+    /// the direct path. A claim the extents contradict is refused when the tile is built ([`GlobalOperand`](crate::GlobalOperand)).
     pub fn disjoint(terms: &[(Axis, usize)]) -> Self {
         let mut map = Self::affine(terms);
         map.composition = Composition::Disjoint;

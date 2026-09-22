@@ -10,7 +10,7 @@ use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Fragments, Level, Levels, MaskProbe, MemData, Monoid, Partitioning, RegisterBlock,
+    Axis, Fragments, Level, Levels, MaskProbe, Memory, Monoid, Partitioning, RegisterBlock,
     Resident, RowShare, RowState, Semiring, Space, StageStorage, StreamFold, TeamUnit, TileArg,
     TileArgLaunch, TileSpec,
 };
@@ -48,14 +48,14 @@ fn attention_fold_kernel<W: Size>(
     let v = v.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(comptime!(space.clone()));
 
-    let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
-    let q_rows = comptime!(q.space.extent(QP));
-    let val_dim = comptime!(v.space.extent(V));
+    let rows = comptime!(q.place.space.extent(G) * q.place.space.extent(QP));
+    let q_rows = comptime!(q.place.space.extent(QP));
+    let val_dim = comptime!(v.place.space.extent(V));
 
     // The stage: q resident in smem for the whole walk (read cols-fold by the
     // score leaf), score/p/factors/acc the fold's working set.
-    let mut q_s = MemData::<f32>::smem(
-        comptime!(q.space.clone()),
+    let mut q_s = Memory::<f32>::smem(
+        comptime!(q.place.space.clone()),
         q.vector_size(),
         StageStorage::Strided,
         0usize,
@@ -65,14 +65,12 @@ fn attention_fold_kernel<W: Size>(
     // budget caps the rows a visit keeps live.
     let config = comptime!(RegisterBlock::new(budget));
     let score_space = comptime!(Space::new(&[(R, rows), (C, block)]));
-    let mut score =
-        MemData::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let mut p = MemData::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
+    let mut score = Memory::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut p = Memory::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
     let row_space = comptime!(Space::new(&[(R, rows)]));
-    let mut factors =
-        MemData::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut factors = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
-    let mut acc = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
+    let mut acc = Memory::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
     acc.zero();
     // One team over every unit of the cube, however many rows of it that takes: the unit's place
     // is stated rather than read off the cube's x dim, so a team wider than x is the same team.
@@ -383,20 +381,20 @@ fn attention_fold_cmma_kernel<E: Float>(
     let mask_tile = mask.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
 
-    let rows = comptime!(q.space.extent(QP));
-    let d = comptime!(q.space.extent(D));
-    let val_dim = comptime!(v.space.extent(V));
+    let rows = comptime!(q.place.space.extent(QP));
+    let d = comptime!(q.place.space.extent(D));
+    let val_dim = comptime!(v.place.space.extent(V));
     let rows_p = comptime!(rows / planes);
     let (rm, cn, vn, ks) = comptime!((rows_p / frag, block / frag, val_dim / frag, d / frag));
 
-    let mut q_s = MemData::<E>::smem(
+    let mut q_s = Memory::<E>::smem(
         comptime!(Space::new(&[(QP, rows), (D, d)])),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     q_s.copy_from(&q);
-    let score = MemData::<f32>::smem(
+    let score = Memory::<f32>::smem(
         comptime!(Space::new(&[(QP, rows), (S, block)])),
         score_vec,
         StageStorage::Strided,
@@ -406,14 +404,14 @@ fn attention_fold_cmma_kernel<E: Float>(
     let k_walk = k.over(&blocks);
     let k_probe = k.at(&k_walk.region(0usize));
     let v_probe = v.at(&k_walk.region(0usize));
-    let mut k_stage = MemData::<E>::smem(
-        comptime!(k_probe.space.clone()),
+    let mut k_stage = Memory::<E>::smem(
+        comptime!(k_probe.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
-    let mut v_stage = MemData::<E>::smem(
-        comptime!(v_probe.space.clone()),
+    let mut v_stage = Memory::<E>::smem(
+        comptime!(v_probe.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
@@ -838,12 +836,12 @@ fn attention_fold_split_kernel<W: Size>(
     let v = v.tile(comptime!(space.clone()));
     let mask_tile = mask.tile(comptime!(space.clone()));
 
-    let rows = comptime!(q.space.extent(G) * q.space.extent(QP));
-    let q_rows = comptime!(q.space.extent(QP));
-    let val_dim = comptime!(v.space.extent(V));
+    let rows = comptime!(q.place.space.extent(G) * q.place.space.extent(QP));
+    let q_rows = comptime!(q.place.space.extent(QP));
+    let val_dim = comptime!(v.place.space.extent(V));
 
-    let mut q_s = MemData::<f32>::smem(
-        comptime!(q.space.clone()),
+    let mut q_s = Memory::<f32>::smem(
+        comptime!(q.place.space.clone()),
         q.vector_size(),
         StageStorage::Strided,
         0usize,
@@ -869,14 +867,13 @@ fn attention_fold_split_kernel<W: Size>(
     });
     let row_space = comptime!(Space::new(&row_extents));
     let acc_space = comptime!(Space::new(&[(R, split_rows), (V, val_dim)]));
-    let score_all =
-        MemData::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let p_all = MemData::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
+    let score_all = Memory::<f32>::smem(score_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let p_all = Memory::<f32>::smem(score_space, 1usize, StageStorage::Strided, 0usize);
     let mut factors_all =
-        MemData::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let m_all = MemData::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let l_all = MemData::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
-    let mut acc_all = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
+        Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let m_all = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let l_all = Memory::<f32>::smem(row_space.clone(), 1usize, StageStorage::Strided, 0usize);
+    let mut acc_all = Memory::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
     acc_all.zero();
 
     // Each split team spans `team_rows` rows of the cube, so its units are found by their
@@ -1224,9 +1221,9 @@ fn attention_stream_test_kernel<W: Size>(
     let v = v.tile(comptime!(space.clone()));
     let mut out = out.tile(comptime!(space.clone()));
 
-    let rank = comptime!(q.space.rank());
-    let d = comptime!(q.space.extent_at(rank - 1));
-    let rows = comptime!(q.space.cells() / d);
+    let rank = comptime!(q.place.space.rank());
+    let d = comptime!(q.place.space.extent_at(rank - 1));
+    let rows = comptime!(q.place.space.cells() / d);
 
     let kept = comptime!(Space::new(&[(R, rows)]));
     let size!(N) = q.vector_size();

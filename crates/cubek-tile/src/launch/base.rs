@@ -163,8 +163,8 @@ impl Launcher {
     }
 
     /// [`arg`](Self::arg) over a stated geometry, for an operand with no tensor: a fused store's
-    /// destination ([`Tile::of_sink`](crate::Tile::of_sink)) or a fused read's producer
-    /// ([`Tile::of_source`](crate::Tile::of_source)). `geometry` is what it *would* have had.
+    /// destination ([`GlobalOperand::sink`](crate::GlobalOperand::sink)) or a fused read's producer
+    /// ([`GlobalOperand::source`](crate::GlobalOperand::source)). `geometry` is what it *would* have had.
     /// End it with [`build_spec`](Arg::build_spec), which hands back the settled geometry too.
     pub fn unbound(&self, geometry: &Geometry) -> Arg<'_, Unlabelled> {
         Arg::unbound(self, geometry)

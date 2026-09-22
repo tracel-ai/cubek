@@ -94,12 +94,10 @@ impl<T: Numeric> CmmaData<T> {
         #[comptime] space: Space,
     ) -> Tile<T> {
         Tile::<T> {
-            tile_kind: TileKind::new_PlaneTile(PlaneTile::new_Cmma(CmmaData::<T>::alloc(
+            kind: TileKind::new_PlaneTile(PlaneTile::new_Cmma(CmmaData::<T>::alloc(
                 ident, m, n, k, layout,
             ))),
-            space: comptime!(space),
-            depth: comptime!(0usize),
-            levels: comptime!(Vec::new()),
+            place: comptime!(Placement::new(space, 0usize, Vec::new())),
         }
     }
 
@@ -111,7 +109,7 @@ impl<T: Numeric> CmmaData<T> {
     /// Fill this fragment from `mem`'s *window*: `A`/`B` use `cmma::load`, an
     /// `Accumulator` uses `load_with_layout`. Rows step by the store's physical row
     /// stride, so a window into a larger stage loads like a whole buffer.
-    pub(crate) fn load_window(&mut self, mem: &MemData<T>, #[comptime] row: usize) {
+    pub(crate) fn load_window(&mut self, mem: &Memory<T>, #[comptime] row: usize) {
         let dequant_at = mem.dequant_at();
         comptime!(assert!(
             dequant_at == DequantAt::Load,
@@ -132,7 +130,7 @@ impl<T: Numeric> CmmaData<T> {
     }
 
     /// Drain this fragment into `mem`'s *window* (origin offset, physical row stride).
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] row: usize) {
+    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] row: usize) {
         let stride = mem.row_stride_at(row);
         cmma::store(
             mem.window_slice_mut(),
@@ -159,7 +157,7 @@ impl<T: Numeric> CmmaData<T> {
     /// themselves, so every cell has exactly one owner and lands once.
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
         let scratch = self.scratch_slot("add_from_scratch");
@@ -198,7 +196,7 @@ impl<T: Numeric> CmmaData<T> {
     /// partition drained a tile at a time runs, and the barriers a whole-partition drain hoists.
     pub(crate) fn accumulate_cast_window<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
         sync_cube();
@@ -225,7 +223,7 @@ impl<T: Numeric> CmmaData<T> {
     /// (e.g. `f16`). The cast is a no-op when the types match.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] row: usize,
     ) {
         let stride = mem.row_stride_at(row);

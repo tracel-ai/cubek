@@ -169,10 +169,10 @@ impl Pipeline {
     pub fn fill<E: Numeric>(&self, dst: &mut Tile<E>, src: &Tile<E>) {
         // Bound before the match, which borrows the kind: the fill needs the logical space both
         // sides carry (a gathered source is addressed per axis).
-        let space = comptime!(dst.space.clone());
+        let space = comptime!(dst.place.space.clone());
         match self {
-            Pipeline::Barrier { full, elected, .. } => match (&mut dst.tile_kind, &src.tile_kind) {
-                (TileKind::Smem(d), TileKind::TmaGmem(s)) => {
+            Pipeline::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
+                (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
                     // One issuer, and the same unit that declares the bytes: the transaction
                     // count is that unit's alone, so a second issuer would over-count the stage.
                     if UNIT_POS == *elected {
@@ -181,8 +181,8 @@ impl Pipeline {
                     }
                 }
                 // A strided source under a barrier is a plain synchronous copy.
-                (TileKind::Smem(d), TileKind::Gmem(s) | TileKind::Smem(s)) => d.fill_from(s, space),
-                (TileKind::Smem(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
+                (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
+                (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
                 _ => panic!("Pipeline::fill: unsupported kind pairing"),
             },
             Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),

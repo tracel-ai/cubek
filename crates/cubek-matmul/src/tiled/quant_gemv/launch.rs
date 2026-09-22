@@ -13,7 +13,7 @@
 
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{Grid, Launcher, PhysicalAxisMap, Projection, float_field};
+use cubek_tile::{Field, Grid, Launcher, PhysicalAxisMap, Projection};
 
 use crate::{
     definition::MatmulSetupError,
@@ -131,7 +131,7 @@ pub fn launch_ref(
         ))));
     }
     let field_of = |elem: ElemType| match elem {
-        ElemType::Float(kind) => Ok(float_field(kind)),
+        ElemType::Float(kind) => Ok(Field::of_float(kind)),
         other => Err(MatmulSetupError::InvalidConfig(Box::new(format!(
             "QuantGemv: a scale is a float, got {other:?}"
         )))),

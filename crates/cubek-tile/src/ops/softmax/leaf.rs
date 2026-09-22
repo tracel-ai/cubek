@@ -49,7 +49,7 @@ impl<EA: Float> Tile<EA> {
         mask: &Tile<u32>,
         scale: EA,
     ) -> Array<EA> {
-        let rank = comptime!(self.space.rank());
+        let rank = comptime!(self.place.space.rank());
         // Rank, not finality: a score tile states the instruction its matmuls contract through,
         // and that statement is a level. Every read here is a flat one over the whole tile, which
         // is the same cells whatever cuts them.
@@ -58,15 +58,15 @@ impl<EA: Float> Tile<EA> {
             "softmax: a leaf op on rank-2 score tiles"
         ));
         comptime!(assert!(
-            state.space.contains(self.space.axis_at(0))
-                && !state.space.contains(self.space.axis_at(1)),
+            state.space.contains(self.place.space.axis_at(0))
+                && !state.space.contains(self.place.space.axis_at(1)),
             "softmax reduces the score axis absent from the state's space; \
              v1 requires it to be the trailing axis"
         ));
         // The passes read a row a line at a time, so the lines must not straddle rows.
         let w = self.vector_size();
         comptime!(assert!(
-            self.space.extent_at(1).is_multiple_of(w),
+            self.place.space.extent_at(1).is_multiple_of(w),
             "softmax: the score's line width divides its columns"
         ));
 

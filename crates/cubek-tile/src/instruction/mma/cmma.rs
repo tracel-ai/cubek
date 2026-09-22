@@ -30,7 +30,7 @@ impl<A: Numeric> CmmaData<A> {
     ) {
         let lhs_values = lhs.values();
         let rhs_values = rhs.values();
-        match (&lhs_values.tile_kind, &rhs_values.tile_kind) {
+        match (&lhs_values.kind, &rhs_values.kind) {
             (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
                 (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
                     lhs.refuse_scales();
@@ -42,14 +42,14 @@ impl<A: Numeric> CmmaData<A> {
             _ => {
                 let a_read = comptime!(FragmentRead::new(
                     Side::Lhs,
-                    &lhs_values.space,
-                    &rhs_values.space,
+                    &lhs_values.place.space,
+                    &rhs_values.place.space,
                     &out
                 ));
                 let b_read = comptime!(FragmentRead::new(
                     Side::Rhs,
-                    &lhs_values.space,
-                    &rhs_values.space,
+                    &lhs_values.place.space,
+                    &rhs_values.place.space,
                     &out
                 ));
                 let mut a_frag = unsafe {
@@ -152,8 +152,15 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             // The landing is this region's until every lane's load has read it.
             sync_plane();
         } else {
-            match &values.tile_kind {
-                TileKind::Smem(m) => {
+            match &values.kind {
+                TileKind::Memory(m) => {
+                    // A fragment loads a window as it lies, which only a shared stage
+                    // guarantees: a gmem layout is unchecked.
+                    comptime!(assert!(
+                        m.address == AddressSpace::Shared,
+                        "mma: a fragment loads a window as it lies and a gmem layout is \
+                         unchecked; open the operand with `with_landing()`, or stage it"
+                    ));
                     // A packed stage holds words, and a fragment loads a window as it lies: it
                     // lands first, or it is not read at all.
                     comptime!(assert!(
@@ -163,10 +170,6 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                     ));
                     cmma::load(frag, m.window_slice(), m.row_stride())
                 }
-                TileKind::Gmem(_) => panic!(
-                    "mma: a fragment loads a window as it lies and a gmem layout is unchecked; \
-                     open the operand with `with_landing()`, or stage it"
-                ),
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
@@ -207,12 +210,12 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
              shared memory; open the operand with `with_landing()`"
         ));
-        let space = comptime!(values.space.clone());
+        let space = comptime!(values.place.space.clone());
         let rank = comptime!(space.rank());
         let units = values.units();
-        let planes = comptime!(plane_windows(&space, &values.levels));
-        let (stage, mut window) = MemData::<E>::landing(comptime!(space.clone()), units, planes);
-        let landing = values.with_kind(stage.tile_kind);
+        let planes = comptime!(plane_windows(&space, &values.place.levels));
+        let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
+        let landing = Tile::new(stage.kind, comptime!(values.place.clone()));
 
         let vw = values.vector_size();
         let size!(VW) = vw;
@@ -272,11 +275,16 @@ impl<E: Numeric> Tile<E> {
     /// the fragment's matrix is as long as the columns' axes multiply to — the trailing run of
     /// axes on the innermost one's side of the contraction against `out`.
     pub(crate) fn load_into(&self, frag: &mut Matrix<E>, #[comptime] out: Space) {
-        let cols = comptime!(landed_cols(&self.space, &out) as u32);
-        match &self.tile_kind {
-            TileKind::Smem(m) => cmma::load(frag, m.window_slice(), cols),
-            TileKind::Gmem(_)
-            | TileKind::PlaneTile(_)
+        let cols = comptime!(landed_cols(&self.place.space, &out) as u32);
+        match &self.kind {
+            TileKind::Memory(m) => {
+                comptime!(assert!(
+                    m.address == AddressSpace::Shared,
+                    "mma: a fragment loads from a shared window"
+                ));
+                cmma::load(frag, m.window_slice(), cols)
+            }
+            TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)

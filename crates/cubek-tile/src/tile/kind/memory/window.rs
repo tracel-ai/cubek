@@ -98,13 +98,13 @@ impl Window {
 /// without its offset), so staged coordinate `c` lands on `origin + c * step` in the source. The
 /// fill wrote the boundary's value wherever that landed outside; only this window can say where.
 ///
-/// Invariant under [`at`](MemData::at): a region step moves the staged window and the source
+/// Invariant under [`at`](Memory::at): a region step moves the staged window and the source
 /// window by the same physical delta, so only the staged origin has to move and this stays as it
 /// was filled.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub(crate) struct SourceWindow {
-    /// The source window's origin, as [`fill_from`](MemData::fill_from) found it.
+    /// The source window's origin, as [`fill_from`](Memory::fill_from) found it.
     pub(crate) origin: Coords<i32>,
     /// The source buffer's logical extent, which is what a tap is in bounds against.
     pub(crate) bound: Coords<u32>,

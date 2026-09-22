@@ -26,29 +26,24 @@ pub struct TmaData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> TmaData<T> {
-    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side, [`TmaTileArg`]) as a `TmaGmem`
-    /// tile. `pos` starts at the origin and advances on [`at`](Tile::at).
+    /// Wrap a TMA tensor-map [`ViewMut`] (built on the client side, [`TmaTileArg`]) as the payload
+    /// of a `TmaGmem` tile. `pos` starts at the origin and advances on [`at`](Tile::at).
     pub(crate) fn from_tensor_map(
         view: ViewMut<'static, T, CoordsDyn>,
-        #[comptime] space: Space,
+        #[comptime] rank: usize,
         #[comptime] units: usize,
-    ) -> Tile<T> {
+    ) -> TmaData<T> {
         let bound = view.shape();
         let mut pos = CoordsDyn::new();
         #[unroll]
-        for _ in 0..comptime!(space.rank()) {
+        for _ in 0..rank {
             pos.push(0u32);
         }
-        Tile::<T> {
-            tile_kind: TileKind::new_TmaGmem(TmaData::<T> {
-                view,
-                pos,
-                bound,
-                units,
-            }),
-            space: comptime!(space),
-            depth: comptime!(0usize),
-            levels: comptime!(Vec::new()),
+        TmaData::<T> {
+            view,
+            pos,
+            bound,
+            units,
         }
     }
 }
@@ -60,7 +55,7 @@ impl<T: Numeric> TmaData<T> {
     ///
     /// The caller elects, because the same unit must declare the transaction count: the bytes are
     /// that unit's alone, and a second issuer would over-count and corrupt the stage.
-    pub(crate) fn stage_into(&self, dst: &mut MemData<T>, barrier: &Shared<Barrier>) {
+    pub(crate) fn stage_into(&self, dst: &mut Memory<T>, barrier: &Shared<Barrier>) {
         self.view.tensor_map_load(
             barrier,
             dst.store.buffer_mut().downcast_mut(),
@@ -71,7 +66,11 @@ impl<T: Numeric> TmaData<T> {
     /// TMA transport leaf, blocking: bulk-copy into `dst` (shared memory) and wait. Owns its
     /// mbarrier locally; the pipelined path leaves it to the caller via
     /// [`stage_into`](TmaData::stage_into).
-    pub(crate) fn load_into(&self, dst: &mut MemData<T>) {
+    pub(crate) fn load_into(&self, dst: &mut Memory<T>) {
+        comptime!(assert!(
+            dst.address == AddressSpace::Shared,
+            "TmaData::load_into: a tensor map bulk-copies into shared memory only"
+        ));
         let barrier = Barrier::shared(CUBE_DIM, UNIT_POS == 0);
         sync_async_proxy_shared();
         // Unit 0 issues the copy and declares its bytes; every unit arrives and waits.

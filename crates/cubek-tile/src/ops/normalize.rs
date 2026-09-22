@@ -70,7 +70,7 @@ impl<T: Float> TileExpand<T> {
         guard: DivGuard,
     ) -> TileExpand<T> {
         validate_guard(guard);
-        match &mut self.tile_kind {
+        match &mut self.kind {
             TileKindExpand::Procedural(data) => {
                 assert!(
                     data.factor_count(scope).is_some(),
@@ -78,8 +78,7 @@ impl<T: Float> TileExpand<T> {
                 );
                 data.normalization = Some((mask, guard, data.space.clone()));
             }
-            TileKindExpand::Gmem(_)
-            | TileKindExpand::Smem(_)
+            TileKindExpand::Memory(_)
             | TileKindExpand::PlaneTile(_)
             | TileKindExpand::PlanePartition(_)
             | TileKindExpand::TmaGmem(_)
@@ -160,10 +159,8 @@ mod tests {
             Monoid::Sum,
         );
         let tile = TileExpand::<f32> {
-            tile_kind: TileKindExpand::PlaneTile(plane_tile),
-            space: Space::new(&[(Axis(0), 4)]),
-            depth: 0,
-            levels: Vec::new(),
+            kind: TileKindExpand::PlaneTile(plane_tile),
+            place: comptime!(Placement::new(Space::new(&[(Axis(0), 4)]), 0, Vec::new())),
         };
         tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
     }

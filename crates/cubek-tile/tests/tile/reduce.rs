@@ -1356,8 +1356,8 @@ fn resident_fold_kernel<E: Numeric>(
     let mut acc = out.block_reducer::<E, E>(
         &input,
         comptime!(Fragments::new(
-            &out.space,
-            &input.space,
+            &out.place.space,
+            &input.place.space,
             std::slice::from_ref(&level)
         )),
         REGISTER_BLOCK,

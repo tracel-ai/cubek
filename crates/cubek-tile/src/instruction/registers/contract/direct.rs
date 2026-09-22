@@ -20,7 +20,7 @@ use crate::*;
 #[cube]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Scaled<EL, LS>,
     rhs: &Scaled<ER, RS>,
     #[comptime] space: Space,
@@ -45,8 +45,8 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
         "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
     ));
     let shape = comptime!(ContractShape::new(
-        &lhs_values.space,
-        &rhs_values.space,
+        &lhs_values.place.space,
+        &rhs_values.place.space,
         space,
         contracted_per_step,
         lw,
@@ -55,7 +55,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     ));
     comptime!(assert!(
         shape
-            .matrix_axes(&lhs_values.space, &rhs_values.space)
+            .matrix_axes(&lhs_values.place.space, &rhs_values.place.space)
             .is_some(),
         "contract: the 2-D nest reads each operand as one matrix, and no grouping of these axes \
          gives one; the N-D nest reads them a cell at a time"
@@ -88,7 +88,7 @@ fn nest<
     RS: Numeric,
     A: Size,
 >(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Scaled<EL, LS>,
     rhs: &Scaled<ER, RS>,
     #[comptime] shape: ContractShape,
@@ -106,8 +106,8 @@ fn nest<
     let aw = comptime!(shape.aw);
     let matrices = comptime!(shape.matrices());
 
-    let lhs_axes = comptime!(shape.lhs_axes(&lhs_values.space));
-    let rhs_axes = comptime!(shape.rhs_axes(&rhs_values.space));
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs_values.place.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs_values.place.space));
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));

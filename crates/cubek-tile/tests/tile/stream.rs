@@ -286,7 +286,11 @@ fn stream_matmul<E: Numeric>(
         let mut acc = c_region.block_accumulator::<E, E, E>(
             &a_region,
             &b_region,
-            comptime!(Fragments::new(&c_region.space, &a_region.space, &below)),
+            comptime!(Fragments::new(
+                &c_region.place.space,
+                &a_region.place.space,
+                &below
+            )),
             REGISTER_BLOCK,
             Monoid::Sum,
         );
@@ -335,8 +339,8 @@ fn stream_matmul_staged_rhs<E: Numeric>(
             &a_region,
             &b_region,
             comptime!(Fragments::new(
-                &c_region.space,
-                &a_region.space,
+                &c_region.place.space,
+                &a_region.place.space,
                 std::slice::from_ref(&inner)
             )),
             REGISTER_BLOCK,

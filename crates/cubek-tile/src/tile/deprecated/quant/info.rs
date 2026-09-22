@@ -28,7 +28,7 @@ pub enum DequantAt {
 
 /// Quantization a tile's store carries, so reads dequantize on their own: the scale `buffer` plus
 /// per-axis `strides`, a running `window_start` and comptime `block` sizes, which [`ScaleLayout`]
-/// turns into an address ([`MemData::at`]). Per-tensor: one scale, every stride `0`, a fixed start.
+/// turns into an address ([`Memory::at`]). Per-tensor: one scale, every stride `0`, a fixed start.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct QuantInfo {
@@ -46,25 +46,25 @@ pub struct QuantInfo {
     /// distinct scales left to address, which is what [`ScaleLayout`] drops its term for.
     #[cube(comptime)]
     pub(crate) extent: Vec<usize>,
-    /// Where this operand's quantized form ends. Read by [`MemData::smem_like`], which is why no
+    /// Where this operand's quantized form ends. Read by [`Memory::smem_like`], which is why no
     /// call site asks an operand whether it is quantized before staging it.
     #[cube(comptime)]
     pub(crate) dequant_at: DequantAt,
     /// Per-axis count of distinct scales the buffer holds, set only on a *staged* smem side-channel
-    /// ([`MemData::smem_quant`]) so the fill knows how many blocks of scales to copy beside the
+    /// ([`Memory::smem_quant`]) so the fill knows how many blocks of scales to copy beside the
     /// packed values. Empty for a gmem operand, which reads the tensor's own scales in place.
     #[cube(comptime)]
     pub(crate) scale_shape: Vec<usize>,
     /// A lookup scheme's `2^bits`-entry table, present exactly under
     /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode). Always the gmem buffer: a few
-    /// hundred cache-resident floats, so a stage carries it ([`smem_quant`](MemData::smem_quant)).
+    /// hundred cache-resident floats, so a stage carries it ([`smem_quant`](Memory::smem_quant)).
     pub(crate) table: ComptimeOption<Box<[f32]>>,
     #[cube(comptime)]
     pub scheme: QuantScheme,
 }
 
 /// Per-axis block edges (elements per block) for a scheme. Per-tensor reports `usize::MAX` on
-/// every axis: with `0` strides ([`Tile::of_dequant`]) no real block is ever addressed, and
+/// every axis: with `0` strides (a dequantizing operand) no real block is ever addressed, and
 /// [`uniform_window`] then reports the whole window uniform, which per-tensor always is.
 pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
     let Some(block) = scheme.block_size() else {
@@ -123,7 +123,7 @@ pub(crate) fn window_extents(space: &Space, rank: usize) -> Vec<usize> {
 }
 
 /// The scheme a staged side-channel serves: its grid holds *effective* scales
-/// ([`MemData::stage_scales`] folds the global level in), so a two-level scheme stages as its
+/// ([`Memory::stage_scales`] folds the global level in), so a two-level scheme stages as its
 /// one-level block form and reads below the stage carry no global scale.
 pub(crate) fn staged_scheme(scheme: QuantScheme) -> QuantScheme {
     let Some(block) = scheme.block_scale() else {
@@ -147,7 +147,7 @@ impl QuantInfo {
     }
 
     /// The [`DequantView`] over a values/scales view pair on the same coordinates. Shared by
-    /// [`flat_transparent`](MemData::flat_transparent) and [`transparent`](MemData::transparent).
+    /// [`flat_transparent`](Memory::flat_transparent) and [`transparent`](Memory::transparent).
     ///
     /// A uniform window promotes to one whole scale read here, so no read below pays for the
     /// scales view; any other window reads with what it already [`known`](QuantInfo::known).

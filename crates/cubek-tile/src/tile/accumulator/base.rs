@@ -248,9 +248,9 @@ impl<Acc: Numeric> Tile<Acc> {
         let rw = rhs.vector_size();
         let aw = self.vector_size();
         let fold = comptime!(contract::contracted_per_step(
-            &lhs.space,
-            &rhs.space,
-            &self.space,
+            &lhs.place.space,
+            &rhs.place.space,
+            &self.place.space,
             lw,
             rw,
             aw
@@ -305,7 +305,7 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] planes: usize,
         #[comptime] lanes: usize,
     ) -> Tile<Acc> {
-        match &self.tile_kind {
+        match &self.kind {
             TileKind::PlanePartition(p) => {
                 let (m, n) = p.at(0usize, 0usize).shape();
                 let cells = comptime!(m * n);
@@ -324,20 +324,22 @@ impl<Acc: Numeric> Tile<Acc> {
                     let slot = shared.clone().map(|s| &s[start..start + cells]);
                     frags.push(p.frags.index(i).clone().with_scratch(slot, lanes));
                 }
-                self.with_kind(TileKind::new_PlanePartition(PlanePartition::<Acc> {
-                    frags,
-                    m_tiles: comptime!(p.m_tiles),
-                    n_tiles: comptime!(p.n_tiles),
-                    rows: comptime!(p.rows),
-                    cols: comptime!(p.cols),
-                    scratch: ComptimeOption::new_Some(
-                        shared.clone().map(|s| &s[plane..plane + cells]),
-                    ),
-                    resident: comptime!(resident),
-                }))
+                Tile::new(
+                    TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                        frags,
+                        m_tiles: comptime!(p.m_tiles),
+                        n_tiles: comptime!(p.n_tiles),
+                        rows: comptime!(p.rows),
+                        cols: comptime!(p.cols),
+                        scratch: ComptimeOption::new_Some(
+                            shared.clone().map(|s| &s[plane..plane + cells]),
+                        ),
+                        resident: comptime!(resident),
+                    }),
+                    comptime!(self.place.clone()),
+                )
             }
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
+            TileKind::Memory(_)
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
@@ -350,8 +352,8 @@ impl<Acc: Numeric> Tile<Acc> {
     /// Whether this operand was opened with a landing ([`with_landing`](Tile::with_landing)),
     /// which is what lets a fragment load read it whatever its own window's layout is.
     pub fn has_landing(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.has_landing(),
+        match &self.kind {
+            TileKind::Memory(g) => g.has_landing(),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -372,9 +374,11 @@ impl<Acc: Numeric> Tile<Acc> {
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
     pub fn with_landing(&self) -> Tile<Acc> {
-        match &self.tile_kind {
-            TileKind::Gmem(g) => self.with_kind(TileKind::new_Gmem(g.clone().with_landing())),
-            TileKind::Smem(g) => self.with_kind(TileKind::new_Smem(g.clone().with_landing())),
+        match &self.kind {
+            TileKind::Memory(g) => Tile::new(
+                TileKind::new_Memory(g.clone().with_landing()),
+                comptime!(self.place.clone()),
+            ),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -410,15 +414,15 @@ impl<Acc: Numeric> Tile<Acc> {
         #[comptime] monoid: Monoid,
     ) -> Tile<EA> {
         PlanePartition::<EA>::mirror(
-            comptime!(self.space.clone()),
-            comptime!(MatrixAxes::accumulator(&self.space, &lhs.space)),
+            comptime!(self.place.space.clone()),
+            comptime!(MatrixAxes::accumulator(&self.place.space, &lhs.place.space)),
             comptime!(form),
             comptime!(fragments),
             vector_size,
             fold,
             monoid,
-            comptime!(self.depth),
-            comptime!(self.levels.clone()),
+            comptime!(self.place.depth),
+            comptime!(self.place.levels.clone()),
         )
     }
 }

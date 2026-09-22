@@ -28,7 +28,7 @@ use super::{
 /// via [`ProjectionInKernel::advance`]. Reads and mask tests use the stepped physical coordinates.
 #[cube]
 pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,

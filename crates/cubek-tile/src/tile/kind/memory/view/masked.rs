@@ -7,16 +7,16 @@ use cubecl::{
 /// its own comptime `check` flag, so the leaf zeroes reads / skips writes past the
 /// partial-tile overhang; `false` is the unchecked fast path.
 #[derive(CubeType)]
-pub struct MaskedView<'a, T: CubePrimitive, C: Coordinates + 'a> {
+pub struct Masked<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: View<'a, T, C>,
     #[cube(comptime)]
     pub(crate) check: bool,
 }
 
 #[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
+impl<'a, T: CubePrimitive, C: Coordinates + 'a> Masked<'a, T, C> {
     pub fn new(view: View<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedView::<'a, T, C> { view, check }
+        Masked::<'a, T, C> { view, check }
     }
 
     pub fn read(&self, pos: C) -> T {
@@ -57,19 +57,19 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedView<'a, T, C> {
     }
 }
 
-/// The mutable twin of [`MaskedView`]. Its `write` skips the overhang under `check`, matching
+/// The mutable twin of [`Masked`]. Its `write` skips the overhang under `check`, matching
 /// the masked reads.
 #[derive(CubeType)]
-pub struct MaskedViewMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
+pub struct MaskedMut<'a, T: CubePrimitive, C: Coordinates + 'a> {
     view: ViewMut<'a, T, C>,
     #[cube(comptime)]
     pub(crate) check: bool,
 }
 
 #[cube]
-impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
+impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedMut<'a, T, C> {
     pub fn new(view: ViewMut<'a, T, C>, #[comptime] check: bool) -> Self {
-        MaskedViewMut::<'a, T, C> { view, check }
+        MaskedMut::<'a, T, C> { view, check }
     }
 
     pub fn read(&self, pos: C) -> T {
@@ -88,7 +88,7 @@ impl<'a, T: CubePrimitive, C: Coordinates + 'a> MaskedViewMut<'a, T, C> {
         }
     }
 
-    /// Mutable counterpart to [`MaskedView::block_in_bounds`].
+    /// Mutable counterpart to [`Masked::block_in_bounds`].
     pub(crate) fn block_in_bounds(&self, pos: C, extent: C) -> bool {
         if comptime!(self.check) {
             let one = C::from_int(pos.clone(), 1i64);

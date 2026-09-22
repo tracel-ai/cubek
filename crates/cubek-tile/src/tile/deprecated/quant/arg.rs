@@ -48,7 +48,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
         } else {
             KnownScale::new_None()
         };
-        Tile::<O>::of_dequant(
+        dequant_operand::<O, Vector<E, V>>(
             self.values,
             self.scales,
             known,
@@ -58,7 +58,7 @@ impl<'a, E: Numeric, V: Size> QuantTileArg<'a, E, V> {
             comptime!(space.space().clone()),
             comptime!(self.spec.clone()),
         )
-        .under(comptime!(space.levels().to_vec()))
+        .tile(comptime!(space.levels().to_vec()))
     }
 }
 
@@ -213,4 +213,57 @@ impl Quantization {
             self.dequant_at,
         )
     }
+}
+
+/// A quantized operand: the values tensor is storage-typed (`u32` words
+/// for a packed scheme, `i8` native), the scales ride as a plain second tensor, and the scheme
+/// says how reads fold them back in. The served width is the binding's × the packing factor.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn dequant_operand<T: Numeric, E: CubePrimitive>(
+    values: &Tensor<E>,
+    scales: &Tensor<f32>,
+    known: KnownScale,
+    table: ComptimeOption<Box<[f32]>>,
+    #[comptime] scheme: QuantScheme,
+    #[comptime] dequant_at: DequantAt,
+    #[comptime] space: Space,
+    #[comptime] spec: TileSpec,
+) -> GlobalOperand<T> {
+    comptime!(cubecl::std::quant::check_table_bindings(
+        &scheme,
+        table.is_some()
+    ));
+    let rank = comptime!(spec.axes().len());
+    let block = comptime!(block_edges(scheme, rank));
+    let mut strides = Coords::<u32>::new();
+    #[unroll]
+    for p in 0..rank {
+        if comptime!(scheme.block_size().is_none()) {
+            strides.push(0u32);
+        } else {
+            strides.push(scales.stride(p) as u32);
+        }
+    }
+    let info = QuantInfo {
+        buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
+        known,
+        strides,
+        window_start: 0u32,
+        block: comptime!(block),
+        extent: comptime!(window_extents(&space.subspace(spec.axes()), rank)),
+        dequant_at: comptime!(dequant_at),
+        // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
+        scale_shape: comptime!(Vec::new()),
+        table,
+        scheme: comptime!(scheme),
+    };
+    GlobalOperand::<T>::of_tensor::<E>(
+        values,
+        space,
+        spec,
+        ComptimeOption::new_Some(info),
+        Coords::<u32>::new(),
+        Coords::<i32>::new(),
+    )
 }

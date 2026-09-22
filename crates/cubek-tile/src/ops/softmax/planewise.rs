@@ -28,8 +28,8 @@ impl<EA: Float> Tile<EA> {
         #[comptime] rpp: usize,
         #[comptime] lanes: usize,
     ) {
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -68,8 +68,8 @@ impl<EA: Float> Tile<EA> {
         #[comptime] rpp: usize,
         #[comptime] lanes: usize,
     ) {
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -105,8 +105,8 @@ impl<EA: Float> Tile<EA> {
         #[comptime] rpp: usize,
         #[comptime] lanes: usize,
     ) {
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let threshold = EA::new(LOGIT_MASKED);
         let w = self.vector_size();
         let size!(W) = w;
@@ -145,8 +145,8 @@ impl<EA: Float> Tile<EA> {
         #[comptime] rpp: usize,
         #[comptime] lanes: usize,
     ) {
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let size!(W) = w;
         let lines = comptime!(cols / w);
@@ -181,8 +181,8 @@ impl<EA: Float> Tile<EA> {
         #[comptime] rpp: usize,
         #[comptime] lanes: usize,
     ) {
-        let rows = comptime!(self.space.extent_at(0));
-        let cols = comptime!(self.space.extent_at(1));
+        let rows = comptime!(self.place.space.extent_at(0));
+        let cols = comptime!(self.place.space.extent_at(1));
         let w = self.vector_size();
         let wp = dest.vector_size();
         comptime!(assert!(

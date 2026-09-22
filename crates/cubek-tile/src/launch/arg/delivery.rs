@@ -101,7 +101,7 @@ pub trait DeliveryLaunch: DeliveryFamily {
 }
 
 /// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
-/// in-kernel by [`Tile::of`]. Serves plain and storage-tiled operands alike: the spec's [`Storage`]
+/// in-kernel by [`GlobalOperand::tile`](crate::GlobalOperand::tile). Serves plain and storage-tiled operands alike: the spec's [`Storage`]
 /// says which; a storage tile only makes each stage one contiguous run instead of a row at a time.
 pub struct Cooperative;
 

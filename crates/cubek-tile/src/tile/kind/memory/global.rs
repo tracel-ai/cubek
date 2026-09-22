@@ -1,27 +1,52 @@
-//! Building a memory-backed [`Tile`] from what the launch bound: a tensor, a fused sink, or a
-//! fused producer. All of them land in `of_impl`, which boxes the top window over the operand's
-//! physical axes.
+//! A launched memory operand ([`GlobalOperand`]): a tensor, a fused sink or a fused producer,
+//! and the [`Memory`] tile it becomes, its top window boxed over the operand's physical axes.
 
 use cubecl::{
     prelude::*,
-    quant::scheme::QuantScheme,
-    std::quant::view::KnownScale,
     std::tensor::{ErasedTensor, WriteOnly},
 };
 
 use crate::*;
 
+/// A launched memory operand, as the kernel receives it: a buffer, a fused sink or a fused
+/// producer, with the geometry that addresses it and the statement the launch bound it under.
+/// What a [`Memory`] tile is built from ([`tile`](Self::tile)); the kernel arguments build one.
+#[derive(CubeType)]
+pub struct GlobalOperand<T: Numeric> {
+    pub(crate) backing: Backing<T>,
+    /// The buffer's physical extents and strides in scalars, one per physical axis.
+    pub geometry: RuntimeGeometry,
+    /// The binding's own line width, on top of which a packed operand serves
+    /// `packing.factor()` values per stored element.
+    #[cube(comptime)]
+    pub bound_width: usize,
+    /// The kernel's space; the tile's own is its projection onto the spec's axes.
+    #[cube(comptime)]
+    pub space: Space,
+    #[cube(comptime)]
+    pub spec: TileSpec,
+    /// What a write does to the cell it lands on.
+    #[cube(comptime)]
+    pub write: Write,
+    pub(crate) quant: ComptimeOption<QuantInfo>,
+    /// One per [`Scale::Dynamic`](crate::Scale) term and one per [`Divisor::Dynamic`](crate::Divisor)
+    /// axis, by physical axis, divisor last; empty for a comptime mapping.
+    pub coefficients: Coords<u32>,
+    /// One signed value per [`Offset::Dynamic`](crate::Offset) axis; empty for a comptime mapping.
+    pub offsets: Coords<i32>,
+}
+
 #[cube]
-impl<T: Numeric> Tile<T> {
-    /// Construct a whole `Gmem` tile straight from a launched tensor: the kernel's one `space`
-    /// projected onto the operand's `spec` axes. The element type carries the line width, so the
-    /// served width *is* the binding's. Shape/strides arrive scalar-unit and convert to lines here.
-    pub fn of<E: CubePrimitive<Scalar = T>>(
+impl<T: Numeric> GlobalOperand<T> {
+    /// A launched tensor: the kernel's one `space` projected onto the operand's `spec` axes. The
+    /// element type carries the line width, so the served width *is* the binding's. Shape and
+    /// strides arrive scalar-unit and convert to lines in the tile.
+    pub fn tensor<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
-    ) -> Tile<T> {
-        Tile::<T>::of_tensor::<E>(
+    ) -> GlobalOperand<T> {
+        GlobalOperand::<T>::of_tensor::<E>(
             tensor,
             space,
             spec,
@@ -31,21 +56,20 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) for a gather whose affine map is not all comptime (a runtime stride,
-    /// dilation, padding or resize ratio). `coefficients`: one per [`Scale::Dynamic`](crate::Scale)
-    /// term and one per [`Divisor::Dynamic`](crate::Divisor) axis, by physical axis, divisor last.
-    ///
-    /// `offsets`: one signed value per [`Offset::Dynamic`](crate::Offset) axis. Only the lengths
-    /// are checked, so those orders are the contract: swap a coefficient for a divisor and the
-    /// read is silently wrong.
-    pub(crate) fn of_gathered<E: CubePrimitive<Scalar = T>>(
+    /// [`tensor`](Self::tensor) for a gather whose affine map is not all comptime (a runtime
+    /// stride, dilation, padding or resize ratio). `coefficients`: one per
+    /// [`Scale::Dynamic`](crate::Scale) term and one per [`Divisor::Dynamic`](crate::Divisor) axis,
+    /// by physical axis, divisor last. `offsets`: one signed value per
+    /// [`Offset::Dynamic`](crate::Offset) axis. Only the lengths are checked, so those orders are
+    /// the contract: swap a coefficient for a divisor and the read is silently wrong.
+    pub fn gathered<E: CubePrimitive<Scalar = T>>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
-    ) -> Tile<T> {
-        Tile::<T>::of_tensor::<E>(
+    ) -> GlobalOperand<T> {
+        GlobalOperand::<T>::of_tensor::<E>(
             tensor,
             space,
             spec,
@@ -55,26 +79,26 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) where the stored element `E` and the served element `T` need not be the
-    /// same: a [`packed`](TileSpec::packed) binding holds `u32` words read at `factor` values each;
-    /// one stating no packing reads its own element. No scales: those are the operand's own tensor.
+    /// [`tensor`](Self::tensor) where the stored element `E` and the served element `T` need not
+    /// be the same: a [`packed`](TileSpec::packed) binding holds `u32` words read at `factor`
+    /// values each; one stating no packing reads its own element.
     ///
     /// `T` is stated at the call because a packed binding's element is the word, not the value,
     /// so nothing can infer it. Where the binding does read its own element, the two must agree,
-    /// which [`of`](Tile::of) proves in the type system and this checks here.
-    pub(crate) fn of_stored<E: CubePrimitive>(
+    /// which [`tensor`](Self::tensor) proves in the type system and this checks here.
+    pub fn stored<E: CubePrimitive>(
         values: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
-    ) -> Tile<T> {
+    ) -> GlobalOperand<T> {
         let stored = elem_type_of::<E>();
         let read = elem_type_of::<T>();
         comptime!(assert!(
             spec.packing != Packing::Plain || stored == read,
-            "Tile::of_stored: a binding that states no packing is read at the element it is \
-             bound at, {stored:?}, not {read:?}"
+            "GlobalOperand::stored: a binding that states no packing is read at the element it \
+             is bound at, {stored:?}, not {read:?}"
         ));
-        Tile::<T>::of_tensor::<E>(
+        GlobalOperand::<T>::of_tensor::<E>(
             values,
             space,
             spec,
@@ -84,69 +108,17 @@ impl<T: Numeric> Tile<T> {
         )
     }
 
-    /// [`of`](Tile::of) from a quantized operand: the values tensor is storage-typed (`u32` words
-    /// for a packed scheme, `i8` native), the scales ride as a plain second tensor, and the scheme
-    /// says how reads fold them back in. The served width is the binding's × the packing factor.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn of_dequant<E: CubePrimitive>(
-        values: &Tensor<E>,
-        scales: &Tensor<f32>,
-        known: KnownScale,
-        table: ComptimeOption<Box<[f32]>>,
-        #[comptime] scheme: QuantScheme,
-        #[comptime] dequant_at: DequantAt,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-    ) -> Tile<T> {
-        comptime!(cubecl::std::quant::check_table_bindings(
-            &scheme,
-            table.is_some()
-        ));
-        let rank = comptime!(spec.axes().len());
-        let block = comptime!(block_edges(scheme, rank));
-        let mut strides = Coords::<u32>::new();
-        #[unroll]
-        for p in 0..rank {
-            if comptime!(scheme.block_size().is_none()) {
-                strides.push(0u32);
-            } else {
-                strides.push(scales.stride(p) as u32);
-            }
-        }
-        let info = QuantInfo {
-            buffer: unsafe { scales.as_slice().as_boxed_unchecked() },
-            known,
-            strides,
-            window_start: 0u32,
-            block: comptime!(block),
-            extent: comptime!(window_extents(&space.subspace(spec.axes()), rank)),
-            dequant_at: comptime!(dequant_at),
-            // A gmem operand reads the tensor's scales in place; only a staged stage grids them.
-            scale_shape: comptime!(Vec::new()),
-            table,
-            scheme: comptime!(scheme),
-        };
-        Tile::<T>::of_tensor::<E>(
-            values,
-            space,
-            spec,
-            ComptimeOption::new_Some(info),
-            Coords::<u32>::new(),
-            Coords::<i32>::new(),
-        )
-    }
-
-    /// Shared body of [`of`](Tile::of)/[`of_dequant`](Tile::of_dequant): `E` is the *binding*
-    /// element, `T` the served scalar, differing only for a quantized operand, whose store truly
-    /// holds `E` and whose read view downcasts back ([`lines_storage`](MemData::lines_storage)).
-    fn of_tensor<E: CubePrimitive>(
+    /// The shared body: `E` is the *binding* element, `T` the served scalar, differing only for
+    /// a packed or quantized operand, whose store truly holds `E` and whose read view downcasts
+    /// back.
+    pub(crate) fn of_tensor<E: CubePrimitive>(
         tensor: &Tensor<E>,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         quant: ComptimeOption<QuantInfo>,
         coefficients: Coords<u32>,
         offsets: Coords<i32>,
-    ) -> Tile<T> {
+    ) -> GlobalOperand<T> {
         let rank = comptime!(spec.projection.physical_rank());
         let backing = Backing::<T>::new_Buffer(unsafe {
             tensor
@@ -154,22 +126,23 @@ impl<T: Numeric> Tile<T> {
                 .downcast_unchecked::<T>()
                 .as_boxed_unchecked()
         });
-        Tile::<T>::of_impl(
+        GlobalOperand::<T> {
             backing,
-            RuntimeGeometry::of_tensor::<E>(tensor, rank),
-            tensor.vector_size(),
+            geometry: RuntimeGeometry::of_tensor::<E>(tensor, rank),
+            bound_width: tensor.vector_size(),
             space,
             spec,
-            Write::Replace,
+            write: comptime!(Write::Replace),
             quant,
             coefficients,
             offsets,
-        )
+        }
     }
 
-    /// A tile whose values are handed to `sink` instead of stored: the walk a buffer gets, with
-    /// only its last step a call. The geometry is *stated* because a destination with no address
-    /// has none to read; stating the product's own metadata gives the unfused kernel's store.
+    /// An operand whose values are handed to `sink` instead of stored: the walk a buffer gets,
+    /// with only its last step a call. The geometry is *stated* because a destination with no
+    /// address has none to read; stating the product's own metadata gives the unfused kernel's
+    /// store.
     ///
     /// A sink serves the layout-addressed writes and only those: it cannot be staged into shared
     /// memory, written dense, quantized, filled by a tensor map, or [`packed`](TileSpec::packed),
@@ -178,83 +151,94 @@ impl<T: Numeric> Tile<T> {
     /// `write` is what the sink does with a value. [`Accumulate`](Write::Accumulate) lets several
     /// instances write one cell, and requires the buffer behind it to hold the monoid's identity
     /// before the launch. Nothing here can check that: the sink cannot read.
-    pub fn of_sink(
+    pub fn sink(
         sink: ErasedTensor<T, WriteOnly>,
         geometry: RuntimeGeometry,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
         #[comptime] write: Write,
-    ) -> Tile<T> {
-        // A packing multiplies a binding's own width, but a sink has only the width it states, and
-        // `of_impl` would address it at `vector_size * factor`. Refused here, where the spec says
-        // it, rather than left to the width mismatch cubecl reports off the erased tensor.
+    ) -> GlobalOperand<T> {
+        // A packing multiplies a binding's own width, but a sink has only the width it states.
+        // Refused here, where the spec says it, rather than left to the width mismatch cubecl
+        // reports off the erased tensor.
         comptime!(assert!(
             spec.packing == Packing::Plain,
-            "Tile::of_sink: a sink is written at the width it states, so its spec may not \
+            "GlobalOperand::sink: a sink is written at the width it states, so its spec may not \
              state a packing ({:?}) on top of it",
             spec.packing
         ));
-        Tile::<T>::of_impl(
-            Backing::<T>::new_WriteCall(sink),
+        GlobalOperand::<T> {
+            backing: Backing::<T>::new_WriteCall(sink),
             geometry,
-            vector_size,
+            bound_width: vector_size,
             space,
             spec,
             write,
-            ComptimeOption::new_None(),
-            Coords::<u32>::new(),
-            Coords::<i32>::new(),
-        )
+            quant: ComptimeOption::new_None(),
+            coefficients: Coords::<u32>::new(),
+            offsets: Coords::<i32>::new(),
+        }
     }
 
-    /// A tile whose values come from `source` instead of from memory: the fuse-on-read twin of
-    /// [`of_sink`](Tile::of_sink), stated geometry and all. A source serves layout-addressed reads
+    /// An operand whose values come from `source` instead of from memory: the fuse-on-read twin
+    /// of [`sink`](Self::sink), stated geometry and all. A source serves layout-addressed reads
     /// only: no staging, dense reads, quantization, tensor maps or [`packed`](TileSpec::packed).
-    pub fn of_source(
+    pub fn source(
         source: ErasedTensor<T, ReadOnly>,
         geometry: RuntimeGeometry,
         #[comptime] vector_size: usize,
         #[comptime] space: Space,
         #[comptime] spec: TileSpec,
-    ) -> Tile<T> {
+    ) -> GlobalOperand<T> {
         comptime!(assert!(
             spec.packing == Packing::Plain,
-            "Tile::of_source: a source is read at the width it states, so its spec may not \
+            "GlobalOperand::source: a source is read at the width it states, so its spec may not \
              state a packing ({:?}) on top of it",
             spec.packing
         ));
-        Tile::<T>::of_impl(
-            Backing::<T>::new_ReadCall(source),
+        GlobalOperand::<T> {
+            backing: Backing::<T>::new_ReadCall(source),
             geometry,
-            vector_size,
+            bound_width: vector_size,
             space,
             spec,
-            Write::Replace,
-            ComptimeOption::new_None(),
-            Coords::<u32>::new(),
-            Coords::<i32>::new(),
-        )
+            write: comptime!(Write::Replace),
+            quant: ComptimeOption::new_None(),
+            coefficients: Coords::<u32>::new(),
+            offsets: Coords::<i32>::new(),
+        }
     }
 
+    /// This operand as a [`Tile`] at the top of `levels`: a memory kind over the operand's own
+    /// axes, placed where a kernel argument's tile is.
+    pub fn tile(self, #[comptime] levels: Vec<Level>) -> Tile<T> {
+        let place = comptime!(Placement::root(
+            self.space.subspace(self.spec.axes()),
+            levels
+        ));
+        Tile::new(TileKind::new_Memory(Memory::<T>::global(self)), place)
+    }
+}
+
+#[cube]
+impl<T: Numeric> Memory<T> {
+    /// The memory tile a launched operand becomes: the top window boxed over the operand's
+    /// physical axes, in global memory.
     #[allow(clippy::too_many_arguments)]
-    fn of_impl(
-        backing: Backing<T>,
-        // `geometry` is the destination's physical extents and strides in scalars, one per physical
-        // axis; `bound_width` the binding's own line width, on top of which a packed destination
-        // serves `packing.factor()` values per stored element.
-        geometry: RuntimeGeometry,
-        #[comptime] bound_width: usize,
-        #[comptime] space: Space,
-        #[comptime] spec: TileSpec,
-        #[comptime] write: Write,
-        quant: ComptimeOption<QuantInfo>,
-        coefficients: Coords<u32>,
-        offsets: Coords<i32>,
-    ) -> Tile<T> {
+    pub(crate) fn global(operand: GlobalOperand<T>) -> Memory<T> {
+        let backing = operand.backing;
+        let geometry = operand.geometry;
+        let quant = operand.quant;
+        let coefficients = operand.coefficients;
+        let offsets = operand.offsets;
+        let bound_width = comptime!(operand.bound_width);
+        let space = comptime!(operand.space.clone());
+        let spec = comptime!(operand.spec.clone());
+        let write = comptime!(operand.write);
         // The one projection: the kernel's space narrowed to this operand's axes. What the
         // instances and lanes are to these cells is stamped level by level on the way down
-        // ([`MemData::at`]): a fresh tile has been dealt out by nothing yet.
+        // ([`Memory::at`]): a fresh tile has been dealt out by nothing yet.
         let split_share = comptime!(SplitShare::Whole);
         let space = comptime!(space.subspace(spec.axes()));
         let projection = comptime!(spec.projection.clone());
@@ -277,18 +261,18 @@ impl<T: Numeric> Tile<T> {
         let offsets_given = offsets.len();
         comptime!(assert!(
             dims_given == projection.physical_rank(),
-            "Tile::of: the projection addresses {} physical dims but {dims_given} were given",
+            "GlobalOperand: the projection addresses {} physical dims but {dims_given} were given",
             projection.physical_rank()
         ));
         comptime!(assert!(
             coefficients_given == coords.dynamic_coefficient_count(),
-            "Tile::of: the projection has {} Dynamic coefficients and divisors but \
+            "GlobalOperand: the projection has {} Dynamic coefficients and divisors but \
              {coefficients_given} were given",
             coords.dynamic_coefficient_count()
         ));
         comptime!(assert!(
             offsets_given == coords.dynamic_offset_count(),
-            "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
+            "GlobalOperand: the projection has {} Dynamic offsets but {offsets_given} were given",
             coords.dynamic_offset_count()
         ));
         comptime!(check_operand(
@@ -337,50 +321,46 @@ impl<T: Numeric> Tile<T> {
             vector_size,
             comptime!(coords.clone()),
         );
-        Tile::<T> {
-            tile_kind: TileKind::new_Gmem(MemData::<T> {
-                store: Store::<T> {
-                    backing,
-                    vector_size: comptime!(vector_size),
-                    quant,
-                    packing: comptime!(packing),
+        Memory::<T> {
+            address: comptime!(AddressSpace::Global),
+            store: Store::<T> {
+                backing,
+                vector_size: comptime!(vector_size),
+                quant,
+                packing: comptime!(packing),
+            },
+            layout: BufferLayout {
+                physical_shape,
+                physical_strides,
+                projection: gmem_projection,
+            },
+            window: Window::new(
+                origin,
+                extent,
+                bound,
+                comptime!(coords.may_underflow()),
+                comptime!(spec.boundaries.clone()),
+            ),
+            source_window: ComptimeOption::new_None(),
+            projection: comptime!(coords),
+            map,
+            offsets,
+            window_start: 0u32,
+            access: comptime!(Access {
+                whole: true,
+                overhang: if spec.is_checked() {
+                    Overhang::Masked
+                } else {
+                    Overhang::Fits
                 },
-                layout: BufferLayout {
-                    physical_shape,
-                    physical_strides,
-                    projection: gmem_projection,
-                },
-                window: Window::new(
-                    origin,
-                    extent,
-                    bound,
-                    comptime!(coords.may_underflow()),
-                    comptime!(spec.boundaries.clone()),
-                ),
-                source_window: ComptimeOption::new_None(),
-                projection: comptime!(coords),
-                map,
-                offsets,
-                window_start: 0u32,
-                access: comptime!(Access {
-                    whole: true,
-                    overhang: if spec.is_checked() {
-                        Overhang::Masked
-                    } else {
-                        Overhang::Fits
-                    },
-                    write,
-                    units: spec.units,
-                    storage: spec.storage,
-                }),
-                lanes: comptime!(LaneShare::Repeated),
-                split_share,
-                init_from: comptime!(InitFrom::Cell),
-                lands: false,
+                write,
+                units: spec.units,
+                storage: spec.storage,
             }),
-            space: comptime!(space),
-            depth: comptime!(0usize),
-            levels: comptime!(Vec::new()),
+            lanes: comptime!(LaneShare::Repeated),
+            split_share,
+            init_from: comptime!(InitFrom::Cell),
+            lands: false,
         }
     }
 }
@@ -401,12 +381,12 @@ fn check_operand(
     // diverge under a gather.
     assert!(
         !quantized || coords.is_direct(),
-        "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
+        "GlobalOperand: a gathered operand cannot be quantized; its scale grid is shaped over its \
          logical axes, which its buffer's physical axes no longer match"
     );
     assert!(
         !quantized || spec.packing == Packing::Plain,
-        "Tile::of: a quantized operand's scheme already states how its values are stored, so \
+        "GlobalOperand: a quantized operand's scheme already states how its values are stored, so \
          its spec may not state a packing too"
     );
     // The operand's own contract, checked here rather than at `TileSpec` construction because it
@@ -419,14 +399,14 @@ fn check_operand(
     let coord_rank = projection.coordinate_rank();
     assert!(
         spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
-        "Tile::of: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
+        "GlobalOperand: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
         spec.boundaries.len()
     );
     // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
     // source builder derives that per-axis mask; this catches hand-built specs too.
     assert!(
         vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
-        "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
+        "GlobalOperand: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
          {vector_size})"
     );
 }

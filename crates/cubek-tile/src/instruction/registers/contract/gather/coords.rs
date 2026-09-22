@@ -12,7 +12,7 @@ use crate::instruction::registers::contract::resolve_nd_coords;
 /// `width` is the operand's own line width, since only its innermost axis is addressed in lines.
 #[cube]
 pub(super) fn cell_read<T: Numeric, W: Size>(
-    view: &MaskedView<'_, Vector<T, W>, CoordsDyn>,
+    view: &Masked<'_, Vector<T, W>, CoordsDyn>,
     batch: &Coords<u32>,
     row: u32,
     col: u32,

@@ -1,4 +1,4 @@
-//! What a [`MemData`] is: the erased buffer it addresses ([`Backing`]), what its values mean
+//! What a [`Memory`] is: the erased buffer it addresses ([`Backing`]), what its values mean
 //! ([`Store`]), and how it may be touched ([`Access`] and the comptime flags qualifying a
 //! read or a write).
 
@@ -14,7 +14,10 @@ use crate::*;
 /// sub-tile keeps addressing its whole buffer after [`at`](Tile::at) windows it down.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct MemData<T: Numeric> {
+pub struct Memory<T: Numeric> {
+    /// Which memory the bytes sit in: what a barrier orders and where a fill may write straight.
+    #[cube(comptime)]
+    pub(crate) address: AddressSpace,
     /// What the bytes are and mean.
     pub(crate) store: Store<T>,
     /// How a logical coordinate becomes a buffer offset. Fixed at construction.
@@ -36,7 +39,7 @@ pub struct MemData<T: Numeric> {
     pub(crate) offsets: Coords<i32>,
     /// The window origin's offset through the layout, accumulated across [`at`](Tile::at)s rather
     /// than re-derived: each descent shifts by a *comptime* edge, so [`step_offset`] folds to a
-    /// multiply-add, where re-deriving it would divide per [`window_slice`](MemData::window_slice).
+    /// multiply-add, where re-deriving it would divide per [`window_slice`](Memory::window_slice).
     pub(crate) window_start: u32,
     /// How this store may be touched. All comptime, all decided at construction.
     #[cube(comptime)]
@@ -66,14 +69,24 @@ pub struct MemData<T: Numeric> {
     pub(crate) lands: bool,
 }
 
-/// What backs a [`MemData`]'s values, and what can be done with them there.
+/// Which memory a [`Memory`] tile's buffer sits in. The payload is the same either way; the
+/// difference is three facts about it: a `sync_cube()` orders shared accesses only, a shared
+/// buffer is allocated to exactly its tile and so never overhangs, and a shared stage remembers
+/// the window it was filled from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum AddressSpace {
+    Global,
+    Shared,
+}
+
+/// What backs a [`Memory`]'s values, and what can be done with them there.
 ///
 /// A [`Buffer`](Backing::Buffer) has an address: it can be read back, sliced, re-typed, staged or
 /// handed to a tensor-map load. The erased two end the walk in a *call* (a generated epilogue or
 /// producer), so every address-shaped operation on them is a comptime panic, not a fallback.
 ///
-/// Each erased backing serves one layout-addressed view: [`write_view`](MemData::write_view) for a
-/// [`WriteCall`](Backing::WriteCall) and [`read_view`](MemData::read_view) for a
+/// Each erased backing serves one layout-addressed view: [`write_view`](Memory::write_view) for a
+/// [`WriteCall`](Backing::WriteCall) and [`read_view`](Memory::read_view) for a
 /// [`ReadCall`](Backing::ReadCall).
 ///
 /// The visibility markers carry the direction. A destination is written and
@@ -96,7 +109,7 @@ pub(crate) enum Backing<T: Numeric> {
     ReadCall(ErasedTensor<T, ReadOnly>),
 }
 
-/// What a [`MemData`]'s values are and mean: where they go, the width they group into lines at,
+/// What a [`Memory`]'s values are and mean: where they go, the width they group into lines at,
 /// and, for quantized data, how a *stored* value becomes a *served* one. Reads through
 /// [`Tile::flat`] dequantize into `T`; every other element view refuses a quantized tile.
 #[derive(CubeType, Clone)]
@@ -136,7 +149,7 @@ impl<T: Numeric> Store<T> {
             ),
             Backing::ReadCall(_) => panic!(
                 "Store::buffer: this tile's backing is read through a call, which has no \
-                 address, it can only be read through its layout (MemData::read_view), so the \
+                 address, it can only be read through its layout (Memory::read_view), so the \
                  slice-shaped paths (a dense run, a re-typed quant storage, a tensor-map load) \
                  are closed to it"
             ),
@@ -160,7 +173,7 @@ impl<T: Numeric> Store<T> {
     }
 }
 
-/// How a [`MemData`] may be touched: whether the fill can write straight through, how the store
+/// How a [`Memory`] may be touched: whether the fill can write straight through, how the store
 /// handles overhang, and how a cooperative fill spreads. Plain data held comptime.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Access {
@@ -268,7 +281,7 @@ pub enum Boundary {
 }
 
 impl Overhang {
-    /// The flag a [`MaskedView`] is built with; the one place the states collapse to a bool.
+    /// The flag a [`Masked`] is built with; the one place the states collapse to a bool.
     pub fn masks(&self) -> bool {
         matches!(self, Overhang::Masked)
     }

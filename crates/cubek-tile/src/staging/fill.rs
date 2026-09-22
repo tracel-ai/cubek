@@ -121,7 +121,8 @@ impl<T: Numeric> Tile<T> {
         #[comptime] storage: StageStorage,
         #[comptime] width: Option<usize>,
     ) -> Tile<T> {
-        MemData::stage(self, level, storage, width).at_depth(depth)
+        let stage = Memory::stage(self, level, storage, width);
+        Tile::new(stage.kind, comptime!(stage.place.at_depth(depth)))
     }
 }
 
@@ -144,8 +145,8 @@ impl<Lhs: Numeric, Rhs: Numeric> Ring<(Tile<Lhs>, Tile<Rhs>)> {
         let rhs_delivery = rhs.delivery();
         let plan = comptime!(SlotPlan::new(
             &[
-                SlotOperand::new(lhs_delivery, &lhs.space),
-                SlotOperand::new(rhs_delivery, &rhs.space),
+                SlotOperand::new(lhs_delivery, &lhs.place.space),
+                SlotOperand::new(rhs_delivery, &rhs.place.space),
             ],
             &walk.space,
             &walk.level,
@@ -358,7 +359,7 @@ impl<T: Numeric> Ring<Tile<T>> {
     ) -> Ring<Tile<T>> {
         let delivery = input.delivery();
         let plan = comptime!(SlotPlan::new(
-            &[SlotOperand::new(delivery, &input.space)],
+            &[SlotOperand::new(delivery, &input.place.space)],
             &walk.space,
             &walk.level,
         ));

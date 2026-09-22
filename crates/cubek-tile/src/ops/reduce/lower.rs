@@ -35,7 +35,7 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
     input: &Tile<In>,
     #[comptime] monoid: Monoid,
 ) {
-    let input_space = comptime!(input.space.clone());
+    let input_space = comptime!(input.place.space.clone());
     let vector_size = input.vector_size();
     comptime!(assert!(
         input_space
@@ -44,9 +44,9 @@ pub(crate) fn reduce_leaf<Acc: Numeric, In: Numeric>(
         "reduce: the input's innermost extent must be divisible by its vector size"
     ));
 
-    let space = comptime!(acc.space.clone());
-    match &mut acc.tile_kind {
-        TileKind::Gmem(g) | TileKind::Smem(g) => {
+    let space = comptime!(acc.place.space.clone());
+    match &mut acc.kind {
+        TileKind::Memory(g) => {
             reduce::memory(g, input, space, monoid);
         }
         TileKind::PlaneTile(t) => {

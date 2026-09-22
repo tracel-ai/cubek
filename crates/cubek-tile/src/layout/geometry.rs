@@ -72,14 +72,14 @@ impl Geometry {
 
     /// Whether this operand can be served in `vector_size`-wide lines.
     ///
-    /// The kernel restates the geometry in lines: [`Tile::of`] counts the innermost extent in lines
+    /// The kernel restates the geometry in lines: [`GlobalOperand`] counts the innermost extent in lines
     /// and divides every coarser stride by the served width, so a width that does not divide them
     /// truncates in bounds, no fault, addressing a fraction of the operand.
     ///
     /// [`Launcher::vector_size`](crate::Launcher::vector_size) reads this to *pick* a width and to
     /// *refuse* one a caller states, so the two cannot drift apart about what a servable width is.
     ///
-    /// [`Tile::of`]: crate::Tile::of
+    /// [`GlobalOperand`]: crate::GlobalOperand
     pub(crate) fn serves_lines(&self, vector_size: usize) -> Result<(), LineMisfit> {
         if vector_size == 1 {
             return Ok(());
@@ -158,7 +158,7 @@ impl From<&TensorBinding> for Geometry {
 /// served width, so [`push`](Self::push) takes a dim's extent and stride together.
 ///
 /// A bound operand reads its geometry off the tensor ([`of_tensor`](Self::of_tensor)); one with
-/// no address states it, which is what [`Tile::of_sink`] and [`Tile::of_source`] take.
+/// no address states it, which is what [`GlobalOperand::sink`](crate::GlobalOperand::sink) and [`GlobalOperand::source`](crate::GlobalOperand::source) take.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
 pub struct RuntimeGeometry {

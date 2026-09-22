@@ -94,7 +94,7 @@ impl Drain {
 /// from there by every seed and commit the leaf runs.
 #[derive(CubeType)]
 pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = Coords2d> {
-    values: MaskedViewMut<'a, Vector<E, V>, C>,
+    values: MaskedMut<'a, Vector<E, V>, C>,
     #[cube(comptime)]
     lanes: LaneShare,
     #[cube(comptime)]
@@ -108,7 +108,7 @@ pub(crate) struct AccumulateView<'a, E: Numeric, V: Size, C: Coordinates + 'a = 
 #[cube]
 impl<'a, E: Numeric, V: Size, C: Coordinates + 'a> AccumulateView<'a, E, V, C> {
     pub(crate) fn new(
-        values: MaskedViewMut<'a, Vector<E, V>, C>,
+        values: MaskedMut<'a, Vector<E, V>, C>,
         #[comptime] lanes: LaneShare,
         #[comptime] split_share: SplitShare,
         #[comptime] write: Write,

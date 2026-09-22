@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 /// Public items declared anywhere in `src/`: types, traits, functions, constants, modules,
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
-const PUB_ITEMS: usize = 757;
+const PUB_ITEMS: usize = 772;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 41;

@@ -1,6 +1,6 @@
 //! The flat 1-D view over a [`Tile`]. [`FlatLayout`] is a [`Layout`] that re-views the tile's N-D
 //! [`Space`] as one row-major [`Coords1d`] index; [`Tile::flat`]/[`Tile::flat_mut`] wrap it as a
-//! [`FlatView`]/[`FlatViewMut`] (a [`MaskedView`] with the comptime overhang-`check` flag).
+//! [`FlatView`]/[`FlatViewMut`] (a [`Masked`] with the comptime overhang-`check` flag).
 
 use cubecl::{
     prelude::*,
@@ -10,9 +10,9 @@ use cubecl::{
 use crate::*;
 
 /// A masked 1-D ([`FlatLayout`]) view: a flat row-major scan over a [`Tile`].
-pub type FlatView<'a, T> = MaskedView<'a, T, Coords1d>;
+pub type FlatView<'a, T> = Masked<'a, T, Coords1d>;
 /// The mutable twin of [`FlatView`].
-pub type FlatViewMut<'a, T> = MaskedViewMut<'a, T, Coords1d>;
+pub type FlatViewMut<'a, T> = MaskedMut<'a, T, Coords1d>;
 
 /// Maps a flat row-major index to an N-D coordinate over `shape` ([`unravel`]): the inverse of a
 /// strided dot. Re-view a [`Window`]ed [`View`](cubecl::std::tensor::View) through this to walk it

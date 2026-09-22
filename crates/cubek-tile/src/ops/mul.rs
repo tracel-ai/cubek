@@ -31,16 +31,16 @@ impl<T: Numeric> Tile<T> {
     /// and one value serves every position of it. A packed operand serves a whole stored word per
     /// line, hence the walk in lines: values sharing a word cannot be read cell by cell.
     fn mul_from<A: Numeric, B: Numeric>(&mut self, a: &Tile<A>, b: &Tile<B>) {
-        let space = comptime!(self.space.clone());
+        let space = comptime!(self.place.space.clone());
         let width = self.vector_size();
         let folds = b.vector_size();
-        let split = comptime!(FoldWalk::of(&space, &b.space, width, folds));
+        let split = comptime!(FoldWalk::of(&space, &b.place.space, width, folds));
         let size!(W) = width;
         let size!(F) = folds;
         let a_reader = a.nd_split::<W>();
         let b_reader = b.nd_split::<F>();
 
-        let a_fold_at = comptime!(a.space.position(split.axis));
+        let a_fold_at = comptime!(a.place.space.position(split.axis));
         let extents = Coords::constant(comptime!(split.groups.clone()));
         let total = comptime!(split.groups.iter().product::<usize>());
 
@@ -55,8 +55,8 @@ impl<T: Numeric> Tile<T> {
             let (a_base, b_base) = bases(
                 &group,
                 comptime!(space.clone()),
-                comptime!(a.space.clone()),
-                comptime!(b.space.clone()),
+                comptime!(a.place.space.clone()),
+                comptime!(b.place.space.clone()),
                 width,
                 folds,
             );

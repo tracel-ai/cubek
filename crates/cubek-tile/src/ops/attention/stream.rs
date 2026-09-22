@@ -99,11 +99,11 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         #[comptime] row_space: Space,
     ) -> StreamFold<EA, N> {
         let w = q.vector_size();
-        let rank = comptime!(q.space.rank());
-        let d = comptime!(q.space.extent_at(rank - 1));
+        let rank = comptime!(q.place.space.rank());
+        let d = comptime!(q.place.space.extent_at(rank - 1));
         let rows = comptime!(row_space.cells());
         comptime!(assert!(
-            q.space.cells() == rows * d && d.is_multiple_of(w),
+            q.place.space.cells() == rows * d && d.is_multiple_of(w),
             "StreamFold: q is {{rows..., head_dim}} with the line width dividing the head dim"
         ));
         let lines = comptime!(d / w);
@@ -157,17 +157,17 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
     ) {
         let wk = k.vector_size();
         let wv = v.vector_size();
-        let rank = comptime!(k.space.rank());
+        let rank = comptime!(k.place.space.rank());
         comptime!(assert!(
             wk == self.width && wv == self.width,
             "StreamFold: k and v share q's line width"
         ));
         comptime!(assert!(
-            k.space.extent_at(rank - 1) == self.lines * self.width
-                && v.space.extent_at(v.space.rank() - 1) == self.lines * self.width,
+            k.place.space.extent_at(rank - 1) == self.lines * self.width
+                && v.place.space.extent_at(v.place.space.rank() - 1) == self.lines * self.width,
             "StreamFold: k and v trailing axes are the head dim"
         ));
-        let cols = comptime!(k.space.extent_at(rank - 2));
+        let cols = comptime!(k.place.space.extent_at(rank - 2));
         let rows = comptime!(self.rows);
         let lines = comptime!(self.lines);
         let per_lane = comptime!(self.per_lane);
@@ -350,7 +350,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
             "StreamFold::store: the output shares the fold's line width"
         ));
         comptime!(assert!(
-            out.space.cells() == rows * lines * this.width,
+            out.place.space.cells() == rows * lines * this.width,
             "StreamFold::store: the output window is rows x head_dim"
         ));
 
@@ -431,7 +431,7 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
 
         let d = comptime!(this.lines * this.width);
         comptime!(assert!(
-            acc_win.space.cells() == rows * d,
+            acc_win.place.space.cells() == rows * d,
             "StreamFold::publish: the accumulator window is {{rows, head_dim}}"
         ));
         let per_lane = comptime!(this.per_lane);

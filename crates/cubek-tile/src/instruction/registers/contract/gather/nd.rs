@@ -13,7 +13,7 @@ use super::{GatherProblem, LhsRole, RhsRole, coords::cell_read};
 /// accumulator's.
 #[cube]
 pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,
     #[comptime] problem: GatherProblem,
@@ -143,7 +143,7 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
 #[cube]
 #[allow(clippy::needless_range_loop)]
 fn box_in_bounds<T: Numeric, W: Size>(
-    view: &MaskedView<'_, Vector<T, W>, CoordsDyn>,
+    view: &Masked<'_, Vector<T, W>, CoordsDyn>,
     #[comptime] space: Space,
     #[comptime] width: usize,
 ) -> bool {
@@ -167,8 +167,8 @@ fn box_in_bounds<T: Numeric, W: Size>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
-    lhs_view: &MaskedView<'_, Vector<EL, L>, CoordsDyn>,
-    rhs_view: &MaskedView<'_, Vector<ER, V>, CoordsDyn>,
+    lhs_view: &Masked<'_, Vector<EL, L>, CoordsDyn>,
+    rhs_view: &Masked<'_, Vector<ER, V>, CoordsDyn>,
     acc: &mut AccumulateView<'_, E, A>,
     batch: &Coords<u32>,
     #[comptime] problem: GatherProblem,
@@ -308,8 +308,8 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
 #[cube]
 #[allow(clippy::too_many_arguments)]
 fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
-    lhs_view: &MaskedView<'_, Vector<EL, L>, CoordsDyn>,
-    rhs_view: &MaskedView<'_, Vector<ER, V>, CoordsDyn>,
+    lhs_view: &Masked<'_, Vector<EL, L>, CoordsDyn>,
+    rhs_view: &Masked<'_, Vector<ER, V>, CoordsDyn>,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     batch: &Coords<u32>,

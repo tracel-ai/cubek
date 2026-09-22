@@ -10,7 +10,7 @@
 //!
 //! The lines are held as the words they lie in and decoded at the read. Nothing here windows a
 //! line: a window into the box is a scalar origin, so a step one block deep into a line of four is
-//! a coordinate, never a line index ([`MemData::at`](crate::MemData) refuses exactly that cut).
+//! a coordinate, never a line index ([`Memory::at`](crate::Memory) refuses exactly that cut).
 
 use std::marker::PhantomData;
 
@@ -101,7 +101,7 @@ impl<T: Numeric> Lanes<T> {
         #[comptime] level: Level,
         #[comptime] reach: Reach,
     ) -> Lanes<T> {
-        let loaded = comptime!(level.child(&operand.space));
+        let loaded = comptime!(level.child(&operand.place.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
         let projection = operand.projection();
@@ -117,7 +117,7 @@ impl<T: Numeric> Lanes<T> {
         let field = comptime!(match packing {
             Packing::Packed { field } => field,
             Packing::Plain => match served {
-                ElemType::Float(kind) if float_field_bits(kind) == 32 => Field::Float(kind),
+                ElemType::Float(kind) if Field::float_bits(kind) == 32 => Field::Float(kind),
                 other => panic!(
                     "Lanes: a plain operand is held as whole 32-bit words, and {other:?} is not \
                      one; bind the operand packed, or serve it as `f32`"
@@ -137,7 +137,7 @@ impl<T: Numeric> Lanes<T> {
         let window = match comptime!(reach) {
             Reach::Shuffle => ComptimeOption::new_None(),
             Reach::Window => {
-                let planes = comptime!(plane_windows(&operand.space, &operand.levels));
+                let planes = comptime!(plane_windows(&operand.place.space, &operand.place.levels));
                 let cells = comptime!(lines * words);
                 let start = Takers::position(Takers::Planes) * cells;
                 let end = start + cells;

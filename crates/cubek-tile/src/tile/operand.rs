@@ -143,7 +143,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         #[unroll]
         for k in 1..count {
             let above = self.levels.index(k);
-            let rank = comptime!(above.space.rank());
+            let rank = comptime!(above.place.space.rank());
             let above_width = above.vector_size();
             let size!(AW) = above_width;
             let mut origin = CoordsDyn::new();
@@ -162,10 +162,10 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
             let inner = self.levels.index(0);
             let projection = inner.projection();
             comptime!(check_scales_omit_rather_than_divide(&projection));
-            comptime!(check_scales_ride(side, &inner.space, &out, acc_axes));
+            comptime!(check_scales_ride(side, &inner.place.space, &out, acc_axes));
             // A line of values is under one scale: the axis it runs along is one the scales
             // omit, or the line is one value.
-            let innermost = comptime!(values.space.axis_at(values.space.rank() - 1));
+            let innermost = comptime!(values.place.space.axis_at(values.place.space.rank() - 1));
             comptime!(assert!(
                 vector_size == 1 || !projection.addresses(innermost),
                 "mm_scaled: a line runs {vector_size} values along {innermost:?}, which its \
@@ -173,11 +173,15 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                  value a line, or omit {innermost:?} from the scales"
             ));
             comptime!(assert!(
-                inner.space.axes().all(|axis| values.space.contains(axis)),
+                inner
+                    .place
+                    .space
+                    .axes()
+                    .all(|axis| values.place.space.contains(axis)),
                 "mm_scaled: the scales span {:?} where the values span {:?}; a scale is looked \
                  up at the value's coordinates, so every axis of the scales is one of the values'",
-                inner.space.axes().collect::<Vec<_>>(),
-                values.space.axes().collect::<Vec<_>>()
+                inner.place.space.axes().collect::<Vec<_>>(),
+                values.place.space.axes().collect::<Vec<_>>()
             ));
             ComptimeOption::new_Some(inner.clone())
         } else {
@@ -186,7 +190,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         ScaleLookup::<S> {
             inner,
             coarser,
-            values: comptime!(values.space.clone()),
+            values: comptime!(values.place.space.clone()),
             axes,
             vector_size,
             matrix,
@@ -270,10 +274,9 @@ impl<S: Numeric> Tile<S> {
     /// whole plane takes part in: a reader must keep its lanes converged around it. True of the
     /// plane's own lanes ([`Lanes`]) and of nothing else.
     pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
+        match &self.kind {
             TileKind::Lanes(_) => comptime!(true),
-            TileKind::Gmem(_)
-            | TileKind::Smem(_)
+            TileKind::Memory(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -285,9 +288,9 @@ impl<S: Numeric> Tile<S> {
     /// holds it: the plane's lanes are read at the coordinate itself; a memory tile serves
     /// lines, so the coordinate names a line and the field of it the scale sits in.
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
-        match &self.tile_kind {
+        match &self.kind {
             TileKind::Lanes(lines) => lines.read(coords),
-            TileKind::Gmem(_) | TileKind::Smem(_) => self.value_in_line(coords),
+            TileKind::Memory(_) => self.value_in_line(coords),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
@@ -302,11 +305,11 @@ impl<S: Numeric> Tile<S> {
     /// A scale's space omits the axes one scale holds whole, so the value's own coordinate along
     /// each axis the scales do carry names the scale, and the omitted ones contribute nothing.
     pub(crate) fn scale_for(&self, coords: &Coords<u32>, #[comptime] values: Space) -> S {
-        let rank = comptime!(self.space.rank());
+        let rank = comptime!(self.place.space.rank());
         let mut own = Coords::<u32>::new();
         #[unroll]
         for p in 0..rank {
-            let axis = comptime!(self.space.axis_at(p));
+            let axis = comptime!(self.place.space.axis_at(p));
             own.push(coords.at(comptime!(values.position(axis))));
         }
         self.scale_at(&own)
@@ -407,7 +410,7 @@ impl<E: Numeric> MaybeTile for ComptimeOption<Tile<E>> {
             {
                 #[comptime]
                 match self {
-                    ComptimeOption::Some(scales) => ComptimeOption::new_Some(MemData::<E>::stage(
+                    ComptimeOption::Some(scales) => ComptimeOption::new_Some(Memory::<E>::stage(
                         scales,
                         comptime!(level.clone()),
                         comptime!(storage.clone()),

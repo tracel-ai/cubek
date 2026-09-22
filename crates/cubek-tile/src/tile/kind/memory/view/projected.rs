@@ -88,8 +88,8 @@ impl<T: Numeric> Tile<T> {
     /// The whole logical box as a *writable* N-D view: the mutable twin of [`nd`](Tile::nd), for a
     /// caller writing one cell at a time at its logical coordinate. Refused where two logical
     /// positions can share a cell, so a write aliases; a [partition](Composition::Disjoint) cannot.
-    pub(crate) fn nd_mut<W: Size>(&mut self) -> MaskedViewMut<'_, Vector<T, W>, CoordsDyn> {
-        let space = comptime!(self.space.clone());
+    pub(crate) fn nd_mut<W: Size>(&mut self) -> MaskedMut<'_, Vector<T, W>, CoordsDyn> {
+        let space = comptime!(self.place.space.clone());
         let g = self.mem_mut("nd_mut");
         comptime!(assert!(
             g.projection.composition() != Composition::Overlapping,
@@ -108,14 +108,14 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn nd_packed<W: Size>(
         &self,
         #[comptime] guard: Guard,
-    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let layout = g.axis_projection(comptime!(self.space.clone()));
+    ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
+        match &self.kind {
+            TileKind::Memory(g) => {
+                let layout = g.axis_projection(comptime!(self.place.space.clone()));
                 g.packed::<W, CoordsDyn, ProjectionInKernel>(layout, guard)
             }
             TileKind::Procedural(data) => {
-                procedural_nd::<T, W>(data, comptime!(self.space.clone()), guard)
+                procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::nd: a plane tile has no memory view")
@@ -131,14 +131,14 @@ impl<T: Numeric> Tile<T> {
     pub fn nd<I: Numeric, WP: Size, W: Size>(
         &self,
         #[comptime] guard: Guard,
-    ) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let layout = g.axis_projection(comptime!(self.space.clone()));
+    ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
+        match &self.kind {
+            TileKind::Memory(g) => {
+                let layout = g.axis_projection(comptime!(self.place.space.clone()));
                 g.transparent::<I, WP, W, CoordsDyn, ProjectionInKernel>(layout, guard)
             }
             TileKind::Procedural(data) => {
-                procedural_nd::<T, W>(data, comptime!(self.space.clone()), guard)
+                procedural_nd::<T, W>(data, comptime!(self.place.space.clone()), guard)
             }
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Tile::nd: a plane tile has no memory view")
@@ -155,9 +155,9 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn nd_words<WP: Size>(
         &self,
         #[comptime] guard: Guard,
-    ) -> MaskedView<'_, Vector<u32, WP>, CoordsDyn> {
+    ) -> Masked<'_, Vector<u32, WP>, CoordsDyn> {
         let g = self.mem("nd_words");
-        let layout = g.axis_projection(comptime!(self.space.clone()));
+        let layout = g.axis_projection(comptime!(self.place.space.clone()));
         g.nd_words::<WP>(layout, guard)
     }
 
@@ -165,8 +165,8 @@ impl<T: Numeric> Tile<T> {
     /// [`Boundary::Clamp`] axis is the one such guard: a clamped read is in bounds *after*
     /// remapping, so nothing a reader can measure recovers it. The other kinds carry no boundary.
     pub(crate) fn guard_provable(&self) -> comptime_type!(bool) {
-        match &self.tile_kind {
-            TileKind::Gmem(data) | TileKind::Smem(data) => {
+        match &self.kind {
+            TileKind::Memory(data) => {
                 comptime!(!data.window.boundaries.contains(&Some(Boundary::Clamp)))
             }
             TileKind::PlaneTile(_)
@@ -186,14 +186,14 @@ fn procedural_nd<T: Numeric, W: Size>(
     data: &ProceduralData<T>,
     #[comptime] space: Space,
     #[comptime] guard: Guard,
-) -> MaskedView<'_, Vector<T, W>, CoordsDyn> {
+) -> Masked<'_, Vector<T, W>, CoordsDyn> {
     let layout = axis_projection(
         comptime!(space.clone()),
         comptime!(Projection::direct_over(&space)),
         RuntimeMap::integral(comptime!(space.rank())),
         comptime!(1usize),
     );
-    MaskedView::new(
+    Masked::new(
         View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(data, layout),
         comptime!(guard.checks() && data.bounds_check),
     )
@@ -201,21 +201,21 @@ fn procedural_nd<T: Numeric, W: Size>(
 
 /// A gathered operand split into the map folded once per run and the physical view it addresses.
 #[derive(CubeType)]
-pub(crate) struct NdReader<'a, T: Numeric, W: Size> {
+pub(crate) struct Gathered<'a, T: Numeric, W: Size> {
     pub map: ProjectionInKernel,
-    pub view: MaskedView<'a, Vector<T, W>, CoordsDyn>,
+    pub view: Masked<'a, Vector<T, W>, CoordsDyn>,
     #[cube(comptime)]
     pub rank: usize,
 }
 
 #[cube]
-impl<'a, T: Numeric, W: Size> NdReader<'a, T, W> {
+impl<'a, T: Numeric, W: Size> Gathered<'a, T, W> {
     fn new(
         map: ProjectionInKernel,
-        view: MaskedView<'a, Vector<T, W>, CoordsDyn>,
+        view: Masked<'a, Vector<T, W>, CoordsDyn>,
         #[comptime] rank: usize,
     ) -> Self {
-        NdReader::<'a, T, W> { map, view, rank }
+        Gathered::<'a, T, W> { map, view, rank }
     }
 }
 
@@ -224,10 +224,10 @@ impl<T: Numeric> Tile<T> {
     /// The map, physical read surface, and physical rank needed to step a gathered operand by
     /// hand, read through whatever [`Packing`] this tile carries. Constructed together so all
     /// three describe the same memory operand.
-    pub(crate) fn nd_split<W: Size>(&self) -> NdReader<'_, T, W> {
-        let space = comptime!(self.space.clone());
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => NdReader::new(
+    pub(crate) fn nd_split<W: Size>(&self) -> Gathered<'_, T, W> {
+        let space = comptime!(self.place.space.clone());
+        match &self.kind {
+            TileKind::Memory(g) => Gathered::new(
                 g.axis_projection(comptime!(space.clone())),
                 // A folded caller hands in coordinates it derived itself, so it has proved
                 // nothing about them: the window's boundary and the overhang mask both stay on.
@@ -237,7 +237,7 @@ impl<T: Numeric> Tile<T> {
                 ),
                 comptime!(g.projection.physical_rank()),
             ),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => NdReader::new(
+            TileKind::Procedural(_) | TileKind::Lanes(_) => Gathered::new(
                 axis_projection(
                     comptime!(space.clone()),
                     comptime!(Projection::direct_over(&space)),

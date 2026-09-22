@@ -119,7 +119,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// [`spill_to_scratch`]: Self::spill_to_scratch
     pub(crate) fn add_from_scratch<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
         match self {
@@ -193,9 +193,9 @@ impl<T: Numeric> PlaneTile<T> {
     /// the space that view is shaped by. A cmma load takes the raw window and cannot decode.
     pub(crate) fn load_window(&mut self, src: &Tile<T>) {
         match self {
-            PlaneTile::Cmma(d) => match &src.tile_kind {
-                TileKind::Gmem(m) | TileKind::Smem(m) => {
-                    d.load_window(m, comptime!(MatrixAxes::edges(&src.space).row_split))
+            PlaneTile::Cmma(d) => match &src.kind {
+                TileKind::Memory(m) => {
+                    d.load_window(m, comptime!(MatrixAxes::edges(&src.place.space).row_split))
                 }
                 TileKind::PlaneTile(_)
                 | TileKind::PlanePartition(_)
@@ -214,7 +214,7 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
+    pub(crate) fn store_window(&self, mem: &mut Memory<T>, #[comptime] space: Space) {
         match self {
             PlaneTile::Cmma(d) => {
                 d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
@@ -244,7 +244,7 @@ impl<T: Numeric> PlaneTile<T> {
     /// into a store that folds read it.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
-        mem: &mut MemData<Out>,
+        mem: &mut Memory<Out>,
         #[comptime] space: Space,
     ) {
         match self {
@@ -479,7 +479,7 @@ impl<T: Numeric> PlanePartition<T> {
             }
         }
         Tile::<T> {
-            tile_kind: TileKind::new_PlanePartition(PlanePartition::<T> {
+            kind: TileKind::new_PlanePartition(PlanePartition::<T> {
                 frags,
                 m_tiles,
                 n_tiles,
@@ -491,9 +491,7 @@ impl<T: Numeric> PlanePartition<T> {
             // The space of the tile it mirrors: what the levels below it cut, as they cut it.
             // The fragments were sized from the statement alone, so a `Dynamic` extent here is
             // never read; the first partition level below reads its own edges off its child.
-            space,
-            depth,
-            levels,
+            place: comptime!(Placement::new(space, depth, levels)),
         }
     }
 
@@ -566,7 +564,7 @@ impl<T: Numeric> PlanePartition<T> {
             }
         }
         Tile::<T> {
-            tile_kind: TileKind::new_PlanePartition(PlanePartition::<T> {
+            kind: TileKind::new_PlanePartition(PlanePartition::<T> {
                 frags,
                 m_tiles: t0,
                 n_tiles: t1,
@@ -575,9 +573,7 @@ impl<T: Numeric> PlanePartition<T> {
                 scratch: ComptimeOption::new_None(),
                 resident: Resident::None,
             }),
-            space: comptime!(window),
-            depth,
-            levels,
+            place: comptime!(Placement::new(window, depth, levels)),
         }
     }
 
@@ -628,14 +624,14 @@ impl<T: Numeric> PlanePartition<T> {
         ));
         let (grid, m, n) = acc.fragment_grid();
         let mut frags = PlanePartition::<T>::store(
-            comptime!(src.space.clone()),
+            comptime!(src.place.space.clone()),
             comptime!(form),
-            comptime!(acc.space.clone()),
+            comptime!(acc.place.space.clone()),
             comptime!(grid),
             comptime!(m),
             comptime!(n),
-            comptime!(src.depth),
-            comptime!(src.levels.clone()),
+            comptime!(src.place.depth),
+            comptime!(src.place.levels.clone()),
         );
         frags.copy_from(src);
         frags
@@ -646,7 +642,7 @@ impl<T: Numeric> PlanePartition<T> {
     /// kernel never walks.
     pub(crate) fn fill_from(&self, src: &Tile<T>) {
         let level = comptime!(fragment_level(
-            &src.space,
+            &src.place.space,
             (self.rows, self.cols),
             (self.m_tiles, self.n_tiles)
         ));
@@ -656,8 +652,8 @@ impl<T: Numeric> PlanePartition<T> {
             for ni in 0..comptime!(self.n_tiles) {
                 let mut frag = self.at(mi, ni);
                 let window = src.at(&Region::trailing(
-                    comptime!(src.depth),
-                    comptime!(src.space.clone()),
+                    comptime!(src.place.depth),
+                    comptime!(src.place.space.clone()),
                     comptime!(level.clone()),
                     mi,
                     ni,

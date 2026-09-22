@@ -21,7 +21,7 @@ use crate::*;
 /// windows, where a step has no single scalar `k` to address a scale with.
 #[cube]
 pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
-    acc: &mut MemData<E>,
+    acc: &mut Memory<E>,
     lhs: &Scaled<EL, LS>,
     rhs: &Scaled<ER, RS>,
     #[comptime] space: Space,
@@ -42,8 +42,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
     let rw = rhs_values.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let contracted_per_step = comptime!(contracted_per_step(
-        &lhs_values.space,
-        &rhs_values.space,
+        &lhs_values.place.space,
+        &rhs_values.place.space,
         &space,
         lw,
         rw,
@@ -53,8 +53,8 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
     // several contracted axes still form one `k` edge when the operand carries them as one run,
     // which is what a partitioned axis is.
     let shape = comptime!(ContractShape::new(
-        &lhs_values.space,
-        &rhs_values.space,
+        &lhs_values.place.space,
+        &rhs_values.place.space,
         space.clone(),
         contracted_per_step,
         lw,
@@ -63,7 +63,7 @@ pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nume
     ));
     let flat = comptime!(
         shape
-            .matrix_axes(&lhs_values.space, &rhs_values.space)
+            .matrix_axes(&lhs_values.place.space, &rhs_values.place.space)
             .is_some()
     );
     let nd = comptime!(

@@ -10,9 +10,9 @@ use cubecl::{
 use crate::*;
 
 /// A masked 2-D ([`TileMatrix`]) view: one matrix of a [`Tile`].
-pub(crate) type MatrixView<'a, T> = MaskedView<'a, T, Coords2d>;
+pub(crate) type MatrixView<'a, T> = Masked<'a, T, Coords2d>;
 /// The mutable twin of [`MatrixView`].
-pub(crate) type MatrixViewMut<'a, T> = MaskedViewMut<'a, T, Coords2d>;
+pub(crate) type MatrixViewMut<'a, T> = MaskedMut<'a, T, Coords2d>;
 
 /// A [`Layout`] presenting a tile's logical box as one `(row, col)` matrix over three axes of
 /// axes, in the space's own order: a *batch* prefix already pinned to one matrix, then the axes
@@ -276,7 +276,7 @@ impl<T: Numeric> Tile<T> {
     /// The `i`-th batch matrix over the trailing two axes, in `Vector<T, W>` lines (`W` =
     /// [`vector_size`](Tile::vector_size)), read through whatever [`Packing`] this tile carries.
     pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
-        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing(&self.space)), i)
+        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing(&self.place.space)), i)
     }
 
     /// The `i`-th batch matrix over the axes `axes` names, read through whatever [`Packing`]
@@ -288,7 +288,7 @@ impl<T: Numeric> Tile<T> {
         i: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
         let g = self.mem("matrix");
-        let layout = g.batch_matrix(comptime!(self.space.clone()), axes, i);
+        let layout = g.batch_matrix(comptime!(self.place.space.clone()), axes, i);
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
@@ -302,7 +302,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] cols: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
         let g = self.mem("fragment_matrix");
-        let layout = g.whole_matrix(comptime!(self.space.clone()), rows, cols);
+        let layout = g.whole_matrix(comptime!(self.place.space.clone()), rows, cols);
         g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
@@ -315,7 +315,7 @@ impl<T: Numeric> Tile<T> {
         #[comptime] cols: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
         let g = self.mem("fragment_matrix");
-        let layout = g.whole_matrix(comptime!(self.space.clone()), rows, cols);
+        let layout = g.whole_matrix(comptime!(self.place.space.clone()), rows, cols);
         g.transparent::<I, WP, W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 }

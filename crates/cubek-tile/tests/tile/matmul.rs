@@ -576,8 +576,8 @@ fn promoted_matmul_in_place<E: Numeric, EA: Numeric, AV: Size, BV: Size, CV: Siz
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         config,
@@ -654,8 +654,8 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             &[outer.clone(), inner.clone()]
         )),
         REGISTER_BLOCK,
@@ -705,8 +705,8 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         Monoid::Sum,
@@ -745,8 +745,8 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         Monoid::Sum,
@@ -759,7 +759,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.space, &b.space]),
+                Space::merge(&[&a.place.space, &b.place.space]),
                 std::slice::from_ref(&level).to_vec()
             )
             .leaf()
@@ -797,8 +797,8 @@ fn mma_matmul_k_walk<E: Numeric>(
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         io,
@@ -838,8 +838,8 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     let mut acc = c.mma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         io,
@@ -880,8 +880,8 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             &[outer.clone(), inner.clone()]
         )),
         Monoid::Sum,
@@ -894,7 +894,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.space, &b.space]),
+                Space::merge(&[&a.place.space, &b.place.space]),
                 vec![outer.clone(), inner.clone()]
             )
             .leaf()
@@ -940,8 +940,8 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             &[stage.clone(), plane.clone(), fragment.clone()]
         )),
         Monoid::Sum,
@@ -954,7 +954,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.space, &b.space]),
+                Space::merge(&[&a.place.space, &b.place.space]),
                 vec![stage.clone(), plane.clone(), fragment.clone()]
             )
             .leaf()
@@ -1009,8 +1009,8 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             &[
                 stage.clone(),
                 plane.clone(),
@@ -1029,7 +1029,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
         &b,
         comptime!(StageStorage::Tiled {
             block: Partitioning::new(
-                Space::merge(&[&a.space, &b.space]),
+                Space::merge(&[&a.place.space, &b.place.space]),
                 vec![
                     stage.clone(),
                     plane.clone(),
@@ -1213,8 +1213,8 @@ fn promoted_matmul_quant_lhs_in_place<I: Numeric, E: Numeric, EA: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         config,
@@ -1243,7 +1243,7 @@ fn cmma_roundtrip<E: Numeric>(
 ) {
     let a = input.tile(comptime!(space.clone()));
 
-    let mut a_smem = MemData::smem(
+    let mut a_smem = Memory::smem(
         comptime!(space.space().clone()),
         1usize,
         StageStorage::Strided,
@@ -1262,7 +1262,7 @@ fn cmma_roundtrip<E: Numeric>(
     );
     frag.copy_from(&a_smem);
 
-    let mut c_smem = MemData::smem(
+    let mut c_smem = Memory::smem(
         comptime!(space.space().clone()),
         1usize,
         StageStorage::Strided,
@@ -1289,24 +1289,24 @@ fn cmma_matmul<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem_tile = MemData::smem(
-        comptime!(a.space.clone()),
+    let mut a_smem_tile = Memory::smem(
+        comptime!(a.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     a_smem_tile.copy_from(&a);
 
-    let mut b_smem_tile = MemData::smem(
-        comptime!(b.space.clone()),
+    let mut b_smem_tile = Memory::smem(
+        comptime!(b.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     b_smem_tile.copy_from(&b);
 
-    let mut c_smem_tile = MemData::smem(
-        comptime!(c.space.clone()),
+    let mut c_smem_tile = Memory::smem(
+        comptime!(c.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
@@ -1320,7 +1320,7 @@ fn cmma_matmul<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(a.space.clone()),
+        comptime!(a.place.space.clone()),
     );
     a_frag.copy_from(&a_smem_tile);
 
@@ -1330,7 +1330,7 @@ fn cmma_matmul<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(b.space.clone()),
+        comptime!(b.place.space.clone()),
     );
     b_frag.copy_from(&b_smem_tile);
 
@@ -1340,7 +1340,7 @@ fn cmma_matmul<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(c.space.clone()),
+        comptime!(c.place.space.clone()),
     );
     acc.copy_from(&c_smem_tile);
 
@@ -1364,16 +1364,16 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem = MemData::smem(
-        comptime!(a.space.clone()),
+    let mut a_smem = Memory::smem(
+        comptime!(a.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     a_smem.copy_from(&a);
 
-    let mut b_smem = MemData::smem(
-        comptime!(b.space.clone()),
+    let mut b_smem = Memory::smem(
+        comptime!(b.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
@@ -1387,7 +1387,7 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(a.space.clone()),
+        comptime!(a.place.space.clone()),
     );
     a_frag.copy_from(&a_smem);
 
@@ -1397,7 +1397,7 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::ColMajor,
-        comptime!(b.space.clone()),
+        comptime!(b.place.space.clone()),
     );
     b_frag.copy_from(&b_smem);
 
@@ -1407,14 +1407,14 @@ fn cmma_matmul_transposed_rhs<E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(c.space.clone()),
+        comptime!(c.place.space.clone()),
     );
     acc.zero();
 
     acc.mma(&a_frag, &b_frag, Semiring::SUM_PROD);
 
-    let mut c_smem = MemData::smem(
-        comptime!(c.space.clone()),
+    let mut c_smem = Memory::smem(
+        comptime!(c.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
@@ -1440,24 +1440,24 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
     let b = b.tile(comptime!(space.clone()));
     let mut c = c.tile(comptime!(space.clone()));
 
-    let mut a_smem = MemData::smem(
-        comptime!(a.space.clone()),
+    let mut a_smem = Memory::smem(
+        comptime!(a.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     a_smem.copy_from(&a);
 
-    let mut b_smem = MemData::smem(
-        comptime!(b.space.clone()),
+    let mut b_smem = Memory::smem(
+        comptime!(b.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
     );
     b_smem.copy_from(&b);
 
-    let mut c_smem = MemData::smem(
-        comptime!(c.space.clone()),
+    let mut c_smem = Memory::smem(
+        comptime!(c.place.space.clone()),
         1usize,
         StageStorage::Strided,
         0usize,
@@ -1471,7 +1471,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(a.space.clone()),
+        comptime!(a.place.space.clone()),
     );
     a_frag.copy_from(&a_smem);
 
@@ -1481,7 +1481,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(b.space.clone()),
+        comptime!(b.place.space.clone()),
     );
     b_frag.copy_from(&b_smem);
 
@@ -1491,7 +1491,7 @@ fn cmma_matmul_quant<I: Numeric, E: Numeric>(
         8usize,
         8usize,
         MatrixLayout::RowMajor,
-        comptime!(c.space.clone()),
+        comptime!(c.place.space.clone()),
     );
     acc.copy_from(&c_smem);
 
@@ -4303,8 +4303,8 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         instruction,

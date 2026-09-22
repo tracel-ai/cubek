@@ -104,8 +104,8 @@ fn scaled_matmul_promoted<E: Numeric, S: Numeric>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         REGISTER_BLOCK,
@@ -201,8 +201,8 @@ fn scaled_matmul_cmma<E: Numeric, S: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         Monoid::Sum,
@@ -1246,8 +1246,8 @@ fn wide_rhs_scaled_matmul_promoted<E: Numeric, S: Numeric, SW: Size>(
         &a,
         &b,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         REGISTER_BLOCK,
@@ -1702,7 +1702,7 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let b = b.tile_as::<E>(comptime!(space.clone()));
     let scale = scale.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
-    let mut stage = MemData::<E>::stage(
+    let mut stage = Memory::<E>::stage(
         &b,
         comptime!(level.clone()),
         StageStorage::Strided,
@@ -1712,8 +1712,8 @@ fn scaled_matmul_cmma_staged<E: Numeric, S: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(
         &a,
         comptime!(Fragments::new(
-            &c.space,
-            &a.space,
+            &c.place.space,
+            &a.place.space,
             std::slice::from_ref(&level)
         )),
         Monoid::Sum,
@@ -1890,7 +1890,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
-            let mut lines = MemData::<S>::stage(
+            let mut lines = Memory::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lanes { reach }),
@@ -2127,7 +2127,7 @@ impl TileOrdered {
                     launcher
                         .arg(binding)
                         .gathered(axes)
-                        .packed(scale_field(ScaleDtype::UE4M3))
+                        .packed(Field::of_scale(ScaleDtype::UE4M3))
                         .vectorize(self.tile)
                         .build(),
                     u32::elem_type_native(),
@@ -2308,8 +2308,8 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let b_plane = b_cube.at(&plane);
             let scale_plane = scale_cube.at(&plane);
             let c_plane = c_cube.at(&plane);
-            let out = comptime!(c_plane.space.clone());
-            let mut lines = MemData::<S>::stage(
+            let out = comptime!(c_plane.place.space.clone());
+            let mut lines = Memory::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
                 comptime!(StageStorage::Lanes { reach }),

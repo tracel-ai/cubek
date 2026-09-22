@@ -17,7 +17,7 @@ use cubecl::prelude::barrier::Barrier;
 use cubecl::quant::scheme::QuantValue;
 use cubecl::std::quant::fp4::e2m1_packed_bits_to_float;
 
-use crate::{Field, FieldDecode, field_decode, float_field_bits};
+use crate::{Field, FieldDecode};
 use cubecl::unexpanded;
 use cubecl::{
     prelude::*,
@@ -35,7 +35,7 @@ pub(crate) fn unpack_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
     #[comptime] field: Field,
 ) -> Vector<F, NF> {
-    match comptime!(field_decode(field)) {
+    match comptime!(field.decode()) {
         FieldDecode::SignExtended => unpack_int_line::<F, NQ, NF>(words, field),
         FieldDecode::Reinterpreted => unpack_fp4_line::<F, NQ, NF>(words),
         FieldDecode::Byte(format) => unpack_byte_line::<F, NQ, NF>(words, format),
@@ -179,7 +179,7 @@ fn unpack_float_line<F: Numeric, NQ: Size, NF: Size>(
     words: Vector<u32, NQ>,
     #[comptime] kind: FloatKind,
 ) -> Vector<F, NF> {
-    let bits = comptime!(float_field_bits(kind));
+    let bits = comptime!(Field::float_bits(kind));
     let nq = NQ::value();
     let nf = NF::value();
     let fields = comptime!(fields_per_word(nq, nf, bits));
