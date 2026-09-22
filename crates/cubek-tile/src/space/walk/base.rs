@@ -77,7 +77,7 @@ impl Walk {
             // down in its tile, the one division of a launch (folded where the extent is static).
             match comptime!(level.grid(space.axis_at(p))) {
                 GridCount::Const(n) => counts.push(n.runtime()),
-                GridCount::Extent(tile) => counts.push(space.extents.count(p, tile)),
+                GridCount::Extent(tile) => counts.push(space.count(p, tile)),
             }
         }
         Walk::from_counts(comptime!(space.clone()), level, counts, parent)
@@ -445,7 +445,7 @@ impl Walk {
 
     /// The depth of the regions this walk hands out: one below its path.
     pub(crate) fn depth(&self) -> usize {
-        self.parent.depth() + 1
+        self.parent.path.depth() + 1
     }
 }
 
@@ -472,6 +472,6 @@ impl WalkExpand {
     }
 
     pub(crate) fn depth(&self) -> usize {
-        self.parent.depth() + 1
+        self.parent.path.depth() + 1
     }
 }

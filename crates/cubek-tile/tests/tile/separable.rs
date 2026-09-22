@@ -79,11 +79,14 @@ fn separable_kernel<E: Float>(
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = if comptime!(separable) {
         Tile::<E>::procedural_separable::<Weights<E>>(
-            comptime!(space.project(&weight_axes)),
+            comptime!(space.space().project(&weight_axes)),
             weights::<E>(),
         )
     } else {
-        Tile::<E>::procedural::<Weights<E>>(comptime!(space.project(&weight_axes)), weights::<E>())
+        Tile::<E>::procedural::<Weights<E>>(
+            comptime!(space.space().project(&weight_axes)),
+            weights::<E>(),
+        )
     };
 
     let output = output.tile(comptime!(space.clone()));
@@ -112,7 +115,7 @@ fn separable_kernel_staged<E: Float>(
     let input = input.tile(comptime!(space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&weight_axes)),
+        comptime!(space.space().project(&weight_axes)),
         weights::<E>(),
     );
 
@@ -337,7 +340,7 @@ fn separable_quant_kernel<E: Float, I: Numeric, VI: Size, V: Size>(
     let input = input.tile::<E>(comptime!(space.clone()));
     let weight_axes = comptime!([&[ROW], TAP.as_slice()].concat());
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&weight_axes)),
+        comptime!(space.space().project(&weight_axes)),
         weights::<E>(),
     );
 
@@ -623,7 +626,7 @@ fn resample_kernel<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(space.space().project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     );
     let weights = if comptime!(normalized) {
@@ -738,7 +741,7 @@ fn procedural_mask_kernel<E: Float>(
     #[define(E)] _dtype: ElemType,
 ) {
     let rhs = Tile::<E>::procedural::<AffineCoordinate<E>>(
-        comptime!(space.project(&[TAP[0], COL])),
+        comptime!(space.space().project(&[TAP[0], COL])),
         affine_along(TAP[0], E::new(1.0_f32), E::new(1.0_f32)),
     );
     let mut output = output.tile(comptime!(space.clone()));
@@ -811,7 +814,7 @@ fn resample_kernel_masked<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(space.space().project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -840,7 +843,7 @@ fn resample_kernel_masked_staged<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, TAP[0]])),
+        comptime!(space.space().project(&[ROW, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -1036,7 +1039,7 @@ fn column_spanning_resample_kernel<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        comptime!(space.space().project(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Unmasked), comptime!(DivGuard::default()));
@@ -1133,7 +1136,7 @@ fn column_spanning_resample_kernel_masked<E: Float>(
 ) {
     let input = input.tile(comptime!(space.clone()));
     let weights = Tile::<E>::procedural_separable::<Weights<E>>(
-        comptime!(space.project(&[ROW, COL, TAP[0]])),
+        comptime!(space.space().project(&[ROW, COL, TAP[0]])),
         resample_weights::<E>(),
     )
     .normalized(comptime!(TapMask::Masked), comptime!(DivGuard::default()));
@@ -1242,7 +1245,7 @@ fn zero_sum_fallback_kernel<E: Float>(
     // Factor 1: taps at k=0 (2.0) and k=1 (2.0), sum = 4.0
     factors.push(affine_along(TAP[1], E::new(2.0_f32), E::new(0.0_f32)));
     let weights = Tile::<E>::procedural_separable::<SeparableProduct<AffineCoordinate<E>>>(
-        comptime!(space.project(&[ROW, TAP[0], TAP[1]])),
+        comptime!(space.space().project(&[ROW, TAP[0], TAP[1]])),
         separable_product(factors),
     )
     .normalized(

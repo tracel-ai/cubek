@@ -40,7 +40,7 @@ fn relayout<E: Numeric, V: Size>(
 ) {
     let src = src.tile(comptime!(space.clone()));
     let dst = dst.tile(comptime!(space.clone()));
-    let rank = comptime!(space.rank());
+    let rank = comptime!(space.space().rank());
     let ri = comptime!(rank - 2);
     let ci = comptime!(rank - 1);
     for cube in space.over(&level) {

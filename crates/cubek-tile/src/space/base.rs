@@ -4,145 +4,157 @@
 use cubecl::prelude::*;
 use cubecl::zspace::SmallVec;
 
-use crate::{Axis, AxisMap, Extent, Level, PartitioningLaunch};
-
-/// Every axis's extent: the comptime `kinds` (`Static(n)` | `Dynamic`) plus, for the `Dynamic`
-/// ones, their runtime `sizes`. Kinds stay comptime so static tile counts fold and the walk
-/// unrolls. Only the top operation space carries sizes; `divide` yields `Static` children.
-#[derive(CubeType, CubeLaunch, Clone, Debug)]
-pub struct Extents {
-    #[cube(comptime)]
-    kinds: AxisMap<Extent>,
-    pub(crate) sizes: Sequence<usize>,
-}
-
-impl Extents {
-    /// A fully-`Static` (or yet-unresolved) extents, with no runtime sizes.
-    fn fixed(kinds: AxisMap<Extent>) -> Self {
-        Extents {
-            kinds,
-            sizes: Sequence::new(),
-        }
-    }
-}
-
-#[cube]
-impl Extents {
-    /// Axis `p`'s tile count for a sub-tile `edge`: a `Static` axis folds to a comptime constant
-    /// (so the walk loop unrolls), a `Dynamic` axis ceil-divides its runtime size. The match is
-    /// comptime, so an all-`Static` extents never touches `sizes`.
-    pub fn count(&self, #[comptime] p: usize, #[comptime] edge: usize) -> usize {
-        match comptime!(self.kinds.get(self.kinds.axis_at(p))) {
-            Extent::Static(n) => comptime!(n.div_ceil(edge)).runtime(),
-            Extent::Dynamic => (*self.sizes.index(p)).div_ceil(edge),
-        }
-    }
-}
+use crate::{Axis, Extent, Level, PartitioningLaunch, Shape};
 
 /// Every axis with its extent, in canonical order. A tile lives in its own space
 /// (matmul's `lhs ∈ {M,K}`, `rhs ∈ {K,N}`, `out ∈ {M,N}`); an operation ranges over
 /// their [`merge`](Space::merge).
+///
+/// The [`Shape`] is comptime, so static tile counts fold and the walk unrolls; the `sizes` are
+/// the runtime half, one per axis (positional) where any axis is dynamic and empty otherwise.
+/// Only the top operation space carries sizes; a level's child is `Static`.
 #[derive(CubeType, CubeLaunch, Clone, Debug)]
 pub struct Space {
-    pub(crate) extents: Extents,
+    #[cube(comptime)]
+    pub(crate) shape: Shape,
+    pub(crate) sizes: Sequence<usize>,
 }
 
-// Identity is the comptime extents only; the `Extents` sizes are runtime, never a key.
+// Identity is the comptime shape only; the sizes are runtime, never a key.
 impl PartialEq for Space {
     fn eq(&self, other: &Self) -> bool {
-        self.extents.kinds == other.extents.kinds
+        self.shape == other.shape
     }
 }
 impl Eq for Space {}
 impl std::hash::Hash for Space {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.extents.kinds.hash(state);
+        self.shape.hash(state);
     }
 }
 
-/// The comptime extents of a runtime `Space`, read as the host reads a `Space`: what
-/// `comptime!(space.clone())` resolves to on the space a kernel is handed.
+/// The comptime reads of a space, as the host reads them: what `comptime!(space.rank())` and the
+/// like resolve to on the space a kernel is handed.
 impl SpaceExpand {
+    /// The comptime shape of a runtime `Space`, as a host `Space` with no sizes.
     pub(crate) fn comptime(&self) -> Space {
-        Space {
-            extents: Extents::fixed(self.extents.kinds.clone()),
-        }
+        Space::from_shape(self.shape.clone())
     }
 
     #[allow(clippy::should_implement_trait)]
     pub fn clone(&self) -> Space {
         self.comptime()
     }
+
+    pub fn shape(&self) -> &Shape {
+        &self.shape
+    }
+
+    pub fn rank(&self) -> usize {
+        self.shape.rank()
+    }
+
+    pub fn axis_at(&self, i: usize) -> Axis {
+        self.shape.axis_at(i)
+    }
+
+    pub fn position(&self, axis: Axis) -> usize {
+        self.shape.position(axis)
+    }
+
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.shape.contains(axis)
+    }
+
+    pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
+        self.shape.axes()
+    }
+
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.shape.extent(axis)
+    }
+
+    pub fn extent_at(&self, i: usize) -> usize {
+        self.shape.extent_at(i)
+    }
+
+    pub fn is_dynamic(&self, axis: Axis) -> bool {
+        self.shape.is_dynamic(axis)
+    }
+
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        Space::from_shape(self.shape.subspace(axes))
+    }
 }
 
-/// The comptime reads of a space, the same on the host and on the expand type: what
-/// `comptime!(space.rank())` and the like resolve to on the space a kernel is handed.
-macro_rules! space_reads {
-    ($ty:ty) => {
-        impl $ty {
-            pub fn rank(&self) -> usize {
-                self.extents.kinds.len()
-            }
+impl Space {
+    pub fn shape(&self) -> &Shape {
+        &self.shape
+    }
 
-            pub fn axis_at(&self, i: usize) -> Axis {
-                self.extents.kinds.axis_at(i)
-            }
+    pub fn rank(&self) -> usize {
+        self.shape.rank()
+    }
 
-            pub fn position(&self, axis: Axis) -> usize {
-                self.extents.kinds.position(axis)
-            }
+    pub fn axis_at(&self, i: usize) -> Axis {
+        self.shape.axis_at(i)
+    }
 
-            pub fn contains(&self, axis: Axis) -> bool {
-                self.extents.kinds.contains(axis)
-            }
+    pub fn position(&self, axis: Axis) -> usize {
+        self.shape.position(axis)
+    }
 
-            pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
-                self.extents.kinds.axes()
-            }
+    pub fn contains(&self, axis: Axis) -> bool {
+        self.shape.contains(axis)
+    }
 
-            pub(crate) fn extent_raw(&self, axis: Axis) -> Extent {
-                self.extents.kinds.get(axis)
-            }
+    pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
+        self.shape.axes()
+    }
 
-            /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf
-            /// and smem consumers all run on fully-divided (`Static`) spaces, so this is what they
-            /// call.
-            pub fn extent(&self, axis: Axis) -> usize {
-                self.extent_raw(axis).get()
-            }
+    pub(crate) fn extent_raw(&self, axis: Axis) -> Extent {
+        self.shape.extent_raw(axis)
+    }
 
-            pub fn extent_at(&self, i: usize) -> usize {
-                self.extent(self.axis_at(i))
-            }
+    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf
+    /// and smem consumers all run on fully-divided (`Static`) spaces, so this is what they
+    /// call.
+    pub fn extent(&self, axis: Axis) -> usize {
+        self.shape.extent(axis)
+    }
 
-            pub fn is_dynamic(&self, axis: Axis) -> bool {
-                self.extent_raw(axis).is_dynamic()
-            }
+    pub fn extent_at(&self, i: usize) -> usize {
+        self.shape.extent_at(i)
+    }
 
-            pub fn project(&self, axes: &[Axis]) -> Space {
-                let entries = axes
-                    .iter()
-                    .map(|&a| (a, self.extent_raw(a)))
-                    .collect::<Vec<_>>();
-                Space::from_extents(&entries)
-            }
-        }
-    };
+    pub fn is_dynamic(&self, axis: Axis) -> bool {
+        self.shape.is_dynamic(axis)
+    }
+
+    pub fn project(&self, axes: &[Axis]) -> Space {
+        Space::from_shape(self.shape.subspace(axes))
+    }
 }
-space_reads!(Space);
-space_reads!(SpaceExpand);
 
 #[cube]
 impl Space {
     /// The runtime operation space: the comptime space plus the runtime `sizes` of its
     /// `Dynamic` axes (per-axis, aligned to axis order; empty when fully `Static`).
-    /// A walk reads them through [`Extents::count`].
+    /// A walk reads them through [`count`](Space::count).
     pub(crate) fn with_sizes(#[comptime] space: Space, sizes: Sequence<usize>) -> Space {
         Space {
-            extents: Extents {
-                kinds: comptime!(space.extents.kinds.clone()),
-                sizes,
-            },
+            shape: comptime!(space.shape.clone()),
+            sizes,
+        }
+    }
+
+    /// Axis `p`'s tile count for a sub-tile `edge`: a `Static` axis folds to a comptime constant
+    /// (so the walk loop unrolls), a `Dynamic` axis ceil-divides its runtime size. The match is
+    /// comptime, so an all-`Static` space never touches `sizes`.
+    pub fn count(&self, #[comptime] p: usize, #[comptime] edge: usize) -> usize {
+        match comptime!(self.shape.extent_raw(self.shape.axis_at(p))) {
+            Extent::Static(n) => comptime!(n.div_ceil(edge)).runtime(),
+            Extent::Dynamic => (*self.sizes.index(p)).div_ceil(edge),
         }
     }
 }
@@ -166,7 +178,7 @@ impl Space {
                 sizes.push(concrete.extent(axis));
             }
         }
-        SpaceLaunch::new(ExtentsLaunch::new(self.extents.kinds.clone(), sizes))
+        SpaceLaunch::new(self.shape.clone(), sizes)
     }
 
     pub fn new(extents: &[(Axis, usize)]) -> Self {
@@ -187,8 +199,14 @@ impl Space {
 
     /// Construct directly from [`Extent`]s (the form `merge`/`project`/`divide` round-trip).
     pub(crate) fn from_extents(extents: &[(Axis, Extent)]) -> Self {
+        Space::from_shape(Shape::new(extents))
+    }
+
+    /// A host space of `shape`, with no runtime sizes.
+    pub(crate) fn from_shape(shape: Shape) -> Self {
         Space {
-            extents: Extents::fixed(AxisMap::new(extents)),
+            shape,
+            sizes: Sequence::new(),
         }
     }
 
@@ -213,7 +231,7 @@ impl Space {
                 (a, extent)
             })
             .collect();
-        self.extents = Extents::fixed(AxisMap::new(&entries));
+        self.shape = Shape::new(&entries);
         self
     }
 
@@ -244,14 +262,14 @@ impl Space {
                 (a, extent)
             })
             .collect();
-        self.extents = Extents::fixed(AxisMap::new(&entries));
+        self.shape = Shape::new(&entries);
         self
     }
 
     /// Every axis is [`Static`](Extent::Static), so the walk is fully comptime. True at every
     /// interior level, since a level's child is `Static`; only the top merge can be dynamic.
     pub(crate) fn is_static(&self) -> bool {
-        self.axes().all(|axis| !self.is_dynamic(axis))
+        self.shape.is_static()
     }
 
     /// The static extents, in axis order.
@@ -308,9 +326,7 @@ impl Space {
                 }
             }
         }
-        Space {
-            extents: Extents::fixed(AxisMap::new(&entries)),
-        }
+        Space::from_shape(Shape::new(&entries))
     }
 
     /// The axes in this space but not in `output`, i.e. those contracted.
@@ -405,9 +421,9 @@ impl Space {
     /// Axis `i`'s extent, preserving a dynamic extent as its runtime size. This is the form a
     /// coordinate-backed operand carries as its real-data bound across [`Space::divide`] calls.
     pub(crate) fn runtime_extent_at(&self, #[comptime] i: usize) -> usize {
-        match comptime!(self.extents.kinds.get(self.extents.kinds.axis_at(i))) {
+        match comptime!(self.shape.extent_raw(self.shape.axis_at(i))) {
             Extent::Static(n) => comptime!(n).runtime(),
-            Extent::Dynamic => *self.extents.sizes.index(i),
+            Extent::Dynamic => *self.sizes.index(i),
         }
     }
 }

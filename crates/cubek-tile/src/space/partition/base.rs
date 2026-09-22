@@ -40,58 +40,35 @@ impl PartitioningExpand {
     }
 }
 
-/// The comptime reads of a partitioning, the same on the host and on the expand type: its
-/// levels, and its space's axes read through the pair.
-macro_rules! partitioning_reads {
-    ($ty:ty) => {
-        impl $ty {
-            /// The levels, outermost first — one per loop the kernel writes.
-            pub fn levels(&self) -> &[Level] {
-                &self.levels
-            }
+/// The comptime reads of a partitioning a kernel is handed: its levels, and its space.
+impl PartitioningExpand {
+    /// The levels, outermost first: one per loop the kernel writes.
+    pub fn levels(&self) -> &[Level] {
+        &self.levels
+    }
 
-            /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
-            pub fn level(&self, i: usize) -> Level {
-                self.levels[i].clone()
-            }
-
-            /// How many levels there are, which is how deep the nest goes.
-            pub fn depth(&self) -> usize {
-                self.levels.len()
-            }
-
-            pub fn rank(&self) -> usize {
-                self.space.rank()
-            }
-
-            pub fn axis_at(&self, i: usize) -> Axis {
-                self.space.axis_at(i)
-            }
-
-            pub fn extent(&self, axis: Axis) -> usize {
-                self.space.extent(axis)
-            }
-
-            pub fn contains(&self, axis: Axis) -> bool {
-                self.space.contains(axis)
-            }
-
-            pub fn position(&self, axis: Axis) -> usize {
-                self.space.position(axis)
-            }
-
-            pub fn project(&self, axes: &[Axis]) -> Space {
-                self.space.project(axes)
-            }
-
-            pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
-                self.space.axes()
-            }
-        }
-    };
+    /// How many levels there are, which is how deep the nest goes.
+    pub fn depth(&self) -> usize {
+        self.levels.len()
+    }
 }
-partitioning_reads!(Partitioning);
-partitioning_reads!(PartitioningExpand);
+
+impl Partitioning {
+    /// The levels, outermost first: one per loop the kernel writes.
+    pub fn levels(&self) -> &[Level] {
+        &self.levels
+    }
+
+    /// Level `i`, outermost first: what a kernel states its `i`-th loop with.
+    pub fn level(&self, i: usize) -> Level {
+        self.levels[i].clone()
+    }
+
+    /// How many levels there are, which is how deep the nest goes.
+    pub fn depth(&self) -> usize {
+        self.levels.len()
+    }
+}
 
 #[cube]
 impl Partitioning {

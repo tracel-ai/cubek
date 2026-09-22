@@ -430,15 +430,16 @@ impl<T: Numeric> Tile<T> {
     /// and `out ∈ {M,N}` line up without the caller matching axes; root and window read one region.
     pub fn at(&self, region: &Region) -> Tile<T> {
         let skip = comptime!({
+            let path = &region.path;
             assert!(
-                region.base <= self.depth && self.depth < region.base + region.levels.len(),
+                path.base() <= self.depth && self.depth < path.depth(),
                 "Tile::at: this tile sits {} levels down its nest, and the region's path runs \
                  from depth {} through {} levels; state the loops the tile is missing above it",
                 self.depth,
-                region.base,
-                region.levels.len()
+                path.base(),
+                path.len()
             );
-            self.depth - region.base
+            self.depth - path.base()
         });
         self.at_from(region, skip)
     }
@@ -446,7 +447,7 @@ impl<T: Numeric> Tile<T> {
     /// The path's steps from the `i`-th down, applied in turn.
     fn at_from(&self, region: &Region, #[comptime] i: usize) -> Tile<T> {
         let sub = self.at_step(&region.step(i));
-        if comptime!(i + 1 == region.levels.len()) {
+        if comptime!(i + 1 == region.path.len()) {
             sub
         } else {
             sub.at_from(region, comptime!(i + 1))
