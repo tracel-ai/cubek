@@ -33,7 +33,7 @@ impl<EA: Float> Tile<EA> {
     ) -> Array<EA> {
         let corr = self.softmax_in_place(state, probe, mask, scale);
         match comptime!(state.share) {
-            RowShare::Unit { rows } => self.write_rows_to(p, rows),
+            RowShare::Unit { rows } => self.write_rows_to(p, rows, state.unit),
             RowShare::Plane { rows, lanes } => self.write_rows_to_planar(p, rows, lanes),
         }
         corr
@@ -76,10 +76,10 @@ impl<EA: Float> Tile<EA> {
 
         match comptime!(state.share) {
             RowShare::Unit { rows } => {
-                self.scale_and_mask(scale, probe, mask, rows);
-                self.row_max(&mut max_buf, &state.m, rows);
-                self.exp_diff(&max_buf, rows);
-                self.row_sum(&mut sum_buf, rows);
+                self.scale_and_mask(scale, probe, mask, rows, state.unit);
+                self.row_max(&mut max_buf, &state.m, rows, state.unit);
+                self.exp_diff(&max_buf, rows, state.unit);
+                self.row_sum(&mut sum_buf, rows, state.unit);
             }
             RowShare::Plane { rows, lanes } => {
                 self.scale_and_mask_planar(scale, probe, mask, rows, lanes);

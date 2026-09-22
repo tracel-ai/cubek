@@ -10,8 +10,8 @@ use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
     Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, Partitioning,
-    RegisterBlock, Resident, RowState, Semiring, Space, StageStorage, StreamFold, TileArg,
-    TileArgLaunch, TileSpec, Tiling,
+    RegisterBlock, Resident, RowShare, RowState, Semiring, Space, StageStorage, StreamFold,
+    TeamUnit, TileArg, TileArgLaunch, TileSpec, Tiling,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -73,7 +73,20 @@ fn attention_fold_kernel<W: Size>(
     let acc_space = comptime!(Space::new(&[(R, rows), (V, val_dim)]));
     let mut acc = MemData::<f32>::smem(acc_space, 1usize, StageStorage::Strided, 0usize);
     acc.zero();
-    let mut state = RowState::<f32>::new(row_space, units);
+    // One team over every unit of the cube, however many rows of it that takes: the unit's place
+    // is stated rather than read off the cube's x dim, so a team wider than x is the same team.
+    let team = TeamUnit::new(
+        (UNIT_POS_Y * CUBE_DIM_X + UNIT_POS_X) as usize,
+        CUBE_DIM as usize,
+    );
+    let rows_per_unit = comptime!(rows.div_ceil(units));
+    let mut state = RowState::<f32>::in_team(
+        row_space,
+        comptime!(RowShare::Unit {
+            rows: rows_per_unit
+        }),
+        &team,
+    );
     let share = comptime!(state.share);
     let rpu = comptime!(share.rows());
     let bound_s = bound as usize;
@@ -101,25 +114,25 @@ fn attention_fold_kernel<W: Size>(
 
         // Clip the ragged tail: no reads past the attended prefix.
         let cols_bound = max(bound_s, s0) - s0;
-        score.score_columns(&q_s, &kb, cols_bound, config);
+        score.score_columns(&q_s, &kb, cols_bound, &team, config);
         sync_cube();
 
         let probe = probe.step_s(s0);
         if comptime!(in_place) {
             let corr = score.softmax_in_place(&mut state, &probe, &mask_tile, scale);
-            acc.rescale_rows(&corr, share);
+            acc.rescale_rows(&corr, share, state.unit);
         } else {
             let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-            acc.rescale_rows(&corr, share);
+            acc.rescale_rows(&corr, share, state.unit);
         }
         sync_cube();
 
         // Stale cache beyond the attended prefix must not ride a zero
         // probability into the accumulator.
         if comptime!(in_place) {
-            acc.mix_columns(&score, &vb, cols_bound, config);
+            acc.mix_columns(&score, &vb, cols_bound, &team, config);
         } else {
-            acc.mix_columns(&p, &vb, cols_bound, config);
+            acc.mix_columns(&p, &vb, cols_bound, &team, config);
         }
         sync_cube();
     }
@@ -129,7 +142,7 @@ fn attention_fold_kernel<W: Size>(
     for ri in 0..rpu {
         recip[ri] = state.recip_l(ri);
     }
-    factors.store_rows(&recip, share);
+    factors.store_rows(&recip, share, state.unit);
     sync_cube();
     acc.scale_rows(&factors);
     sync_cube();
@@ -152,6 +165,7 @@ fn run(
     causal: bool,
     vec: usize,
     in_place: bool,
+    team_rows: usize,
 ) {
     let client: Client = cubecl::test_device().client();
     let units = units.min(client.properties().hardware.max_units_per_cube as usize);
@@ -219,7 +233,7 @@ fn run(
     attention_fold_kernel::launch(
         &client,
         CubeCount::new_single(),
-        CubeDim::new_2d(units as u32, 1),
+        CubeDim::new_2d((units / team_rows) as u32, team_rows as u32),
         vec,
         TileArgLaunch::new(
             q_handle.clone().binding().into_tensor_arg(),
@@ -294,26 +308,37 @@ fn run(
 /// The decode shape: one query per group member, no causal, ragged prefix.
 #[test]
 fn fold_decode_gqa() {
-    run((32, 4, 1, 64, 16, 16, 16), 50, false, 2, false);
+    run((32, 4, 1, 64, 16, 16, 16), 50, false, 2, false, 1);
 }
 
 /// Prefill with GQA and causal: the probe's `q_rows` row→query mapping.
 #[test]
 fn fold_prefill_gqa_causal() {
-    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, false);
+    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, false, 1);
+}
+
+/// **A team is the caller's cut, not the cube's x dim.** The prefill fold's sixteen units laid
+/// four to a row: the units past the first row still own their own columns and their own softmax
+/// rows, where a leaf reading `UNIT_POS_X` and `CUBE_DIM_X` would give every row of the cube the
+/// first row's columns and leave the rows past it unreduced. A cube read off a partitioning is a
+/// plane wide whatever the team is, which is the shape this holds.
+#[test]
+fn fold_team_wider_than_the_cubes_x() {
+    run((16, 4, 4, 24, 8, 8, 4), 13, true, 1, false, 4);
+    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, true, 2);
 }
 
 /// Scalar reads (vector width 1), block not dividing the prefix.
 #[test]
 fn fold_scalar_odd_bound() {
-    run((16, 4, 4, 24, 8, 8, 4), 13, true, 1, false);
+    run((16, 4, 4, 24, 8, 8, 4), 13, true, 1, false, 1);
 }
 
 /// The probabilities left in place over the scores on the column arm: the register mix reads the
 /// score tile as P and no P tile is written.
 #[test]
 fn fold_in_place() {
-    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, true);
+    run((8, 2, 8, 32, 8, 8, 8), 29, true, 2, true, 1);
 }
 
 /// The same fold with both matmuls on tensor cores: the score and mix leaves are the tensor-core
@@ -489,7 +514,7 @@ fn attention_fold_cmma_kernel<E: Float>(
 
             let probe = probe.step_s(s0);
             let corr = score_w.softmax_in_place(&mut state, &probe, &mask_tile, scale);
-            acc.rescale_rows(&corr, share);
+            acc.rescale_rows(&corr, share, state.unit);
             sync_plane();
 
             // The mix: `p · v`, steps at or past the prefix skipped so stale cache never rides
@@ -519,7 +544,7 @@ fn attention_fold_cmma_kernel<E: Float>(
         for ri in 0..rows_p {
             recip[ri] = state.recip_l(ri);
         }
-        acc.rescale_rows(&recip, share);
+        acc.rescale_rows(&recip, share, state.unit);
         sync_plane();
         #[unroll]
         for i in 0..comptime!(rm * vn) {
@@ -897,28 +922,28 @@ fn attention_fold_split_kernel<W: Size>(
 
         if live {
             let kb = k.at(&region);
-            score.score_columns(&q_s, &kb, cols_bound, config);
+            score.score_columns(&q_s, &kb, cols_bound, &TeamUnit::along_x(), config);
         }
         sync_cube();
 
         if live {
             let probe = probe.step_s(s0);
             let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-            acc.rescale_rows(&corr, share);
+            acc.rescale_rows(&corr, share, state.unit);
         }
         sync_cube();
 
         if live {
             let vb = v.at(&region);
-            acc.mix_columns(&p, &vb, cols_bound, config);
+            acc.mix_columns(&p, &vb, cols_bound, &TeamUnit::along_x(), config);
         }
         sync_cube();
     }
 
     // Publish each team's running state, merge across splits, drain with the
     // split weights and the normalizer folded in.
-    m_win.store_rows(&state.m, share);
-    l_win.store_rows(&state.l, share);
+    m_win.store_rows(&state.m, share, state.unit);
+    l_win.store_rows(&state.l, share, state.unit);
     sync_cube();
     factors_all.merge_splits(&m_all, &l_all, T);
     sync_cube();

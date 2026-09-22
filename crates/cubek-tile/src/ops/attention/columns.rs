@@ -1,6 +1,8 @@
 //! Attention's matmul leaves at column ownership, the arm the software instruction runs: each
-//! unit owns every `CUBE_DIM_X`-th column of the output, so a K or V block streamed along that
-//! axis is read from gmem once per team. Split teams sit on the cube's y dim (y = 1: one team).
+//! unit owns every `team.units`-th column of the output, so a K or V block streamed along that
+//! axis is read from gmem once per team. The team is the caller's ([`TeamUnit`]): a kernel whose
+//! levels deal it reads the unit's place off them, one that lays it on the cube's x dim passes
+//! [`TeamUnit::along_x`].
 //!
 //! The hardware form is the general contraction on a plane-resident accumulator
 //! ([`cmma_accumulator`](crate::Tile::cmma_accumulator)).
@@ -22,6 +24,7 @@ impl<EA: Float> Tile<EA> {
         q: &Tile<EI>,
         k: &Tile<EI>,
         cols_bound: usize,
+        team: &TeamUnit,
         #[comptime] config: RegisterBlock,
     ) {
         let rank = comptime!(self.space.rank());
@@ -53,9 +56,9 @@ impl<EA: Float> Tile<EA> {
         let mut out = self.flat_mut::<W>();
 
         let chunks = comptime!(rows.div_ceil(row_chunk));
-        let workers = CUBE_DIM_X as usize;
+        let workers = team.units;
         let bound = min(cols_bound, cols);
-        let mut c = UNIT_POS_X as usize;
+        let mut c = team.index;
         while c < bound {
             #[unroll]
             for ch in 0..chunks {
@@ -97,6 +100,7 @@ impl<EA: Float> Tile<EA> {
         p: &Tile<EP>,
         val: &Tile<EI>,
         cols_bound: usize,
+        team: &TeamUnit,
         #[comptime] config: RegisterBlock,
     ) {
         let rank = comptime!(self.space.rank());
@@ -129,8 +133,8 @@ impl<EA: Float> Tile<EA> {
         // One visit is a `(row chunk, value line)` pair; the line is the inner digit, so the
         // units sharing a chunk read consecutive lines.
         let visits = comptime!((rows / row_chunk) * v_lines);
-        let workers = CUBE_DIM_X as usize;
-        let mut visit = UNIT_POS_X as usize;
+        let workers = team.units;
+        let mut visit = team.index;
         while visit < visits {
             let base = (visit / v_lines) * row_chunk;
             let li = visit % v_lines;

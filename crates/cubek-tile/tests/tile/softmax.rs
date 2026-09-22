@@ -416,7 +416,7 @@ fn softmax_smem_acc_kernel(
             materialized: false,
         };
         let corr = score.softmax::<f32>(&mut p, &mut state, &probe, &mask_tile, scale);
-        factors.store_rows(&corr, share);
+        factors.store_rows(&corr, share, state.unit);
         sync_cube();
 
         // `O = corr·O`, every cell exactly once, whoever owns the rows.
@@ -454,7 +454,7 @@ fn softmax_smem_acc_kernel(
     for ri in 0..rpu {
         recip[ri] = state.recip_l(ri);
     }
-    factors.store_rows(&recip, share);
+    factors.store_rows(&recip, share, state.unit);
     sync_cube();
     acc.scale_rows(&factors);
     sync_cube();

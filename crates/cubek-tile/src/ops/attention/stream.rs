@@ -424,8 +424,8 @@ impl<EA: Float, N: Size> StreamFold<EA, N> {
         // The fold's own share: one worker owning every row, which is what puts
         // lane 0 in range and every other lane past it.
         let share = comptime!(this.state.share);
-        m_win.store_rows(&this.state.m, share);
-        l_win.store_rows(&this.state.l, share);
+        m_win.store_rows(&this.state.m, share, this.state.unit);
+        l_win.store_rows(&this.state.l, share, this.state.unit);
 
         let d = comptime!(this.lines * this.width);
         comptime!(assert!(

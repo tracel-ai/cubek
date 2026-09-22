@@ -55,15 +55,49 @@ impl RowShare {
     }
 }
 
+/// A unit's place in the team it shares a leaf with: its index among the team's units, and how
+/// many there are.
+///
+/// The leaves that deal one tile to a team — a unit's cyclic share of the attention columns, a
+/// unit's run of softmax rows — take this rather than reading the cube's x dim, because a team
+/// is the caller's cut and not a dimension of the cube: a team wider than a plane spans several
+/// rows of it, and a cube read off a partitioning is a plane wide whatever the team is. A kernel
+/// whose levels deal the team reads the two off them; [`along_x`](TeamUnit::along_x) is the
+/// team a kernel lays on the cube's x dim by hand.
+#[derive(CubeType, Clone, Copy)]
+pub struct TeamUnit {
+    /// This unit, among the team's.
+    pub index: usize,
+    /// Units the team holds.
+    pub units: usize,
+}
+
+#[cube]
+impl TeamUnit {
+    /// This unit in a team of `units`, at `index`.
+    pub fn new(index: usize, units: usize) -> TeamUnit {
+        TeamUnit { index, units }
+    }
+
+    /// A team laid along the cube's x dim: the whole cube where its y dim is one, one split
+    /// team per row of it otherwise.
+    pub fn along_x() -> TeamUnit {
+        TeamUnit {
+            index: UNIT_POS_X as usize,
+            units: CUBE_DIM_X as usize,
+        }
+    }
+}
+
 /// The row of the tile this worker's `ri`-th owned row is: the ownership rule, stated once.
 ///
-/// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit along the cube's
-/// x dim. A plane owns every row of the tile it is handed: the kernel windows the tile per plane
-/// before the call, so no leaf indexes planes.
+/// A unit owns a run of `rows` rows of the tile it is handed, `rows` per unit of its team, unit
+/// `unit` starting at `unit * rows`. A plane owns every row of the tile it is handed: the kernel
+/// windows the tile per plane before the call, so no leaf indexes planes.
 #[cube]
-pub fn owned_row(#[comptime] share: RowShare, ri: usize) -> usize {
+pub fn owned_row(#[comptime] share: RowShare, unit: usize, ri: usize) -> usize {
     match comptime!(share) {
-        RowShare::Unit { rows } => UNIT_POS_X as usize * rows + ri,
+        RowShare::Unit { rows } => unit * rows + ri,
         RowShare::Plane { rows: _, lanes: _ } => ri,
     }
 }
@@ -92,6 +126,9 @@ pub struct RowState<E: Float> {
     /// holds the same `(m, l)`, since a plane-reduced score is plane-uniform.
     #[cube(comptime)]
     pub share: RowShare,
+    /// This unit's index in the team sharing the tile, which a unit-owned row is numbered from
+    /// ([`owned_row()`]). Unread under [`RowShare::Plane`].
+    pub unit: usize,
 }
 
 /// What one streamed [`absorb`](RowState::absorb) tells the row's
@@ -129,8 +166,19 @@ impl<E: Float> RowState<E> {
         RowState::<E>::of(space, comptime!(RowShare::Plane { rows, lanes }))
     }
 
-    /// The state one worker holds, at whatever [`RowShare`] the caller states.
+    /// The state one worker holds, at whatever [`RowShare`] the caller states, its team laid
+    /// along the cube's x dim ([`TeamUnit::along_x`]).
     pub fn of(#[comptime] space: Space, #[comptime] share: RowShare) -> RowState<E> {
+        RowState::<E>::in_team(space, share, &TeamUnit::along_x())
+    }
+
+    /// [`of`](RowState::of) for a worker whose place in its team the caller states — what a
+    /// kernel whose levels deal the team reads off them.
+    pub fn in_team(
+        #[comptime] space: Space,
+        #[comptime] share: RowShare,
+        team: &TeamUnit,
+    ) -> RowState<E> {
         let rows = comptime!(share.rows());
         let mut m = Array::new(rows);
         let mut l = Array::new(rows);
@@ -138,7 +186,13 @@ impl<E: Float> RowState<E> {
             m[i] = E::min_value();
             l[i] = E::from_int(0);
         }
-        RowState::<E> { m, l, space, share }
+        RowState::<E> {
+            m,
+            l,
+            space,
+            share,
+            unit: team.index,
+        }
     }
 
     /// Absorb one block's row maxes and sums: `m = max_buf`,
