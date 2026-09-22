@@ -38,8 +38,8 @@ impl<T: Numeric> Tile<T> {
         let split = comptime!(FoldWalk::of(&space, &b.space, width, folds));
         let size!(W) = width;
         let size!(F) = folds;
-        let a_reader = a.nd_split_packed::<W>();
-        let b_reader = b.nd_split_packed::<F>();
+        let a_reader = a.nd_split::<W>();
+        let b_reader = b.nd_split::<F>();
 
         let a_fold_at = comptime!(a.space.position(split.axis));
         let extents = const_coords(comptime!(split.groups.clone()));

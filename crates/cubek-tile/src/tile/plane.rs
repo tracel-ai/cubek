@@ -131,12 +131,13 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// The tile's `(m, n)`.
+    /// The tile's `(m, n)`, which only a cmma tile carries: the two other encodings size
+    /// themselves off the instruction and never bounce through a scratch.
     pub(crate) fn shape(&self) -> comptime_type!((usize, usize)) {
         match self {
             PlaneTile::Cmma(d) => comptime!(d.shape),
             PlaneTile::Mma(_) | PlaneTile::Register(_) => {
-                panic!("PlaneTile::shape: only a cmma tile bounces through a scratch")
+                panic!("PlaneTile::shape: only a cmma tile states its shape")
             }
         }
     }
@@ -309,6 +310,59 @@ impl<T: Numeric> PlanePartition<T> {
             self.n_tiles
         ));
         self.at(0usize, 0usize)
+    }
+
+    /// One level down: the `sub_m × sub_n` block of fragments `step` selects, or the one
+    /// fragment where the block is `1 × 1`.
+    ///
+    /// A partition selects under comptime coordinates (an unrolled walk folds regions to
+    /// constants). An uncut level selects the whole partition. A runtime coordinate reaches here
+    /// only from a `Dynamic` (top, instance) level, which cuts nothing on `m`/`n` and passes the
+    /// whole partition down to the static levels below; a rolled *cut* is refused.
+    pub(crate) fn at_step(&self, step: &Step, #[comptime] space: Space) -> TileKind<T> {
+        let edges = comptime!(MatrixAxes::edges(&space));
+        let a0 = comptime!(space.axis_at(edges.row_split));
+        let a1 = comptime!(space.axis_at(edges.col_split));
+        // A single-tile static axis (k-step, no m/n cut) folds to constant `0`, so a cut axis
+        // takes its constant digit and an uncut one selects the whole partition. A `Dynamic`
+        // axis (top level only) stays runtime, yielding `None`.
+        let mi = if comptime!(step.level.single_static_tile(&space, a0)) {
+            comptime!(Some(0u64))
+        } else {
+            step.coord(a0).constant()
+        };
+        let ni = if comptime!(step.level.single_static_tile(&space, a1)) {
+            comptime!(Some(0u64))
+        } else {
+            step.coord(a1).constant()
+        };
+        match comptime!(mi.zip(ni)) {
+            Some((c0, c1)) => {
+                let (sub_m, sub_n) = comptime!({
+                    let (cm, cn) = (step.level.tiles(&space, a0), step.level.tiles(&space, a1));
+                    assert!(
+                        self.m_tiles.is_multiple_of(cm) && self.n_tiles.is_multiple_of(cn),
+                        "Tile::at: the level's grid must divide the partition"
+                    );
+                    (self.m_tiles / cm, self.n_tiles / cn)
+                });
+                let mi = comptime!(c0 as usize * sub_m);
+                let ni = comptime!(c1 as usize * sub_n);
+                if comptime!(sub_m == 1 && sub_n == 1) {
+                    TileKind::new_PlaneTile(self.at(mi, ni))
+                } else {
+                    TileKind::new_PlanePartition(self.window(mi, ni, sub_m, sub_n))
+                }
+            }
+            None => {
+                comptime!(assert!(
+                    !step.level.cuts_tiles(&space),
+                    "Tile::at: a level that cuts a partition must be walked with compile-time \
+                     coordinates (an unrolled walk)"
+                ));
+                TileKind::new_PlanePartition(self.clone())
+            }
+        }
     }
 
     /// The `m_tiles × n_tiles` sub-partition at `(mi, ni)` (handle clones, so its tiles are the
@@ -624,36 +678,27 @@ impl<T: Numeric> PlanePartition<T> {
     /// Zero every tile.
     pub(crate) fn zero(&self) {
         #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let mut frag = self.at(mi, ni);
-                frag.zero();
-            }
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            let mut frag = self.frags.index(i).clone();
+            frag.zero();
         }
     }
 
     /// Initialize every tile with `val`.
     pub(crate) fn init(&self, val: T) {
         #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let mut frag = self.at(mi, ni);
-                frag.init(val);
-            }
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            let mut frag = self.frags.index(i).clone();
+            frag.init(val);
         }
     }
 
     /// Multiply every tile by `factor`.
     pub(crate) fn scale(&self, factor: T) {
         #[unroll]
-        for mi in 0..comptime!(self.m_tiles) {
-            #[unroll]
-            for ni in 0..comptime!(self.n_tiles) {
-                let mut frag = self.at(mi, ni);
-                frag.scale(factor);
-            }
+        for i in 0..comptime!(self.m_tiles * self.n_tiles) {
+            let mut frag = self.frags.index(i).clone();
+            frag.scale(factor);
         }
     }
 }

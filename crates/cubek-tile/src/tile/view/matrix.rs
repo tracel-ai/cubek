@@ -444,128 +444,23 @@ pub(crate) fn projected_whole_matrix(
 
 #[cube]
 impl<T: Numeric> Tile<T> {
-    /// The `i`-th batch matrix over `Vector<T, W>` lines (`W` = [`width`](Tile::width)).
+    /// The `i`-th batch matrix over the trailing two axes, in `Vector<T, W>` lines (`W` =
+    /// [`vector_size`](Tile::vector_size)), read through whatever [`Packing`] this tile carries.
     pub fn matrix<W: Size>(&self, i: usize) -> MatrixView<'_, Vector<T, W>> {
-        let vector_size = self.vector_size();
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let bound = g.extent();
-                let layout = projected_batch_matrix(
-                    &bound,
-                    comptime!(self.space.clone()),
-                    comptime!(g.projection.clone()),
-                    g.map.clone(),
-                    vector_size,
-                    comptime!(MatrixAxes::trailing_pair(&self.space)),
-                    i,
-                );
-                g.masked::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::matrix: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::matrix: a tma source has no element view"),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!("Tile::matrix: a procedural tile and the plane's lanes have no memory view")
-            }
-        }
+        self.matrix_packed::<W>(comptime!(MatrixAxes::trailing_pair(&self.space)), i)
     }
 
-    /// Mutable version of [`matrix`](Tile::matrix). Refused where two logical positions can share
-    /// a cell, which is the only way a write aliases.
-    pub(crate) fn matrix_mut<W: Size>(&mut self, i: usize) -> MatrixViewMut<'_, Vector<T, W>> {
-        let vector_size = self.vector_size();
-        match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                comptime!(assert!(
-                    g.projection.composition() != Composition::Overlapping,
-                    "Tile::matrix_mut: an overlapping operand aliases under a write"
-                ));
-                let bound = g.extent();
-                let layout = projected_batch_matrix(
-                    &bound,
-                    comptime!(self.space.clone()),
-                    comptime!(g.projection.clone()),
-                    g.map.clone(),
-                    vector_size,
-                    comptime!(MatrixAxes::trailing_pair(&self.space)),
-                    i,
-                );
-                g.masked_mut::<W, Coords2d, ProjectedMatrix>(layout)
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::matrix_mut: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::matrix_mut: a tma source has no element view"),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!("Tile::matrix_mut: a procedural tile and the plane's lanes are not writable")
-            }
-        }
-    }
-
-    /// The `i`-th batch matrix, read through whatever [`Packing`] this tile carries.
-    ///
-    /// The one place a packing becomes a storage element: every leaf used to re-derive the
-    /// `i8`/`u32` choice from a bare factor, and the return type never mentions it.
+    /// The `i`-th batch matrix over the axes `axes` names, read through whatever [`Packing`]
+    /// this tile carries: a plain tile as it stands, a packed one unpacked at the read, a
+    /// quantized one dequantized per its scheme, with no dequantize-into-`f32` fill.
     pub fn matrix_packed<W: Size>(
         &self,
         #[comptime] axes: MatrixAxes,
         i: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
-        let served = self.vector_size();
-        let packing = self.packing();
-        let physical = comptime!(packing.physical(served));
-        match comptime!(packing) {
-            Packing::Plain => {
-                let size!(WP) = physical;
-                self.matrix_transparent::<T, WP, W>(axes, i)
-            }
-            Packing::Native => {
-                let size!(WP) = physical;
-                self.matrix_transparent::<i8, WP, W>(axes, i)
-            }
-            Packing::Packed { field: _ } => {
-                let size!(WP) = physical;
-                self.matrix_transparent::<u32, WP, W>(axes, i)
-            }
-        }
-    }
-
-    /// [`matrix_packed`](Tile::matrix_packed) at a stated storage element `I` and physical line
-    /// `WP`: a plain tile is read as it stands, a quantized one dequantizes each `(row, col)` per
-    /// its scheme, with no dequantize-into-`f32` fill.
-    pub fn matrix_transparent<I: Numeric, WP: Size, W: Size>(
-        &self,
-        #[comptime] axes: MatrixAxes,
-        i: usize,
-    ) -> MatrixView<'_, Vector<T, W>> {
-        let vector_size = self.vector_size();
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let bound = g.extent();
-                let layout = projected_batch_matrix(
-                    &bound,
-                    comptime!(self.space.clone()),
-                    comptime!(g.projection.clone()),
-                    g.map.clone(),
-                    vector_size,
-                    axes,
-                    i,
-                );
-                g.matrix_transparent::<I, WP, W, ProjectedMatrix>(layout)
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::matrix_transparent: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => {
-                panic!("Tile::matrix_transparent: a tma source has no element view")
-            }
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!(
-                    "Tile::matrix_transparent: a procedural tile and the plane's lanes have no memory view"
-                )
-            }
-        }
+        let g = self.mem("matrix");
+        let layout = g.batch_matrix(comptime!(self.space.clone()), axes, i);
+        g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
     /// The fragment's grouped matrix, read through whatever [`Packing`] this tile carries. The
@@ -577,59 +472,23 @@ impl<T: Numeric> Tile<T> {
         #[comptime] rows: usize,
         #[comptime] cols: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
-        let served = self.vector_size();
-        let packing = self.packing();
-        let physical = comptime!(packing.physical(served));
-        match comptime!(packing) {
-            Packing::Plain => {
-                let size!(WP) = physical;
-                self.fragment_matrix::<T, WP, W>(rows, cols)
-            }
-            Packing::Native => {
-                let size!(WP) = physical;
-                self.fragment_matrix::<i8, WP, W>(rows, cols)
-            }
-            Packing::Packed { field: _ } => {
-                let size!(WP) = physical;
-                self.fragment_matrix::<u32, WP, W>(rows, cols)
-            }
-        }
+        let g = self.mem("fragment_matrix");
+        let layout = g.whole_matrix(comptime!(self.space.clone()), rows, cols);
+        g.packed::<W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 
-    /// [`fragment_matrix_packed`](Tile::fragment_matrix_packed) at a stated storage element:
-    /// several logical axes may flatten into one edge, so an operand whose contraction spans its
-    /// taps *and* its channels still has a `k` edge, and a gathered one reads it straight out of
-    /// its compacted stage.
+    /// [`fragment_matrix_packed`](Tile::fragment_matrix_packed) at a stated storage element `I`
+    /// and physical line `WP`: several logical axes may flatten into one edge, so an operand
+    /// whose contraction spans its taps *and* its channels still has a `k` edge, and a gathered
+    /// one reads it straight out of its compacted stage.
     pub fn fragment_matrix<I: Numeric, WP: Size, W: Size>(
         &self,
         #[comptime] rows: usize,
         #[comptime] cols: usize,
     ) -> MatrixView<'_, Vector<T, W>> {
-        let vector_size = self.vector_size();
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                let layout = projected_whole_matrix(
-                    comptime!(self.space.clone()),
-                    comptime!(g.projection.clone()),
-                    g.map.clone(),
-                    vector_size,
-                    rows,
-                    cols,
-                );
-                g.matrix_transparent::<I, WP, W, ProjectedMatrix>(layout)
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::fragment_matrix: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => {
-                panic!("Tile::fragment_matrix: a tma source has no element view")
-            }
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!(
-                    "Tile::fragment_matrix: a procedural tile and the plane's lanes have no memory view"
-                )
-            }
-        }
+        let g = self.mem("fragment_matrix");
+        let layout = g.whole_matrix(comptime!(self.space.clone()), rows, cols);
+        g.transparent::<I, WP, W, Coords2d, ProjectedMatrix>(layout, comptime!(Guard::Checked))
     }
 }
 

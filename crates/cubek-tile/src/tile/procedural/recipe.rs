@@ -164,6 +164,7 @@ impl<T: Numeric> VirtualRecipe<T> {
     }
 
     /// Whether one separable factor reads `axis` from its recipe coordinates.
+    #[allow(dead_code)] // Reached through its expand, from [`ProceduralData::factor_reads_axis`].
     pub(crate) fn factor_reads_axis(&self, _factor: usize, _axis: Axis) -> comptime_type!(bool) {
         unexpanded!()
     }

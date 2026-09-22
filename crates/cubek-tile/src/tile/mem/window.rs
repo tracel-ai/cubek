@@ -200,6 +200,26 @@ pub(crate) struct SourceWindow {
 
 #[cube]
 impl SourceWindow {
+    /// Whether `pos` of the staged window whose origin is `stage_origin` lands inside the source
+    /// on the selected physical axes: the factor-local form, as [`Window::axes_in_bounds`] is.
+    #[allow(clippy::needless_range_loop)] // `#[unroll]` requires a range loop.
+    pub(crate) fn axes_in_bounds(
+        &self,
+        stage_origin: &Coords<i32>,
+        pos: &CoordsDyn,
+        #[comptime] axes: Vec<usize>,
+    ) -> bool {
+        let mut valid = true;
+        #[unroll]
+        for a in 0..comptime!(axes.len()) {
+            let i = comptime!(axes[a]);
+            if comptime!(self.boundaries.get(i).copied().flatten() == Some(Boundary::Zero)) {
+                valid = valid && self.axis_in_bounds(stage_origin.at(i), pos[i], i);
+            }
+        }
+        valid
+    }
+
     /// Whether one physical coordinate of the staged window lands inside the source.
     ///
     /// `stage_origin` is the staged window's own origin on this axis and `pos` the offset within

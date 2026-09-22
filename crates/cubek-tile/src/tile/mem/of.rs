@@ -272,37 +272,6 @@ impl<T: Numeric> Tile<T> {
         // The operand addresses *coordinates*; the buffer's storage tiling is the layout's business
         // ([`positional`] below), and splitting a coordinate into digits is what it does with it.
         let coords = comptime!(projection.untiled());
-        // The scales are gridded over the operand's *logical* axes (`strides` and `block` below
-        // are one entry per logical axis), while `at` re-windows them over the physical ones. The
-        // two ranks coincide for every direct operand, tiled or not, and diverge under a gather.
-        comptime!(assert!(
-            quant.is_none() || coords.is_direct(),
-            "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
-             logical axes, which its buffer's physical axes no longer match"
-        ));
-        let scales_given = coefficients.len();
-        comptime!(assert!(
-            scales_given == coords.dynamic_coefficient_count(),
-            "Tile::of: the projection has {} Dynamic coefficients and divisors but \
-             {scales_given} were given",
-            coords.dynamic_coefficient_count()
-        ));
-        let offsets_given = offsets.len();
-        comptime!(assert!(
-            offsets_given == coords.dynamic_offset_count(),
-            "Tile::of: the projection has {} Dynamic offsets but {offsets_given} were given",
-            coords.dynamic_offset_count()
-        ));
-        // Free for a bound operand, which builds its geometry off the projection's own rank; the
-        // check is for a *stated* one ([`of_sink`](Tile::of_sink)), where too few dims panic on an
-        // opaque `Sequence` index below and too many silently ignore their tail.
-        let dims_given = geometry.shape.len();
-        let physical_rank = comptime!(projection.physical_rank());
-        comptime!(assert!(
-            dims_given == physical_rank,
-            "Tile::of: the projection addresses {physical_rank} physical dims but {dims_given} \
-             were given"
-        ));
         // How the buffer holds its values: what a quantized operand's scheme says, else what the
         // spec states. One statement, whichever door minted it, so nothing below asks twice.
         let packing = #[comptime]
@@ -310,39 +279,27 @@ impl<T: Numeric> Tile<T> {
             ComptimeOption::Some(info) => comptime!(scheme_packing(info.scheme)),
             ComptimeOption::None => comptime!(spec.packing),
         };
-        comptime!(assert!(
-            quant.is_none() || spec.packing == Packing::Plain,
-            "Tile::of: a quantized operand's scheme already states how its values are stored, so \
-             its spec may not state a packing too"
-        ));
         // A packed store serves `factor` values per stored element, on top of the binding's own
         // line width; a sub-word store serves its stated width out of one word.
         let vector_size = comptime!(packing.served(bound_width));
-        // The operand's own contract, checked here rather than at `TileSpec` construction because
-        // it turns on the served width, which only this call, not the spec, ever knows. Same for a
-        // padded stage width, which `StridedTileSource` already checked for the specs it builds;
-        // this catches hand-built ones too.
-        comptime!(projection.validate(vector_size));
-        // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
-        // and the space are both in hand.
-        comptime!(projection.validate_composition(|axis| space.extent(axis)));
-        let coord_rank = comptime!(projection.coordinate_rank());
-        comptime!(assert!(
-            spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
-            "Tile::of: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
-            spec.boundaries.len()
+        let dims_given = geometry.shape.len();
+        let coefficients_given = coefficients.len();
+        let offsets_given = offsets.len();
+        comptime!(check_operand(
+            &space,
+            &spec,
+            &coords,
+            quant.is_some(),
+            vector_size,
+            Given {
+                dims: dims_given,
+                coefficients: coefficients_given,
+                offsets: offsets_given,
+            }
         ));
-        // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
-        // source builder derives that per-axis mask; this catches hand-built specs too.
-        comptime!(assert!(
-            vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
-            "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
-             {vector_size})"
-        ));
-        // `physical_rank` above, off the projection rather than the space: a gathered operand's
-        // buffer has fewer physical axes than its logical space has axes, and a storage-tiled one
-        // has more.
-        let rank = physical_rank;
+        // Off the projection rather than the space: a gathered operand's buffer has fewer
+        // physical axes than its logical space has axes, and a storage-tiled one has more.
+        let rank = comptime!(projection.physical_rank());
         let last = comptime!(rank - 1);
         let w = comptime!(vector_size as u32);
         let mut physical_shape = Coords::<u32>::new();
@@ -429,6 +386,87 @@ impl<T: Numeric> Tile<T> {
             levels: comptime!(Vec::new()),
         }
     }
+}
+
+/// What a call to `of` handed over beside the statement: the runtime lists whose lengths the
+/// statement fixes.
+#[derive(Clone, Copy)]
+struct Given {
+    /// Physical dims of the geometry.
+    dims: usize,
+    /// Dynamic coefficients and divisors.
+    coefficients: usize,
+    /// Dynamic offsets.
+    offsets: usize,
+}
+
+/// The contract an operand's statement owes, refused at `of` on the host: every check here is
+/// comptime, and the one place the spec, the projection, the space and the served width are all
+/// in hand. `coords` is the projection in coordinate space ([`Projection::untiled`]).
+fn check_operand(
+    space: &Space,
+    spec: &TileSpec,
+    coords: &Projection,
+    quantized: bool,
+    vector_size: usize,
+    given: Given,
+) {
+    let projection = &spec.projection;
+    // The scales are gridded over the operand's *logical* axes, while `at` re-windows them over
+    // the physical ones. The two ranks coincide for every direct operand, tiled or not, and
+    // diverge under a gather.
+    assert!(
+        !quantized || coords.is_direct(),
+        "Tile::of: a gathered operand cannot be quantized; its scale grid is shaped over its \
+         logical axes, which its buffer's physical axes no longer match"
+    );
+    assert!(
+        !quantized || spec.packing == Packing::Plain,
+        "Tile::of: a quantized operand's scheme already states how its values are stored, so \
+         its spec may not state a packing too"
+    );
+    assert!(
+        given.coefficients == coords.dynamic_coefficient_count(),
+        "Tile::of: the projection has {} Dynamic coefficients and divisors but {} were given",
+        coords.dynamic_coefficient_count(),
+        given.coefficients
+    );
+    assert!(
+        given.offsets == coords.dynamic_offset_count(),
+        "Tile::of: the projection has {} Dynamic offsets but {} were given",
+        coords.dynamic_offset_count(),
+        given.offsets
+    );
+    // Free for a bound operand, which builds its geometry off the projection's own rank; the
+    // check is for a *stated* one ([`of_sink`](Tile::of_sink)), where too few dims panic on an
+    // opaque `Sequence` index and too many silently ignore their tail.
+    assert!(
+        given.dims == projection.physical_rank(),
+        "Tile::of: the projection addresses {} physical dims but {} were given",
+        projection.physical_rank(),
+        given.dims
+    );
+    // The operand's own contract, checked here rather than at `TileSpec` construction because
+    // it turns on the served width, which only this call, not the spec, ever knows. Same for a
+    // padded stage width, which `StridedTileSource` already checked for the specs it builds;
+    // this catches hand-built ones too.
+    projection.validate(vector_size);
+    // A `Disjoint` claim is about the axes' extents, and this is the one place the projection
+    // and the space are both in hand.
+    projection.validate_composition(|axis| space.extent(axis));
+    let coord_rank = projection.coordinate_rank();
+    assert!(
+        spec.boundaries.is_empty() || spec.boundaries.len() == coord_rank,
+        "Tile::of: boundaries rank ({}) does not match coordinate rank ({coord_rank})",
+        spec.boundaries.len()
+    );
+    // A clamped vector line is only valid if the innermost coordinate axis is not clamped. The
+    // source builder derives that per-axis mask; this catches hand-built specs too.
+    assert!(
+        vector_size == 1 || spec.boundaries.last().copied().flatten() != Some(Boundary::Clamp),
+        "Tile::of: Boundary::Clamp cannot clamp the vectorized innermost axis (served at \
+         {vector_size})"
+    );
 }
 
 /// [`full_window`] for the top gmem tile, over the *physical* axes, where an axis may be

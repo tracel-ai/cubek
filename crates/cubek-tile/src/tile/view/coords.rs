@@ -1,5 +1,5 @@
 //! The coordinate arithmetic the tile's [`Layout`](cubecl::std::tensor::layout::Layout)s share:
-//! unraveling a flat index over a group of extents, joining two groups, and the box test each
+//! unraveling a flat index over a group of extents, joining groups, and the box test each
 //! layout answers `is_in_bounds` with. Kept apart from the layouts themselves so a reshaper and a
 //! projection reach the same `unravel` rather than each spelling one out.
 
@@ -57,24 +57,7 @@ pub(crate) fn unravel_const(#[comptime] extents: Vec<usize>, i: u32) -> Coords<u
     out
 }
 
-/// Concatenates two coordinate lists into dynamic coordinates.
-#[cube]
-pub(crate) fn concat(leading: &Coords<u32>, trailing: &Coords<u32>) -> CoordsDyn {
-    let mut out = CoordsDyn::new();
-
-    #[unroll]
-    for p in 0..leading.len() {
-        out.push(leading.at(p));
-    }
-    #[unroll]
-    for p in 0..trailing.len() {
-        out.push(trailing.at(p));
-    }
-
-    out
-}
-
-/// [`concat`] over three groups, which is what a matrix over `[batch…, row…, col…]` assembles.
+/// Concatenates three coordinate groups, which is what a matrix over `[batch…, row…, col…]` assembles.
 #[cube]
 pub(crate) fn concat3(batches: &Coords<u32>, rows: &Coords<u32>, cols: &Coords<u32>) -> CoordsDyn {
     let mut out = CoordsDyn::new();

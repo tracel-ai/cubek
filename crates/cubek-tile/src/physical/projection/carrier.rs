@@ -50,11 +50,6 @@ impl Projection {
         self.coefficient_base(self.physical_rank())
     }
 
-    /// Whether any physical axis's divisor is only known at runtime.
-    pub(crate) fn has_dynamic_divisors(&self) -> bool {
-        self.axis_maps().any(|m| m.divisor().is_dynamic())
-    }
-
     /// Where physical axis `pa`'s offset sits in the runtime offset carrier, or `None` when it is
     /// [`Static`](Offset::Static). Offsets ride their own signed carrier, so this order is
     /// independent of [`dynamic_scale_index`](Self::dynamic_scale_index)'s.
@@ -73,11 +68,6 @@ impl Projection {
     /// How many offsets are [`Dynamic`](Offset::Dynamic): the length of the offset carrier.
     pub(crate) fn dynamic_offset_count(&self) -> usize {
         self.axis_maps().filter(|m| m.offset().is_dynamic()).count()
-    }
-
-    /// Whether any coefficient, offset or divisor is only known at runtime.
-    pub(crate) fn has_dynamic(&self) -> bool {
-        self.has_dynamic_scales() || self.dynamic_offset_count() > 0 || self.has_dynamic_divisors()
     }
 
     /// Whether any coefficient is only known at runtime.

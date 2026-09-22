@@ -30,6 +30,8 @@ pub enum Role {
 pub struct Ring<T: CubeType> {
     pub(crate) slots: Sequence<Staging<T>>,
     pub(crate) sources: T,
+    // Read by the schedule ([`pipelined`]) at expand level only.
+    #[allow(dead_code)]
     #[cube(comptime)]
     pub(crate) depth: usize,
     /// Planes of the cube that fill these slots and do nothing else ([`Level::filled_by`]).
@@ -79,12 +81,6 @@ impl<T: CubeType> Ring<T> {
     /// slots even when the walk itself stays rolled.
     pub fn slot_mut(&mut self, #[comptime] index: usize) -> &mut Staging<T> {
         self.slots.index_mut(index)
-    }
-
-    /// Whether any operand across the ring is fixed across the walk. Uniform across slots since
-    /// all slots share one plan.
-    pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
-        self.slots.index(FIRST_SLOT).has_fixed()
     }
 }
 

@@ -43,6 +43,7 @@ pub struct ProceduralData<T: Numeric> {
 
 #[cube]
 impl<T: Numeric> ProceduralData<T> {
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::procedural`].
     pub(crate) fn new_virtual(#[comptime] space: Space, recipe: VirtualRecipe<T>) -> Self {
         let mut origin = Coords::<u32>::new();
         let mut bound = Coords::<u32>::new();
@@ -120,6 +121,7 @@ impl<T: Numeric> ProceduralData<T> {
         self.recipe.factors()
     }
 
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::factor_dependencies`].
     pub(crate) fn factor_reads_axis(
         &self,
         #[comptime] factor: usize,
@@ -165,6 +167,7 @@ impl<T: Numeric> ProceduralData<T> {
         }
     }
 
+    #[allow(dead_code)] // Reached through its expand, from the `ViewOperationsExpand` impl below.
     pub(crate) fn evaluate_dyn(&self, pos: &CoordsDyn, #[comptime] space: Space) -> T {
         let mut coords = Coords::<u32>::new();
         #[unroll]

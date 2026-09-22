@@ -20,10 +20,10 @@
 //! [`direct`](Projection::direct) is the degenerate one every current operand uses.
 //!
 //! A projection is written one buffer dim at a time ([`Projection::dims`], in [`build`]) and,
-//! once the buffer's real extents and strides are in hand, asked which axis is contiguous, how
-//! far an axis steps, and whether the dims alias or run out of order ([`query`]). It holds no
-//! extents and no strides of its own: which dim carries `k` is a fact about the operand, and
-//! how far `k` steps is a fact about the allocation, and they arrive from different places.
+//! once the buffer's real extents and strides are in hand, asked which axis is contiguous and
+//! whether the dims alias ([`query`]). It holds no extents and no strides of its own: which dim
+//! carries `k` is a fact about the operand, and how far `k` steps is a fact about the
+//! allocation, and they arrive from different places.
 
 mod base;
 mod build;
@@ -39,7 +39,6 @@ pub use build::*;
 pub use compact::*;
 pub use fold::*;
 pub use map::*;
-pub use query::*;
 pub use tiling::*;
 
 /// Shared by the two places a set of coefficients has a common factor worth taking out:

@@ -8,9 +8,6 @@ use serde::{Deserialize, Serialize};
 /// Inline capacity for per-axis allocations in small vectors (spills to heap if exceeded).
 pub(crate) const MAX_AXES: usize = 6;
 
-/// Inline capacity for per-level allocations in small vectors (spills to heap if exceeded).
-pub(crate) const MAX_LEVELS: usize = 6;
-
 /// A labeled axis. The `u8` is a client-assigned index, not a position.
 ///
 /// Serialized as that index, so a client's persisted record (an autotune key naming the axis an
@@ -50,6 +47,11 @@ impl<T: Copy> ByAxis<T> {
 
     pub fn axis_at(&self, i: usize) -> Axis {
         self.entries[i].0
+    }
+
+    /// The axes in declared order.
+    pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
+        self.entries.iter().map(|&(a, _)| a)
     }
 
     /// The values in axis order.

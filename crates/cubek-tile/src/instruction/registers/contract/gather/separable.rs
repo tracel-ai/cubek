@@ -48,7 +48,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
     let matrices = comptime!(problem.block.matrices());
     let batch_extents = comptime!(problem.block.batch_extents());
 
-    let rhs_reader = rhs.nd_split_packed::<V>();
+    let rhs_reader = rhs.nd_split::<V>();
     let rhs_check = comptime!(rhs_reader.view.check);
     let factors = comptime!(
         problem

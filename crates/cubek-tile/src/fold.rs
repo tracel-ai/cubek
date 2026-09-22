@@ -64,10 +64,6 @@ impl Fold for i32 {}
 /// by chaining fresh values, where a `let mut` accumulator would land in a mutable
 /// slot and erase constness.
 pub(crate) trait FoldSeq<C: Int>: Sized {
-    /// Product of the picked elements (empty picks fold to `1`).
-    fn fproduct(&self, _picks: Vec<usize>) -> C {
-        unexpanded!()
-    }
     /// Sum of the picked elements (empty picks fold to `0`).
     fn fsum(&self, _picks: Vec<usize>) -> C {
         unexpanded!()
@@ -205,21 +201,10 @@ impl<C: Int> FoldExpand<C> for NativeExpand<C> {
 
 /// Expand twin of [`FoldSeq`]; blanket on integer sequences.
 pub(crate) trait FoldSeqExpand<C: Int>: Sized {
-    fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C>;
     fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C>;
 }
 
 impl<C: Int> FoldSeqExpand<C> for SequenceExpand<C> {
-    fn __expand_fproduct_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
-        let mut acc: NativeExpand<C> =
-            ExpandValue::constant(1u64.into(), C::elem_type(scope)).into();
-        for i in picks {
-            let e = *self.__expand_index_method(scope, NativeExpand::from_lit(scope, i));
-            acc = fold_mul(scope, acc, e);
-        }
-        acc
-    }
-
     fn __expand_fsum_method(&self, scope: &Scope, picks: Vec<usize>) -> NativeExpand<C> {
         let mut acc: NativeExpand<C> =
             ExpandValue::constant(0u64.into(), C::elem_type(scope)).into();

@@ -1,8 +1,7 @@
 //! The layouts a leaf reads a [`Tile`](crate::Tile) through, and the views that wrap them:
-//! flat, 2-D matrix, gathered, packed, masked, cast, and the accumulating one.
+//! flat, 2-D matrix, gathered, packed, masked, and the accumulating one.
 
 mod accumulate;
-mod cast;
 mod coords;
 mod flat;
 mod masked;
@@ -12,7 +11,6 @@ mod projected;
 mod quant;
 
 pub(crate) use accumulate::*;
-pub(crate) use cast::*;
 // Crate-internal helpers, so this re-export carries no public item.
 pub(crate) use coords::*;
 pub use flat::*;

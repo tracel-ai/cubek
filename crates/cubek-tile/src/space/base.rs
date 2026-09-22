@@ -52,22 +52,6 @@ impl Extents {
             sizes: Sequence::new(),
         }
     }
-
-    fn get(&self, axis: Axis) -> Extent {
-        self.kinds.get(axis)
-    }
-    fn axis_at(&self, i: usize) -> Axis {
-        self.kinds.axis_at(i)
-    }
-    fn position(&self, axis: Axis) -> usize {
-        self.kinds.position(axis)
-    }
-    fn contains(&self, axis: Axis) -> bool {
-        self.kinds.contains(axis)
-    }
-    fn len(&self) -> usize {
-        self.kinds.len()
-    }
 }
 
 #[cube]
@@ -105,7 +89,7 @@ impl std::hash::Hash for Space {
 }
 
 /// The comptime extents of a runtime `Space`, read as the host reads a `Space`: what
-/// `comptime!(space.rank())` and the like resolve to on the space a kernel is handed.
+/// `comptime!(space.clone())` resolves to on the space a kernel is handed.
 impl SpaceExpand {
     pub(crate) fn comptime(&self) -> Space {
         Space {
@@ -117,43 +101,64 @@ impl SpaceExpand {
     pub fn clone(&self) -> Space {
         self.comptime()
     }
-
-    pub fn rank(&self) -> usize {
-        self.extents.kinds.len()
-    }
-
-    pub fn axis_at(&self, i: usize) -> Axis {
-        self.extents.kinds.axis_at(i)
-    }
-
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.comptime().extent(axis)
-    }
-
-    pub fn extent_at(&self, i: usize) -> usize {
-        self.comptime().extent_at(i)
-    }
-
-    pub fn is_dynamic(&self, axis: Axis) -> bool {
-        self.comptime().is_dynamic(axis)
-    }
-
-    pub fn contains(&self, axis: Axis) -> bool {
-        self.extents.kinds.contains(axis)
-    }
-
-    pub fn position(&self, axis: Axis) -> usize {
-        self.extents.kinds.position(axis)
-    }
-
-    pub fn project(&self, axes: &[Axis]) -> Space {
-        self.comptime().project(axes)
-    }
-
-    pub fn axes(&self) -> Vec<Axis> {
-        self.comptime().axes().collect()
-    }
 }
+
+/// The comptime reads of a space, the same on the host and on the expand type: what
+/// `comptime!(space.rank())` and the like resolve to on the space a kernel is handed.
+macro_rules! space_reads {
+    ($ty:ty) => {
+        impl $ty {
+            pub fn rank(&self) -> usize {
+                self.extents.kinds.len()
+            }
+
+            pub fn axis_at(&self, i: usize) -> Axis {
+                self.extents.kinds.axis_at(i)
+            }
+
+            pub fn position(&self, axis: Axis) -> usize {
+                self.extents.kinds.position(axis)
+            }
+
+            pub fn contains(&self, axis: Axis) -> bool {
+                self.extents.kinds.contains(axis)
+            }
+
+            pub fn axes(&self) -> impl Iterator<Item = Axis> + '_ {
+                self.extents.kinds.axes()
+            }
+
+            pub(crate) fn extent_raw(&self, axis: Axis) -> Extent {
+                self.extents.kinds.get(axis)
+            }
+
+            /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf
+            /// and smem consumers all run on fully-divided (`Static`) spaces, so this is what they
+            /// call.
+            pub fn extent(&self, axis: Axis) -> usize {
+                self.extent_raw(axis).get()
+            }
+
+            pub fn extent_at(&self, i: usize) -> usize {
+                self.extent(self.axis_at(i))
+            }
+
+            pub fn is_dynamic(&self, axis: Axis) -> bool {
+                self.extent_raw(axis).is_dynamic()
+            }
+
+            pub fn project(&self, axes: &[Axis]) -> Space {
+                let entries = axes
+                    .iter()
+                    .map(|&a| (a, self.extent_raw(a)))
+                    .collect::<Vec<_>>();
+                Space::from_extents(&entries)
+            }
+        }
+    };
+}
+space_reads!(Space);
+space_reads!(SpaceExpand);
 
 #[cube]
 impl Space {
@@ -223,7 +228,7 @@ impl Space {
                 let extent = if axes.contains(&a) {
                     Extent::Dynamic
                 } else {
-                    self.extents.get(a)
+                    self.extent_raw(a)
                 };
                 (a, extent)
             })
@@ -255,7 +260,7 @@ impl Space {
             .map(|a| {
                 let extent = match extents.iter().find(|&&(axis, _)| axis == a) {
                     Some(&(_, n)) => Extent::Static(n),
-                    None => self.extents.get(a),
+                    None => self.extent_raw(a),
                 };
                 (a, extent)
             })
@@ -264,45 +269,11 @@ impl Space {
         self
     }
 
-    /// The axis's comptime size; panics on a [`Dynamic`](Extent::Dynamic) axis. The leaf and
-    /// smem consumers all run on fully-divided (`Static`) spaces, so this is what they call.
-    pub fn extent(&self, axis: Axis) -> usize {
-        self.extents.get(axis).get()
-    }
-
-    pub(crate) fn extent_raw(&self, axis: Axis) -> Extent {
-        self.extents.get(axis)
-    }
-
-    pub fn is_dynamic(&self, axis: Axis) -> bool {
-        self.extents.get(axis).is_dynamic()
-    }
-
     /// Every axis is [`Static`](Extent::Static), so the walk is fully comptime. True at every
     /// interior tiling level, since [`divide`](Space::divide) yields `Static` children; only the top
     /// merge can be dynamic.
     pub(crate) fn is_static(&self) -> bool {
         self.axes().all(|axis| !self.is_dynamic(axis))
-    }
-
-    pub fn extent_at(&self, i: usize) -> usize {
-        self.extent(self.axis_at(i))
-    }
-
-    pub fn axis_at(&self, i: usize) -> Axis {
-        self.extents.axis_at(i)
-    }
-
-    pub fn position(&self, axis: Axis) -> usize {
-        self.extents.position(axis)
-    }
-
-    pub fn rank(&self) -> usize {
-        self.extents.len()
-    }
-
-    pub fn contains(&self, axis: Axis) -> bool {
-        self.extents.contains(axis)
     }
 
     /// The static extents, in axis order.
@@ -361,16 +332,6 @@ impl Space {
                 }
             }
         }
-        Space {
-            extents: Extents::fixed(ByAxis::new(&entries)),
-        }
-    }
-
-    pub fn project(&self, axes: &[Axis]) -> Space {
-        let entries = axes
-            .iter()
-            .map(|&a| (a, self.extent_raw(a)))
-            .collect::<Vec<_>>();
         Space {
             extents: Extents::fixed(ByAxis::new(&entries)),
         }
@@ -463,10 +424,6 @@ impl Space {
         contracted[0]
     }
 
-    pub fn axes(&self) -> Axes<'_> {
-        Axes { space: self, i: 0 }
-    }
-
     pub fn tile_size(&self) -> usize {
         self.axes().map(|axis| self.extent(axis)).product()
     }
@@ -494,41 +451,6 @@ fn merge_level(a: Extent, b: Extent) -> Extent {
         (Extent::Dynamic, _) | (_, Extent::Dynamic) => Extent::Dynamic,
         (Extent::Static(a), Extent::Static(b)) if a == b => Extent::Static(a),
         _ => panic!("Space::merge: axis appears with conflicting extents"),
-    }
-}
-
-pub struct Axes<'a> {
-    space: &'a Space,
-    i: usize,
-}
-
-impl Iterator for Axes<'_> {
-    type Item = Axis;
-
-    fn next(&mut self) -> Option<Axis> {
-        if self.i < self.space.rank() {
-            let axis = self.space.axis_at(self.i);
-            self.i += 1;
-            Some(axis)
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.space.rank() - self.i;
-        (remaining, Some(remaining))
-    }
-}
-
-impl ExactSizeIterator for Axes<'_> {}
-
-impl<'a> IntoIterator for &'a Space {
-    type Item = Axis;
-    type IntoIter = Axes<'a>;
-
-    fn into_iter(self) -> Axes<'a> {
-        self.axes()
     }
 }
 

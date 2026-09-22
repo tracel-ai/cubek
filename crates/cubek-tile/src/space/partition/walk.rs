@@ -20,6 +20,7 @@
 //! windows itself to it with `at`, applying the steps below its own depth.
 
 use cubecl::prelude::*;
+use cubecl::unexpanded;
 
 use crate::{
     Axis, Coords, Count, Fold, FoldExpand, Level, Region, RegionExpand, Space, const_coords,
@@ -307,77 +308,6 @@ impl Walk {
         }
     }
 
-    /// This walk with its steps visited last to first.
-    pub fn reversed(self) -> Walk {
-        Walk {
-            counts: self.counts,
-            positions: self.positions,
-            scales: self.scales,
-            route: self.route,
-            routed_at: comptime!(self.routed_at.clone()),
-            base: self.base,
-            steps: self.steps,
-            parent: self.parent,
-            space: comptime!(self.space.clone()),
-            level: comptime!(self.level.clone()),
-            unroll: comptime!(self.unroll),
-            order: comptime!(WalkOrder::Reversed),
-        }
-    }
-
-    /// This walk, unrolled when iterated: each region's coordinates fold to comptime
-    /// constants (static spaces only; the trip count must be constant).
-    pub fn unrolled(self) -> Walk {
-        self.with_unroll(comptime!(true))
-    }
-
-    /// This walk, unrolled when `unroll`. Lets a caller pick the mode from a comptime flag
-    /// without branching on the [`Walk`] value (which `#[cube]` would read as a runtime select).
-    pub(crate) fn with_unroll(self, #[comptime] unroll: bool) -> Walk {
-        Walk {
-            counts: self.counts,
-            positions: self.positions,
-            scales: self.scales,
-            route: self.route,
-            routed_at: comptime!(self.routed_at.clone()),
-            base: self.base,
-            steps: self.steps,
-            parent: self.parent,
-            space: comptime!(self.space.clone()),
-            level: comptime!(self.level.clone()),
-            unroll: comptime!(unroll),
-            order: comptime!(self.order),
-        }
-    }
-
-    /// This walk over the `steps` regions starting at flat step `base`, rather than all of its
-    /// own from zero.
-    ///
-    /// The window is how a level deals its grid out as contiguous runs instead of as a
-    /// rectangular block per axis: every axis stays `Sequential`, so the counts are the whole
-    /// grid and the flat index already carries every coordinate, and an instance's share is a
-    /// range of that index. `base` and `steps` are runtime values, so a run whose length only
-    /// the launch knows walks the same loop a static one does.
-    ///
-    /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
-    /// reads coordinates that are not in the grid, and nothing here can check it.
-    pub fn window(self, base: usize, steps: usize) -> Walk {
-        Walk {
-            counts: self.counts,
-            positions: self.positions,
-            scales: self.scales,
-            route: self.route,
-            routed_at: comptime!(self.routed_at.clone()),
-            base,
-            steps,
-            parent: self.parent,
-            space: comptime!(self.space.clone()),
-            level: comptime!(self.level.clone()),
-            unroll: comptime!(self.unroll),
-            order: comptime!(self.order),
-        }
-    }
-
     /// Returns the regions count
     pub fn total(&self) -> usize {
         self.steps
@@ -640,7 +570,36 @@ pub fn hardware_pos(#[comptime] unit: ComputeScope) -> usize {
     }
 }
 
+/// The settings a walk is told after it is built. They change comptime fields, or swap in the
+/// handles a runtime window states, and emit no instruction of their own, so they are written
+/// once on the expand type rather than as a `#[cube]` rebuild of every field.
 impl Walk {
+    /// This walk with its steps visited last to first.
+    pub fn reversed(self) -> Walk {
+        unexpanded!()
+    }
+
+    /// This walk, unrolled when iterated: each region's coordinates fold to comptime
+    /// constants (static spaces only; the trip count must be constant).
+    pub fn unrolled(self) -> Walk {
+        unexpanded!()
+    }
+
+    /// This walk over the `steps` regions starting at flat step `base`, rather than all of its
+    /// own from zero.
+    ///
+    /// The window is how a level deals its grid out as contiguous runs instead of as a
+    /// rectangular block per axis: every axis stays `Sequential`, so the counts are the whole
+    /// grid and the flat index already carries every coordinate, and an instance's share is a
+    /// range of that index. `base` and `steps` are runtime values, so a run whose length only
+    /// the launch knows walks the same loop a static one does.
+    ///
+    /// The caller owns the range: `base + steps` past this walk's own [`total`](Walk::total)
+    /// reads coordinates that are not in the grid, and nothing here can check it.
+    pub fn window(self, _base: usize, _steps: usize) -> Walk {
+        unexpanded!()
+    }
+
     /// The depth of the regions this walk hands out: one below its path.
     pub(crate) fn depth(&self) -> usize {
         self.parent.depth() + 1
@@ -648,6 +607,27 @@ impl Walk {
 }
 
 impl WalkExpand {
+    pub fn __expand_reversed_method(mut self, _scope: &Scope) -> Self {
+        self.order = WalkOrder::Reversed;
+        self
+    }
+
+    pub fn __expand_unrolled_method(mut self, _scope: &Scope) -> Self {
+        self.unroll = true;
+        self
+    }
+
+    pub fn __expand_window_method(
+        mut self,
+        _scope: &Scope,
+        base: NativeExpand<usize>,
+        steps: NativeExpand<usize>,
+    ) -> Self {
+        self.base = base;
+        self.steps = steps;
+        self
+    }
+
     pub(crate) fn depth(&self) -> usize {
         self.parent.depth() + 1
     }

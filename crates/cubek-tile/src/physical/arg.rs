@@ -22,7 +22,7 @@ use crate::*;
 /// by a divisibility check. Settled by the launch, the one place the buffer's real extents and
 /// the kernel's levels are both in hand, which refuses a tensor whose storage tile is no level's tile.
 /// Read in the kernel as the comptime fact it is; [`at`](crate::Tile::at) turns
-/// [`Above`](Storage::Tiled) into [`Held`](Storage::Contiguous) on the way down.
+/// [`Tiled`](Storage::Tiled) into [`Contiguous`](Storage::Contiguous) on the way down.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Storage {
     /// Untiled storage: the whole buffer is one storage tile, addressed by its strides, and every
@@ -58,7 +58,7 @@ pub struct TileSpec {
     /// [`packed`](Self::packed); a quantized operand's scheme states it instead.
     pub packing: Packing,
     /// What this operand's storage tiles are to the windows it is read through. Settled by
-    /// the launch; [`Whole`](Storage::Strided) for every untiled operand, which is every operand
+    /// the launch; [`Strided`](Storage::Strided) for every untiled operand, which is every operand
     /// that does not say otherwise.
     pub storage: Storage,
 }
@@ -107,7 +107,7 @@ impl TileSpec {
     }
 
     /// What this operand's storage tiles are to the windows it is read through; settled by
-    /// the launch, [`Whole`](Storage::Strided) by default (which is what every untiled operand is).
+    /// the launch, [`Strided`](Storage::Strided) by default (which is what every untiled operand is).
     pub fn storage(mut self, storage: Storage) -> Self {
         self.storage = storage;
         self
@@ -355,27 +355,22 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
         QuantStore::PackedU32(dim) => {
             assert!(
                 dim == 0,
-                "StridedTileSource::quantized: a packed-u32 operand must pack along the \
-                 innermost axis (dim 0), got {dim}"
+                "a packed-u32 quantized operand must pack along the innermost axis (dim 0), got {dim}"
             );
             assert!(
                 vector_size.is_multiple_of(scheme.num_quants()),
-                "StridedTileSource::quantized: the innermost axis is served in \
-                 {vector_size}-wide lines, which must be a multiple of the {}-value packing \
-                 factor, else a line splits a u32",
+                "a quantized operand's innermost axis is served in {vector_size}-wide lines, which must \
+                 be a multiple of the {}-value packing factor, else a line splits a u32",
                 scheme.num_quants()
             );
         }
-        other => panic!(
-            "StridedTileSource::quantized: quantization storage {other:?} is not supported \
-             (native or packed-u32)"
-        ),
+        other => panic!("quantization storage {other:?} is not supported (native or packed-u32)"),
     }
     // The scales ride a plain `f32` tensor read straight through, so a narrower param
     // would reinterpret its bytes.
     assert!(
         scheme.scale_dtype() == ScaleDtype::F32,
-        "StridedTileSource::quantized: scales are read as f32, got {:?}",
+        "a quantized operand's scales are read as f32, got {:?}",
         scheme.scale_dtype()
     );
 
@@ -389,9 +384,8 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
     let inner = block[rank - 1];
     assert!(
         inner.is_multiple_of(vector_size),
-        "StridedTileSource::quantized: the innermost axis is served in {vector_size}-wide \
-         lines, which its {inner}-element scale blocks must be a multiple of, else one line \
-         straddles two scales"
+        "a quantized operand's innermost axis is served in {vector_size}-wide lines, which its \
+         {inner}-element scale blocks must be a multiple of, else one line straddles two scales"
     );
 }
 

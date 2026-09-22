@@ -49,9 +49,8 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    /// `space` on `grid`, its extents this launch's real ones, in kernel `form`. Refuses a cube
-    /// the device cannot hold. State the leaf and the overhanging axes with
-    /// [`leaf`](Launcher::leaf) and [`overhanging`](Launcher::overhanging).
+    /// `space` on `grid`, its extents this launch's real ones, in kernel `form`, cut by no level
+    /// and overhanging nowhere. Refuses a cube the device cannot hold.
     pub fn new(
         client: &Client,
         space: Space,
@@ -92,22 +91,9 @@ impl Launcher {
         }
     }
 
-    /// The tile every operand is cut to at the bottom: what a line width has to divide.
-    pub fn leaf(mut self, leaf: &[(Axis, usize)]) -> Self {
-        self.leaf = leaf.to_vec();
-        self
-    }
-
-    /// The axes along which some tile reaches past the tensor, so every access is masked.
-    pub fn overhanging(mut self, axes: &[Axis]) -> Self {
-        self.overhangs = axes.to_vec();
-        self
-    }
-
     /// [`new`](Launcher::new) over the kernel's whole `partitioning`: the leaf and the overhangs
-    /// read off its levels rather than stated beside them, and the levels kept, which is what
-    /// lets a storage-tiled operand find the level its storage tile is the tile of. The grid is still
-    /// the blueprint's statement.
+    /// read off its levels, and the levels kept, which is what lets a storage-tiled operand find
+    /// the level its storage tile is the tile of. The grid is still the blueprint's statement.
     pub fn partitioned(
         client: &Client,
         partitioning: Partitioning,
@@ -132,12 +118,13 @@ impl Launcher {
             "Launcher: {fillers} plane(s) are set aside to fill a walk's stages, and this device \
              carries no barrier type for the two roles to meet on"
         );
-        let (space, levels) = partitioning.into_parts();
-        let mut launch = Launcher::new(client, space, grid, form)
-            .leaf(&leaf)
-            .overhanging(&overhangs);
-        launch.levels = levels;
-        launch
+        let Partitioning { space, levels } = partitioning;
+        Launcher {
+            leaf,
+            overhangs,
+            levels,
+            ..Launcher::new(client, space, grid, form)
+        }
     }
 
     /// The launch `partitioning` implies, for a kernel with no blueprint to state one: as many

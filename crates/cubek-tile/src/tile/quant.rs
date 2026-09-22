@@ -3,7 +3,7 @@
 
 use cubecl::{
     prelude::*,
-    quant::scheme::QuantScheme,
+    quant::scheme::{QuantScheme, QuantStore, QuantValue},
     std::quant::view::{KnownScale, QuantizedView as DequantView},
     std::tensor::{View, layout::Coordinates},
 };
@@ -80,13 +80,19 @@ pub(crate) fn block_edges(scheme: QuantScheme, rank: usize) -> Vec<usize> {
 
 /// The [`Packing`] a quantization scheme implies: how many of its values a stored element holds
 /// and what field each occupies. The one place a scheme is read for a fact about *storage*, so a
-/// quantized operand and one that merely states [`TileSpec::packed`] answer every reader alike.
+/// quantized operand and one that merely states [`TileSpec::packed`] answer every reader alike,
+/// and the one place a storage this crate does not serve is refused: a native store holds one
+/// `i8` per value, a packed one `u32` words, and nothing else is wired.
 pub(crate) fn scheme_packing(scheme: QuantScheme) -> Packing {
-    match scheme.num_quants() {
-        1 => Packing::Native,
-        _ => Packing::Packed {
+    match scheme.store {
+        QuantStore::Native => match scheme.value {
+            QuantValue::Q8F | QuantValue::Q8S => Packing::Native,
+            other => panic!("native quant storage element {other:?} is not wired (i8 only)"),
+        },
+        QuantStore::PackedU32(_) => Packing::Packed {
             field: scheme.value.into(),
         },
+        other => panic!("quant storage {other:?} is not wired (native or packed-u32)"),
     }
 }
 

@@ -310,15 +310,12 @@ impl<Acc: Numeric> Tile<Acc> {
     /// `resident` is how much of the partition the window holds, which is a trade rather than a
     /// fact: barriers against bytes ([`Resident`]).
     pub fn with_scratch(
-        self,
+        &self,
         #[comptime] resident: Resident,
         #[comptime] planes: usize,
         #[comptime] lanes: usize,
     ) -> Tile<Acc> {
-        let space = comptime!(self.space.clone());
-        let depth = comptime!(self.depth);
-        let levels = comptime!(self.levels.clone());
-        match self.tile_kind {
+        match &self.tile_kind {
             TileKind::PlanePartition(p) => {
                 let (m, n) = p.at(0usize, 0usize).shape();
                 let cells = comptime!(m * n);
@@ -337,22 +334,17 @@ impl<Acc: Numeric> Tile<Acc> {
                     let slot = shared.clone().map(|s| &s[start..start + cells]);
                     frags.push(p.frags.index(i).clone().with_scratch(slot, lanes));
                 }
-                Tile::<Acc> {
-                    tile_kind: TileKind::new_PlanePartition(PlanePartition::<Acc> {
-                        frags,
-                        m_tiles: comptime!(p.m_tiles),
-                        n_tiles: comptime!(p.n_tiles),
-                        rows: comptime!(p.rows),
-                        cols: comptime!(p.cols),
-                        scratch: ComptimeOption::new_Some(
-                            shared.clone().map(|s| &s[plane..plane + cells]),
-                        ),
-                        resident: comptime!(resident),
-                    }),
-                    space,
-                    depth,
-                    levels,
-                }
+                self.with_kind(TileKind::new_PlanePartition(PlanePartition::<Acc> {
+                    frags,
+                    m_tiles: comptime!(p.m_tiles),
+                    n_tiles: comptime!(p.n_tiles),
+                    rows: comptime!(p.rows),
+                    cols: comptime!(p.cols),
+                    scratch: ComptimeOption::new_Some(
+                        shared.clone().map(|s| &s[plane..plane + cells]),
+                    ),
+                    resident: comptime!(resident),
+                }))
             }
             TileKind::Gmem(_)
             | TileKind::Smem(_)
@@ -388,23 +380,10 @@ impl<Acc: Numeric> Tile<Acc> {
     /// The operand may lie in global memory or in a stage: a packed stage keeps its words and
     /// lands them the way a packed global window does, which is what keeps a deep stage the
     /// size of the words rather than of the values they unpack to.
-    pub fn with_landing(self) -> Tile<Acc> {
-        let space = comptime!(self.space.clone());
-        let depth = comptime!(self.depth);
-        let levels = comptime!(self.levels.clone());
-        match self.tile_kind {
-            TileKind::Gmem(g) => Tile::<Acc> {
-                tile_kind: TileKind::new_Gmem(g.with_landing()),
-                space,
-                depth,
-                levels,
-            },
-            TileKind::Smem(g) => Tile::<Acc> {
-                tile_kind: TileKind::new_Smem(g.with_landing()),
-                space,
-                depth,
-                levels,
-            },
+    pub fn with_landing(&self) -> Tile<Acc> {
+        match &self.tile_kind {
+            TileKind::Gmem(g) => self.with_kind(TileKind::new_Gmem(g.clone().with_landing())),
+            TileKind::Smem(g) => self.with_kind(TileKind::new_Smem(g.clone().with_landing())),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)

@@ -221,12 +221,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         let units = values.units();
         let planes = comptime!(plane_windows(&space, &values.levels));
         let (stage, mut window) = MemData::<E>::landing(comptime!(space.clone()), units, planes);
-        let landing = Tile::<E> {
-            tile_kind: stage.tile_kind,
-            space: comptime!(space.clone()),
-            depth: comptime!(values.depth),
-            levels: comptime!(values.levels.clone()),
-        };
+        let landing = values.with_kind(stage.tile_kind);
 
         let vw = values.vector_size();
         let size!(VW) = vw;

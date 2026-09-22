@@ -92,6 +92,7 @@ pub struct MemData<T: Numeric> {
 /// where the other belongs without the type saying so.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
+#[allow(dead_code)] // Built through the derived `new_*` expand constructors.
 pub(crate) enum Backing<T: Numeric> {
     /// Bytes this kernel addresses directly. Scalar-typed by Rust-side erasure
     /// only: the real binding/alloc element is `Vector<T, vector_size>`, so

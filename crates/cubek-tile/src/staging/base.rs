@@ -91,6 +91,7 @@ impl<T: CubeType> Staging<T> {
     }
 
     /// Whether this slot has any fixed operand.
+    #[allow(dead_code)] // Reached through its expand, from [`RingFill`].
     pub(crate) fn has_fixed(&self) -> comptime_type!(bool) {
         comptime!(self.plans.iter().any(|p| p.mode == WindowMode::Fixed))
     }
@@ -100,6 +101,7 @@ impl<T: CubeType> Staging<T> {
     ///
     /// The first wait is on the parity `writes` was not born at, which a fresh mbarrier already
     /// carries, so it passes straight through.
+    #[allow(dead_code)] // Reached through its expand, from `Staging::fill` / `Staging::consume`.
     pub(crate) fn acquire_write(&self) {
         match &self.pipeline {
             Pipeline::Barrier { empty, writes, .. } => empty.wait_parity(*writes ^ 1),
@@ -111,6 +113,7 @@ impl<T: CubeType> Staging<T> {
     /// Producer release publishes a barrier slot after its required arrivals and any TMA bytes
     /// declared by [`Pipeline::fill`] land. Which units arrive is the slot's to say
     /// ([`Pipeline::producers`]).
+    #[allow(dead_code)] // Reached through its expand, from `Staging::fill` / `Staging::consume`.
     pub(crate) fn release_write(&mut self) {
         match &mut self.pipeline {
             Pipeline::Barrier {
@@ -131,6 +134,7 @@ impl<T: CubeType> Staging<T> {
 
     /// Consumer acquire: wait the slot's fill (`full`, RAW) for `Barrier`; nothing for `Cube` (already
     /// rendezvoused in `write`).
+    #[allow(dead_code)] // Reached through its expand, from `Staging::fill` / `Staging::consume`.
     pub(crate) fn acquire_read(&self) {
         match &self.pipeline {
             Pipeline::Barrier { full, reads, .. } => full.wait_parity(*reads),
@@ -140,6 +144,7 @@ impl<T: CubeType> Staging<T> {
 
     /// Consumer release: arrive `empty` (free the slot) and flip the read parity for `Barrier`;
     /// nothing for `Cube`.
+    #[allow(dead_code)] // Reached through its expand, from `Staging::fill` / `Staging::consume`.
     pub(crate) fn release_read(&mut self) {
         match &mut self.pipeline {
             Pipeline::Barrier { empty, reads, .. } => {

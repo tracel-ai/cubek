@@ -62,24 +62,14 @@ impl Layout for FlatLayout {
 impl<T: Numeric> Tile<T> {
     /// A flat 1-D view over `Vector<T, W>` lines (`W` = [`vector_size`](Tile::vector_size)): a
     /// row-major scan over the tile's window, masking the overhang per its comptime `check` flag.
-    /// A quantized store is refused: it dequantizes under the fill ([`Tile::copy_from`]), which
-    /// recovers the storage element from the scheme itself.
+    /// A packed store is refused: it unpacks under the fill ([`Tile::copy_from`]) and the
+    /// packed views, which recover the storage element from the packing itself.
     pub fn flat<W: Size>(&self) -> FlatView<'_, Vector<T, W>> {
-        match &self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => {
-                if comptime!(g.store.packing != Packing::Plain) {
-                    panic!("Tile::flat: a packed tile only unpacks under Tile::copy_from")
-                }
-                g.flat::<W>()
-            }
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::flat: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::flat: a tma source has no element view"),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!("Tile::flat: a procedural tile and the plane's lanes have no memory view")
-            }
+        let g = self.mem("flat");
+        if comptime!(g.store.packing != Packing::Plain) {
+            panic!("Tile::flat: a packed tile only unpacks under Tile::copy_from")
         }
+        g.flat::<W>()
     }
 
     /// The mutable twin of [`flat`](Tile::flat). Public because a consumer's kernel is where
@@ -88,15 +78,6 @@ impl<T: Numeric> Tile<T> {
     /// no other verb for "each unit writes its own flat positions" — [`copy_from`](Tile::copy_from),
     /// [`zero`](Tile::zero) and [`init`](Tile::init) all write a value it does not choose per cell.
     pub fn flat_mut<W: Size>(&mut self) -> FlatViewMut<'_, Vector<T, W>> {
-        match &mut self.tile_kind {
-            TileKind::Gmem(g) | TileKind::Smem(g) => g.flat_mut::<W>(),
-            TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
-                panic!("Tile::flat_mut: a plane tile has no memory view")
-            }
-            TileKind::TmaGmem(_) => panic!("Tile::flat_mut: a tma source has no element view"),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
-                panic!("Tile::flat_mut: a procedural tile and the plane's lanes are not writable")
-            }
-        }
+        self.mem_mut("flat_mut").flat_mut::<W>()
     }
 }

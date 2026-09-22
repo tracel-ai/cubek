@@ -20,7 +20,6 @@
 //! [`Region`] is the path those loops took from the space, so the root tile and any window of
 //! it read one region alike. The launch ([`Launcher`]) reads the grid off the same levels the
 //! kernel's loops state, listed by the blueprint, and binds the tensors to the same extents.
-#![allow(dead_code)]
 
 mod arrival;
 mod axis;

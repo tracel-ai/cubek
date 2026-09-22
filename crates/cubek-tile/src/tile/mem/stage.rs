@@ -2,22 +2,9 @@
 //! plus the two mappings that address them) and the `smem*` constructors that allocate one.
 
 use cubecl::zspace::SmallVec;
-use cubecl::{
-    prelude::*,
-    quant::scheme::{QuantScheme, QuantStore, QuantValue},
-    std::quant::view::KnownScale,
-};
+use cubecl::{prelude::*, quant::scheme::QuantScheme, std::quant::view::KnownScale};
 
 use crate::*;
-
-/// Comptime metadata bundled when constructing a shared-memory stage.
-#[derive(Clone)]
-pub(crate) struct StageMeta {
-    pub space: Space,
-    pub vector_size: usize,
-    /// The launch's cube size, `0` when unknown ([`Access::units`](super::Access)).
-    pub units: usize,
-}
 
 /// The byte alignment a TMA-filled stage's shared buffer must have.
 const TMA_STAGE_ALIGNMENT: usize = 128;
@@ -81,7 +68,7 @@ impl<T: Numeric> MemData<T> {
                 tile_kind: TileKind::new_Lanes(Lanes::<T>::new(
                     operand,
                     comptime!(level.clone()),
-                    comptime!(reach.clone()),
+                    reach,
                 )),
                 space: comptime!(level.child(&operand.space)),
                 depth: comptime!(operand.depth + 1),
@@ -177,22 +164,9 @@ impl<T: Numeric> MemData<T> {
                             MemData::smem_packed(space, vector_size, storage, units, packing)
                         }
                     },
-                    ComptimeOption::Some(info) => match comptime!(info.scheme.store) {
-                        QuantStore::Native => match comptime!(info.scheme.value) {
-                            QuantValue::Q8F | QuantValue::Q8S => MemData::smem_quant::<i8>(
-                                space,
-                                vector_size,
-                                storage,
-                                units,
-                                info.table.clone(),
-                                comptime!(info.scheme),
-                            ),
-                            other => panic!(
-                                "MemData::smem_stored: native quant storage element {:?} is not wired (i8 only)",
-                                other
-                            ),
-                        },
-                        QuantStore::PackedU32(_) => MemData::smem_quant::<u32>(
+                    // The store was allocated at the scheme's own storage ([`scheme_packing`]).
+                    ComptimeOption::Some(info) => match comptime!(g.store.packing) {
+                        Packing::Native => MemData::smem_quant::<i8>(
                             space,
                             vector_size,
                             storage,
@@ -200,10 +174,17 @@ impl<T: Numeric> MemData<T> {
                             info.table.clone(),
                             comptime!(info.scheme),
                         ),
-                        other => panic!(
-                            "MemData::smem_stored: quant storage {:?} is not wired (native or packed-u32)",
-                            other
+                        Packing::Packed { field: _ } => MemData::smem_quant::<u32>(
+                            space,
+                            vector_size,
+                            storage,
+                            units,
+                            info.table.clone(),
+                            comptime!(info.scheme),
                         ),
+                        Packing::Plain => {
+                            panic!("MemData::smem_stored: a quantized store is never plain")
+                        }
                     },
                 }
             }
@@ -248,12 +229,15 @@ impl<T: Numeric> MemData<T> {
     ) -> Tile<T> {
         let form = comptime!(StageForm::dense(&space, vector_size, storage));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let meta = comptime!(StageMeta {
+        MemData::smem_with_form(
             space,
             vector_size,
             units,
-        });
-        MemData::smem_with_form(meta, form, map, ComptimeOption::new_None(), alignment)
+            form,
+            map,
+            ComptimeOption::new_None(),
+            alignment,
+        )
     }
 
     /// [`smem`](MemData::smem) for a *gathered* operand: the stage holds the physical window its
@@ -292,11 +276,6 @@ impl<T: Numeric> MemData<T> {
             } else {
                 stage_map
             };
-        let meta = comptime!(StageMeta {
-            space,
-            vector_size,
-            units,
-        });
         let source = MemData::<T>::pending_source_window(
             comptime!(form.steps.clone()),
             comptime!(signed),
@@ -305,7 +284,9 @@ impl<T: Numeric> MemData<T> {
         // A gathered stage is never a TMA destination (TMA operands are
         // direct), so it takes no extra alignment.
         MemData::smem_with_form(
-            meta,
+            space,
+            vector_size,
+            units,
             form,
             stage_map,
             ComptimeOption::new_Some(source),
@@ -313,23 +294,28 @@ impl<T: Numeric> MemData<T> {
         )
     }
 
-    /// The body every smem constructor shares, taking the buffer's [`StageForm`] directly.
+    /// The body every plain smem constructor shares, taking the buffer's [`StageForm`] directly.
     /// `alignment` is the shared buffer's minimum byte alignment (`0` = the element's own).
+    #[allow(clippy::too_many_arguments)]
     fn smem_with_form(
-        #[comptime] meta: StageMeta,
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] units: usize,
         #[comptime] form: StageForm,
         map: RuntimeMap,
         source: ComptimeOption<SourceWindow>,
         #[comptime] alignment: usize,
     ) -> Tile<T> {
-        let size!(W) = meta.vector_size;
+        let size!(W) = vector_size;
         let smem = if comptime!(alignment > 0) {
             Shared::<[Vector<T, W>]>::new_aligned_slice(comptime!(form.cells()), alignment)
         } else {
             Shared::<[Vector<T, W>]>::new_slice(comptime!(form.cells()))
         };
         MemData::smem_over(
-            meta,
+            space,
+            vector_size,
+            units,
             &smem,
             ComptimeOption::new_None(),
             comptime!(Packing::Plain),
@@ -354,13 +340,10 @@ impl<T: Numeric> MemData<T> {
         let size!(WP) = comptime!(packing.physical(vector_size));
         let smem = Shared::<[Vector<u32, WP>]>::new_slice(comptime!(form.cells()));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let meta = comptime!(StageMeta {
+        MemData::smem_over(
             space,
             vector_size,
             units,
-        });
-        MemData::smem_over(
-            meta,
             &smem,
             ComptimeOption::new_None(),
             comptime!(packing),
@@ -391,13 +374,10 @@ impl<T: Numeric> MemData<T> {
         let smem = Shared::<[Vector<I, WP>]>::new_slice(comptime!(form.cells()));
         let quant = smem_quant_info(comptime!(space.clone()), table, comptime!(scheme));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let meta = comptime!(StageMeta {
+        MemData::smem_over(
             space,
             vector_size,
             units,
-        });
-        MemData::smem_over(
-            meta,
             &smem,
             quant,
             comptime!(scheme_packing(scheme)),
@@ -411,8 +391,12 @@ impl<T: Numeric> MemData<T> {
     /// it takes the allocated slice rather than making it) and the buffer's [`StageForm`]. Scalar-
     /// erases the slice to the served `T` (the views recover the stored element through
     /// [`lines_storage`](MemData::lines_storage)) and wraps it in the whole-buffer window.
+    /// `units` is the launch's cube size, `0` when unknown ([`Access::units`](super::Access)).
+    #[allow(clippy::too_many_arguments)]
     fn smem_over<S: CubePrimitive>(
-        #[comptime] meta: StageMeta,
+        #[comptime] space: Space,
+        #[comptime] vector_size: usize,
+        #[comptime] units: usize,
         smem: &Shared<[S]>,
         quant: ComptimeOption<QuantInfo>,
         #[comptime] packing: Packing,
@@ -436,7 +420,7 @@ impl<T: Numeric> MemData<T> {
             tile_kind: TileKind::new_Smem(MemData::<T> {
                 store: Store::<T> {
                     backing,
-                    vector_size: meta.vector_size,
+                    vector_size,
                     quant,
                     packing: comptime!(packing),
                 },
@@ -460,7 +444,7 @@ impl<T: Numeric> MemData<T> {
                     whole: true,
                     overhang: Overhang::Never,
                     write: Write::Replace,
-                    units: meta.units,
+                    units,
                     // A stage is allocated here, whole: one storage tile over the buffer.
                     storage: Storage::Strided,
                 }),
@@ -473,7 +457,7 @@ impl<T: Numeric> MemData<T> {
                 source_window: source,
                 lands: false,
             }),
-            space: comptime!(meta.space),
+            space: comptime!(space),
             depth: comptime!(0usize),
             levels: comptime!(Vec::new()),
         }
@@ -498,13 +482,10 @@ impl<T: Numeric> MemData<T> {
             Shared::<[T]>::new_slice(comptime!(cells * planes)).map(|all| &all[start..end]);
         let form = comptime!(StageForm::dense(&space, 1, StageStorage::Strided));
         let map = RuntimeMap::integral(comptime!(form.projection.physical_rank()));
-        let meta = comptime!(StageMeta {
-            space,
-            vector_size: 1,
-            units,
-        });
         let tile = MemData::smem_over(
-            meta,
+            space,
+            1usize,
+            units,
             &window,
             ComptimeOption::new_None(),
             comptime!(Packing::Plain),
