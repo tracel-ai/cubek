@@ -11,7 +11,7 @@ use crate::{
     definition::{InterpolateForwardProblem, InterpolateMode, InterpolateOptions, get_transform},
 };
 use cubecl::{client::Client, ir::ElemType, prelude::*};
-use cubek_tile::{Geometry, KernelForm, Launcher};
+use cubek_tile::{BoundaryPolicy, Geometry, Grid, Launcher};
 
 /// Launch the tile-backed interpolation implementation for NHWC tensors.
 ///
@@ -146,8 +146,16 @@ fn dispatch<F: SeparableFilterFamily>(
     };
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
-    let launch =
-        Launcher::partitioned(client, plan.partitioning(), plan.grid(), KernelForm::Static);
+    let (cube_count, cube_dim) = plan.grid();
+    let launch = Launcher::new(
+        client,
+        plan.partitioning(),
+        &plan.space(),
+        Grid::Stated {
+            cube_count,
+            cube_dim,
+        },
+    );
 
     let vector_size = launch.vector_size(
         CHANNEL,
@@ -204,13 +212,15 @@ fn dispatch<F: SeparableFilterFamily>(
     let input_arg = launch
         .arg(input)
         .gathered(space::input_projection(row, col, F::radius()))
-        .checked(checked)
-        .with_boundary(checked.then_some(properties.boundary))
+        .boundary(match checked {
+            true => BoundaryPolicy::Every(properties.boundary),
+            false => BoundaryPolicy::Unchecked,
+        })
         .vectorize(vector_size)
         .build();
     let output_arg = launch
         .arg(output)
-        .subspace(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
+        .axes(&[space::BATCH, space::OUTPUT_H, space::OUTPUT_W, CHANNEL])
         .vectorize(vector_size)
         .build();
     interpolate_tile_kernel::launch::<F>(

@@ -8,6 +8,7 @@
 //! walk's bounds decides which tokens a sequence folds.
 #![allow(non_snake_case)]
 
+use super::{Form, implied};
 use cubecl::{prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -75,7 +76,7 @@ fn run() -> HostData {
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
@@ -84,7 +85,7 @@ fn run() -> HostData {
                 .walk_every(&[B])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (packed_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
@@ -117,8 +118,8 @@ fn run() -> HostData {
         ),
         ends_handle.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32_ty,
     );
 
@@ -204,7 +205,7 @@ fn run_blocked(ends: &[u32]) -> HostData {
     let f32_ty = f32::elem_type_native();
     let u32_ty = u32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(B, SEQS), (P, TOKENS), (D, FEATURES)]),
@@ -213,7 +214,7 @@ fn run_blocked(ends: &[u32]) -> HostData {
                 .walk_every(&[B])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (packed_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
@@ -243,8 +244,8 @@ fn run_blocked(ends: &[u32]) -> HostData {
         ),
         ends_handle.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32_ty,
     );
 

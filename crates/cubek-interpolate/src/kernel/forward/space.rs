@@ -157,7 +157,7 @@ pub fn stage_window_bytes(
         other => panic!("stage_window_bytes: {other:?} is not an axis of the interpolation space"),
     };
     let window_vectors: usize =
-        Compaction::of(&input_projection(row, col, radius), vector_size, extent_of)
+        Compaction::new(&input_projection(row, col, radius), vector_size, extent_of)
             .extents()
             .iter()
             .product();
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn the_interpolate_routine_states_four_levels() {
         assert_eq!(
-            plan(16).partitioning().labelled(&LABELS).to_string(),
+            plan(16).partitioning().table(&LABELS).to_string(),
             [
                 "        b × oh × ow × th × tw × c    b ×  oh ×  ow × th × tw ×  c",
                 "",
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn a_channel_axis_wider_than_a_plane_walks_its_blocks() {
         assert_eq!(
-            plan(256).partitioning().labelled(&LABELS).to_string(),
+            plan(256).partitioning().table(&LABELS).to_string(),
             [
                 "        b × oh × ow × th × tw ×  c    b ×  oh ×  ow × th × tw ×   c",
                 "",

@@ -12,6 +12,7 @@
 //! consumed where the values are, never staged into the shape of its own expansion. [`Tile::copy`]
 //! refuses this outright: a compacted stage fill needs source and destination on one projection.
 
+use super::{Form, implied};
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -67,7 +68,7 @@ fn coarse_spec() -> TileSpec {
 /// One level, cutting `K` at `cut` so a walk that cuts *at* the block, finer, and coarser are
 /// all expressible.
 fn space(cut: usize) -> Launcher {
-    Launcher::implied(
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, ROWS), (N, COLS), (K, DEPTH)]),
@@ -75,7 +76,7 @@ fn space(cut: usize) -> Launcher {
                 .walk_every(&[M, N, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     )
 }
 
@@ -118,7 +119,7 @@ fn run(launcher: Launcher) -> HostData {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 

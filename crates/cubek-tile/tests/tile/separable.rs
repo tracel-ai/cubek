@@ -6,12 +6,14 @@
 //! checked against the general one as well as against the host.
 #![allow(non_snake_case)]
 
+use super::{Form, implied};
 use cubecl::{features::TypeUsage, ir::ElemType, prelude::*, zspace::shape};
 use cubek_quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype};
 use cubek_test_utils::{
     HostData, HostDataType, TestInput, TestOutcome, TileInput, ValidationResult,
 };
 use cubek_tile::*;
+use cubek_tile::{Boundary, BoundaryPolicy, Quantization};
 
 const ROW: Axis = Axis(0);
 const COL: Axis = Axis(1);
@@ -168,7 +170,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -188,7 +190,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     separable_kernel::launch(
@@ -205,7 +207,7 @@ fn run(separable: bool) -> (HostData, Vec<f32>) {
         ),
         separable,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -260,7 +262,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -280,7 +282,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::direct(&[TAP[0], TAP[1], TAP[2], COL]);
@@ -296,7 +298,7 @@ fn a_separable_lhs_contracts_a_padded_staged_rhs() {
         ),
         Some(4),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -390,7 +392,7 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         .custom(vec![QSCALE])
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -410,14 +412,19 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let input_op = launcher
         .arg(in_handle.binding())
-        .subspace(&[TAP[0], TAP[1], TAP[2], COL])
+        .axes(&[TAP[0], TAP[1], TAP[2], COL])
         .vectorize(QV)
-        .quantized(&[scales.binding()], scheme, DequantAt::Read)
+        .quantized(Quantization::new(
+            scales.binding(),
+            None,
+            scheme,
+            DequantAt::Read,
+        ))
         .build();
 
     let f32_ty = f32::elem_type_native();
@@ -432,13 +439,13 @@ fn a_separable_lhs_contracts_a_native_quantized_rhs() {
         launcher.cube_dim(),
         input_op.bound_width(),
         QV,
-        input_op.arg(),
+        input_op.quant_arg(),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         in_dtype,
         f32_ty,
     );
@@ -487,7 +494,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         return;
     }
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -507,7 +514,7 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
             .walk_every(&[ROW, COL, TAP[0], TAP[1], TAP[2]])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let input = TileInput::builder(
@@ -526,9 +533,14 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
 
     let input_op = launcher
         .arg(input.tile.handle().binding())
-        .subspace(&[TAP[0], TAP[1], TAP[2], COL])
+        .axes(&[TAP[0], TAP[1], TAP[2], COL])
         .vectorize(pack)
-        .quantized(&[input.scales_binding()], scheme, DequantAt::Read)
+        .quantized(Quantization::new(
+            input.scales_binding(),
+            None,
+            scheme,
+            DequantAt::Read,
+        ))
         .build();
 
     separable_quant_kernel::launch(
@@ -537,13 +549,13 @@ fn a_separable_lhs_contracts_a_packed_quantized_rhs() {
         launcher.cube_dim(),
         input_op.bound_width(),
         pack,
-        input_op.arg(),
+        input_op.quant_arg(),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         u32::elem_type_native(),
         f32_ty,
     );
@@ -658,7 +670,7 @@ fn check_resampling(normalized: bool) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
@@ -666,7 +678,7 @@ fn check_resampling(normalized: bool) {
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -688,7 +700,7 @@ fn check_resampling(normalized: bool) {
         ),
         normalized,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -756,7 +768,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
         .dtype(dtype)
         .zeros()
         .generate_without_host_data();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 3)]),
@@ -764,7 +776,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     procedural_mask_kernel::launch(
@@ -776,7 +788,7 @@ fn masked_normalization_excludes_a_procedural_overhang() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -863,7 +875,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
@@ -871,7 +883,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -881,7 +893,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
             PhysicalAxisMap::of(COL),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     resample_kernel_masked::launch(
         &client,
@@ -893,7 +905,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_gmem_input() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -946,7 +958,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
@@ -954,7 +966,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -964,7 +976,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
             PhysicalAxisMap::of(COL),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     resample_kernel_masked_staged::launch(
         &client,
@@ -976,7 +988,7 @@ fn masked_normalization_dedarkens_a_boundary_zero_smem_input() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -1060,7 +1072,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
@@ -1068,7 +1080,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -1089,7 +1101,7 @@ fn a_column_spanning_separable_lhs_normalizes_its_factor_run() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -1156,7 +1168,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, RROWS), (COL, RCOLS), (TAP[0], RTAPS)]),
@@ -1164,7 +1176,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
                 .walk_every(&[ROW, COL, TAP[0]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -1174,7 +1186,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
             PhysicalAxisMap::of(COL),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     column_spanning_resample_kernel_masked::launch(
         &client,
@@ -1186,7 +1198,7 @@ fn a_column_spanning_separable_lhs_masks_and_dedarkens_boundary_zero_gmem_input(
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -1269,7 +1281,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, 1), (COL, 1), (TAP[0], 2), (TAP[1], 2)]),
@@ -1277,7 +1289,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
                 .walk_every(&[ROW, COL, TAP[0], TAP[1]])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     zero_sum_fallback_kernel::launch(
@@ -1293,7 +1305,7 @@ fn a_zero_factor_sum_takes_fallback_without_poisoning_siblings() {
             TileSpec::direct(&[ROW, COL]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 

@@ -14,7 +14,9 @@ use cubecl::{
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
+use super::{Form, implied};
 use cubek_tile::*;
+use cubek_tile::{Boundary, BoundaryPolicy};
 
 // Output positions, output channels, window taps, input channels. `OW`/`RW` are the second
 // spatial pair the 2-D case adds.
@@ -241,7 +243,7 @@ fn run(
     let cube_count = launcher.cube_count();
     let cube_dim = launcher.cube_dim();
     // The kernel that walks this space: one loop per level, the stage where `stage` says.
-    match (launcher.levels().len(), stage) {
+    match (launcher.partitioning().levels().len(), stage) {
         (1, Stage::InPlace) => conv_kernel::launch(
             &client,
             cube_count,
@@ -252,7 +254,7 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         ),
         (1, Stage::Smem { depth, width: None }) => conv_kernel_smem::launch(
@@ -266,7 +268,7 @@ fn run(
             config,
             depth,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         ),
         (
@@ -291,7 +293,7 @@ fn run(
                 depth,
                 width,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             )
         }
@@ -305,8 +307,8 @@ fn run(
             TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
             config,
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             f32_ty,
         ),
         (2, Stage::Smem { depth, width: None }) => conv_kernel_two_levels_smem::launch(
@@ -320,8 +322,8 @@ fn run(
             config,
             depth,
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             f32_ty,
         ),
         (levels, stage) => panic!("conv: no kernel walks {levels} levels under {stage:?}"),
@@ -400,7 +402,7 @@ impl Conv1d {
         stage: Stage,
         config: RegisterBlock,
     ) {
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
@@ -408,7 +410,7 @@ impl Conv1d {
                     .walk_every(&[OH, CO, RH, CI])
                     .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // The input's one gathered physical axis: the output position at `stride`, the tap at
@@ -420,7 +422,11 @@ impl Conv1d {
                 PhysicalAxisMap::of(CI),
             ],
         ))
-        .checked(checked);
+        .boundary(if checked {
+            BoundaryPolicy::Every(Boundary::Zero)
+        } else {
+            BoundaryPolicy::Unchecked
+        });
 
         let (got, input, weight) = run(
             shape![self.in_len(), self.ci],
@@ -428,7 +434,11 @@ impl Conv1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(checked),
+            TileSpec::direct(&[OH, CO]).boundary(if checked {
+                BoundaryPolicy::Every(Boundary::Zero)
+            } else {
+                BoundaryPolicy::Unchecked
+            }),
             launcher.clone(),
             in_v,
             config,
@@ -547,7 +557,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -555,7 +565,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -568,7 +578,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -576,7 +586,7 @@ fn conv1d_padded_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -628,7 +638,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -636,7 +646,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -649,7 +659,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .with_boundary(Some(Boundary::Clamp));
+    .boundary(BoundaryPolicy::Every(Boundary::Clamp));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -657,7 +667,7 @@ fn conv1d_padded_underflow_clamps_to_edge() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -705,7 +715,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -713,7 +723,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -726,7 +736,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -734,7 +744,7 @@ fn conv1d_padded_staged_underflow_masks_to_zero() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -879,7 +889,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
@@ -887,7 +897,7 @@ impl Conv1d {
                     .walk_every(&[OH, CO, RH, CI])
                     .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // Padding shortens the input by exactly what it shifts the window back by, so the last
@@ -915,15 +925,21 @@ impl Conv1d {
         // by the output, which maps it identically, and `RH` by the weight. Only an axis no
         // operand witnesses has to stay static, which is what `dynamic` narrows to.
         let launch = match dynamic {
-            Some(axes) => Launcher::implied(
+            Some(axes) => implied(
                 &client,
-                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
-                KernelForm::DynamicAlong(axes),
+                Partitioning::new(
+                    launcher.space().clone(),
+                    launcher.partitioning().levels().to_vec(),
+                ),
+                Form::DynamicAlong(axes),
             ),
-            None => Launcher::implied(
+            None => implied(
                 &client,
-                Partitioning::new(launcher.space().clone(), launcher.levels().to_vec()),
-                KernelForm::Dynamic,
+                Partitioning::new(
+                    launcher.space().clone(),
+                    launcher.partitioning().levels().to_vec(),
+                ),
+                Form::Dynamic,
             ),
         };
         let in_arg = launch
@@ -939,13 +955,10 @@ impl Conv1d {
                 ],
             ))
             .build();
-        let w_arg = launch
-            .arg(w_handle.binding())
-            .subspace(&[RH, CI, CO])
-            .build();
+        let w_arg = launch.arg(w_handle.binding()).axes(&[RH, CI, CO]).build();
         let out_arg = launch
             .arg(out_handle.clone().binding())
-            .subspace(&[OH, CO])
+            .axes(&[OH, CO])
             .build();
 
         match stage {
@@ -959,7 +972,7 @@ impl Conv1d {
                 out_arg.arg(),
                 RegisterBlock::new(16),
                 launch.partitioning_arg(),
-                launch.level(0),
+                launch.partitioning().level(0),
                 f32_ty,
             ),
             Stage::Smem { depth, width: None } => conv_kernel_smem::launch(
@@ -973,7 +986,7 @@ impl Conv1d {
                 RegisterBlock::new(16),
                 depth,
                 launch.partitioning_arg(),
-                launch.level(0),
+                launch.partitioning().level(0),
                 f32_ty,
             ),
             Stage::Smem { width: Some(_), .. } => {
@@ -1143,7 +1156,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
@@ -1151,7 +1164,7 @@ impl Conv1d {
                     .walk_every(&[OH, CO, RH, CI])
                     .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         let in_spec = TileSpec::new(Projection::new(
@@ -1199,7 +1212,7 @@ impl Conv1d {
             self.stride as u32,
             self.dilation as u32,
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             f32_ty,
         );
 
@@ -1418,7 +1431,7 @@ impl Conv1d {
         let client = cubecl::test_device().client();
         let f32_ty = f32::elem_type_native();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
@@ -1426,7 +1439,7 @@ impl Conv1d {
                     .walk_every(&[OH, CO, RH, CI])
                     .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         let gathered = if dynamic_scales {
@@ -1447,7 +1460,7 @@ impl Conv1d {
             &[OH, RH, CI],
             &[gathered, PhysicalAxisMap::of(CI)],
         ))
-        .checked(true);
+        .boundary(BoundaryPolicy::Every(Boundary::Zero));
         let w_spec = TileSpec::direct(&[RH, CI, CO]);
 
         let in_shape = shape![in_len, self.ci];
@@ -1472,7 +1485,7 @@ impl Conv1d {
         let w_binding = w_handle.binding();
         let out_binding = out_handle.clone().binding();
         let offset = -(padding as i32);
-        let out_spec = TileSpec::direct(&[OH, CO]).checked(true);
+        let out_spec = TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero));
         let cube_count = launcher.cube_count();
         let cube_dim = launcher.cube_dim();
         match (dynamic_scales, staged) {
@@ -1487,7 +1500,7 @@ impl Conv1d {
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (true, true) => conv_kernel_all_dynamic_smem::launch(
@@ -1501,7 +1514,7 @@ impl Conv1d {
                 self.dilation as u32,
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (false, false) => conv_kernel_dynamic_padding::launch(
@@ -1513,7 +1526,7 @@ impl Conv1d {
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
             (false, true) => conv_kernel_dynamic_padding_smem::launch(
@@ -1525,7 +1538,7 @@ impl Conv1d {
                 TileArgLaunch::new(out_binding.into_tensor_arg(), out_spec),
                 offset,
                 launcher.partitioning_arg(),
-                launcher.level(0),
+                launcher.partitioning().level(0),
                 f32_ty,
             ),
         }
@@ -1660,7 +1673,7 @@ impl Conv2d {
     /// `check` under `stage`: `InPlace` gathers straight out of gmem, `Smem` compacts the two
     /// gathered physical axes into a dense stage first.
     fn check_at(&self, tile_oh: usize, tile_ow: usize, tile_co: usize, stage: Stage) {
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[
@@ -1682,7 +1695,7 @@ impl Conv2d {
                 .walk_every(&[OH, OW, CO, RH, RW, CI])
                 .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         // Two gathered physical axes, one per spatial axis pair; the channel axis rides identity.
@@ -2183,7 +2196,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
     let in_h = (oh - 1) * sh + (rh - 1) * dh + 1;
     let in_w = (ow - 1) * sw + (rw - 1) * dw + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (OW, ow), (RH, rh), (RW, rw), (CI, ci)]),
@@ -2191,7 +2204,7 @@ fn setup_conv2d_view() -> Conv2dViewSetup {
                 .walk_every(&[OH, OW, RH, RW, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2432,7 +2445,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
     let (stride, dilation) = (1usize, 1usize);
     let in_len = (oh - 1) * stride + (rh - 1) * dilation + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -2440,7 +2453,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -2483,7 +2496,7 @@ fn conv1d_mma_leaf_with(io: MmaIOConfig) {
         ),
         io,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -2557,13 +2570,13 @@ impl Resize1d {
         let tiling = oh_counts.iter().fold(leaf, |tiling, &count| {
             tiling.walk(&[(OH, count), (CO, 1), (RH, 1), (CI, 1)])
         });
-        Launcher::implied(
+        implied(
             &cubecl::test_device().client(),
             Partitioning::new(
                 Space::new(&[(OH, self.oh), (CO, self.co), (RH, self.rh), (CI, self.ci)]),
                 tiling.walk_every(&[OH, CO, RH, CI]).levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         )
     }
 
@@ -2596,7 +2609,7 @@ impl Resize1d {
                 PhysicalAxisMap::of(CI),
             ],
         ))
-        .checked(true);
+        .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
         let (got, input, weight) = run(
             shape![self.in_len, self.ci],
@@ -2604,7 +2617,7 @@ impl Resize1d {
             shape![self.oh, self.co],
             in_spec,
             &[RH, CI, CO],
-            TileSpec::direct(&[OH, CO]).checked(true),
+            TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
             self.space(oh, oh_counts),
             vector_size,
             RegisterBlock::new(16),
@@ -2858,7 +2871,7 @@ fn resize1d_rational_dynamic() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let in_data = ramp(resize.in_len * resize.ci, 7);
     let w_data = ramp(resize.rh * resize.ci * resize.co, 5);
@@ -2887,12 +2900,12 @@ fn resize1d_rational_dynamic() {
         ),
         TileArgLaunch::new(
             out_handle.clone().binding().into_tensor_arg(),
-            TileSpec::direct(&[OH, CO]).checked(true),
+            TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         ),
         resize.divisor as u32,
         resize.offset as i32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 
@@ -2966,7 +2979,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (in_handle, _) = TestInput::builder(client.clone(), shape![resize.in_len, resize.ci])
         .dtype(f32_ty)
@@ -2981,7 +2994,7 @@ fn resize1d_dynamic_stage_read_before_fill() {
         resize.divisor as u32,
         resize.offset as i32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         f32_ty,
     );
 }
@@ -3000,7 +3013,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
     let padding = 1;
     let in_len = 6;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -3008,7 +3021,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -3021,7 +3034,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -3029,7 +3042,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_indexing() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16),
@@ -3079,7 +3092,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
     let (stride, dilation, padding) = (1, 1, 1);
     let oh = (in_len + 2 * padding - (rh - 1) * dilation - 1) / stride + 1;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(OH, oh), (CO, co), (RH, rh), (CI, ci)]),
@@ -3087,7 +3100,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
                 .walk_every(&[OH, CO, RH, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let in_spec = TileSpec::new(Projection::new(
@@ -3100,7 +3113,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
             PhysicalAxisMap::of(CI),
         ],
     ))
-    .checked(true);
+    .boundary(BoundaryPolicy::Every(Boundary::Zero));
 
     let (got, input, weight) = run(
         shape![in_len, ci],
@@ -3108,7 +3121,7 @@ fn conv1d_staged_padded_multi_axis_reduce_lane_fanout() {
         shape![oh, co],
         in_spec,
         &[RH, CI, CO],
-        TileSpec::direct(&[OH, CO]).checked(true),
+        TileSpec::direct(&[OH, CO]).boundary(BoundaryPolicy::Every(Boundary::Zero)),
         launcher.clone(),
         1,
         RegisterBlock::new(16).lane_fanout(),

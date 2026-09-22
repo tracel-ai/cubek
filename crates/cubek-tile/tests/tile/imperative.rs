@@ -8,6 +8,7 @@ use cubek_test_utils::{HostData, HostDataType, TestInput, TileInput, assert_equa
 use cubek_tile::*;
 
 use super::references;
+use super::{Form, implied};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -165,7 +166,7 @@ fn check_ring_matmul_with(
     let client = cubecl::test_device().client();
     let tile = 4usize;
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -174,7 +175,7 @@ fn check_ring_matmul_with(
                 .walk_every(&[M, N, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
@@ -229,7 +230,7 @@ fn check_ring_matmul_with(
 fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
     let (m, n, k, tile) = (8usize, 8usize, 16usize, 4usize);
     let client = cubecl::test_device().client();
-    Launcher::implied(
+    implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -239,7 +240,7 @@ fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
                 .filled_by(1)
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 }
 
@@ -249,7 +250,7 @@ fn a_device_without_barriers_refuses_a_walk_filled_by_planes_of_its_own() {
 fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
     let (m, n, k, tile) = (8usize, 8usize, 16usize, 4usize);
     let client = cubecl::test_device().client();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -258,7 +259,7 @@ fn a_role_split_walk_with_no_filling_plane_is_the_walk_it_always_was() {
                 .walk_every(&[M, N, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let a = TileInput::builder(&client, launcher.space().project(&[M, K]))
         .tile(&[tile, tile])

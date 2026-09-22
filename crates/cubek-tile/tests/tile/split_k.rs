@@ -26,6 +26,7 @@ use cubecl::{
 };
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 
+use super::{Form, implied};
 use cubek_tile::*;
 
 const M: Axis = Axis(0);
@@ -109,13 +110,13 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
         .generate_without_host_data();
 
     // One split per cube, the whole output tile in each: the split is the only thing on the grid.
-    let split_space = Launcher::implied(
+    let split_space = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (KB, splits), (KI, inside)]),
             Tiling::leaf(&[(KB, 1)]).cubes(&[KB]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     // `a` is `[M, K]` and `b` is `[K, N]` in memory: one physical `K` dim each, addressed by the
@@ -149,17 +150,17 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             TileSpec::direct(&[KB, M, N]),
         ),
         split_space.partitioning_arg(),
-        split_space.level(0),
+        split_space.partitioning().level(0),
         dtype,
     );
 
-    let fold_space = Launcher::implied(
+    let fold_space = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (KB, splits)]),
             Tiling::leaf(&[(M, 1)]).cubes(&[M]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     reduce_splits::launch(
@@ -175,7 +176,7 @@ fn run_split_k(m: usize, n: usize, k: usize, splits: usize) -> (HostData, HostDa
             TileSpec::direct(&[M, N]),
         ),
         fold_space.partitioning_arg(),
-        fold_space.level(0),
+        fold_space.partitioning().level(0),
         dtype,
     );
 
@@ -368,13 +369,13 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
             Tiling::leaf(&[(K, k / splits)]).cubes(&[K]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     atomic_split_matmul::launch(
@@ -394,7 +395,7 @@ fn run_atomic_split_k(m: usize, n: usize, k: usize, splits: usize) -> HostData {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -507,7 +508,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -516,7 +517,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
                 .cubes(&[K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     atomic_split_matmul::launch(
@@ -536,7 +537,7 @@ fn an_atomic_drain_with_lanes_of_their_own() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -592,7 +593,7 @@ fn an_atomic_drain_folds_across_planes() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -600,7 +601,7 @@ fn an_atomic_drain_folds_across_planes() {
                 .planes(&[(K, num_planes)])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     atomic_split_matmul::launch(
@@ -620,7 +621,7 @@ fn an_atomic_drain_folds_across_planes() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -701,13 +702,13 @@ fn a_folding_output_contracts_in_place() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
             Tiling::leaf(&[(K, k / splits)]).cubes(&[K]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     atomic_split_matmul_in_place::launch(
@@ -727,7 +728,7 @@ fn a_folding_output_contracts_in_place() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -847,7 +848,7 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
         .generate_without_host_data();
 
     // One plane per cube, the whole output per cube, `K` dealt in runs of one stage.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -857,7 +858,7 @@ fn run_atomic_split_cmma(k: usize, splits: usize) -> HostData {
                 .across(K, splits)
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     atomic_split_cmma::launch(
@@ -969,7 +970,7 @@ fn a_copy_into_a_folding_output_adds() {
         .generate_with_f32_host_data();
 
     // One cube over the whole tile, so the destination stays whole and each cell is added once.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols)]),
@@ -977,7 +978,7 @@ fn a_copy_into_a_folding_output_adds() {
                 .cubes(&[M, N])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     copy_into_folding::launch(
         &client,

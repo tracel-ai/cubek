@@ -26,7 +26,7 @@ pub enum Count {
 /// What a walk counts along one axis of a level: a constant, or the extent handed down in
 /// this tile ([`Level::grid`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Grid {
+pub(crate) enum GridCount {
     Const(usize),
     Extent(usize),
 }
@@ -61,10 +61,10 @@ impl Count {
 
     /// What a walk counts along an axis stepped in `tile`: the stated number, or the extent it
     /// is handed, in that tile.
-    pub(crate) fn grid(self, tile: usize) -> Grid {
+    pub(crate) fn grid(self, tile: usize) -> GridCount {
         match self {
-            Count::Of(n) => Grid::Const(n),
-            Count::Every | Count::Across(_) => Grid::Extent(tile),
+            Count::Of(n) => GridCount::Const(n),
+            Count::Every | Count::Across(_) => GridCount::Extent(tile),
         }
     }
 }
@@ -391,9 +391,9 @@ impl Level {
 
     /// What a walk counts along `axis`: the stated count, `1` where the level does not name the
     /// axis, or the extent in this level's tile where it takes every tile.
-    pub(crate) fn grid(&self, axis: Axis) -> Grid {
+    pub(crate) fn grid(&self, axis: Axis) -> GridCount {
         match self.count(axis) {
-            None => Grid::Const(1),
+            None => GridCount::Const(1),
             Some(count) => count.grid(self.tile_of(axis)),
         }
     }

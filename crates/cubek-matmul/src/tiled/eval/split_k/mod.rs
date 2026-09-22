@@ -47,8 +47,8 @@ use cubek_test_utils::{
     CatalogEntry, HostData, HostDataType, RunSamples, TileInput, TileInputBuilder,
 };
 use cubek_tile::{
-    Axis, KernelForm, Launcher, Partitioning, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, Tiling,
+    Axis, Grid, Launcher, Partitioning, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch,
+    Tiling,
 };
 
 /// What this bench contracts through: a 64-cell unroll budget, no edge specialization, no lane
@@ -165,39 +165,39 @@ impl Mapping {
         let SplitKProblem { m, n, k } = problem;
         match self {
             // One column per cube, one lane, whole K walked serially.
-            Mapping::SeqK => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::SeqK => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Tiling::leaf(&[(N, 1)]).cubes(&[N]).levels(),
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
             // `plane_size · cols` columns per cube, then `cols` per lane, whole K each.
-            Mapping::NSpread { cols } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::NSpread { cols } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Tiling::leaf(&[(N, cols)])
                         .lanes(&[(N, plane_size)])
                         .cubes(&[N])
                         .levels(),
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
             // `cols` columns per cube shared by the whole plane, K cut into one slice per lane.
             // The transposed variant is the same *nest*: only the rhs strides differ.
-            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::SplitK { cols } | Mapping::SplitKT { cols } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Tiling::leaf(&[(N, cols), (K, k / plane_size)])
                         .lanes(&[(K, plane_size)])
                         .cubes(&[N])
                         .levels(),
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
         }
     }
 

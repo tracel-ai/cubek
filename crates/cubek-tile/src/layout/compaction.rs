@@ -28,7 +28,7 @@ impl Compaction {
     /// Compact `projection`'s window, `extent_of` giving each logical axis's extent over the
     /// sub-tile staged; a [`direct`](Projection::direct) one compacts to itself. `vector_size` is
     /// the width the stage is served at, threaded through to [`Projection::validate`].
-    pub fn of(
+    pub fn new(
         projection: &Projection,
         vector_size: usize,
         extent_of: impl Fn(Axis) -> usize,
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn direct_compacts_to_itself() {
         let p = Projection::direct(&[OH, CI]);
-        let c = Compaction::of(&p, 4, extents(8, 1, 16));
+        let c = Compaction::new(&p, 4, extents(8, 1, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[8, 16]);
@@ -226,7 +226,7 @@ mod tests {
     /// `oh * rh` cells the logical stage held.
     #[test]
     fn a_unit_stride_window_is_the_receptive_field() {
-        let c = Compaction::of(&conv(1, 1), 4, extents(8, 3, 16));
+        let c = Compaction::new(&conv(1, 1), 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[10, 16]);
         assert_eq!(c.cells(4), 10 * 4);
@@ -236,7 +236,7 @@ mod tests {
     /// dense and only the extent grows.
     #[test]
     fn a_strided_window_with_adjacent_taps_stays_dense() {
-        let c = Compaction::of(&conv(2, 1), 4, extents(8, 3, 16));
+        let c = Compaction::new(&conv(2, 1), 4, extents(8, 3, 16));
         assert!(c.is_dense());
         // 1 + 7*2 + 2*1
         assert_eq!(c.extents(), &[17, 16]);
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn a_single_tap_at_stride_two_halves_the_stage() {
         for dilation in [1, 3] {
-            let c = Compaction::of(&conv(2, dilation), 4, extents(8, 1, 16));
+            let c = Compaction::new(&conv(2, dilation), 4, extents(8, 1, 16));
             assert!(!c.is_dense());
             assert_eq!(c.steps(), &[2, 1]);
             assert_eq!(c.extents(), &[8, 16]);
@@ -261,7 +261,7 @@ mod tests {
     /// stores half of the bounding box and both coefficients halve.
     #[test]
     fn a_shared_factor_quotients_the_window() {
-        let c = Compaction::of(&conv(2, 2), 4, extents(8, 3, 16));
+        let c = Compaction::new(&conv(2, 2), 4, extents(8, 3, 16));
         assert_eq!(c.steps(), &[2, 1]);
         // Bounding box 1 + 7*2 + 2*2 = 19, on the even lattice: 1 + 7 + 2 = 10.
         assert_eq!(c.extents(), &[10, 16]);
@@ -273,7 +273,7 @@ mod tests {
     /// `{0, 1, 3, 4, 6, 7}`, whose gcd is 1, so the box spans the holes.
     #[test]
     fn unreachable_offsets_inside_the_box_stay_as_padding() {
-        let c = Compaction::of(&conv(3, 1), 4, extents(3, 2, 16));
+        let c = Compaction::new(&conv(3, 1), 4, extents(3, 2, 16));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[8, 16]);
     }
@@ -281,7 +281,7 @@ mod tests {
     /// A ragged innermost extent is padded out to whole lines.
     #[test]
     fn a_ragged_innermost_extent_is_padded() {
-        let lines = Compaction::of(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
+        let lines = Compaction::new(&conv(1, 1), 4, extents(8, 3, 6)).line_extents(4);
         assert_eq!(lines, &[10, 2]);
     }
 
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn a_scalar_gather_may_compact_its_only_axis() {
         let p = Projection::new(&[OH, RH], &[PhysicalAxisMap::affine(&[(OH, 2), (RH, 1)])]);
-        let c = Compaction::of(&p, 1, extents2(8, 3));
+        let c = Compaction::new(&p, 1, extents2(8, 3));
         assert!(c.is_dense());
         assert_eq!(c.extents(), &[17]);
     }
@@ -306,7 +306,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
@@ -323,7 +323,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[17, 16]);
@@ -342,12 +342,12 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         // 1 + 7*2 + 2*1, the box `conv(2, 1)` fills.
         assert_eq!(c.extents(), &[17, 16]);
         assert_eq!(
-            Compaction::of(&conv(2, 1), 4, extents(8, 3, 16)).extents(),
+            Compaction::new(&conv(2, 1), 4, extents(8, 3, 16)).extents(),
             c.extents()
         );
         assert!(c.projection().physical_axis(0).has_dynamic_scale());
@@ -366,7 +366,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         // 1 + 7*2 + 2*2, the bounding box `conv(2, 2)` quotients but this one cannot.
@@ -386,7 +386,7 @@ mod tests {
             ],
         );
         // RH does not move, so it contributes nothing to the box: 1 + 7*2 on the even lattice.
-        let c = Compaction::of(&p, 4, extents(8, 1, 16));
+        let c = Compaction::new(&p, 4, extents(8, 1, 16));
         assert_eq!(c.steps(), &[2, 1]);
         assert_eq!(c.extents(), &[8, 16]);
         assert_eq!(p.dynamic_scale_index(0, 1), Some(0));
@@ -407,7 +407,7 @@ mod tests {
         // OH: 8, RH: 3, CI: 16
         // field = (8-1)*2 + (3-1)*3 = 14 + 6 = 20
         // extent = 1 + (20 + 3 - 1) / 3 = 1 + 22 / 3 = 1 + 7 = 8
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         assert_eq!(c.steps(), &[1, 1]);
         assert_eq!(c.extents(), &[8, 16]);
@@ -426,7 +426,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c = Compaction::of(&p, 4, extents(8, 3, 16));
+        let c = Compaction::new(&p, 4, extents(8, 3, 16));
         assert!(c.is_dense());
         // Identical to the static `over(3)` box above: field 20 over divisor 3 is 1 + 7 = 8.
         assert_eq!(c.extents(), &[8, 16]);
@@ -445,7 +445,7 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let box_extent = Compaction::of(&bounded, 4, extents(8, 3, 16)).extents()[0];
+        let box_extent = Compaction::new(&bounded, 4, extents(8, 3, 16)).extents()[0];
         for d in 2..24 {
             let exact = Projection::new(
                 &[OH, RH, CI],
@@ -456,7 +456,7 @@ mod tests {
             );
             // `over` reduces a divisor the coefficients cancel, which is a different shape.
             if exact.physical_axis(0).is_rational() {
-                assert!(Compaction::of(&exact, 4, extents(8, 3, 16)).extents()[0] <= box_extent);
+                assert!(Compaction::new(&exact, 4, extents(8, 3, 16)).extents()[0] <= box_extent);
             }
         }
     }
@@ -483,8 +483,8 @@ mod tests {
                 PhysicalAxisMap::of(CI),
             ],
         );
-        let c_dynamic = Compaction::of(&p_dynamic_offset, 4, extents(8, 3, 16));
-        let c_integer = Compaction::of(&p_integer, 4, extents(8, 3, 16));
+        let c_dynamic = Compaction::new(&p_dynamic_offset, 4, extents(8, 3, 16));
+        let c_integer = Compaction::new(&p_integer, 4, extents(8, 3, 16));
 
         assert_eq!(c_dynamic.steps(), c_integer.steps());
         assert_eq!(c_dynamic.extents(), c_integer.extents());

@@ -2,6 +2,7 @@
 
 use core::f32::consts::PI;
 
+use super::{Form, implied};
 use cubecl::{prelude::*, std::tensor::TensorHandle, zspace::shape};
 use cubecl_common::{ComptimeFloat, Ratio};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
@@ -378,7 +379,7 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            launcher: Launcher::implied(
+            launcher: implied(
                 &cubecl::test_device().client(),
                 Partitioning::new(
                     Space::new(&[(ROW, ROWS), (COL, COLS)]),
@@ -386,7 +387,7 @@ impl Harness {
                         .walk_every(&[ROW, COL])
                         .levels(),
                 ),
-                KernelForm::Static,
+                Form::Static,
             ),
         }
     }
@@ -452,7 +453,7 @@ fn user_recipe_evaluates_in_place() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
@@ -468,7 +469,7 @@ fn user_recipe_materializes_through_a_staged_walk() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |row, col| (row * col) as f32);
@@ -484,7 +485,7 @@ fn selecting_a_region_rebases_the_recipe_origin() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |_, _| 4.0);
@@ -501,7 +502,7 @@ fn check_phase(launch_ratio: bool) {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         launch_ratio,
         h.dtype,
     );
@@ -531,7 +532,7 @@ fn constant_evaluates_its_value_everywhere() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
     assert_grid(&h.read(output), |_, _| -1.25);
@@ -547,7 +548,7 @@ fn affine_coordinates_evaluate_absolute_positions() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         offset(-2.5),
         h.dtype,
     );
@@ -566,7 +567,7 @@ fn linear_is_a_triangle_with_unit_support() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         offset(-2.5),
         h.dtype,
     );
@@ -592,7 +593,7 @@ fn a_procedural_tile_works_over_an_integer_element_type() {
         launcher.cube_dim(),
         output_arg!(output),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
     let got = HostData::from_tensor_handle(&client, output, HostDataType::I32);
@@ -613,7 +614,7 @@ fn a_filter_wraps_any_recipe_not_only_affine_coordinates() {
         h.launcher.cube_dim(),
         output_arg!(output),
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
     // x = row / 2, so the triangle falls to zero at row 2 and stays there.
@@ -636,7 +637,7 @@ fn cubic_matches_the_keys_convolution() {
             h.launcher.cube_dim(),
             output_arg!(output),
             h.launcher.partitioning_arg(),
-            h.launcher.level(0),
+            h.launcher.partitioning().level(0),
             offset(-2.5),
             ratio,
             h.dtype,
@@ -668,7 +669,7 @@ fn lanczos_matches_the_windowed_sinc() {
             h.launcher.cube_dim(),
             output_arg!(output),
             h.launcher.partitioning_arg(),
-            h.launcher.level(0),
+            h.launcher.partitioning().level(0),
             offset(start),
             lobes,
             h.dtype,
@@ -689,7 +690,7 @@ fn lanczos_matches_the_windowed_sinc() {
 fn direct_copy_masks_the_trailing_partial_tile() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
@@ -697,7 +698,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
                 .walk_every(&[ROW, COL])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
@@ -723,7 +724,7 @@ fn direct_copy_masks_the_trailing_partial_tile() {
 fn divided_direct_copy_preserves_the_parent_bound() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launch = Launcher::implied(
+    let launch = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
@@ -731,7 +732,7 @@ fn divided_direct_copy_preserves_the_parent_bound() {
                 .walk_every(&[ROW, COL])
                 .levels(),
         ),
-        KernelForm::DynamicAlong(&[ROW]),
+        Form::DynamicAlong(&[ROW]),
     );
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
@@ -744,7 +745,7 @@ fn divided_direct_copy_preserves_the_parent_bound() {
         launch.cube_dim(),
         output_arg!(output),
         launch.partitioning_arg(),
-        launch.level(0),
+        launch.partitioning().level(0),
         dtype,
     );
 

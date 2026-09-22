@@ -6,6 +6,8 @@ use core::fmt::{self, Display, Formatter};
 
 use cubecl::prelude::*;
 
+use crate::Axis;
+
 use crate::Coords;
 
 /// One operand's physical extents and strides, in scalars, one entry per physical dim.
@@ -21,7 +23,7 @@ pub struct Geometry {
 
 impl Geometry {
     /// One `(extent, stride)` per physical dim, coarsest first, both in scalars.
-    pub fn of_dims(dims: &[(usize, usize)]) -> Self {
+    pub fn new(dims: &[(usize, usize)]) -> Self {
         Self {
             shape: dims.iter().map(|&(extent, _)| extent).collect(),
             strides: dims.iter().map(|&(_, stride)| stride).collect(),
@@ -44,6 +46,26 @@ impl Geometry {
     }
 
     /// The dims, coarsest first.
+    /// This geometry with its trailing `labels.len()` dims reordered by stride, coarsest first,
+    /// and the labels in that same order; the leading (batch) dims are left alone. How a transposed
+    /// view binds as the buffer it is.
+    pub fn in_stride_order(&self, labels: &[Axis]) -> (Geometry, Vec<Axis>) {
+        let batch_dims = self.rank() - labels.len();
+        let mut trailing: Vec<(usize, (usize, usize))> =
+            self.dims().enumerate().skip(batch_dims).collect();
+        trailing.sort_by_key(|&(_, (_, stride))| core::cmp::Reverse(stride));
+        let dims: Vec<(usize, usize)> = self
+            .dims()
+            .take(batch_dims)
+            .chain(trailing.iter().map(|&(_, dim)| dim))
+            .collect();
+        let ordered = trailing
+            .iter()
+            .map(|&(dim, _)| labels[dim - batch_dims])
+            .collect();
+        (Geometry::new(&dims), ordered)
+    }
+
     pub fn dims(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.shape.iter().copied().zip(self.strides.iter().copied())
     }
@@ -85,7 +107,7 @@ impl Geometry {
 /// Why a [`Geometry`] cannot be served at some width: the value that decided it, so a message
 /// names the number a reader has to go looking for otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LineMisfit {
+pub enum LineMisfit {
     /// The innermost dim's own stride, when it is not 1: consecutive values are not one line.
     InnermostStrided(usize),
     /// The innermost extent, when it is not a whole number of lines.
@@ -175,5 +197,34 @@ impl RuntimeGeometry {
     pub fn push(&mut self, extent: u32, stride: u32) {
         self.shape.push(extent);
         self.strides.push(stride);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const K: Axis = Axis(2);
+    const N: Axis = Axis(1);
+
+    /// A transposed view comes back as the buffer it is: the dims in the order they step, the
+    /// labels following them, and a leading batch dim left where it was.
+    #[test]
+    fn stride_order_reorders_the_dims_and_their_labels() {
+        // `[n, k]` behind a `[k, n]` view: `k` strides by one.
+        let (dims, labels) = Geometry::new(&[(4096, 1), (6144, 4096)]).in_stride_order(&[K, N]);
+        assert_eq!(labels, vec![N, K]);
+        assert_eq!(dims, Geometry::new(&[(6144, 4096), (4096, 1)]));
+
+        // Already in order: nothing moves.
+        let (dims, labels) = Geometry::new(&[(4096, 6144), (6144, 1)]).in_stride_order(&[K, N]);
+        assert_eq!(labels, vec![K, N]);
+        assert_eq!(dims, Geometry::new(&[(4096, 6144), (6144, 1)]));
+
+        // A broadcast batch dim strides by zero and stays first all the same.
+        let (dims, labels) =
+            Geometry::new(&[(8, 0), (4096, 1), (6144, 4096)]).in_stride_order(&[K, N]);
+        assert_eq!(labels, vec![N, K]);
+        assert_eq!(dims, Geometry::new(&[(8, 0), (6144, 4096), (4096, 1)]));
     }
 }

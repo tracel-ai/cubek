@@ -7,8 +7,8 @@
 //! ```text
 //! Projection::dims()
 //!     .dim(B)                                        // dim 0 = b
-//!     .dim(window(&[(OH, stride), (RH, dilation)]).pad(pad)) // dim 1 = oh*stride+rh*dilation-pad
-//!     .dim(window(&[(OW, stride), (RW, dilation)]).pad(pad))   // dim 2
+//!     .dim(stencil(&[(OH, stride), (RH, dilation)]).pad(pad)) // dim 1 = oh*stride+rh*dilation-pad
+//!     .dim(stencil(&[(OW, stride), (RW, dilation)]).pad(pad))   // dim 2
 //!     .dim(C)                                        // dim 3 = c
 //!     .build()
 //! ```
@@ -20,9 +20,9 @@
 //! * [`split`] — several axes cut one dim into blocks, `kb·block + ki`, and cannot land on the
 //!   same cell. Stated in **extents**, coarsest first, so no coefficient is computed by hand;
 //!
-//! * [`window`] — several axes slide over one dim, `oh·stride + rh·dilation`, and may land on
+//! * [`stencil`] — several axes slide over one dim, `oh·stride + rh·dilation`, and may land on
 //!   the same cell. Stated in coefficients, because a stride and a dilation *are* the
-//!   coefficients, with [`pad`](WindowDim::pad) for the constant term.
+//!   coefficients, with [`pad`](StencilDim::pad) for the constant term.
 //!
 //! A storage-tiled axis is the plain axis repeated, coarsest fragment first; the radix each
 //! fragment steps by is read off the buffer at use time, not stated here.
@@ -50,7 +50,7 @@ pub struct DimsBuilder {
 }
 
 impl DimsBuilder {
-    /// The next buffer dim, coarsest first: an [`Axis`], a [`split`], or a [`window`].
+    /// The next buffer dim, coarsest first: an [`Axis`], a [`split`], or a [`stencil`].
     pub fn dim(mut self, dim: impl Into<PhysicalAxisMap>) -> Self {
         self.physical.push(dim.into());
         self
@@ -143,27 +143,27 @@ pub fn split(extents: &[(Axis, usize)]) -> PhysicalAxisMap {
 }
 
 /// One dim several axes slide over, stated in **coefficients**:
-/// `window(&[(OH, stride), (RH, dilation)])` is `oh·stride + rh·dilation`, and
-/// [`.pad(p)`](WindowDim::pad) subtracts the padding.
+/// `stencil(&[(OH, stride), (RH, dilation)])` is `oh·stride + rh·dilation`, and
+/// [`.pad(p)`](StencilDim::pad) subtracts the padding.
 ///
 /// Consecutive windows may overlap — that is what a receptive field is — so this is
 /// [`Composition::Overlapping`], and the aliasing checks leave it alone.
-pub fn window(coefficients: &[(Axis, usize)]) -> WindowDim {
-    WindowDim {
+pub fn stencil(coefficients: &[(Axis, usize)]) -> StencilDim {
+    StencilDim {
         coefficients: SmallVec::from_slice(coefficients),
         pad: 0,
     }
 }
 
-/// A [`window`] before its padding is stated. Converts into the dim's map directly, at zero
+/// A [`stencil`] before its padding is stated. Converts into the dim's map directly, at zero
 /// padding, or after [`pad`](Self::pad).
 #[derive(Clone, Debug)]
-pub struct WindowDim {
+pub struct StencilDim {
     coefficients: SmallVec<[(Axis, usize); Space::MAX_RANK]>,
     pad: usize,
 }
 
-impl WindowDim {
+impl StencilDim {
     /// How many cells before the buffer's first this window's origin sits: the padding, which
     /// a boundary guard reads as zero.
     pub fn pad(mut self, pad: usize) -> Self {
@@ -172,8 +172,8 @@ impl WindowDim {
     }
 }
 
-impl From<WindowDim> for PhysicalAxisMap {
-    fn from(window: WindowDim) -> Self {
+impl From<StencilDim> for PhysicalAxisMap {
+    fn from(window: StencilDim) -> Self {
         let map = PhysicalAxisMap::affine_with_offset(&window.coefficients, -(window.pad as isize));
         debug_assert!(
             window.coefficients.len() == 1 || map.composition() == Composition::Overlapping,
@@ -271,10 +271,10 @@ mod tests {
 
     /// `oh·2 + rh·1 − 1`: adjacent output steps overlap, and `oh = 0` reaches into the pad.
     #[test]
-    fn window_is_an_overlapping_affine_map_with_padding() {
+    fn stencil_is_an_overlapping_affine_map_with_padding() {
         let p = Projection::dims()
             .dim(B)
-            .dim(window(&[(OH, 2), (RH, 1)]).pad(1))
+            .dim(stencil(&[(OH, 2), (RH, 1)]).pad(1))
             .dim(C)
             .build();
 

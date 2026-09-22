@@ -142,7 +142,7 @@ pub(crate) fn validate_stored_tile(
     Err(MatmulSetupError::InvalidConfig(Box::new(format!(
         "{name} is stored in {tile:?} storage tiles, which is the tile of no level of this \
          routine's nest; pack the tensor to one of its tiles\n\n{}",
-        partitioning.labelled(&labels(space))
+        partitioning.table(&labels(space))
     ))))
 }
 

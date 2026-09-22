@@ -14,7 +14,7 @@ use cubek_matmul::{
 use cubek_std::{InputBinding, MatrixLayout};
 use cubek_test_utils::{TestInput, skip_unless_cpu};
 use cubek_tile::{
-    Axis, KernelForm, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
+    Axis, Grid, Launcher, Partitioning, Projection, Space, TileArg, TileArgLaunch, TileSpec,
 };
 
 use super::Dims;
@@ -116,14 +116,19 @@ impl Operand {
         Operand {
             handle,
             layout,
-            launcher: Launcher::implied(
-                &cubecl::test_device().client(),
-                Partitioning::new(
+            launcher: {
+                let partitioning = Partitioning::new(
                     Space::new(&[(axes[0], batch), (axes[1], rows), (axes[2], cols)]),
                     vec![],
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(
+                    &cubecl::test_device().client(),
+                    partitioning,
+                    &concrete,
+                    Grid::FromLevels,
+                )
+            },
             batch,
             rows,
             cols,

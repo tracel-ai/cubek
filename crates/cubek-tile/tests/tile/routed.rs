@@ -8,6 +8,7 @@
 //! along `K` exactly as an unrouted one does.
 #![allow(non_snake_case)]
 
+use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, std::tensor::TensorHandle, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -184,7 +185,7 @@ fn routed_staged_matmul_kernel<E: Numeric>(
 /// Nothing here says a token uses one expert; the walk does.
 fn per_token_operands(client: &Client) -> (Launcher, TensorHandle, TensorHandle) {
     let f32_ty = f32::elem_type_native();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, FEATURES), (EXPERT, EXPERTS)]),
@@ -193,7 +194,7 @@ fn per_token_operands(client: &Client) -> (Launcher, TensorHandle, TensorHandle)
                 .walk_every(&[M])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (x, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, FEATURES]))
@@ -229,8 +230,8 @@ fn run(routes: &[u32]) -> HostData {
         ),
         table.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32::elem_type_native(),
     );
 
@@ -258,8 +259,8 @@ fn run_staged(routes: &[u32]) -> HostData {
         ),
         table.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
         f32::elem_type_native(),
     );
 
@@ -342,7 +343,7 @@ fn run_block(routes: &[u32]) -> HostData {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (N, FEATURES), (K, DEPTH), (EXPERT, EXPERTS)]),
@@ -352,7 +353,7 @@ fn run_block(routes: &[u32]) -> HostData {
                 .walk_every(&[M])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (x, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, DEPTH]))
@@ -381,9 +382,9 @@ fn run_block(routes: &[u32]) -> HostData {
         ),
         table.binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
-        launcher.level(1),
-        launcher.level(2),
+        launcher.partitioning().level(0),
+        launcher.partitioning().level(1),
+        launcher.partitioning().level(2),
         f32_ty,
     );
 
@@ -426,13 +427,13 @@ fn launch_routed_on(axis: Axis) -> f32 {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, TOKENS), (EXPERT, EXPERTS)]),
             Tiling::leaf(&[(EXPERT, 1)]).walk_every(&[EXPERT]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (k_handle, _) = TestInput::builder(client.clone(), Shape::new([TOKENS, EXPERTS]))
@@ -454,7 +455,7 @@ fn launch_routed_on(axis: Axis) -> f32 {
         ),
         out_handle.clone().binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         axis,
     );
 
@@ -497,7 +498,7 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
     let lanes = client.properties().hardware.plane_size_max as usize;
     let target = 2usize;
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(EXPERT, lanes)]),
@@ -505,7 +506,7 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
                 .lanes(&[(EXPERT, lanes)])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let out_handle = TestInput::builder(client.clone(), Shape::new([lanes]))
@@ -519,7 +520,7 @@ fn a_routed_axis_reads_the_same_coordinate_in_every_lane() {
         CubeDim::new_2d(lanes as u32, 1),
         out_handle.clone().binding().into_tensor_arg(),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         target,
     );
 

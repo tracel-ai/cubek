@@ -3,7 +3,7 @@
 use cubecl::prelude::*;
 use cubecl::quant::scheme::{QuantScheme, QuantStore, ScaleDtype};
 use cubecl::std::quant::view::KnownScale;
-use cubecl::std::tensor::layout::linear::LinearView;
+use cubecl::std::tensor::layout::linear::{LinearView, linear_view};
 
 use crate::*;
 
@@ -110,4 +110,107 @@ pub(crate) fn validate_scheme(space: &Space, vector_size: usize, scheme: QuantSc
         "a quantized operand's innermost axis is served in {vector_size}-wide lines, which its \
          {inner}-element scale blocks must be a multiple of, else one line straddles two scales"
     );
+}
+
+/// How an operand is quantized: the scales beside its values, the scheme saying how to fold them
+/// back in, and how far the quantized form travels before something decodes it. One thing, because
+/// none says anything alone: scales need a scheme, a [`DequantAt`] without one bounds nothing.
+pub struct Quantization {
+    /// The innermost level's scales, the only ones addressed per position.
+    pub scales: TensorArg,
+    /// The global level's scale, one for the whole tensor, present exactly when the scheme has a
+    /// second level ([`validate`](Self::validate) holds the two together).
+    pub global: Option<TensorBinding>,
+    /// A lookup scheme's `2^bits`-entry table, present exactly under
+    /// [`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode);
+    /// [`validate`](Self::validate) holds the two together.
+    pub table: Option<BufferArg>,
+    pub scheme: QuantScheme,
+    pub dequant_at: DequantAt,
+}
+
+impl Quantization {
+    /// `inner` holds the innermost level's scales, addressed per position; `global` the whole
+    /// tensor's, read once from its first element, present exactly when the scheme has a second
+    /// level ([`validate`](Self::validate) holds the two together).
+    pub fn new(
+        inner: TensorBinding,
+        global: Option<TensorBinding>,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> Self {
+        Quantization {
+            scales: inner.into_tensor_arg(),
+            global,
+            table: None,
+            scheme,
+            dequant_at,
+        }
+    }
+
+    /// [`new`](Self::new) for a lookup scheme, where a read reconstructs `table[field] * scale`
+    /// ([`QuantMode::Lookup`](cubecl::quant::scheme::QuantMode)). `table` holds `2^bits` f32
+    /// entries, unchecked here: the unpack's mask bounds every index.
+    pub fn lookup(
+        scales: TensorArg,
+        table: BufferArg,
+        scheme: QuantScheme,
+        dequant_at: DequantAt,
+    ) -> Self {
+        Quantization {
+            scales,
+            global: None,
+            table: Some(table),
+            scheme,
+            dequant_at,
+        }
+    }
+
+    /// Values per stored element: `1` unless the scheme packs several into each.
+    pub fn num_quants(&self) -> usize {
+        self.scheme.num_quants()
+    }
+
+    /// Refuse what this quantization cannot serve, on the caller's thread: the scheme against the
+    /// operand's cuts and served width. Where the [`DequantAt`] can be honoured is the fragment
+    /// load's to say, at the kernel's own call.
+    /// This quantization against the operand it rides: a gathered operand cannot be quantized
+    /// (its scale grid is shaped over its logical axes, which its buffer's dims no longer match),
+    /// and the scheme must fit the served width and the operand's space.
+    pub(crate) fn check(
+        &self,
+        spec: &TileSpec,
+        space: &Space,
+        width: usize,
+    ) -> Result<(), Refusal> {
+        if !spec.projection.untiled().is_direct() {
+            return Err(Refusal::QuantizedGather);
+        }
+        self.validate(&space.project(spec.axes()), width);
+        Ok(())
+    }
+
+    fn validate(&self, space: &Space, vector_size: usize) {
+        cubecl::std::quant::check_scale_bindings(&self.scheme, 1 + self.global.is_some() as usize);
+        validate_scheme(space, vector_size, self.scheme);
+        cubecl::std::quant::check_table_bindings(&self.scheme, self.table.is_some());
+    }
+
+    /// The operand as the kernel's [`QuantTileArg`] launch argument: values, scales, spec and
+    /// scheme as one thing.
+    pub(crate) fn arg<E: Numeric, V: Size>(
+        self,
+        tensor: TensorArg,
+        spec: TileSpec,
+    ) -> QuantTileArgLaunch<'static, E, V> {
+        QuantTileArgLaunch::new(
+            tensor,
+            self.scales,
+            self.global.map(linear_view).into(),
+            self.table.into(),
+            spec,
+            self.scheme,
+            self.dequant_at,
+        )
+    }
 }

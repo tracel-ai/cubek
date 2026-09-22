@@ -11,6 +11,7 @@
 //! Both compute the same answer and neither is a ladder rung of the other.
 //! [`cubek-matmul`'s QuantGemv routine] is built on the first.
 
+use super::{Form, implied};
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
@@ -212,7 +213,7 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
     // The activation is read one `K`-contiguous line a step where the accumulator sits in
     // memory, and cell by cell where it is promoted (see the kernel above).
     let dtype = f32::elem_type_native();
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, d_out), (N, n), (KB, blocks), (KI, block)]),
@@ -229,7 +230,7 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
             .cubes(&[M])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     // The leaf's budget: one scalar per row a lane owns, per value of the word it takes a step.
     let budget = rows_per_lane * factor;
@@ -292,11 +293,8 @@ fn serving_geometry(promoted: bool, lanes_cut: bool) {
         .vectorize(if promoted { 1 } else { factor })
         .build();
     // One scale per `(row, block of K)`: `KI` is carried and addressed by nothing.
-    let s_op = launcher.arg(s_tensor.binding()).subspace(&[M, KB]).build();
-    let out_op = launcher
-        .arg(out.clone().binding())
-        .subspace(&[M, N])
-        .build();
+    let s_op = launcher.arg(s_tensor.binding()).axes(&[M, KB]).build();
+    let out_op = launcher.arg(out.clone().binding()).axes(&[M, N]).build();
 
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());
     if promoted {

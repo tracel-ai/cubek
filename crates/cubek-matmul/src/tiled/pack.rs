@@ -15,7 +15,7 @@ use cubecl::{
     zspace::{Shape, Tiling},
 };
 use cubek_tile::{
-    Axis, Geometry, KernelForm, Launcher, Level, Partitioning, Space, TileArg, Tiling as Levels,
+    Axis, Geometry, Grid, Launcher, Level, Partitioning, Space, TileArg, Tiling as Levels,
 };
 
 use crate::{
@@ -234,12 +234,20 @@ fn relayout_launch(
     let partitioning = Partitioning::new(space, vec![level.clone()]);
     let cube_count = partitioning.cube_count();
     let cube_dim = CubeDim::new_1d(client.properties().hardware.plane_size_max);
-    let launch = Launcher::partitioned(
-        client,
-        partitioning,
-        (cube_count.clone(), cube_dim),
-        KernelForm::Dynamic,
-    );
+    let launch = {
+        let partitioning = partitioning;
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = (cube_count.clone(), cube_dim);
+        Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
     let v = launch.vector_size(
         N,
         &[
@@ -250,13 +258,13 @@ fn relayout_launch(
     );
     let s = launch
         .arg(src)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();
     let d = launch
         .arg(dst)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(&all_batch_axes)
         .vectorize(v)
         .build();

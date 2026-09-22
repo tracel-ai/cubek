@@ -4,10 +4,7 @@
 use crate::Addressed;
 use cubecl::zspace::SmallVec;
 
-use crate::{
-    Axis, Composition, ConcreteLayout, Divisor, Offset, PhysicalAxisMap, Scale, Space,
-    StorageTiling,
-};
+use crate::{Axis, Composition, Divisor, Offset, PhysicalAxisMap, Scale, Space, StorageTiling};
 
 /// An operand's logical axes mapped onto its buffer's physical axes.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -33,20 +30,6 @@ impl Projection {
     /// stage, a fragment) maps through, whatever its source mapped through.
     pub(crate) fn direct_over(space: &crate::Space) -> Self {
         Projection::direct(&space.axes().collect::<Vec<_>>())
-    }
-
-    /// Build the projection off a realized [`ConcreteLayout`]: one identity term per physical axis
-    /// in buffer order; a tiled axis labels one per fragment, with no extent baked in. Labeled maps
-    /// in [`StridedTileSource::subspace`](crate::StridedTileSource::subspace) derive from this.
-    pub(crate) fn of_layout(layout: &ConcreteLayout) -> Projection {
-        Projection {
-            physical: layout
-                .axes()
-                .iter()
-                .map(|pa| PhysicalAxisMap::of(pa.axis()))
-                .collect(),
-            axes: layout.distinct_axes(),
-        }
     }
 
     /// [`direct`](Projection::direct) with the axes storage-tiled per `tiling`: each axis labels as
@@ -461,15 +444,6 @@ impl Projection {
 mod tests {
     use super::*;
 
-    const A: Axis = Axis(0);
-    const B: Axis = Axis(1);
-    const R: Axis = Axis(2);
-
-    const M: Axis = Axis(3);
-    const KB: Axis = Axis(4);
-    const KI: Axis = Axis(5);
-    const KO: Axis = Axis(6);
-
     /// The block scales span the values' axes but the position inside a block, and count the
     /// split dim in blocks.
     #[test]
@@ -512,6 +486,15 @@ mod tests {
     fn scales_per_an_unsplit_axis_are_refused() {
         Projection::direct(&[M, KB]).scales_per(KB);
     }
+
+    const A: Axis = Axis(0);
+    const B: Axis = Axis(1);
+    const R: Axis = Axis(2);
+
+    const M: Axis = Axis(3);
+    const KB: Axis = Axis(4);
+    const KI: Axis = Axis(5);
+    const KO: Axis = Axis(6);
 
     #[test]
     fn direct_is_direct() {
@@ -664,94 +647,20 @@ mod tests {
         p.validate(4);
     }
 
-    /// `[batch, m_grid, n_grid, m_tile, n_tile]`: a passthrough axis carries one physical axis and
-    /// no digit arithmetic, while each tiled axis's grid digit strips its tile fragment and keeps
-    /// the full quotient, and its tile digit strips nothing and takes its own extent as the radix.
-    #[test]
-    fn of_layout_batch_and_grid_tile() {
-        use crate::PhysicalAxis;
-
-        const BATCH: Axis = Axis(3);
-        let layout = ConcreteLayout::new(&[
-            PhysicalAxis::new(BATCH, 2),
-            PhysicalAxis::new(A, 4),
-            PhysicalAxis::new(B, 4),
-            PhysicalAxis::new(A, 8),
-            PhysicalAxis::new(B, 8),
-        ]);
-        let p = Projection::of_layout(&layout);
-
-        assert_eq!(p.logical_axes(), &[BATCH, A, B]);
-        assert_eq!(p.physical_rank(), 5);
-        assert!(p.is_tiled());
-        assert!(p.is_invertible());
-
-        assert_eq!(p.digit(0, BATCH), (SmallVec::new(), None));
-        assert_eq!(p.digit(1, A), (SmallVec::from_slice(&[3]), None));
-        assert_eq!(p.digit(2, B), (SmallVec::from_slice(&[4]), None));
-        assert_eq!(p.digit(3, A), (SmallVec::new(), Some(3)));
-        assert_eq!(p.digit(4, B), (SmallVec::new(), Some(4)));
-    }
-
-    /// An untiled layout is [`direct`](Projection::direct): one physical axis per logical one, so
-    /// every digit is the whole coordinate and the addressing is the plain strided dot.
-    #[test]
-    fn of_layout_untiled_is_identity() {
-        use crate::PhysicalAxis;
-
-        let layout = ConcreteLayout::new(&[PhysicalAxis::new(A, 4), PhysicalAxis::new(B, 8)]);
-        let p = Projection::of_layout(&layout);
-        assert_eq!(p, Projection::direct(&[A, B]));
-        assert!(p.is_invertible());
-        assert_eq!(p.digit(0, A), (SmallVec::new(), None));
-    }
-
-    /// The synthetic per-position map addresses the same `[pre…, grid…, tile…]` buffer as a
-    /// realized layout of the same shape, at any depth: two levels give three fragments per tiled
-    /// position, each stripping the ones below it.
-    #[test]
-    fn of_tiling_matches_a_realized_layout() {
-        use crate::PhysicalAxis;
-
-        let p = Projection::of_tiling(StorageTiling::suffix(3, 1, 2));
-        assert_eq!(p.physical_rank(), 7);
-        assert_eq!(p.logical_rank(), 3);
-        // `[batch, m_grid, n_grid, m_mid, n_mid, m_tile, n_tile]`, `M` at positions 1, 3, 5.
-        assert_eq!(p.digit(1, Axis(1)), (SmallVec::from_slice(&[3, 5]), None));
-        assert_eq!(p.digit(3, Axis(1)), (SmallVec::from_slice(&[5]), Some(3)));
-        assert_eq!(p.digit(5, Axis(1)), (SmallVec::new(), Some(5)));
-        assert_eq!(p.digit(0, Axis(0)), (SmallVec::new(), None));
-
-        let realized = ConcreteLayout::new(&[
-            PhysicalAxis::new(Axis(0), 2),
-            PhysicalAxis::new(Axis(1), 4),
-            PhysicalAxis::new(Axis(2), 4),
-            PhysicalAxis::new(Axis(1), 2),
-            PhysicalAxis::new(Axis(2), 2),
-            PhysicalAxis::new(Axis(1), 8),
-            PhysicalAxis::new(Axis(2), 8),
-        ]);
-        assert_eq!(p, Projection::of_layout(&realized));
-    }
-
     /// A spec built from a realized tiled layout is honest about its buffer: its physical rank *is*
     /// the rank `Tile::of` reads shape and strides over, its positional relabeling the layout's own
     /// synthetic map; the declared twin (`TileSpec::new` plus tiled `Storage`) describes the same.
     #[test]
     fn a_tiled_spec_matches_its_buffer() {
-        use crate::{PhysicalAxis, TileSpec};
+        use crate::TileSpec;
 
         const BATCH: Axis = Axis(3);
-        let layout = ConcreteLayout::new(&[
-            PhysicalAxis::new(BATCH, 2),
-            PhysicalAxis::new(A, 4),
-            PhysicalAxis::new(B, 4),
-            PhysicalAxis::new(A, 8),
-            PhysicalAxis::new(B, 8),
-        ]);
-        let spec = TileSpec::new(Projection::of_layout(&layout));
+        let spec = TileSpec::new(Projection::new(
+            &[BATCH, A, B],
+            &[BATCH, A, B, A, B].map(PhysicalAxisMap::of),
+        ));
 
-        assert_eq!(spec.projection.physical_rank(), layout.axes().len());
+        assert_eq!(spec.projection.physical_rank(), 5);
         assert_eq!(
             spec.projection.positional(),
             Projection::of_tiling(StorageTiling::suffix(3, 1, 1))

@@ -34,24 +34,39 @@ impl<E: Numeric> TmaTileArg<E> {
     }
 }
 
+/// The box a TMA descriptor moves and the runtime extents it moves within: the operand's logical
+/// `(rows, cols)`, its batch when it has one, and whether the descriptor is column-major (TMA
+/// discards the last stride, so a col-major descriptor is transposed and the layout swaps back).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TmaBox {
+    pub rows: u32,
+    pub cols: u32,
+    pub batch: Option<u32>,
+    pub transposed: bool,
+}
+
+/// What the TMA family launches from: the tensor map, the axes it spans, and its box.
+pub struct TmaOperand {
+    pub map: TensorMapArg<Tiled>,
+    pub axes: Vec<Axis>,
+    pub shape: TmaBox,
+}
+
 impl<E: Numeric> TmaTileArgLaunch<E> {
-    /// Load a TMA tensor-map as a tile argument over `axes`. `dims` is the operand's logical
-    /// runtime `(batch, rows, cols)`; `transposed` flags a col-major descriptor whose inner pair
-    /// the layout swaps back. Width and storage don't apply to a tensor map, so the spec is built.
-    pub fn tensor_map(
-        tensor_map: TensorMapArg<Tiled>,
-        axes: &[Axis],
-        dims: (u32, u32, u32),
-        transposed: bool,
-    ) -> Self {
-        let batched = match axes.len() {
-            2 => false,
-            3 => true,
-            r => panic!(
-                "TmaTileArg: the descriptor is (batch, row, col); rank {r} operand unsupported"
+    /// A TMA tensor map as a tile argument over `axes`: two for a matrix, three with the batch
+    /// leading, which `shape.batch` then states. Width and storage don't apply to a tensor map,
+    /// so the spec is built.
+    pub fn tensor_map(tensor_map: TensorMapArg<Tiled>, axes: &[Axis], shape: TmaBox) -> Self {
+        let batched = match (axes.len(), shape.batch) {
+            (2, None) => false,
+            (3, Some(_)) => true,
+            (r, batch) => panic!(
+                "TmaTileArg: the descriptor is (batch, row, col); {r} axes with batch {batch:?} \
+                 is not a matrix nor a batched one"
             ),
         };
-        let layout = TmaDynLayoutLaunch::new(dims, batched, transposed);
+        let dims = (shape.batch.unwrap_or(1), shape.rows, shape.cols);
+        let layout = TmaDynLayoutLaunch::new(dims, batched, shape.transposed);
         let view = ViewArg::new_tensor_map_tiled::<TmaDynLayout>(tensor_map, layout);
         Self::new(view, TileSpec::direct(axes))
     }

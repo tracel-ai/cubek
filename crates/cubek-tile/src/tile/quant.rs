@@ -14,7 +14,7 @@ use crate::*;
 /// ones, stated once at launch since the quantized form ends at exactly one boundary.
 ///
 /// Which sites are available is fixed by what the operand's transports can decode, never by
-/// preference ([`build`](crate::StridedTileSource::build) enforces it); where both remain, the
+/// preference ([`build`](crate::Arg::build) enforces it); where both remain, the
 /// choice is a fork between stage size and per-read cost.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DequantAt {

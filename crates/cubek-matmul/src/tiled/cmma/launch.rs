@@ -7,7 +7,8 @@ use cubek_std::{
     launch::tma::{stride_align_bits, tma_operand, tma_operand_tiled},
 };
 use cubek_tile::{
-    Axis, Cooperative, Geometry, KernelForm, Launcher, Space, TensorDelivery, Tma, TmaTileArgLaunch,
+    Axis, Bound, Cooperative, DeliveryLaunch, Geometry, Grid, Launcher, Space, Tma, TmaBox,
+    TmaTileArgLaunch,
 };
 
 use crate::{
@@ -209,12 +210,20 @@ pub fn launch_ref(
     // and what a storage-tiled input's storage tile is the tile of.
     let space = Space::new(&extents);
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::partitioned(
-        client,
-        blueprint.partitioning(&space, &batch_axes),
-        blueprint.grid(&space, &batch_axes, plane_size),
-        KernelForm::Dynamic,
-    );
+    let launch = {
+        let partitioning = blueprint.partitioning(&space, &batch_axes);
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = blueprint.grid(&space, &batch_axes, plane_size);
+        Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
     let lhs = lhs.into_data();
     let rhs = rhs.into_data();
 
@@ -289,26 +298,26 @@ fn launch_strided<D>(
     out: TensorBinding,
     out_batch_axes: &[Axis],
 ) where
-    D: TensorDelivery,
+    D: DeliveryLaunch<Operand = Bound>,
 {
     let v_a = launch.vector_size(K, &[(&Geometry::from(&lhs), &[M, K])], elems.lhs.size());
     let a = launch
         .arg(lhs)
-        .subspace(&[M, K])
+        .axes(&[M, K])
         .batches(out_batch_axes)
         .vectorize(v_a)
         .build();
     let v_b = launch.vector_size(N, &[(&Geometry::from(&rhs), &[K, N])], elems.rhs.size());
     let b = launch
         .arg(rhs)
-        .subspace(&[K, N])
+        .axes(&[K, N])
         .batches(out_batch_axes)
         .vectorize(v_b)
         .build();
     let v_c = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_c)
         .build();
@@ -319,8 +328,8 @@ fn launch_strided<D>(
         a.vector_size,
         b.vector_size,
         c.vector_size,
-        D::operand(a),
-        D::operand(b),
+        D::arg(a),
+        D::arg(b),
         c.arg(),
         launch.partitioning_arg(),
         blueprint.clone(),
@@ -382,7 +391,16 @@ fn launch_tma(
             dtype,
             TensorMapSwizzle::None,
         );
-        TmaTileArgLaunch::tensor_map(map, axes, (1, rows, cols), transposed)
+        TmaTileArgLaunch::tensor_map(
+            map,
+            axes,
+            TmaBox {
+                rows,
+                cols,
+                batch: None,
+                transposed,
+            },
+        )
     }
     let a = operand(
         &[M, K],
@@ -401,7 +419,7 @@ fn launch_tma(
     let v_out = launch.vector_size(N, &[(&Geometry::from(&out), &[M, N])], elems.out.size());
     let c = launch
         .arg(out)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(out_batch_axes)
         .vectorize(v_out)
         .build();

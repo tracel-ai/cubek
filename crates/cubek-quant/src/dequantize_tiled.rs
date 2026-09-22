@@ -5,8 +5,8 @@ use cubecl::{
     quant::scheme::{QuantScheme, QuantStore, QuantValue, ScaleDtype},
 };
 use cubek_tile::{
-    Axis, DequantAt, KernelForm, Launcher, Partitioning, QuantTileArg, Space, StridedOperand,
-    TileArg,
+    Axis, BoundaryPolicy, DequantAt, Grid, Launcher, Partitioning, QuantTileArg, Quantization,
+    Space, TileArg,
 };
 
 // Input axes
@@ -58,31 +58,34 @@ pub fn launch_ref(
     let (cube_count, cube_dim) = (CubeCount::Static(1, 1, 1), CubeDim::new_2d(plane_size, 1));
     let launch = Launcher::new(
         client,
-        space.clone(),
-        (cube_count.clone(), cube_dim),
-        KernelForm::Dynamic,
+        Partitioning::new(Space::dynamic(&[M, N]), vec![]),
+        &space,
+        Grid::Stated {
+            cube_count: cube_count.clone(),
+            cube_dim,
+        },
     );
     let input_dtype = ElemType::from_quant_value(scheme.value);
     // Both operands through the source builder, which derives the storage from the binding's own
     // dims and validates the scheme against this space. One tile covers each axis, so nothing
     // overhangs and the checks stay off. Both operands read as memory windows.
-    let input_op = StridedOperand::source(input)
-        .space(&space)
-        .subspace(&[M, N])
-        .checked(false)
+    let input_op = launch
+        .arg(input)
+        .axes(&[M, N])
+        .boundary(BoundaryPolicy::Unchecked)
         // Nothing stages this operand, so its read is what decodes it.
-        .quantized(&[scales], *scheme, DequantAt::Read)
+        .quantized(Quantization::new(scales, None, *scheme, DequantAt::Read))
         .build();
-    let output_op = StridedOperand::source(output)
-        .space(&space)
-        .subspace(&[M, N])
-        .checked(false)
+    let output_op = launch
+        .arg(output)
+        .axes(&[M, N])
+        .boundary(BoundaryPolicy::Unchecked)
         .build();
     dequantize::launch(
         client,
         cube_count,
         cube_dim,
-        input_op.arg(),
+        input_op.quant_arg(),
         output_op.arg(),
         launch.partitioning_arg(),
         input_dtype,

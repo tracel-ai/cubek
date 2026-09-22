@@ -6,12 +6,13 @@
 //! omit the group axis, and the probe's `q_rows` maps rows back to query positions for the causal
 //! predicate.
 
+use super::{Form, implied};
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput, TestOutcome, ValidationResult};
 use cubek_tile::{
-    Axis, Fragments, KernelForm, Launcher, Level, MaskProbe, MemData, Monoid, Partitioning,
-    RegisterBlock, Resident, RowShare, RowState, Semiring, Space, StageStorage, StreamFold,
-    TeamUnit, TileArg, TileArgLaunch, TileSpec, Tiling,
+    Axis, Fragments, Level, MaskProbe, MemData, Monoid, Partitioning, RegisterBlock, Resident,
+    RowShare, RowState, Semiring, Space, StageStorage, StreamFold, TeamUnit, TileArg,
+    TileArgLaunch, TileSpec, Tiling,
 };
 
 const G: Axis = Axis(0); // GQA group member
@@ -203,7 +204,7 @@ fn run(
 
     // The one attention space: every operand projects its axes out of it. The
     // walk cuts S into blocks; every other axis rides whole.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -227,7 +228,7 @@ fn run(
             .walk_every(&[G, QP, S, D, V, R, C])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     attention_fold_kernel::launch(
@@ -255,7 +256,7 @@ fn run(
         scale,
         bound_s as u32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         units,
         causal,
         block,
@@ -645,7 +646,7 @@ fn run_cmma<E: Float + CubeElement>(
         .generate_without_host_data();
 
     // The launch walks `S` in blocks and nothing else; the planes' cut on `QP` is the kernel's.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -669,7 +670,7 @@ fn run_cmma<E: Float + CubeElement>(
             .walk_every(&[G, QP, S, D, V, R, C])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let (k_axes, v_axes): (&[Axis], &[Axis]) = if spanned {
         (&[G, S, D], &[G, S, V])
@@ -704,7 +705,7 @@ fn run_cmma<E: Float + CubeElement>(
         scale,
         bound_s as u32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         causal,
         block,
         frag,
@@ -1060,7 +1061,7 @@ fn run_split_at(
         .generate_without_host_data();
 
     // The one attention nest, as in [`run`].
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1084,7 +1085,7 @@ fn run_split_at(
             .walk_every(&[G, QP, S, D, V, R, C])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     attention_fold_split_kernel::launch(
@@ -1112,7 +1113,7 @@ fn run_split_at(
         scale,
         bound_s as u32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         team,
         splits,
         causal,
@@ -1288,7 +1289,7 @@ fn run_stream(
         .generate_without_host_data();
 
     // The one attention space: q/k/v/out project their axes out of it.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(G, g), (QP, 1), (S, s_total), (D, d), (V, val_dim)]),
@@ -1296,7 +1297,7 @@ fn run_stream(
                 .walk_every(&[G, QP, S, D, V])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     attention_stream_test_kernel::launch(
@@ -1323,7 +1324,7 @@ fn run_stream(
         scale,
         bound_s as u32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         lanes,
         splits,
         block,
@@ -1421,13 +1422,13 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
     let client = cubecl::test_device().client();
     let f32_ty = f32::elem_type_native();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(S, VISIT_S), (D, VISIT_D)]),
             Tiling::leaf(&[(S, VISIT_BLOCK)]).walk_every(&[S]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let (k_handle, _) = TestInput::builder(client.clone(), Shape::new([VISIT_S, VISIT_D]))
@@ -1450,7 +1451,7 @@ fn visited_blocks(bound_s: usize, q_rows: usize, causal: bool) -> usize {
         out_handle.clone().binding().into_tensor_arg(),
         bound_s as u32,
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         VISIT_BLOCK,
         q_rows,
         causal,

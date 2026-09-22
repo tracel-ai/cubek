@@ -3,7 +3,7 @@
 use cubecl::{prelude::*, unexpanded};
 
 use crate::{
-    Axis, ComputeScope, Contraction, Count, CubeAxis, Labelled, Level, Quadrant, Region,
+    Axis, ComputeScope, Contraction, Count, CubeAxis, Level, LevelTable, Quadrant, Region,
     RegionExpand, Space, Walk,
 };
 
@@ -164,11 +164,20 @@ impl Partitioning {
         &self.space
     }
 
+    /// This partitioning in kernel form: every extent [`Dynamic`](crate::Extent::Dynamic), the
+    /// levels unchanged, so one compiled kernel serves every shape a launch stamps on.
+    pub fn all_dynamic(self) -> Self {
+        Partitioning {
+            space: self.space.all_dynamic(),
+            levels: self.levels,
+        }
+    }
+
     /// This partitioning with a name for each of its axes, which is what prints a table worth
     /// reading: an [`Axis`] is a client-assigned index, so only the client can say what it
     /// stands for. An axis the labels do not name prints that index.
-    pub fn labelled<'a>(&'a self, labels: &'a [(Axis, &'a str)]) -> Labelled<'a> {
-        Labelled::new(self, labels)
+    pub fn table<'a>(&'a self, labels: &'a [(Axis, &'a str)]) -> LevelTable<'a> {
+        LevelTable::new(self, labels)
     }
 
     /// This partitioning read as a contraction, which prints one figure a level: what a single

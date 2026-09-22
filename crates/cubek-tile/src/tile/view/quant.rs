@@ -9,10 +9,10 @@ use crate::*;
 
 /// The scales' [`BufferLayout`]: a window coordinate to the flat index of its block's scale, the dot
 /// of each axis's block index with its scale stride. `window_start` carries the origin's own block
-/// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::StridedTileSource::quantized)).
+/// ([`QuantInfo`]); no window straddles one ([`quantized`](crate::Arg::quantized)).
 ///
 /// Per-tensor never leaves index `0`: its strides are `0`, so every term folds away
-/// ([`fmul`](crate::Known::fmul) annihilates) and a read is a constant-index broadcast.
+/// ([`times`](crate::Known::times) annihilates) and a read is a constant-index broadcast.
 #[derive(CubeType, Clone)]
 pub struct ScaleLayout {
     strides: Coords<u32>,

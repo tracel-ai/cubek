@@ -12,6 +12,7 @@
 //! split an axis the *output* spans, the shape a per-column-block scale needs and the one the
 //! accumulator's edges had to be derived to allow.
 
+use super::{Form, implied};
 use cubecl::{prelude::*, zspace::shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
 use cubek_tile::*;
@@ -120,7 +121,7 @@ fn one_contracted_axis_is_the_reference() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (K, depth)]),
@@ -128,7 +129,7 @@ fn one_contracted_axis_is_the_reference() {
                 .walk_every(&[M, N, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -142,7 +143,7 @@ fn one_contracted_axis_is_the_reference() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -184,7 +185,7 @@ fn a_partitioned_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -192,7 +193,7 @@ fn a_partitioned_axis_contracts_the_same() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -224,7 +225,7 @@ fn a_partitioned_axis_contracts_the_same() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -273,7 +274,7 @@ fn scales_omit_the_axis_inside_the_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -281,7 +282,7 @@ fn scales_omit_the_axis_inside_the_block() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -322,7 +323,7 @@ fn scales_omit_the_axis_inside_the_block() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         dtype,
     );
@@ -372,7 +373,7 @@ fn a_split_output_axis_contracts_the_same() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -380,7 +381,7 @@ fn a_split_output_axis_contracts_the_same() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     matmul::launch(
@@ -409,7 +410,7 @@ fn a_split_output_axis_contracts_the_same() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -462,7 +463,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -470,7 +471,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -505,7 +506,7 @@ fn scales_omit_the_axis_inside_the_column_block() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         dtype,
     );
@@ -570,7 +571,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -578,7 +579,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_matmul::launch(
@@ -608,7 +609,7 @@ fn a_split_output_axis_serves_lines_one_block_wide() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -685,7 +686,7 @@ fn scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -693,7 +694,7 @@ fn scales_are_served_several_at_a_time() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_scaled_matmul::launch(
@@ -729,7 +730,7 @@ fn scales_are_served_several_at_a_time() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -808,7 +809,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -816,7 +817,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     promoted_matmul::launch(
@@ -845,7 +846,7 @@ fn a_promoted_accumulator_spans_a_split_output_axis() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -935,7 +936,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -943,7 +944,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_scaled_promoted::launch(
@@ -977,7 +978,7 @@ fn a_promoted_accumulator_takes_scales_by_the_line() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1057,7 +1058,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (NB, blocks), (NI, inside), (K, depth)]),
@@ -1065,7 +1066,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
                 .walk_every(&[M, NB, NI, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_typed_scaled_matmul::launch(
@@ -1099,7 +1100,7 @@ fn scales_keep_their_own_element_when_served_as_lines() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         [dtype, scale_dtype],
     );
 

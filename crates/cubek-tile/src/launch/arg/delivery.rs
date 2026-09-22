@@ -1,5 +1,6 @@
-//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine) and
-//! its type-level twin [`DeliveryFamily`], which lets one kernel body serve every argument type.
+//! Who moves an operand's bytes: the [`Delivery`] (the cube's own units, or the TMA engine), its
+//! type-level twin [`DeliveryFamily`], which lets one kernel body serve every argument type, and
+//! [`DeliveryLaunch`], the host side that builds each family's argument.
 //!
 //! How the operand is *stored* is a separate fact, riding the spec's [`Storage`](crate::Storage):
 //! a storage-tiled operand states the level its tile is the tile of; every mover here serves it.
@@ -7,7 +8,10 @@
 
 use cubecl::prelude::*;
 
-use crate::{Partitioning, Storage, StridedOperand, Sync, Tile, TileArg, TmaTileArg};
+use crate::{
+    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Storage, Sync, Tile, TileArg,
+    TileArgLaunch, TmaOperand, TmaTileArg, TmaTileArgLaunch,
+};
 
 /// Who moves an operand into a stage: the cube's own units (a cooperative buffer copy, or a
 /// coordinate-backed materialization with no buffer at all), or the TMA engine. Read off a tile
@@ -66,39 +70,34 @@ impl Delivery {
 }
 
 /// [`Delivery`]'s type-level twin: which launchable argument carries an operand and how a kernel
-/// serves it as a [`Tile`]. Each argument bundles its comptime [`TileSpec`] ([`TileArg`] strided
-/// or storage-tiled, [`TmaTileArg`] tensor map); only the kernel's one [`Space`] crosses the seam.
+/// serves it as a [`Tile`]. Each argument bundles its comptime [`TileSpec`](crate::TileSpec); only
+/// the kernel's one [`Partitioning`] crosses the seam.
 ///
-/// A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled or TMA unchanged; the
-/// launch entry picks the family. One family covers both operands, since
+/// A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled, TMA or accumulating
+/// unchanged; the launch entry picks the family. One family covers both operands, since
 /// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.
     type Arg<E: Numeric, V: Size>: LaunchArg + CubeType;
 
-    /// Serve the argument as a [`Tile`]: the kernel's one `space` projected onto the
-    /// argument's own spec axes.
-    fn tile<E: Numeric, V: Size>(arg: &Self::Arg<E, V>, #[comptime] space: Partitioning)
-    -> Tile<E>;
+    /// Serve the argument as a [`Tile`] under the kernel's one `partitioning`.
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] partitioning: Partitioning,
+    ) -> Tile<E>;
 }
 
-/// The families whose argument is a plain tensor + its spec ([`TileArg`]): what a built
-/// [`StridedOperand`] launches as. Lets a launch entry written over `D` hand its operands to
-/// the kernel without naming the erased element types the kernel's launch is spelled in.
-pub trait TensorDelivery: DeliveryFamily {
-    /// The operand as this family's launch argument.
-    fn operand<E: Numeric, V: Size>(
-        operand: StridedOperand,
+/// [`DeliveryFamily`]'s host side: how a built operand becomes this family's launch argument.
+/// Complete over every family, so a launch entry written over `D` names no argument type.
+pub trait DeliveryLaunch: DeliveryFamily {
+    /// What this family launches from: a [`Bound`] operand for the tensor families, a tensor map
+    /// with its box for TMA.
+    type Operand;
+
+    fn arg<E: Numeric, V: Size>(
+        operand: Self::Operand,
     ) -> <Self::Arg<E, V> as LaunchArg>::RuntimeArg;
-}
-
-impl TensorDelivery for Cooperative {
-    fn operand<E: Numeric, V: Size>(
-        operand: StridedOperand,
-    ) -> <Self::Arg<E, V> as LaunchArg>::RuntimeArg {
-        operand.arg::<E, V>()
-    }
 }
 
 /// [`Delivery::Copy`]'s family: a tensor + spec ([`TileArg`]), the cube's units moving it, tiled
@@ -109,20 +108,24 @@ pub struct Cooperative;
 /// [`Delivery::Tma`]'s family: a tensor map ([`TmaTileArg`]), hardware bulk-copied.
 pub struct Tma;
 
+/// An output several instances add into ([`AccumulateArg`]): the family a product leaves by when
+/// the cubes that share a cell each hold a slice of it.
+pub struct Accumulated;
+
 #[cube]
 impl DeliveryFamily for Cooperative {
     type Arg<E: Numeric, V: Size> = TileArg<'static, E, V>;
 
     fn tile<E: Numeric, V: Size>(
         arg: &Self::Arg<E, V>,
-        #[comptime] space: Partitioning,
+        #[comptime] partitioning: Partitioning,
     ) -> Tile<E> {
         comptime!(match arg.spec.storage {
             Storage::Strided | Storage::Tiled(_) => {}
             Storage::Contiguous =>
                 panic!("Cooperative: a launched spec is never inside a storage tile"),
         });
-        arg.tile(space)
+        arg.tile(partitioning)
     }
 }
 
@@ -132,8 +135,45 @@ impl DeliveryFamily for Tma {
 
     fn tile<E: Numeric, V: Size>(
         arg: &Self::Arg<E, V>,
-        #[comptime] space: Partitioning,
+        #[comptime] partitioning: Partitioning,
     ) -> Tile<E> {
-        arg.tile(space)
+        arg.tile(partitioning)
+    }
+}
+
+#[cube]
+impl DeliveryFamily for Accumulated {
+    type Arg<E: Numeric, V: Size> = AccumulateArg<'static, E>;
+
+    fn tile<E: Numeric, V: Size>(
+        arg: &Self::Arg<E, V>,
+        #[comptime] partitioning: Partitioning,
+    ) -> Tile<E> {
+        arg.tile::<V>(partitioning)
+    }
+}
+
+impl DeliveryLaunch for Cooperative {
+    type Operand = Bound;
+
+    fn arg<E: Numeric, V: Size>(operand: Bound) -> TileArgLaunch<'static, E, V> {
+        operand.arg()
+    }
+}
+
+impl DeliveryLaunch for Tma {
+    type Operand = TmaOperand;
+
+    fn arg<E: Numeric, V: Size>(operand: TmaOperand) -> TmaTileArgLaunch<E> {
+        TmaTileArgLaunch::tensor_map(operand.map, &operand.axes, operand.shape)
+    }
+}
+
+impl DeliveryLaunch for Accumulated {
+    type Operand = Bound;
+
+    fn arg<E: Numeric, V: Size>(operand: Bound) -> AccumulateArgLaunch<'static, E> {
+        let spec = operand.spec.clone();
+        AccumulateArgLaunch::new(operand.tensor(), spec)
     }
 }

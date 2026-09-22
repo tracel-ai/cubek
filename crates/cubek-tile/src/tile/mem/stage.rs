@@ -625,7 +625,7 @@ pub(crate) fn stage_compaction(
     if src.composition() == Composition::Disjoint && dst.is_direct() {
         return None;
     }
-    let compaction = Compaction::of(src, vector_size, |axis| space.extent(axis));
+    let compaction = Compaction::new(src, vector_size, |axis| space.extent(axis));
     assert!(
         compaction.projection() == dst,
         "stage_compaction: a gathered source fills the compacted stage of its own \
@@ -683,7 +683,7 @@ impl StageForm {
             "StageForm: a gathered operand stages into a plain row-major window, but {stage:?} \
              storage was asked for"
         );
-        let compaction = Compaction::of(projection, vector_size, |axis| space.extent(axis));
+        let compaction = Compaction::new(projection, vector_size, |axis| space.extent(axis));
         let extents = compaction.line_extents(vector_size);
         StageForm {
             positional: Projection::of_tiling(StorageTiling::uniform(extents.len(), 0)),

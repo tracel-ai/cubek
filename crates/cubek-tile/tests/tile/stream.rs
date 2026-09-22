@@ -12,6 +12,7 @@
 //! they prove the runs cover the grid exactly once, and that a run starting late reads the
 //! regions it was given.
 
+use super::{Form, implied};
 use cubecl::{
     features::AtomicUsage,
     ir::{ElemType, FloatKind, Type},
@@ -91,7 +92,7 @@ impl Harness {
         Self {
             client: cubecl::test_device().client(),
             dtype: f32::elem_type_native(),
-            launcher: Launcher::implied(
+            launcher: implied(
                 &cubecl::test_device().client(),
                 Partitioning::new(
                     Space::new(&[(ROW, ROWS), (COL, COLS)]),
@@ -99,7 +100,7 @@ impl Harness {
                         .walk_every(&[ROW, COL])
                         .levels(),
                 ),
-                KernelForm::Static,
+                Form::Static,
             ),
         }
     }
@@ -156,7 +157,7 @@ fn runs_cover_the_grid(cubes: usize) {
         src_arg,
         dst_arg,
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         cubes,
         h.dtype,
     );
@@ -207,7 +208,7 @@ fn a_run_starting_late_copies_the_regions_it_was_given() {
         start,
         steps,
         h.launcher.partitioning_arg(),
-        h.launcher.level(0),
+        h.launcher.partitioning().level(0),
         h.dtype,
     );
 
@@ -392,7 +393,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(MM, m), (NN, n), (KK, k)]),
@@ -402,7 +403,7 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 .shared_by(runs)
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     match rhs {
@@ -423,8 +424,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             None,
             dtype,
         ),
@@ -445,8 +446,8 @@ fn run_stream_k(m: usize, n: usize, k: usize, runs: usize, rhs: RhsStage) -> Hos
                 TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
             dtype,
         ),
     }
@@ -599,7 +600,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
             .zeros()
             .generate_without_host_data();
 
-        let launcher = Launcher::implied(
+        let launcher = implied(
             &client,
             Partitioning::new(
                 Space::new(&[(MM, m), (NN, n), (KK, k)]),
@@ -610,7 +611,7 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                     .shared_by(runs)
                     .levels(),
             ),
-            KernelForm::Static,
+            Form::Static,
         );
 
         stream_matmul::launch(
@@ -630,9 +631,9 @@ fn cubes_take_shares_while_the_lanes_cut_k_between_them() {
                 TileSpec::direct(&[MM, NN]),
             ),
             launcher.partitioning_arg(),
-            launcher.level(0),
-            launcher.level(1),
-            Some(launcher.level(2)),
+            launcher.partitioning().level(0),
+            launcher.partitioning().level(1),
+            Some(launcher.partitioning().level(2)),
             dtype,
         );
 

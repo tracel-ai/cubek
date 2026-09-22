@@ -35,9 +35,9 @@ use cubek_test_utils::{
     CatalogEntry, CategoryWork, ComputeWork, HostData, HostDataType, RunSamples, TileInput, client,
 };
 use cubek_tile::{
-    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, KernelForm, Launcher, Monoid,
-    Partitioning, PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg,
-    TileArgLaunch, TileSpec, Tiling,
+    AccumulateArg, AccumulateArgLaunch, Axis, Fragments, Grid, Launcher, Monoid, Partitioning,
+    PhysicalAxisMap, Projection, RegisterBlock, Semiring, Space, TileArg, TileArgLaunch, TileSpec,
+    Tiling,
 };
 
 /// Held fixed across mappings so the numbers compare the partitioning and not the instruction.
@@ -213,57 +213,57 @@ impl Mapping {
         let Problem { m, n, k } = problem;
         let splits = self.splits();
         match self {
-            Mapping::DataParallel | Mapping::Atomic { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::DataParallel | Mapping::Atomic { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Tiling::leaf(&[(N, COLS), (K, k / splits)])
                         .cubes(&[N, K])
                         .levels(),
-                ),
-                KernelForm::Static,
-            ),
-            Mapping::Workspace { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
+            Mapping::Workspace { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (KB, splits), (KI, k / splits)]),
                     Tiling::leaf(&[(N, COLS)])
                         .cubes(&[N])
                         .batches(&[KB])
                         .levels(),
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
             // The cube's slice of K cut again across the plane: each lane contracts its own
             // sixteenth (or whatever the lane count makes it), the plane combines in registers,
             // and one fold per cube reaches memory.
-            Mapping::AtomicLanes { .. } => Launcher::implied(
-                client,
-                Partitioning::new(
+            Mapping::AtomicLanes { .. } => {
+                let partitioning = Partitioning::new(
                     Space::new(&[(M, m), (N, n), (K, k)]),
                     Tiling::leaf(&[(N, COLS), (K, k / splits / plane_size)])
                         .lanes(&[(K, plane_size)])
                         .cubes(&[N, K])
                         .levels(),
-                ),
-                KernelForm::Static,
-            ),
+                );
+                let concrete = partitioning.space().clone();
+                Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+            }
         }
     }
 
     /// The fold pass's nest, for the mapping that has one.
     fn fold_space(self, client: &Client, problem: Problem) -> Launcher {
         let Problem { m, n, .. } = problem;
-        Launcher::implied(
-            client,
-            Partitioning::new(
+        {
+            let partitioning = Partitioning::new(
                 Space::new(&[(M, m), (N, n), (KB, self.splits())]),
                 Tiling::leaf(&[(M, 1), (N, FOLD_COLS)])
                     .cubes(&[M, N])
                     .levels(),
-            ),
-            KernelForm::Static,
-        )
+            );
+            let concrete = partitioning.space().clone();
+            Launcher::new(client, partitioning, &concrete, Grid::FromLevels)
+        }
     }
 
     /// The lhs spec: `[M, K]` in memory either way, addressed by one logical axis or two.

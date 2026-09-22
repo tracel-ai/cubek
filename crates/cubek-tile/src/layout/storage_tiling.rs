@@ -42,7 +42,7 @@ impl StorageTiling {
 
     /// The tiling a tensor's metadata states, over the `subspace_len` inner axes of a buffer of
     /// `physical_rank` dims: where a stored [`Tiling`] becomes a [`StorageTiling`]. Metadata covers
-    /// every dim; this the subspace only: [`labeled`](crate::physical::source) handles batch dims.
+    /// every dim; this the subspace only: [`Arg::axes`](crate::Arg::axes) handles batch dims.
     ///
     /// # Panics
     ///
@@ -108,7 +108,7 @@ impl StorageTiling {
     /// emission itself, one entry per physical axis, a tiled axis appearing once per fragment.
     ///
     /// The one place the order is defined: [`Projection::tiled`](crate::Projection::tiled) and
-    /// callers labeling a binding's dims ([`ConcreteLayout`](crate::ConcreteLayout)) share it.
+    /// the labelling of a binding's dims shares it.
     pub fn order(&self, axes: &[Axis]) -> Vec<Axis> {
         assert_eq!(
             self.rank(),

@@ -2,7 +2,7 @@
 
 use cubecl::{client::Client, prelude::*};
 use cubek_std::{InputBinding, MatrixLayout};
-use cubek_tile::{Axis, Geometry, KernelForm, Launcher, Space};
+use cubek_tile::{Axis, Geometry, Grid, Launcher, Space};
 
 use crate::{
     definition::{
@@ -141,12 +141,20 @@ pub fn launch_ref(
     validate_stored_tile(lhs.data(), "lhs", &space, partitioning.levels(), (M, K))?;
     validate_stored_tile(rhs.data(), "rhs", &space, partitioning.levels(), (K, N))?;
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::partitioned(
-        client,
-        blueprint.partitioning(&space, &batch_axes),
-        blueprint.grid(&space, &batch_axes, plane_size),
-        KernelForm::Dynamic,
-    );
+    let launch = {
+        let partitioning = blueprint.partitioning(&space, &batch_axes);
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = blueprint.grid(&space, &batch_axes, plane_size);
+        Launcher::new(
+            client,
+            partitioning.all_dynamic(),
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
 
     // One `N` line width shared by `rhs` and the output (the leaf writes the lines it reads);
     // `lhs` is always scalar (broadcast per `K`), so its layout never matters. The launcher
@@ -169,18 +177,18 @@ pub fn launch_ref(
     let out_batch_axes: Vec<Axis> = (0..out_batches.len()).map(batch_axis).collect();
     let a = launch
         .arg(lhs.into_data())
-        .subspace(&[M, K])
+        .axes(&[M, K])
         .batches(&out_batch_axes)
         .build();
     let b = launch
         .arg(rhs)
-        .subspace(&[K, N])
+        .axes(&[K, N])
         .batches(&out_batch_axes)
         .vectorize(v)
         .build();
     let c = launch
         .arg(out)
-        .subspace(&[M, N])
+        .axes(&[M, N])
         .batches(&out_batch_axes)
         .vectorize(v)
         .build();

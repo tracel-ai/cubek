@@ -245,7 +245,7 @@ mod tests {
         let partitioning = blueprint().partitioning(&space, &batch);
 
         assert_eq!(
-            partitioning.labelled(&labels(&space)).to_string(),
+            partitioning.table(&labels(&space)).to_string(),
             [
                 "        b0 × m ×  n ×   k    b0 ×   m ×    n ×    k",
                 "",
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(partitioning.leaf().extent(M), 16);
         assert!(
             partitioning
-                .labelled(&labels(&space))
+                .table(&labels(&space))
                 .to_string()
                 .contains('?')
         );

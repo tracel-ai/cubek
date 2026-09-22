@@ -8,6 +8,7 @@
 //! columns, and where inside it. The weights address both and the scales address `CB` alone, so
 //! one scale per block is a fact about which axes the operand distinguishes; nothing divides.
 
+use super::{Form, implied};
 use cubecl::{
     bytes::Bytes, prelude::*, quant::scheme::QuantValue, std::tensor::TensorHandle, zspace::shape,
 };
@@ -65,7 +66,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
 
     // The scales are an operand like the others, and the axis they omit is the whole statement
     // that one of their values covers a block of columns.
-    let launch = Launcher::implied(
+    let launch = implied(
         &client,
         Partitioning::new(
             Space::new(&[(ROW, rows), (CB, blocks), (CI, inside)]),
@@ -73,7 +74,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
                 .walk_every(&[ROW, CB, CI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     // Shape and strides count values; the packing says how many share a stored word.
@@ -102,10 +103,13 @@ fn a_packed_tensor_decodes_against_its_scales() {
             ],
         )
     };
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
-        Partitioning::new(launch.space().clone(), launch.levels().to_vec()),
-        KernelForm::Dynamic,
+        Partitioning::new(
+            launch.space().clone(),
+            launch.partitioning().levels().to_vec(),
+        ),
+        Form::Dynamic,
     );
     let w_op = launcher
         .arg(w_tensor.clone().binding())
@@ -117,7 +121,7 @@ fn a_packed_tensor_decodes_against_its_scales() {
     // taken by the run of values that block holds.
     let s_op = launcher
         .arg(s_tensor.binding())
-        .subspace(&[ROW, CB])
+        .axes(&[ROW, CB])
         .vectorize(scale_lanes)
         .build();
     let out_op = launcher

@@ -173,22 +173,27 @@ impl Benchmark for TileQuantStageBench {
 
     fn execute(&self, args: Self::Input) -> Result<(), String> {
         let (a, b, c) = &*args;
-        let launcher = Launcher::implied(
-            &self.client,
-            Partitioning::new(self.space(), self.levels()),
-            KernelForm::Static,
-        );
-        let a = launcher.arg(a.handle().binding()).subspace(&[M, K]).build();
+        let launcher = {
+            let partitioning = Partitioning::new(self.space(), self.levels());
+            let concrete = partitioning.space().clone();
+            Launcher::new(&self.client, partitioning, &concrete, Grid::FromLevels)
+        };
+        let a = launcher.arg(a.handle().binding()).axes(&[M, K]).build();
         let b = launcher
             .arg(b.tile.handle().binding())
-            .subspace(&[K, N])
+            .axes(&[K, N])
             .vectorize(self.pack)
-            .quantized(&[b.scales_binding()], self.scheme, DequantAt::Read)
+            .quantized(Quantization::new(
+                b.scales_binding(),
+                None,
+                self.scheme,
+                DequantAt::Read,
+            ))
             .build();
         // The register instruction lines the accumulator at the RHS's served width.
         let c = launcher
             .arg(c.handle().binding())
-            .subspace(&[M, N])
+            .axes(&[M, N])
             .vectorize(self.pack)
             .build();
         let vb = b.bound_width();
@@ -200,7 +205,7 @@ impl Benchmark for TileQuantStageBench {
             vb,
             c.vector_size,
             a.arg(),
-            b.arg(),
+            b.quant_arg(),
             c.arg(),
             launcher.partitioning_arg(),
             u32::elem_type_native(),

@@ -20,7 +20,7 @@ use crate::{
     Axis, Coords, Count, Known, KnownExpand, Level, Region, RegionExpand, Space, instance_tiles,
 };
 
-use super::level::Grid;
+use super::level::GridCount;
 use super::walk_order::{cube_positions, walk_index};
 use super::{ComputeScope, CubeAxis, Distribution, Spread, WalkOrder};
 
@@ -101,8 +101,8 @@ impl Walk {
             // A stated count is the constant it states; an every-level's is the extent handed
             // down in its tile, the one division of a launch (folded where the extent is static).
             match comptime!(level.grid(space.axis_at(p))) {
-                Grid::Const(n) => counts.push(n.runtime()),
-                Grid::Extent(tile) => counts.push(space.extents.count(p, tile)),
+                GridCount::Const(n) => counts.push(n.runtime()),
+                GridCount::Extent(tile) => counts.push(space.extents.count(p, tile)),
             }
         }
         Walk::from_counts(comptime!(space.clone()), level, counts, parent)

@@ -57,29 +57,29 @@ impl<'a> Quadrant<'a> {
 
 /// One operand's grid at one level: the tiles the worker above it holds, of which the worker
 /// takes the first — every other is its twin, so drawing one says what all of them are.
-struct Grid {
+struct GridCount {
     rows: usize,
     cols: usize,
 }
 
-impl Grid {
+impl GridCount {
     /// How many tiles the grid draws along a side, and whether the rest were elided.
     fn shown(side: usize, cap: usize) -> (usize, bool) {
         (side.min(cap), side > cap)
     }
 
     fn width(&self) -> usize {
-        Grid::shown(self.cols, COLS_SHOWN).0 * TILE.chars().count()
+        GridCount::shown(self.cols, COLS_SHOWN).0 * TILE.chars().count()
     }
 
     fn height(&self) -> usize {
-        Grid::shown(self.rows, ROWS_SHOWN).0
+        GridCount::shown(self.rows, ROWS_SHOWN).0
     }
 
     /// Row `row` of the figure: the taken tile at the origin, the elision marks at the far edge.
     fn line(&self, row: usize) -> String {
-        let (cols, elided) = Grid::shown(self.cols, COLS_SHOWN);
-        let (rows, deep) = Grid::shown(self.rows, ROWS_SHOWN);
+        let (cols, elided) = GridCount::shown(self.cols, COLS_SHOWN);
+        let (rows, deep) = GridCount::shown(self.rows, ROWS_SHOWN);
         (0..cols)
             .map(
                 |col| match (deep && row + 1 == rows, elided && col + 1 == cols) {
@@ -127,9 +127,9 @@ impl Display for Quadrant<'_> {
                 side(level, &space, across),
                 side(level, &space, over),
             );
-            let lhs = Grid { rows, cols: steps };
-            let rhs = Grid { rows: steps, cols };
-            let out = Grid { rows, cols };
+            let lhs = GridCount { rows, cols: steps };
+            let rhs = GridCount { rows: steps, cols };
+            let out = GridCount { rows, cols };
             let indent = " ".repeat(MARGIN.chars().count() + lhs.width() + GUTTER.chars().count());
 
             if !lines.is_empty() {

@@ -21,6 +21,7 @@ use cubek_tile::*;
 use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
+use super::{Form, implied};
 
 const M: Axis = Axis(0);
 const N: Axis = Axis(1);
@@ -172,7 +173,7 @@ fn nvfp4_shaped_decode() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -180,7 +181,7 @@ fn nvfp4_shaped_decode() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     nvfp4_shaped_matmul::launch(
@@ -226,7 +227,7 @@ fn nvfp4_shaped_decode() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -821,7 +822,7 @@ fn a_packed_operand_contracts_against_its_scales() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -829,7 +830,7 @@ fn a_packed_operand_contracts_against_its_scales() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul::launch(
@@ -871,7 +872,7 @@ fn a_packed_operand_contracts_against_its_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -943,7 +944,7 @@ fn eight_bit_fields_contract_against_their_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -951,7 +952,7 @@ fn eight_bit_fields_contract_against_their_scales() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul::launch(
@@ -992,7 +993,7 @@ fn eight_bit_fields_contract_against_their_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1068,7 +1069,7 @@ fn a_folded_walk_takes_its_scales_several_at_a_time() {
         .generate_without_host_data();
 
     // A region sits inside one block, and the packed line is one word of it.
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1076,7 +1077,7 @@ fn a_folded_walk_takes_its_scales_several_at_a_time() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul::launch(
@@ -1118,7 +1119,7 @@ fn a_folded_walk_takes_its_scales_several_at_a_time() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1196,7 +1197,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1210,7 +1211,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
                 .walk_every(&[M, NB, NI, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1260,7 +1261,7 @@ fn a_packed_rhs_contracts_against_its_scales() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1338,7 +1339,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1352,7 +1353,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
                 .walk_every(&[M, NB, NI, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1402,7 +1403,7 @@ fn an_eight_bit_packed_rhs_contracts_against_its_scales() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1483,7 +1484,7 @@ fn several_lines_may_share_one_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1497,7 +1498,7 @@ fn several_lines_may_share_one_scale() {
                 .walk_every(&[M, NB, NI, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_matmul_rhs::launch(
@@ -1547,7 +1548,7 @@ fn several_lines_may_share_one_scale() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1608,7 +1609,7 @@ fn an_i8_operand_contracts_against_its_scales() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1616,7 +1617,7 @@ fn an_i8_operand_contracts_against_its_scales() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     native_matmul::launch(
@@ -1655,7 +1656,7 @@ fn an_i8_operand_contracts_against_its_scales() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -1734,7 +1735,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1749,7 +1750,7 @@ fn a_packed_decode_gemv_runs_in_this_spelling() {
                 .cubes(&[NB])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv::launch(
@@ -1872,7 +1873,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -1887,7 +1888,7 @@ fn an_eight_bit_decode_gemv_runs_in_this_spelling() {
                 .cubes(&[NB])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv::launch(
@@ -2046,7 +2047,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, cols), (KB, blocks_k), (KI, block_k)]),
@@ -2055,7 +2056,7 @@ fn a_packed_rhs_drains_from_a_promoted_accumulator() {
                 .cubes(&[N])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv_unscaled::launch(
@@ -2242,7 +2243,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -2251,7 +2252,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let w_projection = Projection::new(
@@ -2288,7 +2289,7 @@ fn check_ue8m0_scales(block: usize, blocks: usize) {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -2390,7 +2391,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -2404,7 +2405,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
             .walk_every(&[M, N, KB, KI])
             .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     let w_projection = Projection::new(
@@ -2441,7 +2442,7 @@ fn check_float_scales(kind: FloatKind, block: usize, blocks: usize) {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 
@@ -2522,7 +2523,7 @@ fn e4m3_scales_reach_the_promoted_block() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -2538,7 +2539,7 @@ fn e4m3_scales_reach_the_promoted_block() {
                 .cubes(&[NB])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_gemv_byte_scales::launch(
@@ -2675,7 +2676,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[
@@ -2689,7 +2690,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
                 .walk_every(&[M, NB, NI, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     packed_cmma_rhs::launch(
@@ -2736,7 +2737,7 @@ fn a_packed_rhs_reaches_the_tensor_cores() {
             )),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         dtype,
     );
 

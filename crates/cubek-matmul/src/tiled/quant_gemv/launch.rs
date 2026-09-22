@@ -13,7 +13,7 @@
 
 use cubecl::prelude::ComptimeOptionArgs;
 use cubecl::{client::Client, prelude::*};
-use cubek_tile::{KernelForm, Launcher, PhysicalAxisMap, Projection, float_field};
+use cubek_tile::{Grid, Launcher, PhysicalAxisMap, Projection, float_field};
 
 use crate::{
     definition::MatmulSetupError,
@@ -81,12 +81,20 @@ pub fn launch_ref(
     // The kernel's own statement of the space; every axis static, so the launcher stamps
     // nothing on.
     let plane_size = client.properties().hardware.plane_size_max;
-    let launch = Launcher::partitioned(
-        client,
-        blueprint.partitioning(problem),
-        blueprint.grid(problem, plane_size),
-        KernelForm::Static,
-    );
+    let launch = {
+        let partitioning = blueprint.partitioning(problem);
+        let concrete = partitioning.space().clone();
+        let (cube_count, cube_dim) = blueprint.grid(problem, plane_size);
+        Launcher::new(
+            client,
+            partitioning,
+            &concrete,
+            Grid::Stated {
+                cube_count,
+                cube_dim,
+            },
+        )
+    };
 
     // `K` is one physical dim that `(KB, KI)` partition, so each operand spanning both says so;
     // the scales span `KB` alone and address it as it stands.
@@ -188,7 +196,7 @@ pub fn launch_ref(
     };
     // Each lane holds a partial of its group's cell, so the accumulator stays scalar: the fold
     // requires it.
-    let out_op = launch.arg(out).subspace(&[M, N]).build();
+    let out_op = launch.arg(out).axes(&[M, N]).build();
 
     quant_gemv_kernel::launch(
         client,

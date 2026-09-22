@@ -37,14 +37,14 @@ fn count(level: &Level, space: &Space, axis: Axis) -> String {
 /// A [`Partitioning`] with a name for each of its axes, which is the one thing the value cannot
 /// supply: an [`Axis`] is a client-assigned index and the labels are the client's. An axis the
 /// labels do not name prints that index.
-pub struct Labelled<'a> {
+pub struct LevelTable<'a> {
     partitioning: &'a Partitioning,
     labels: &'a [(Axis, &'a str)],
 }
 
-impl<'a> Labelled<'a> {
+impl<'a> LevelTable<'a> {
     pub(crate) fn new(partitioning: &'a Partitioning, labels: &'a [(Axis, &'a str)]) -> Self {
-        Labelled {
+        LevelTable {
             partitioning,
             labels,
         }
@@ -160,7 +160,7 @@ fn ruled(name: &str) -> usize {
     name.chars().count() + 6
 }
 
-impl Display for Labelled<'_> {
+impl Display for LevelTable<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let axes: Vec<Axis> = self.partitioning.space().axes().collect();
         let header: Vec<String> = axes.iter().map(|&axis| self.label(axis)).collect();
@@ -211,10 +211,10 @@ fn spanned(widths: &[usize]) -> usize {
 }
 
 /// A partitioning prints its table with no axis named, which is all a value holding
-/// client-assigned indices can promise; [`Partitioning::labelled`] is the one worth reading.
+/// client-assigned indices can promise; [`Partitioning::table`] is the one worth reading.
 impl Display for Partitioning {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.labelled(&[]).fmt(f)
+        self.table(&[]).fmt(f)
     }
 }
 
@@ -249,7 +249,7 @@ mod tests {
         let labels = [(B, "b"), (M, "m"), (N, "n"), (K, "k")];
 
         assert_eq!(
-            staged().labelled(&labels).to_string(),
+            staged().table(&labels).to_string(),
             [
                 "        b × m ×  n ×   k    b ×   m ×    n ×    k",
                 "",
@@ -285,7 +285,7 @@ mod tests {
                 .cubes(&[M])
                 .levels(),
         );
-        let table = partitioning.labelled(&[(M, "m"), (K, "k")]).to_string();
+        let table = partitioning.table(&[(M, "m"), (K, "k")]).to_string();
 
         assert!(table.lines().any(|line| line.contains("× ?")), "{table}");
     }
@@ -319,7 +319,7 @@ mod tests {
         );
 
         assert_eq!(
-            partitioning.labelled(&[(M, "m"), (K, "k")]).to_string(),
+            partitioning.table(&[(M, "m"), (K, "k")]).to_string(),
             [
                 "            m ×   k      m ×    k",
                 "",

@@ -150,7 +150,7 @@ pub enum Composition {
     Overlapping,
 }
 
-/// One [`PhysicalAxis`](crate::PhysicalAxis) as an affine combination of logical axes' digits
+/// One buffer dim as an affine combination of logical axes' digits
 /// plus a constant term, over a divisor: `physical = (Σ digit(axis) * scale + offset) / divisor`,
 /// floored. The divisor is `1` for every mapping but a [rational](Divisor) one.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

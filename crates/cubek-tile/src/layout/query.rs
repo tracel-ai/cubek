@@ -91,7 +91,7 @@ mod tests {
     const C: Axis = Axis(7);
 
     fn geometry(dims: &[(usize, usize)]) -> Geometry {
-        Geometry::of_dims(dims)
+        Geometry::new(dims)
     }
 
     /// A `[k, n]` view over an `[n, k]` buffer: `k` strides by one, `n` by the row. The whole
@@ -151,7 +151,7 @@ mod tests {
     fn a_window_is_exempt_from_the_aliasing_check() {
         let p = Projection::dims()
             .dim(B)
-            .dim(crate::window(&[(M, 2), (K, 1)]).pad(1))
+            .dim(crate::stencil(&[(M, 2), (K, 1)]).pad(1))
             .dim(C)
             .build();
         let g = geometry(&[(8, 64 * 32), (64, 32), (32, 1)]);

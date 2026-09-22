@@ -12,6 +12,7 @@
 //! that lands one element over shows up as another cell's value instead of as a
 //! near miss.
 
+use super::{Form, implied};
 use cubecl::{
     prelude::*,
     std::tensor::{ErasedTensor, WriteOnly},
@@ -88,8 +89,8 @@ macro_rules! output_arg {
 
 /// The nest both kernels walk, cut so the store is not one contiguous run,
 /// a sink that only happened to work on a dense window would pass a flatter one.
-fn space(form: KernelForm) -> Launcher {
-    Launcher::implied(
+fn space(form: Form) -> Launcher {
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, ROWS), (COL, COLS)]),
@@ -104,7 +105,7 @@ fn space(form: KernelForm) -> Launcher {
 fn run(sink: bool) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space(KernelForm::Static);
+    let launcher = space(Form::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -198,7 +199,7 @@ fn derived_sink_kernel<E: Float>(
 fn a_launcher_derived_spec_addresses_the_sink() {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = space(KernelForm::Static);
+    let launcher = space(Form::Static);
     let output = TestInput::builder(client.clone(), shape![ROWS, COLS])
         .dtype(dtype)
         .zeros()
@@ -206,8 +207,8 @@ fn a_launcher_derived_spec_addresses_the_sink() {
 
     // What the destination would have been, had it been a tensor to bind.
     let derived = launcher
-        .geometry(&Geometry::of_dims(&[(ROWS, COLS), (COLS, 1)]))
-        .subspace(&[ROW, COL])
+        .unbound(&Geometry::new(&[(ROWS, COLS), (COLS, 1)]))
+        .axes(&[ROW, COL])
         .vectorize(1)
         .build_spec();
     assert_eq!(derived.geometry.shape(), [ROWS, COLS]);
@@ -403,7 +404,7 @@ enum Backed {
 /// accumulator, so the destination is touched exactly once, on the drain.
 fn matmul_space() -> Launcher {
     let (m, n, k, edge) = (4usize, 4usize, 16usize, 4usize);
-    Launcher::implied(
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -411,7 +412,7 @@ fn matmul_space() -> Launcher {
                 .walk_every(&[M, N, K])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     )
 }
 
@@ -442,7 +443,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -454,7 +455,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -466,7 +467,7 @@ fn run_matmul(backed: Backed) -> HostData {
             b.arg(),
             c.arg(),
             launcher.partitioning_arg(),
-            launcher.level(0),
+            launcher.partitioning().level(0),
             dtype,
             dtype,
         ),
@@ -541,8 +542,8 @@ const MASKED_ROWS: usize = 5;
 ///
 /// The columns stay exact and in bounds, since a vectorized innermost axis that can leave the
 /// buffer is refused outright.
-fn masked_space(form: KernelForm) -> Launcher {
-    Launcher::implied(
+fn masked_space(form: Form) -> Launcher {
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(ROW, MASKED_ROWS), (COL, COLS)]),
@@ -629,7 +630,7 @@ enum Erased {
 fn run_masked(erased: Erased) -> HostData {
     let client = cubecl::test_device().client();
     let dtype = f32::elem_type_native();
-    let launcher = masked_space(KernelForm::Dynamic);
+    let launcher = masked_space(Form::Dynamic);
     let input = TestInput::builder(client.clone(), shape![MASKED_ROWS, COLS])
         .dtype(dtype)
         .arange()
@@ -642,12 +643,12 @@ fn run_masked(erased: Erased) -> HostData {
     // walks the tile the buffer kernel walks rather than one this test talked it into.
     let src = launcher
         .arg(input.binding())
-        .subspace(&[ROW, COL])
+        .axes(&[ROW, COL])
         .vectorize(2)
         .build();
     let out = launcher
         .arg(output.clone().binding())
-        .subspace(&[ROW, COL])
+        .axes(&[ROW, COL])
         .vectorize(2)
         .build();
     let (count, dim) = (launcher.cube_count(), launcher.cube_dim());

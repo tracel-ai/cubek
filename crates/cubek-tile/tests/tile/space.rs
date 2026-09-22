@@ -1,7 +1,8 @@
 //! Unit tests for [`Space`]
 
+use super::{Form, implied};
 use cubecl::prelude::*;
-use cubek_tile::{Axis, KernelForm, Launcher, Level, Partitioning, Space, Tiling};
+use cubek_tile::{Axis, Launcher, Level, Partitioning, Space, Tiling};
 
 // Matmul-style axis labels reused across the cases below. `B0`/`B1` are two
 // independent batch axes (a batch is just ordinary axes; broadcasting is omission).
@@ -178,7 +179,7 @@ fn an_operand_the_output_spans_contracts_nothing() {
 fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Launcher {
     let (leaf_m, leaf_n, leaf_k) = (8, 8, 4);
     let (planes_m, planes_n) = (2, 4);
-    Launcher::implied(
+    implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, m), (N, n), (K, k)]),
@@ -188,7 +189,7 @@ fn cpu_gemm_nest(m: usize, n: usize, k: usize) -> Launcher {
                 .walk_every(&[M, N])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     )
 }
 
@@ -224,13 +225,13 @@ fn overhangs_with_no_level_never() {
 #[test]
 #[should_panic(expected = "concrete space")]
 fn overhangs_dynamic_axis_panics() {
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64)]).all_dynamic(),
             Tiling::leaf(&[(M, 16)]).walk_every(&[M]).levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let _ = hangs(&launcher, M);
 }
@@ -241,7 +242,7 @@ fn overhangs_dynamic_axis_panics() {
 /// does, so the launch grid is their count.
 #[test]
 fn shared_tiles_launch_their_instances() {
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
@@ -251,19 +252,19 @@ fn shared_tiles_launch_their_instances() {
                 .shared_by(5)
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    assert!(launcher.level(0).work().is_some());
+    assert!(launcher.partitioning().level(0).work().is_some());
     // Five cubes, not `4 * 2 * 1`.
     assert!(matches!(launcher.cube_count(), CubeCount::Static(5, 1, 1)));
-    assert_eq!(launcher.levels().len(), 2);
+    assert_eq!(launcher.partitioning().levels().len(), 2);
 }
 
 /// Batch axes ride `Z` one tile each, however many there are and however they are listed: a
 /// box of the grid, not a share.
 #[test]
 fn batches_are_a_dial_each() {
-    let one_line = Launcher::implied(
+    let one_line = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
@@ -272,9 +273,9 @@ fn batches_are_a_dial_each() {
                 .batches(&[B0, B1])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    let a_dial_each = Launcher::implied(
+    let a_dial_each = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(B0, 2), (B1, 3), (M, 64), (N, 64), (K, 16)]),
@@ -284,13 +285,16 @@ fn batches_are_a_dial_each() {
                 .batches(&[B1])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
-    assert_eq!(one_line.levels(), a_dial_each.levels());
+    assert_eq!(
+        one_line.partitioning().levels(),
+        a_dial_each.partitioning().levels()
+    );
     // No work: the lowering that reads this is the one that picks the per-region accumulator
     // nest.
-    assert!(one_line.level(0).work().is_none());
+    assert!(one_line.partitioning().level(0).work().is_none());
     // Both axes ride Z, one cube per (B0, B1) pair, behind the `4 x 2` grid on X and Y.
     assert!(matches!(one_line.cube_count(), CubeCount::Static(4, 2, 6)));
 }
@@ -299,7 +303,7 @@ fn batches_are_a_dial_each() {
 /// scope, which is what a cut has always meant: no work is stated.
 #[test]
 fn one_axis_across_a_count_is_a_dial() {
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
@@ -309,16 +313,16 @@ fn one_axis_across_a_count_is_a_dial() {
                 .across(M, 4)
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    assert!(launcher.level(0).work().is_none());
+    assert!(launcher.partitioning().level(0).work().is_none());
     assert!(matches!(launcher.cube_count(), CubeCount::Static(4, 1, 1)));
 }
 
 /// Nothing named is nothing said: a level that names no axis cuts every cube the whole space.
 #[test]
 fn a_level_naming_no_axis_deals_everything_to_one_cube() {
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64), (K, 16)]),
@@ -327,11 +331,14 @@ fn a_level_naming_no_axis_deals_everything_to_one_cube() {
                 .cubes(&[])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    assert!(launcher.level(0).work().is_none());
+    assert!(launcher.partitioning().level(0).work().is_none());
     assert!(matches!(launcher.cube_count(), CubeCount::Static(1, 1, 1)));
-    assert_eq!(&launcher.level(0).child(launcher.space()), launcher.space());
+    assert_eq!(
+        &launcher.partitioning().level(0).child(launcher.space()),
+        launcher.space()
+    );
 }
 
 /// The plane's lanes combine in registers, which needs them in lockstep. Lanes holding different
@@ -371,7 +378,7 @@ fn an_axis_named_twice_is_refused() {
 /// the list must hold every one. A one-region walk folds away in the kernel, so it costs nothing.
 #[test]
 fn a_level_that_cuts_nothing_is_kept() {
-    let plain = Launcher::implied(
+    let plain = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64)]),
@@ -379,9 +386,9 @@ fn a_level_that_cuts_nothing_is_kept() {
                 .walk_every(&[M, N])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &cubecl::test_device().client(),
         Partitioning::new(
             Space::new(&[(M, 64), (N, 64)]),
@@ -391,11 +398,21 @@ fn a_level_that_cuts_nothing_is_kept() {
                 .walk_every(&[M, N])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
-    assert_ne!(launcher.levels(), plain.levels());
-    assert_eq!(launcher.levels().len(), 2);
-    assert_eq!(launcher.level(0).child(launcher.space()).extent(M), 16);
+    assert_ne!(
+        launcher.partitioning().levels(),
+        plain.partitioning().levels()
+    );
+    assert_eq!(launcher.partitioning().levels().len(), 2);
+    assert_eq!(
+        launcher
+            .partitioning()
+            .level(0)
+            .child(launcher.space())
+            .extent(M),
+        16
+    );
     assert_eq!(launcher.partitioning().leaf().extent(M), 16);
 }

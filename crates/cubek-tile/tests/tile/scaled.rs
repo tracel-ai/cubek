@@ -25,6 +25,8 @@ use cubek_tile::*;
 use half::f16;
 
 use super::matmul::require_cmma_8x8x8_f32;
+use super::{Form, implied};
+use cubek_tile::Bound;
 
 /// Which factor a test kernel writes its scales on. The engine has no such enum: a kernel says
 /// which by where it writes `.scaled()`, and these kernels serve both cases from one launch.
@@ -268,7 +270,7 @@ fn two_levels_fold_in_order() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -276,7 +278,7 @@ fn two_levels_fold_in_order() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     two_level_scaled_matmul::launch(
@@ -320,7 +322,7 @@ fn two_levels_fold_in_order() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -371,7 +373,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -379,7 +381,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     // The values' projection names the block; the scales' is derived from it, one per `KB`.
@@ -417,7 +419,7 @@ fn a_scaled_contraction_folds_the_block_scale_in() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -467,7 +469,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -475,7 +477,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -514,7 +516,7 @@ fn a_cut_finer_than_the_block_reuses_its_scale() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -568,7 +570,7 @@ fn a_scale_over_no_axis_covers_everything() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -576,7 +578,7 @@ fn a_scale_over_no_axis_covers_everything() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -613,7 +615,7 @@ fn a_scale_over_no_axis_covers_everything() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -664,7 +666,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -672,7 +674,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -711,7 +713,7 @@ fn a_cut_coarser_than_the_block_changes_scale_within_a_region() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -764,7 +766,7 @@ fn f16_scales_are_read_as_f16() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -772,7 +774,7 @@ fn f16_scales_are_read_as_f16() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -811,7 +813,7 @@ fn f16_scales_are_read_as_f16() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, scale_dtype],
     );
@@ -862,7 +864,7 @@ fn scales_over_the_columns_scale_the_rhs() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -870,7 +872,7 @@ fn scales_over_the_columns_scale_the_rhs() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -910,7 +912,7 @@ fn scales_over_the_columns_scale_the_rhs() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         [dtype, dtype],
     );
@@ -960,7 +962,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -968,7 +970,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -1007,7 +1009,7 @@ fn an_rhs_scale_survives_a_finer_cut() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         [dtype, dtype],
     );
@@ -1057,7 +1059,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1065,7 +1067,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul::launch(
@@ -1104,7 +1106,7 @@ fn an_rhs_scale_changes_within_a_coarser_region() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         [dtype, dtype],
     );
@@ -1156,7 +1158,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1164,7 +1166,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     scaled_matmul_promoted::launch(
@@ -1203,7 +1205,7 @@ fn a_promoted_accumulator_takes_the_scaled_contraction() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -1315,7 +1317,7 @@ fn rhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1323,7 +1325,7 @@ fn rhs_scales_are_served_several_at_a_time() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_rhs_scaled_matmul_promoted::launch(
@@ -1365,7 +1367,7 @@ fn rhs_scales_are_served_several_at_a_time() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Rhs,
         [dtype, dtype],
     );
@@ -1460,7 +1462,7 @@ fn lhs_scales_are_served_several_at_a_time() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, 1), (N, cols), (KB, blocks), (KI, block)]),
@@ -1468,7 +1470,7 @@ fn lhs_scales_are_served_several_at_a_time() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
 
     wide_lhs_scaled_matmul::launch(
@@ -1506,7 +1508,7 @@ fn lhs_scales_are_served_several_at_a_time() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         Scaled::Lhs,
         [dtype, dtype],
     );
@@ -1583,7 +1585,7 @@ fn check_scaled_cmma(case: CmmaCase) {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1591,7 +1593,7 @@ fn check_scaled_cmma(case: CmmaCase) {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let split = PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
     let b_spec = match case {
@@ -1637,7 +1639,7 @@ fn check_scaled_cmma(case: CmmaCase) {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         side,
         [dtype, dtype],
     );
@@ -1781,7 +1783,7 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
         .zeros()
         .generate_without_host_data();
 
-    let launcher = Launcher::implied(
+    let launcher = implied(
         &client,
         Partitioning::new(
             Space::new(&[(M, rows), (N, cols), (KB, blocks), (KI, block)]),
@@ -1789,7 +1791,7 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
                 .walk_every(&[M, N, KB, KI])
                 .levels(),
         ),
-        KernelForm::Static,
+        Form::Static,
     );
     let split = PhysicalAxisMap::disjoint(&[(KB, block), (KI, 1)]);
 
@@ -1824,7 +1826,7 @@ fn a_packed_stage_lands_on_the_tensor_cores() {
             TileSpec::direct(&[M, N]),
         ),
         launcher.partitioning_arg(),
-        launcher.level(0),
+        launcher.partitioning().level(0),
         [dtype, dtype],
     );
 
@@ -2037,7 +2039,7 @@ impl TileOrdered {
     }
 
     /// The activation, served at the width a word of the weight unpacks to.
-    fn a_op(&self, client: &Client, launcher: &Launcher) -> StridedOperand {
+    fn a_op(&self, client: &Client, launcher: &Launcher) -> Bound {
         let (a_t, _) = TestInput::builder(client.clone(), shape![self.rows, self.depth()])
             .dtype(f32::elem_type_native())
             .custom(self.a.clone())
@@ -2056,7 +2058,7 @@ impl TileOrdered {
 
     /// The weight as stored. A packed binding counts values, its words being the packing's
     /// business: the shape and the strides are the tiles' in values.
-    fn b_op(&self, client: &Client, launcher: &Launcher) -> StridedOperand {
+    fn b_op(&self, client: &Client, launcher: &Launcher) -> Bound {
         let shape = vec![self.n_tiles, self.k_tiles, self.tile, self.tile];
         let b_t = TensorHandle::new_contiguous(
             shape.clone(),
@@ -2076,12 +2078,7 @@ impl TileOrdered {
     /// The scales as stored, served as `f32` a line (a tile's sixteen) a read: whole words, or
     /// `ue4m3` bytes four to a word, the same shape in values either way. Returns the element
     /// they are stored as.
-    fn s_op(
-        &self,
-        client: &Client,
-        launcher: &Launcher,
-        scales: TileScales,
-    ) -> (StridedOperand, ElemType) {
+    fn s_op(&self, client: &Client, launcher: &Launcher, scales: TileScales) -> (Bound, ElemType) {
         let axes = Projection::dims()
             .dim(NB)
             .dim(KB)
@@ -2139,7 +2136,7 @@ impl TileOrdered {
         }
     }
 
-    fn c_op(&self, launcher: &Launcher, c: &TensorHandle) -> StridedOperand {
+    fn c_op(&self, launcher: &Launcher, c: &TensorHandle) -> Bound {
         launcher
             .arg(c.clone().binding())
             .gathered(
@@ -2226,11 +2223,7 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
         },
         Arm::Landing => Instruction::Cmma,
     };
-    let launcher = Launcher::implied(
-        &client,
-        Partitioning::new(w.space(), levels),
-        KernelForm::Static,
-    );
+    let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
     let (s_op, stored) = w.s_op(&client, &launcher, scales);
 
     chunked_scaled_matmul::launch(
@@ -2387,11 +2380,7 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
         .levels();
     let chunks_level = levels[2].clone();
     let grid = levels[6].clone();
-    let launcher = Launcher::implied(
-        &client,
-        Partitioning::new(w.space(), levels),
-        KernelForm::Static,
-    );
+    let launcher = implied(&client, Partitioning::new(w.space(), levels), Form::Static);
     let (s_op, stored) = w.s_op(&client, &launcher, scales);
 
     partitioned_scaled_matmul::launch(

@@ -164,14 +164,11 @@ mod tests {
     /// so the round trip is checked here on the digit positions they are built from.
     #[test]
     fn fold_physical_digits_invert_to_source_pos_digits() {
-        use crate::PhysicalAxis;
-
         let shape = [3usize, 8];
-        let layout = crate::ConcreteLayout::new(&[
-            PhysicalAxis::new(A, shape[0]),
-            PhysicalAxis::new(A, shape[1]),
-        ]);
-        let p = Projection::of_layout(&layout);
+        let p = Projection::new(
+            &[A],
+            &[crate::PhysicalAxisMap::of(A), crate::PhysicalAxisMap::of(A)],
+        );
         assert!(p.is_invertible());
         let block = |pa| {
             p.digit(pa, A)

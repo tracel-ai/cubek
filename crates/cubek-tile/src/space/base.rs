@@ -222,6 +222,12 @@ impl Space {
     /// launch side computes geometry from the concrete (real-extent) space, then derives the
     /// kernel's space with this so distinct input shapes hit one compiled kernel.
     pub fn with_dynamic(mut self, axes: &[Axis]) -> Self {
+        for axis in axes {
+            assert!(
+                self.contains(*axis),
+                "Space::with_dynamic: {axis:?} is not an axis of this space"
+            );
+        }
         let entries: Vec<_> = self
             .axes()
             .map(|a| {
