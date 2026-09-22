@@ -1,6 +1,7 @@
 mod arrival;
 mod attention;
 mod blocked;
+mod census;
 mod coarse;
 mod conv;
 mod decode_gemv;
