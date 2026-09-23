@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// re-exports. `pub(crate)` and `pub(super)` are not public.
 ///
 /// Phase 10 sets the target the facade lands on.
-const PUB_ITEMS: usize = 750;
+const PUB_ITEMS: usize = 748;
 /// Functions whose body runs past this many lines.
 const LONG_FN_LINES: usize = 60;
 const LONG_FNS: usize = 41;
