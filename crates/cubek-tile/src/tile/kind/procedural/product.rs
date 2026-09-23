@@ -1,10 +1,10 @@
 use cubecl::prelude::*;
 
-use super::{Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
+use super::{Reads, Recipe, RecipeCoords, RecipeExpand};
 
 /// Pointwise product of two recipes: `(A * B)(coords) = A(coords) * B(coords)`. Both factors are
 /// evaluated at every coordinate; the factorization is not exploited, because nothing here states
-/// that the two read orthogonal axes. [`SeparableProduct`] is the one that does.
+/// that the two read orthogonal axes. [`Factors`] is the one that does.
 #[derive(CubeType, Clone)]
 pub struct Product<A: CubeType, B: CubeType> {
     pub lhs: A,
@@ -24,12 +24,12 @@ impl<T: Numeric, A: Recipe<T>, B: Recipe<T>> Recipe<T> for Product<A, B> {
     }
 }
 
-impl<A: CubeType, B: CubeType> RecipeAxisDependencies for ProductExpand<A, B>
+impl<A: CubeType, B: CubeType> Reads for ProductExpand<A, B>
 where
-    A::ExpandType: RecipeAxisDependencies,
-    B::ExpandType: RecipeAxisDependencies,
+    A::ExpandType: Reads,
+    B::ExpandType: Reads,
 {
-    fn reads_axis(&self, scope: &Scope, axis: crate::Axis) -> bool {
-        self.lhs.reads_axis(scope, axis) || self.rhs.reads_axis(scope, axis)
+    fn reads(&self, scope: &Scope, axis: crate::Axis) -> bool {
+        self.lhs.reads(scope, axis) || self.rhs.reads(scope, axis)
     }
 }

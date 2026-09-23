@@ -85,7 +85,7 @@ pub(super) struct GatherProblem {
     /// answers only as a whole, which takes the general schedule.
     pub factors: Option<usize>,
     /// Factor-local normalization requested by the procedural lhs.
-    pub normalization: Option<(TapMask, DivGuard)>,
+    pub normalization: Option<Normalization>,
     /// The separable walk's weight count: one per tap of each factor, summed rather than
     /// multiplied out.
     pub taps: usize,
@@ -107,7 +107,7 @@ impl GatherProblem {
         block: ContractShape,
         factors: Option<usize>,
         factor_dependencies: Option<Vec<(bool, bool)>>,
-        normalization: Option<(TapMask, DivGuard, Space)>,
+        normalization: Option<Normalization>,
         rhs_boundaries: &[Option<Boundary>],
     ) -> Self {
         let rank = block.space.rank();
@@ -150,19 +150,18 @@ impl GatherProblem {
                 "contract gather: factor normalization needs a separable lhs"
             );
         }
-        let normalization = normalization.map(|(mask, guard, original)| {
-            validate_guard(guard);
+        if let Some(normalization) = &normalization {
             for &axis in &block.reduce {
                 assert!(
-                    original.contains(axis) && original.extent_raw(axis) == lhs.extent_raw(axis),
+                    normalization.over.contains(axis)
+                        && normalization.over.extent_raw(axis) == lhs.extent_raw(axis),
                     "contract gather: a normalized factor axis cannot be partitioned between \
                      .normalized() and the gather leaf; calling .normalized() below a split \
                      normalizes each chunk independently"
                 );
             }
-            (mask, guard)
-        });
-        if matches!(normalization, Some((TapMask::Masked, _))) {
+        }
+        if matches!(&normalization, Some(n) if n.taps == TapSupport::InBounds) {
             assert_factorized_mask(rhs_projection, &block.reduce);
         }
         let row = block.space.axis_at(rank - 2);
@@ -173,7 +172,7 @@ impl GatherProblem {
                     .into_iter()
                     .enumerate()
                     .map(|(f, (mut varies_row, mut varies_col))| {
-                        if matches!(normalization, Some((TapMask::Masked, _))) {
+                        if matches!(&normalization, Some(n) if n.taps == TapSupport::InBounds) {
                             let tap = block.reduce[f];
                             varies_row |=
                                 masked_bound_depends_on(rhs_projection, rhs_boundaries, tap, row);
@@ -227,7 +226,7 @@ fn assert_factorized_mask(rhs: &Projection, reduce: &[Axis]) {
                         .terms()
                         .iter()
                         .any(|term| term.axis == other),
-                    "contract gather: TapMask::Masked needs each contracted axis to move distinct \
+                    "contract gather: TapSupport::InBounds needs each contracted axis to move distinct \
                      input axes; {axis:?} and {other:?} both move physical axis {pa}"
                 );
             }
@@ -418,7 +417,11 @@ mod tests {
             block,
             Some(2),
             Some(vec![(true, true); 2]),
-            Some((TapMask::Unmasked, DivGuard::default(), original)),
+            Some(Normalization::new(
+                TapSupport::Whole,
+                DivGuard::default(),
+                original,
+            )),
             &[],
         );
     }
@@ -440,7 +443,11 @@ mod tests {
             block,
             Some(2),
             Some(vec![(true, true); 2]),
-            Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
+            Some(Normalization::new(
+                TapSupport::InBounds,
+                DivGuard::default(),
+                lhs.clone(),
+            )),
             &[],
         );
     }
@@ -464,7 +471,11 @@ mod tests {
             block,
             Some(2),
             Some(vec![(false, false); 2]),
-            Some((TapMask::Masked, DivGuard::default(), lhs.clone())),
+            Some(Normalization::new(
+                TapSupport::InBounds,
+                DivGuard::default(),
+                lhs.clone(),
+            )),
             &[Some(Boundary::Zero), None, None],
         );
 

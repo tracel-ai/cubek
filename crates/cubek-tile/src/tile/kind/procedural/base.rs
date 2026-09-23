@@ -11,13 +11,13 @@ use crate::{Axis, Coords, Space};
 /// This deliberately lives on expand types: axes are compile-time state of recipe values, not a
 /// runtime GPU value, and composing the answer in ordinary Rust avoids turning a collected list
 /// of axes into mutable kernel state.
-pub trait RecipeAxisDependencies {
-    fn reads_axis(&self, scope: &Scope, axis: Axis) -> bool;
+pub trait Reads {
+    fn reads(&self, scope: &Scope, axis: Axis) -> bool;
 }
 
 /// Per-factor coordinate dependencies of a separable recipe, queried during expansion.
-pub trait SeparableRecipeAxisDependencies {
-    fn factor_reads_axis(&self, scope: &Scope, factor: usize, axis: Axis) -> bool;
+pub trait FactorReads {
+    fn factor_reads(&self, scope: &Scope, factor: usize, axis: Axis) -> bool;
 }
 
 /// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
@@ -74,9 +74,9 @@ pub trait Recipe<T: Numeric> {
 /// The factor count is the recipe's, not the consumer's: a 1-D, 2-D or N-D filter is the same
 /// contract with a different `factors`.
 #[cube]
-pub trait SeparableRecipe<T: Numeric>: Recipe<T> {
+pub trait Separable<T: Numeric>: Recipe<T> {
     fn factors(&self) -> comptime_type!(usize);
     /// Evaluate the factor at comptime position `factor`, which indexes the contracted axes in
     /// the order the contraction walks them.
-    fn evaluate_factor(&self, coordinates: &RecipeCoords, #[comptime] factor: usize) -> T;
+    fn factor(&self, coordinates: &RecipeCoords, #[comptime] factor: usize) -> T;
 }

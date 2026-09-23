@@ -30,7 +30,7 @@ pub enum TileKind<T: Numeric> {
     /// copy into shared memory. Launched via [`TmaTileArg`](crate::TmaTileArg).
     TmaGmem(TmaData<T>),
     /// A read-only source evaluated from logical coordinates with no backing buffer.
-    Procedural(ProceduralData<T>),
+    Procedural(Procedural<T>),
     /// A tile the plane holds in its lanes, one line to a lane, read at coordinates and reached
     /// by shuffle or through the plane's own window ([`Lines`]).
     Lines(Lines<T>),
@@ -93,14 +93,14 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// Evaluate a procedural tile at scalar logical coordinates relative to its current region.
-    pub fn procedural_value(&self, pos: Coords<u32>) -> T {
+    pub fn value_at(&self, pos: Coords<u32>) -> T {
         match &self.kind {
             TileKind::Procedural(data) => data.evaluate(&pos, comptime!(self.place.space.clone())),
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
-            | TileKind::Lines(_) => panic!("Tile::procedural_value: tile is not procedural"),
+            | TileKind::Lines(_) => panic!("Tile::value_at: tile is not procedural"),
         }
     }
 
@@ -263,7 +263,7 @@ impl<T: Numeric> Tile<T> {
     /// `Some(1)`, deliberately distinct from `None`: a consumer can still exploit it.
     pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
         match &self.kind {
-            TileKind::Procedural(data) => data.factors(),
+            TileKind::Procedural(data) => data.factorization(),
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -320,9 +320,7 @@ impl<T: Numeric> Tile<T> {
 
     /// The separable factor-normalization request, if one was attached to this procedural tile.
     /// Backed tiles answer `None`, as they have no factor evaluation for the gather leaf to alter.
-    pub(crate) fn factor_normalization(
-        &self,
-    ) -> comptime_type!(Option<(TapMask, DivGuard, Space)>) {
+    pub(crate) fn factor_normalization(&self) -> comptime_type!(Option<Normalization>) {
         match &self.kind {
             TileKind::Procedural(data) => comptime!(data.normalization.clone()),
             TileKind::Memory(_)
@@ -339,7 +337,7 @@ impl<T: Numeric> Tile<T> {
     pub(crate) fn separable_factor(&self, pos: CoordsDyn, #[comptime] factor: usize) -> T {
         match &self.kind {
             TileKind::Procedural(data) => {
-                data.evaluate_factor_dyn(&pos, factor, comptime!(self.place.space.clone()))
+                data.read_factor_at(&pos, factor, comptime!(self.place.space.clone()))
             }
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)
@@ -899,8 +897,8 @@ impl<T: Numeric> TileExpand<T> {
             TileKindExpand::Procedural(data) => (0..factors)
                 .map(|f| {
                     (
-                        data.__expand_factor_reads_axis_method(scope, f, row),
-                        data.__expand_factor_reads_axis_method(scope, f, col),
+                        data.__expand_factor_reads_method(scope, f, row),
+                        data.__expand_factor_reads_method(scope, f, col),
                     )
                 })
                 .collect(),

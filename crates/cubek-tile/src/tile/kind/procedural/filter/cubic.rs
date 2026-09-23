@@ -3,7 +3,7 @@ use cubecl_common::Ratio;
 
 use crate::Axis;
 
-use super::super::{AffineCoordinate, Recipe, RecipeAxisDependencies, RecipeCoords, RecipeExpand};
+use super::super::{AffineCoordinate, Reads, Recipe, RecipeCoords, RecipeExpand};
 
 /// Keys' cubic-convolution filter over an [`AffineCoordinate`].
 pub type CubicAxis<T> = Cubic<AffineCoordinate<T>>;
@@ -62,11 +62,11 @@ impl<T: Float, C: Recipe<T>> Recipe<T> for Cubic<C> {
     }
 }
 
-impl<C: CubeType> RecipeAxisDependencies for CubicExpand<C>
+impl<C: CubeType> Reads for CubicExpand<C>
 where
-    C::ExpandType: RecipeAxisDependencies,
+    C::ExpandType: Reads,
 {
-    fn reads_axis(&self, scope: &Scope, axis: Axis) -> bool {
-        self.coordinate.reads_axis(scope, axis)
+    fn reads(&self, scope: &Scope, axis: Axis) -> bool {
+        self.coordinate.reads(scope, axis)
     }
 }

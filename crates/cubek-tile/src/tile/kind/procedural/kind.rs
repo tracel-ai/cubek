@@ -10,16 +10,12 @@ use cubecl::{
 
 use crate::*;
 
-use super::{
-    Constant, ConstantExpand, Ones, OnesExpand, RecipeCoords, SeparableRecipe,
-    SeparableRecipeAxisDependencies, SeparableRecipeOps, VirtualRecipe, Zeros, ZerosExpand,
-    validate_guard,
-};
+use super::{ErasedRecipe, FactorReads, RecipeCoords, Separable, SeparableCall};
 
 /// Runtime state of a procedural source. `origin` tracks regions selected by `Tile::at`.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct ProceduralData<T: Numeric> {
+pub struct Procedural<T: Numeric> {
     origin: Coords<u32>,
     /// The source's static logical extent. Dynamic axes hold `u32::MAX`, deliberately leaving
     /// them unmasked; unlike `space`, this stays in the parent's coordinate system as
@@ -37,8 +33,8 @@ pub struct ProceduralData<T: Numeric> {
     /// a separable contraction consumes it, since only that leaf knows each factor's tap run; the
     /// original space lets it reject an ancestor split that would normalize each chunk on its own.
     #[cube(comptime)]
-    pub(crate) normalization: Option<(TapMask, DivGuard, Space)>,
-    recipe: VirtualRecipe<T>,
+    pub(crate) normalization: Option<Normalization>,
+    recipe: ErasedRecipe<T>,
     #[cube(comptime)]
     pub(crate) space: Space,
     #[cube(comptime)]
@@ -46,9 +42,9 @@ pub struct ProceduralData<T: Numeric> {
 }
 
 #[cube]
-impl<T: Numeric> ProceduralData<T> {
+impl<T: Numeric> Procedural<T> {
     #[allow(dead_code)] // Reached through its expand, from [`Tile::procedural`].
-    pub(crate) fn new_virtual(#[comptime] space: Space, recipe: VirtualRecipe<T>) -> Self {
+    pub(crate) fn erased(#[comptime] space: Space, recipe: ErasedRecipe<T>) -> Self {
         let mut origin = Coords::<u32>::new();
         let mut bound = Coords::<u32>::new();
         #[unroll]
@@ -65,7 +61,7 @@ impl<T: Numeric> ProceduralData<T> {
         // Nothing has cut this tile yet: an axis overhangs once a level's edge fails to divide
         // it, which `at` records on the way down.
         let bounded_axes = comptime!(Vec::new());
-        ProceduralData::<T> {
+        Procedural::<T> {
             origin,
             bound,
             bounds_check: comptime!(false),
@@ -104,7 +100,7 @@ impl<T: Numeric> ProceduralData<T> {
             }
             axes
         });
-        ProceduralData::<T> {
+        Procedural::<T> {
             origin,
             bound: self.bound.clone(),
             bounds_check: comptime!(!bounded_axes.is_empty()),
@@ -121,20 +117,20 @@ impl<T: Numeric> ProceduralData<T> {
         self.recipe.evaluate(&absolute)
     }
 
-    pub(crate) fn factors(&self) -> comptime_type!(Option<usize>) {
-        self.recipe.factors()
+    pub(crate) fn factorization(&self) -> comptime_type!(Option<usize>) {
+        self.recipe.factorization()
     }
 
     #[allow(dead_code)] // Reached through its expand, from [`Tile::factor_dependencies`].
-    pub(crate) fn factor_reads_axis(
+    pub(crate) fn factor_reads(
         &self,
         #[comptime] factor: usize,
         #[comptime] axis: Axis,
     ) -> comptime_type!(bool) {
-        self.recipe.factor_reads_axis(factor, axis)
+        self.recipe.factor_reads(factor, axis)
     }
 
-    pub(crate) fn evaluate_factor_dyn(
+    pub(crate) fn read_factor_at(
         &self,
         pos: &CoordsDyn,
         #[comptime] factor: usize,
@@ -146,7 +142,7 @@ impl<T: Numeric> ProceduralData<T> {
             coords.push(pos[p]);
         }
         let absolute = RecipeCoords::new(&self.origin, &coords, space);
-        self.recipe.evaluate_factor(&absolute, factor)
+        self.recipe.factor(&absolute, factor)
     }
 
     /// Whether `pos` remains inside the original procedural box on one logical axis. Factor-local
@@ -163,7 +159,7 @@ impl<T: Numeric> ProceduralData<T> {
 
     /// Evaluate with the static partial-tile mask. Dynamic axes are unmasked because a recipe
     /// has no source-local runtime extent for them.
-    pub(crate) fn evaluate_masked(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
+    pub(crate) fn read_masked(&self, pos: &Coords<u32>, #[comptime] space: Space) -> T {
         if comptime!(self.bounds_check) && !self.is_in_bounds(pos) {
             T::from_int(0)
         } else {
@@ -172,7 +168,7 @@ impl<T: Numeric> ProceduralData<T> {
     }
 
     #[allow(dead_code)] // Reached through its expand, from the `ViewOperationsExpand` impl below.
-    pub(crate) fn evaluate_dyn(&self, pos: &CoordsDyn, #[comptime] space: Space) -> T {
+    pub(crate) fn read_at(&self, pos: &CoordsDyn, #[comptime] space: Space) -> T {
         let mut coords = Coords::<u32>::new();
         #[unroll]
         for p in 0..comptime!(space.rank()) {
@@ -191,25 +187,23 @@ impl<T: Numeric> ProceduralData<T> {
     }
 }
 
-impl<T: Numeric> Vectorized for ProceduralData<T> {}
+impl<T: Numeric> Vectorized for Procedural<T> {}
 
-impl<T: Numeric> ProceduralDataExpand<T> {
+impl<T: Numeric> ProceduralExpand<T> {
     pub(crate) fn factor_count(&self, scope: &Scope) -> Option<usize> {
-        self.recipe.__expand_factors_method(scope)
+        self.recipe.__expand_factorization_method(scope)
     }
 }
 
-impl<T: Numeric> VectorizedExpand for ProceduralDataExpand<T> {
+impl<T: Numeric> VectorizedExpand for ProceduralExpand<T> {
     fn __expand_vector_size_method(&self, _scope: &Scope) -> VectorSize {
         1
     }
 }
 
-impl<T: Numeric, W: Size> ViewOperations<Vector<T, W>, CoordsDyn> for ProceduralData<T> {}
+impl<T: Numeric, W: Size> ViewOperations<Vector<T, W>, CoordsDyn> for Procedural<T> {}
 
-impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
-    for ProceduralDataExpand<T>
-{
+impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn> for ProceduralExpand<T> {
     fn __expand_read_method(
         &self,
         scope: &Scope,
@@ -218,12 +212,12 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         assert_eq!(
             W::__expand_value(scope),
             1,
-            "ProceduralData: a procedural read is scalar; a vectorized read would broadcast \
+            "Procedural: a procedural read is scalar; a vectorized read would broadcast \
              the first lane's value instead of ramping the innermost coordinate"
         );
         let value = self
             .clone()
-            .__expand_evaluate_dyn_method(scope, &pos, self.space.clone());
+            .__expand_read_at_method(scope, &pos, self.space.clone());
         Vector::<T, W>::__expand_cast_from(scope, value)
     }
 
@@ -273,7 +267,7 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         _pos: <CoordsDyn as CubeType>::ExpandType,
         _end: <CoordsDyn as CubeType>::ExpandType,
     ) -> &SliceExpand<Vector<T, W>> {
-        panic!("ProceduralData: procedural sources have no backing slice")
+        panic!("Procedural: procedural sources have no backing slice")
     }
 
     fn __expand_shape_method(&self, scope: &Scope) -> <CoordsDyn as CubeType>::ExpandType {
@@ -306,141 +300,103 @@ impl<T: Numeric, W: Size> ViewOperationsExpand<Vector<T, W>, CoordsDyn>
         _shared_memory: &mut SliceExpand<Vector<T, W>>,
         _pos: <CoordsDyn as CubeType>::ExpandType,
     ) {
-        panic!("ProceduralData: procedural sources cannot issue TMA loads")
-    }
-}
-
-impl<T: Float> Tile<T> {
-    /// Normalize a separable procedural tile's factor runs where the gather contraction evaluates
-    /// them. Refused for opaque recipes and backed tiles: a post-pass would hide an extra walk. A
-    /// masked one also needs the rhs at its source window, so staging it in smem is rejected.
-    pub fn normalized(self, _mask: TapMask, _guard: DivGuard) -> Tile<T> {
-        unexpanded!()
-    }
-}
-
-impl<T: Float> TileExpand<T> {
-    pub fn __expand_normalized_method(
-        mut self,
-        scope: &Scope,
-        mask: TapMask,
-        guard: DivGuard,
-    ) -> TileExpand<T> {
-        validate_guard(guard);
-        match &mut self.kind {
-            TileKindExpand::Procedural(data) => {
-                assert!(
-                    data.factor_count(scope).is_some(),
-                    "Tile::normalized: the procedural recipe states no separable factorization"
-                );
-                data.normalization = Some((mask, guard, data.space.clone()));
-            }
-            TileKindExpand::Memory(_)
-            | TileKindExpand::PlaneTile(_)
-            | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_)
-            | TileKindExpand::Lines(_) => {
-                panic!("Tile::normalized: only a separable procedural tile has factor runs")
-            }
-        }
-        self
+        panic!("Procedural: procedural sources cannot issue TMA loads")
     }
 }
 
 #[cube]
-impl<T: Numeric> Tile<T> {
-    /// Create a scalar, memory-free tile over a logical space, evaluated where it is read at every
-    /// level. Dynamic extents are supplied by another operand when an operation is walked; a
-    /// procedural tile never witnesses them.
-    #[allow(dead_code)] // Reached through its expand, from [`Tile::procedural`].
-    fn procedural_virtual(#[comptime] space: Space, recipe: VirtualRecipe<T>) -> Self {
-        Tile::<T> {
-            kind: TileKind::new_Procedural(ProceduralData::<T>::new_virtual(
-                comptime!(space.clone()),
-                recipe,
-            )),
-            place: comptime!(Placement::alone(space)),
-        }
+impl<T: Numeric> Procedural<T> {
+    /// This source as a tile, placed alone: a recipe is evaluated where it is read, so no level
+    /// above it cuts it until a walk states one.
+    pub fn tile(self) -> Tile<T> {
+        let space = comptime!(self.space.clone());
+        Tile::new(
+            TileKind::new_Procedural(self),
+            comptime!(Placement::alone(space)),
+        )
     }
 }
 
-impl<T: Numeric> Tile<T> {
-    /// Create a coordinate-backed tile from an arbitrary procedural recipe. The concrete recipe
-    /// is erased only while CubeCL expands this call.
-    pub fn procedural<R: Recipe<T> + 'static>(_space: Space, _recipe: R) -> Self {
+impl<T: Numeric> Procedural<T> {
+    /// A memory-free source over `space`, evaluated from `recipe` at the logical coordinates it
+    /// is read at. The concrete recipe is erased while the kernel expands and nowhere else.
+    ///
+    /// Dynamic extents are supplied by another operand when an operation is walked; a procedural
+    /// source never witnesses them.
+    pub fn new<R: Recipe<T> + 'static>(_space: Space, _recipe: R) -> Self {
         unexpanded!()
     }
 
-    pub fn __expand_procedural<R: Recipe<T> + 'static>(
+    pub fn __expand_new<R: Recipe<T> + 'static>(
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
-    ) -> TileExpand<T> {
-        Self::__expand_procedural_virtual(
+    ) -> ProceduralExpand<T> {
+        Self::__expand_erased(
             scope,
             space,
-            VirtualRecipe::<T>::__expand_new::<R>(scope, recipe),
+            ErasedRecipe::<T>::__expand_new::<R>(scope, recipe),
         )
     }
 
-    /// Create a procedural tile while preserving the recipe's factorization for contraction: the
-    /// consumer sees one factor per contracted axis instead of one opaque field.
-    pub fn procedural_separable<R: SeparableRecipe<T> + 'static>(_space: Space, _recipe: R) -> Self
+    /// [`new`](Self::new) keeping the recipe's factorization: a consumer sees one factor per
+    /// contracted axis instead of one opaque field, and evaluates each factor once per tap run.
+    pub fn separable<R: Separable<T> + 'static>(_space: Space, _recipe: R) -> Self
     where
-        R::ExpandType: SeparableRecipeAxisDependencies,
+        R::ExpandType: FactorReads,
     {
         unexpanded!()
     }
 
-    pub fn __expand_procedural_separable<R: SeparableRecipe<T> + 'static>(
+    pub fn __expand_separable<R: Separable<T> + 'static>(
         scope: &Scope,
         space: Space,
         recipe: R::ExpandType,
-    ) -> TileExpand<T>
+    ) -> ProceduralExpand<T>
     where
-        R::ExpandType: SeparableRecipeOps<T>,
+        R::ExpandType: SeparableCall<T>,
     {
-        // A separable procedural tile is evaluated where it is read: staging a recipe into shared
-        // memory would drop its factorization and normalization metadata without diagnostic.
-        Self::__expand_procedural_virtual(
+        // A separable source is evaluated where it is read: staging a recipe into shared memory
+        // would drop its factorization and its normalization without diagnostic.
+        Self::__expand_erased(
             scope,
             space,
-            VirtualRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
+            ErasedRecipe::<T>::__expand_new_separable::<R>(scope, recipe),
         )
     }
+}
 
-    /// Create a coordinate-backed tile yielding constant zero.
-    pub fn zeros(_space: Space) -> Self {
+impl<T: Float> Procedural<T> {
+    /// Normalize this source's factor runs where the gather contraction evaluates them: each
+    /// factor's taps are summed and divided out there, since only that leaf knows a tap run.
+    ///
+    /// Refused for a recipe that states no factorization: a post-pass over the values would hide
+    /// a second walk. Summing only the taps in bounds ([`TapSupport::InBounds`]) also needs the
+    /// operand read at its source window, so staging it in shared memory is refused at launch.
+    pub fn normalized(self, _taps: TapSupport, _guard: DivGuard) -> Self {
         unexpanded!()
     }
+}
 
-    pub fn __expand_zeros(scope: &Scope, space: Space) -> TileExpand<T> {
-        Self::__expand_procedural::<Zeros>(scope, space, ZerosExpand {})
-    }
-
-    /// Create a coordinate-backed tile yielding constant one.
-    pub fn ones(_space: Space) -> Self {
-        unexpanded!()
-    }
-
-    pub fn __expand_ones(scope: &Scope, space: Space) -> TileExpand<T> {
-        Self::__expand_procedural::<Ones>(scope, space, OnesExpand {})
-    }
-
-    /// Create a coordinate-backed tile yielding a constant value.
-    pub fn constant(_space: Space, _value: T) -> Self {
-        unexpanded!()
-    }
-
-    pub fn __expand_constant(scope: &Scope, space: Space, value: NativeExpand<T>) -> TileExpand<T> {
-        Self::__expand_procedural::<Constant<T>>(scope, space, ConstantExpand::<T> { value })
+impl<T: Float> ProceduralExpand<T> {
+    pub fn __expand_normalized_method(
+        mut self,
+        scope: &Scope,
+        taps: TapSupport,
+        guard: DivGuard,
+    ) -> ProceduralExpand<T> {
+        assert!(
+            self.factor_count(scope).is_some(),
+            "Procedural::normalized: the recipe states no separable factorization"
+        );
+        self.normalization = Some(Normalization::new(taps, guard, self.space.clone()));
+        self
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cubecl::ir::Scope;
-    use cubecl::prelude::*;
+    use cubecl::ir::{ExpandValue, Scope};
 
     use crate::*;
 
@@ -453,32 +409,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "the procedural recipe states no separable factorization")]
-    fn normalized_rejects_an_opaque_procedural_recipe() {
+    #[should_panic(expected = "the recipe states no separable factorization")]
+    fn normalized_rejects_an_opaque_recipe() {
         let scope = test_scope();
-        let tile = Tile::<f32>::__expand_zeros(&scope, Space::new(&[(Axis(0), 4)]));
-        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
-    }
-
-    #[test]
-    #[should_panic(expected = "only a separable procedural tile has factor runs")]
-    fn normalized_rejects_a_non_procedural_tile() {
-        let scope = test_scope();
-        let plane_tile = PlaneTile::<f32>::__expand_acc(
+        let source = Procedural::<f32>::__expand_new::<Constant<f32>>(
             &scope,
-            Instruction::Cmma,
-            8,
-            8,
-            MatrixAxes::trailing(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
-            8,
-            1,
-            1,
-            Monoid::Sum,
+            Space::new(&[(Axis(0), 4)]),
+            ConstantExpand::<f32> {
+                value: ExpandValue::constant(
+                    0u64.into(),
+                    cubecl::ir::ElemType::Float(cubecl::ir::FloatKind::F32),
+                )
+                .into(),
+            },
         );
-        let tile = TileExpand::<f32> {
-            kind: TileKindExpand::PlaneTile(plane_tile),
-            place: comptime!(Placement::new(Space::new(&[(Axis(0), 4)]), 0, Vec::new())),
-        };
-        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
+        source.__expand_normalized_method(&scope, TapSupport::Whole, DivGuard::default());
     }
 }

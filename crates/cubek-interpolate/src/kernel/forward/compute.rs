@@ -5,8 +5,8 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Partitioning, Phase, Region, RegisterBlock, Ring, Semiring, StageStorage, Tile, TileArg,
-    affine_along, pipelined, separable_product, sum_of,
+    Axis, Factors, Partitioning, Phase, Procedural, Region, RegisterBlock, Ring, Semiring,
+    StageStorage, Tile, TileArg, affine_along, pipelined, sum_of,
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -61,18 +61,19 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
     let mut factors = Sequence::new();
     factors.push(F::Filter::<E>::along(row));
     factors.push(F::Filter::<E>::along(col));
-    let weights = Tile::<E>::procedural_separable::<SeparableWeights<E, F::Filter<E>>>(
+    let weights = Procedural::<E>::separable::<SeparableWeights<E, F::Filter<E>>>(
         comptime!(
             space
                 .space()
                 .subspace(&[BATCH, OUTPUT_H, OUTPUT_W, TAP_H, TAP_W])
         ),
-        separable_product(factors),
+        Factors::new(factors),
     );
     let weights = match comptime!(F::NORMALIZATION) {
-        Some((mask, guard)) => weights.normalized(comptime!(mask), comptime!(guard)),
+        Some((taps, guard)) => weights.normalized(comptime!(taps), comptime!(guard)),
         None => weights,
-    };
+    }
+    .tile();
 
     let output = output.tile(comptime!(space.clone()));
 

@@ -2,8 +2,8 @@ use crate::definition::{InterpolateMode, ModeProperties, mode_properties};
 use cubecl::prelude::*;
 use cubecl_common::Ratio;
 use cubek_tile::{
-    AffineCoordinate, Constant, Cubic, DivGuard, Lanczos, Linear, Phase, Recipe,
-    RecipeAxisDependencies, SeparableProduct, Sum, TapMask,
+    AffineCoordinate, Constant, Cubic, DivGuard, Factors, Lanczos, Linear, Phase, Reads, Recipe,
+    Sum, TapSupport,
 };
 
 pub type TapDistance<E> = Sum<AffineCoordinate<E>, Phase<E>>;
@@ -15,20 +15,20 @@ type Lanczos3Axis<E> = Lanczos<TapDistance<E>>;
 #[cube]
 pub trait SeparableFilter<E: Float>: Send + std::marker::Sync + 'static
 where
-    <Self::Axis as CubeType>::ExpandType: RecipeAxisDependencies,
+    <Self::Axis as CubeType>::ExpandType: Reads,
 {
     type Axis: Recipe<E> + 'static;
     fn along(distance: TapDistance<E>) -> Self::Axis;
 }
 
 /// One factor per resampled axis, in the order the contraction walks the tap axes.
-pub type SeparableWeights<E, F> = SeparableProduct<<F as SeparableFilter<E>>::Axis>;
+pub type SeparableWeights<E, F> = Factors<<F as SeparableFilter<E>>::Axis>;
 
 /// Bridges host-side mode selection to the element type selected when a kernel is launched.
 pub trait SeparableFilterFamily: Send + std::marker::Sync + 'static {
     type Filter<E: Float>: SeparableFilter<E>;
     const MODE: InterpolateMode;
-    const NORMALIZATION: Option<(TapMask, DivGuard)> = None;
+    const NORMALIZATION: Option<(TapSupport, DivGuard)> = None;
 
     fn mode_properties() -> ModeProperties {
         mode_properties(Self::MODE)
@@ -90,8 +90,8 @@ pub struct Lanczos3Filter;
 impl SeparableFilterFamily for Lanczos3Filter {
     type Filter<E: Float> = Self;
     const MODE: InterpolateMode = InterpolateMode::Lanczos3;
-    const NORMALIZATION: Option<(TapMask, DivGuard)> = Some((
-        TapMask::Masked,
+    const NORMALIZATION: Option<(TapSupport, DivGuard)> = Some((
+        TapSupport::InBounds,
         DivGuard {
             epsilon: 1e-7,
             fallback: 0.0,

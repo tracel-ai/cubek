@@ -14,7 +14,7 @@ impl<T: Numeric> Memory<T> {
     /// Cooperatively materialize a coordinate-backed source into this plain, direct scalar memory
     /// tile. Workers write cyclic positions across it, so the caller must ensure every unit in the
     /// cube owns this window: a property of the level's distribution, not of buffer coverage.
-    pub(crate) fn fill_procedural(&mut self, src: &ProceduralData<T>, #[comptime] space: Space) {
+    pub(crate) fn fill_procedural(&mut self, src: &Procedural<T>, #[comptime] space: Space) {
         comptime!(assert!(
             self.store.packing == Packing::Plain
                 && self.projection.is_direct()
@@ -30,12 +30,12 @@ impl<T: Numeric> Memory<T> {
         let mut i = UNIT_POS as usize;
         while i < total {
             let pos = shape.unravel(i.retyped::<u32>());
-            // TODO: staging cannot see its consumer, so this masked fill uses ProceduralData's
+            // TODO: staging cannot see its consumer, so this masked fill uses Procedural's
             // zero fallback, not every reduction's identity (Max on negatives, Min on positives).
             // A reduction-aware contract must carry validity or the consumer's identity here.
             dst.write(
                 i,
-                Vector::cast_from(src.evaluate_masked(&pos, comptime!(space.clone()))),
+                Vector::cast_from(src.read_masked(&pos, comptime!(space.clone()))),
             );
             i += workers;
         }

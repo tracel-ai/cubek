@@ -78,13 +78,14 @@ fn product_kernel_in_place<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+    let source = Procedural::<E>::new::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.space().clone()),
         product_of(
             affine_along(ROW, E::from_int(0), E::from_int(1)),
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -97,13 +98,14 @@ fn product_kernel_staged<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
+    let source = Procedural::<E>::new::<Product<AffineCoordinate<E>, AffineCoordinate<E>>>(
         comptime!(space.space().clone()),
         product_of(
             affine_along(ROW, E::from_int(0), E::from_int(1)),
             affine_along(COL, E::from_int(0), E::from_int(1)),
         ),
-    );
+    )
+    .tile();
     let output = output.tile(comptime!(space.clone()));
     let walk = source.over(&level);
     let mut ring = Ring::smem_single(&walk, &source, StageStorage::Strided, 1usize);
@@ -124,7 +126,7 @@ fn affine_plus_phase<E: Float>(
     offset: i32,
     divisor: u32,
 ) -> Tile<E> {
-    Tile::<E>::procedural::<Sum<AffineCoordinate<E>, Phase<E>>>(
+    Procedural::<E>::new::<Sum<AffineCoordinate<E>, Phase<E>>>(
         space,
         sum_of(
             affine_along(ROW, E::from_int(0), runtime_scalar::<E>(E::new(1.0_f32))),
@@ -137,6 +139,7 @@ fn affine_plus_phase<E: Float>(
             },
         ),
     )
+    .tile()
 }
 
 /// `launch_ratio` decides whether the fraction is spelled in constants, which fold at expand time,
@@ -170,13 +173,14 @@ fn rebase_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<AxisValue>(
+    let source = Procedural::<E>::new::<AxisValue>(
         comptime!(space.space().clone()),
         AxisValue {
             axis: ROW,
             scale: 2.0,
         },
-    );
+    )
+    .tile();
     // The second region starts at (2, 3), so its first logical coordinate reads row 2.
     let region = Region::trailing(
         comptime!(0usize),
@@ -190,7 +194,7 @@ fn rebase_kernel<E: Float>(
     pos.push(0u32.runtime());
     pos.push(0u32.runtime());
     let mut output = output.tile(comptime!(space.clone()));
-    output.init(source.procedural_value(pos));
+    output.init(source.value_at(pos));
 }
 
 #[cube(launch)]
@@ -200,12 +204,13 @@ fn constant_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Constant<E>>(
+    let source = Procedural::<E>::new::<Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(-1.25_f32)),
         },
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -217,10 +222,11 @@ fn affine_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<AffineCoordinate<E>>(
+    let source = Procedural::<E>::new::<AffineCoordinate<E>>(
         comptime!(space.space().clone()),
         along_col::<E>(offset),
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -232,14 +238,15 @@ fn linear_kernel<E: Float>(
     #[comptime] offset: ComptimeFloat<f32>,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<LinearAxis<E>>(
+    let source = Procedural::<E>::new::<LinearAxis<E>>(
         comptime!(space.space().clone()),
         linear_along(
             COL,
             runtime_scalar::<E>(E::new(comptime!(offset.get()))),
             runtime_scalar::<E>(E::new(1.0_f32)),
         ),
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -252,7 +259,7 @@ fn cubic_kernel<E: Float>(
     #[comptime] a: Ratio,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<CubicAxis<E>>(
+    let source = Procedural::<E>::new::<CubicAxis<E>>(
         comptime!(space.space().clone()),
         cubic_along(
             COL,
@@ -260,7 +267,8 @@ fn cubic_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
             a,
         ),
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -273,7 +281,7 @@ fn lanczos_kernel<E: Float>(
     #[comptime] lobes: u8,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<LanczosAxis<E>>(
+    let source = Procedural::<E>::new::<LanczosAxis<E>>(
         comptime!(space.space().clone()),
         lanczos_along(
             COL,
@@ -281,7 +289,8 @@ fn lanczos_kernel<E: Float>(
             runtime_scalar::<E>(E::new(1.0_f32)),
             lobes,
         ),
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -294,7 +303,7 @@ fn linear_over_axis_value_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<LinearScaled>(
+    let source = Procedural::<E>::new::<LinearScaled>(
         comptime!(space.space().clone()),
         LinearScaled {
             coordinate: AxisValue {
@@ -302,7 +311,8 @@ fn linear_over_axis_value_kernel<E: Float>(
                 scale: 0.5,
             },
         },
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -315,12 +325,13 @@ fn integer_kernel<E: Int>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Constant<E>>(
+    let source = Procedural::<E>::new::<Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(7)),
         },
-    );
+    )
+    .tile();
     materialize(&source, output, &space, level.clone());
 }
 
@@ -331,12 +342,13 @@ fn direct_copy_kernel<E: Float>(
     space: Partitioning,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Constant<E>>(
+    let source = Procedural::<E>::new::<Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
-    );
+    )
+    .tile();
     let mut output = output.tile(comptime!(space.clone()));
     output.copy_from(&source);
 }
@@ -349,12 +361,13 @@ fn divided_direct_copy_kernel<E: Float>(
     #[comptime] level: Level,
     #[define(E)] _dtype: ElemType,
 ) {
-    let source = Tile::<E>::procedural::<Constant<E>>(
+    let source = Procedural::<E>::new::<Constant<E>>(
         comptime!(space.space().clone()),
         Constant::<E> {
             value: runtime_scalar::<E>(E::new(1.0_f32)),
         },
-    );
+    )
+    .tile();
     let region = Region::trailing(
         comptime!(0usize),
         comptime!(space.space().clone()),

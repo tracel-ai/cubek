@@ -346,7 +346,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
     #[comptime] factor: usize,
     #[comptime] problem: GatherProblem,
 ) {
-    match comptime!(problem.normalization) {
+    match comptime!(problem.normalization.clone()) {
         None =>
         {
             #[unroll]
@@ -363,7 +363,7 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
                 weights[offset + comptime!(k)] = lhs.separable_factor(pos, factor);
             }
         }
-        Some((mask, guard)) => {
+        Some(normalization) => {
             let mut sum = EL::from_int(0);
             #[unroll]
             for k in 0..comptime!(problem.block.reduce_extents[factor]) {
@@ -378,8 +378,8 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
                     1usize,
                 );
                 let weight = lhs.separable_factor(lhs_pos, factor);
-                let weight = match comptime!(mask) {
-                    TapMask::Masked => {
+                let weight = match comptime!(normalization.taps) {
+                    TapSupport::InBounds => {
                         let rhs_pos = cell_position(
                             batch,
                             row,
@@ -403,13 +403,13 @@ fn factor_walk<EL: Numeric, ER: Numeric>(
                             EL::from_int(0),
                         )
                     }
-                    TapMask::Unmasked => weight,
+                    TapSupport::Whole => weight,
                 };
                 weights[offset + comptime!(k)] = weight;
                 sum += weight;
             }
 
-            let reciprocal = guarded_recip_numeric::<EL>(sum, guard);
+            let reciprocal = guarded_recip::<EL>(sum, comptime!(normalization.guard));
             #[unroll]
             for k in 0..comptime!(problem.block.reduce_extents[factor]) {
                 weights[offset + comptime!(k)] *= reciprocal;

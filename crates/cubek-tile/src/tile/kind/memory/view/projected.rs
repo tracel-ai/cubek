@@ -183,7 +183,7 @@ impl<T: Numeric> Tile<T> {
 /// along the innermost axis.
 #[cube]
 fn procedural_nd<T: Numeric, W: Size>(
-    data: &ProceduralData<T>,
+    data: &Procedural<T>,
     #[comptime] space: Space,
     #[comptime] guard: Guard,
 ) -> Masked<'_, Vector<T, W>, CoordsDyn> {
@@ -194,7 +194,7 @@ fn procedural_nd<T: Numeric, W: Size>(
         comptime!(1usize),
     );
     Masked::new(
-        View::<Vector<T, W>, CoordsDyn>::new::<&ProceduralData<T>, CoordsDyn>(data, layout),
+        View::<Vector<T, W>, CoordsDyn>::new::<&Procedural<T>, CoordsDyn>(data, layout),
         comptime!(guard.checks() && data.bounds_check),
     )
 }
