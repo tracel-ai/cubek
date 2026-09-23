@@ -22,7 +22,7 @@ mod launch;
 mod layout;
 mod ops;
 mod space;
-mod staging;
+mod load;
 mod tile;
 
 pub use algebra::*;
@@ -31,5 +31,5 @@ pub use launch::*;
 pub use layout::*;
 pub use ops::*;
 pub use space::*;
-pub use staging::*;
+pub use load::*;
 pub use tile::*;
