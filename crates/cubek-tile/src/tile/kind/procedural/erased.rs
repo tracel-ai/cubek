@@ -1,3 +1,5 @@
+//! Expansion-time erasure of a recipe, so a tile holds one whatever its type.
+
 use core::marker::PhantomData;
 use std::sync::Arc;
 
@@ -6,69 +8,11 @@ use cubecl::ir::Scope;
 use cubecl::prelude::*;
 use cubecl::unexpanded;
 
-use super::SeparableRecipeExpand;
-use crate::{Axis, Coords, Space};
-
-/// Coordinate dependence of a recipe, queried while a kernel is expanded.
-///
-/// This deliberately lives on expand types: axes are compile-time state of recipe values, not a
-/// runtime GPU value, and composing the answer in ordinary Rust avoids turning a collected list
-/// of axes into mutable kernel state.
-pub trait RecipeAxisDependencies {
-    fn reads_axis(&self, scope: &Scope, axis: Axis) -> bool;
-}
-
-/// Per-factor coordinate dependencies of a separable recipe, queried during expansion.
-pub trait SeparableRecipeAxisDependencies {
-    fn factor_reads_axis(&self, scope: &Scope, factor: usize, axis: Axis) -> bool;
-}
-
-/// The absolute logical coordinates a [`Recipe`] is evaluated at: the source's `origin` plus the
-/// position it is read at, within its [`Space`]. Rebased one axis at a time on demand, so a
-/// recipe emits an add only for the axes it reads, and one that ignores its coordinates emits none.
-#[derive(CubeType, Clone)]
-#[expand(derive(Clone))]
-pub struct RecipeCoords {
-    origin: Coords<u32>,
-    offset: Coords<u32>,
-    #[cube(comptime)]
-    pub space: Space,
-}
-
-#[cube]
-impl RecipeCoords {
-    pub(crate) fn new(
-        origin: &Coords<u32>,
-        offset: &Coords<u32>,
-        #[comptime] space: Space,
-    ) -> Self {
-        RecipeCoords {
-            origin: origin.clone(),
-            offset: offset.clone(),
-            space,
-        }
-    }
-
-    /// The absolute coordinate along the axis at comptime position `p`.
-    pub fn at(&self, #[comptime] p: usize) -> u32 {
-        self.origin.at(p) + self.offset.at(p)
-    }
-
-    /// The absolute coordinate along the specified `axis`.
-    pub fn along(&self, #[comptime] axis: Axis) -> u32 {
-        self.at(comptime!(self.space.position(axis)))
-    }
-}
-
-/// An N-dimensional scalar field evaluated at absolute logical coordinates.
-///
-/// Recipes implement [`Recipe<T>`] for any numeric element type `T: Numeric` (integers and floats),
-/// though continuous interpolation and filtering recipes (such as [`Linear`](super::Linear),
-/// [`Cubic`](super::Cubic), [`Lanczos`](super::Lanczos)) are defined over [`Float`] elements.
-#[cube(expand_base_traits = "ExpandTypeClone")]
-pub trait Recipe<T: Numeric> {
-    fn evaluate(&self, coordinates: &RecipeCoords) -> T;
-}
+use super::{
+    Recipe, RecipeCoords, RecipeCoordsExpand, RecipeExpand, SeparableRecipeAxisDependencies,
+    SeparableRecipeExpand,
+};
+use crate::Axis;
 
 #[doc(hidden)]
 pub trait RecipeOps<T: Numeric> {

@@ -8,14 +8,12 @@ mod attention;
 mod copy;
 mod matmul;
 mod mul;
-mod normalize;
 mod reduce;
 mod rows;
 mod softmax;
 mod team;
 
 pub use attention::*;
-pub use normalize::*;
 pub use reduce::*;
 pub use softmax::*;
 pub use team::*;

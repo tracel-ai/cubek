@@ -1,10 +1,7 @@
-//! Normalization policy and helpers shared by procedural filters.
+//! What a normalized separable factor run divides by: which taps it sums, and how the
+//! division answers a denominator too small to divide by.
 
-use cubecl::ir::Scope;
 use cubecl::prelude::*;
-use cubecl::unexpanded;
-
-use crate::*;
 
 /// How division handles a denominator whose magnitude is too small to divide by. Both fields are
 /// comptime kernel constants. The fallback is the reciprocal multiplier, so the default maps a
@@ -53,43 +50,6 @@ pub(crate) fn guarded_recip_numeric<E: Numeric>(d: E, #[comptime] guard: DivGuar
     select(valid, E::from_int(1) / safe, fallback)
 }
 
-impl<T: Float> Tile<T> {
-    /// Normalize a separable procedural tile's factor runs where the gather contraction evaluates
-    /// them. Refused for opaque recipes and backed tiles: a post-pass would hide an extra walk. A
-    /// masked one also needs the rhs at its source window, so staging it in smem is rejected.
-    pub fn normalized(self, _mask: TapMask, _guard: DivGuard) -> Tile<T> {
-        unexpanded!()
-    }
-}
-
-impl<T: Float> TileExpand<T> {
-    pub fn __expand_normalized_method(
-        mut self,
-        scope: &Scope,
-        mask: TapMask,
-        guard: DivGuard,
-    ) -> TileExpand<T> {
-        validate_guard(guard);
-        match &mut self.kind {
-            TileKindExpand::Procedural(data) => {
-                assert!(
-                    data.factor_count(scope).is_some(),
-                    "Tile::normalized: the procedural recipe states no separable factorization"
-                );
-                data.normalization = Some((mask, guard, data.space.clone()));
-            }
-            TileKindExpand::Memory(_)
-            | TileKindExpand::PlaneTile(_)
-            | TileKindExpand::PlanePartition(_)
-            | TileKindExpand::TmaGmem(_)
-            | TileKindExpand::Lines(_) => {
-                panic!("Tile::normalized: only a separable procedural tile has factor runs")
-            }
-        }
-        self
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,43 +85,5 @@ mod tests {
                 "fallback {fallback:?} should be rejected"
             );
         }
-    }
-
-    fn test_scope() -> Scope {
-        Scope::root(cubecl::ir::settings::KernelSettings::new(
-            cubecl::ir::settings::Dim3::new_single(),
-            cubecl::ir::settings::ExecutionMode::Checked,
-            cubecl::ir::AddressType::U32,
-        ))
-    }
-
-    #[test]
-    #[should_panic(expected = "the procedural recipe states no separable factorization")]
-    fn normalized_rejects_an_opaque_procedural_recipe() {
-        let scope = test_scope();
-        let tile = Tile::<f32>::__expand_zeros(&scope, Space::new(&[(Axis(0), 4)]));
-        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
-    }
-
-    #[test]
-    #[should_panic(expected = "only a separable procedural tile has factor runs")]
-    fn normalized_rejects_a_non_procedural_tile() {
-        let scope = test_scope();
-        let plane_tile = PlaneTile::<f32>::__expand_acc(
-            &scope,
-            Instruction::Cmma,
-            8,
-            8,
-            MatrixAxes::trailing(&Space::new(&[(Axis(0), 8), (Axis(1), 8)])),
-            8,
-            1,
-            1,
-            Monoid::Sum,
-        );
-        let tile = TileExpand::<f32> {
-            kind: TileKindExpand::PlaneTile(plane_tile),
-            place: comptime!(Placement::new(Space::new(&[(Axis(0), 4)]), 0, Vec::new())),
-        };
-        tile.__expand_normalized_method(&scope, TapMask::Unmasked, DivGuard::default());
     }
 }
