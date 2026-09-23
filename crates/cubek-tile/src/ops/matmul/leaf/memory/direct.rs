@@ -19,34 +19,32 @@ use crate::*;
 /// else to the N-D nest, so the conditions below are re-asserted rather than re-decided.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
+pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory<E>,
-    lhs: &Scaled<EL, LS>,
-    rhs: &Scaled<ER, RS>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
     #[comptime] space: Space,
     #[comptime] contracted_per_step: usize,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_values = lhs.values();
-    let rhs_values = rhs.values();
-    let lhs_gathered = lhs_values.gathered();
-    let rhs_gathered = rhs_values.gathered();
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
     comptime!(assert!(
         !lhs_gathered && !rhs_gathered,
         "contract: a gathered operand has no 2-D matrix view; it needs the N-D nest"
     ));
 
-    let lw = lhs_values.vector_size();
-    let rw = rhs_values.vector_size();
+    let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     comptime!(assert!(
         rw == aw || contracted_per_step > 1,
         "contract direct: a padded rhs staged wider than its {aw}-wide sink must use the N-D nest"
     ));
     let shape = comptime!(ContractShape::new(
-        &lhs_values.place.space,
-        &rhs_values.place.space,
+        &lhs.place.space,
+        &rhs.place.space,
         space,
         contracted_per_step,
         lw,
@@ -55,7 +53,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     ));
     comptime!(assert!(
         shape
-            .matrix_axes(&lhs_values.place.space, &rhs_values.place.space)
+            .matrix_axes(&lhs.place.space, &rhs.place.space)
             .is_some(),
         "contract: the 2-D nest reads each operand as one matrix, and no grouping of these axes \
          gives one; the N-D nest reads them a cell at a time"
@@ -66,11 +64,11 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     if comptime!(contracted_per_step > 1) {
         let size!(W) = contracted_per_step;
         let size!(A) = 1usize;
-        nest::<E, EL, W, LS, ER, W, RS, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, ER, W, A>(acc, lhs, rhs, shape, config, semiring);
     } else {
         let size!(W) = lw;
         let size!(A) = aw;
-        nest::<E, EL, W, LS, ER, A, RS, A>(acc, lhs, rhs, shape, config, semiring);
+        nest::<E, EL, W, ER, A, A>(acc, lhs, rhs, shape, config, semiring);
     }
 }
 
@@ -78,25 +76,14 @@ pub(super) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
 /// accumulator's.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn nest<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    LS: Numeric,
-    ER: Numeric,
-    V: Size,
-    RS: Numeric,
-    A: Size,
->(
+fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut Memory<E>,
-    lhs: &Scaled<EL, LS>,
-    rhs: &Scaled<ER, RS>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
     #[comptime] shape: ContractShape,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_values = lhs.values();
-    let rhs_values = rhs.values();
     let mr = comptime!(shape.mr);
     let nr = comptime!(shape.nr);
     let cols = comptime!(shape.cols);
@@ -106,25 +93,25 @@ fn nest<
     let aw = comptime!(shape.aw);
     let matrices = comptime!(shape.matrices());
 
-    let lhs_axes = comptime!(shape.lhs_axes(&lhs_values.place.space));
-    let rhs_axes = comptime!(shape.rhs_axes(&rhs_values.place.space));
+    let lhs_axes = comptime!(shape.lhs_axes(&lhs.place.space));
+    let rhs_axes = comptime!(shape.rhs_axes(&rhs.place.space));
 
     // Only the bound proof below needs the lhs's line count; the walk itself splits `kc`.
     let lhs_k_lines = comptime!(kc.div_ceil(lw));
     let lane_fanout = comptime!(config.lane_fanout);
 
     for mat in 0..matrices {
-        let lhs_mat = lhs_values.matrix_packed::<L>(lhs_axes, mat);
-        let rhs_mat = rhs_values.matrix_packed::<V>(rhs_axes, mat);
+        let lhs_mat = lhs.matrix_packed::<L>(lhs_axes, mat);
+        let rhs_mat = rhs.matrix_packed::<V>(rhs_axes, mat);
         // Each factor's scales, looked up at its lines' own coordinates.
-        let lhs_scales = lhs.lookup(
+        let lhs_scales = lhs.reader(
             lhs_axes,
             mat,
             comptime!(Side::Lhs),
             comptime!(shape.space.clone()),
             comptime!(shape.acc_axes),
         );
-        let rhs_scales = rhs.lookup(
+        let rhs_scales = rhs.reader(
             rhs_axes,
             mat,
             comptime!(Side::Rhs),
@@ -178,7 +165,7 @@ fn nest<
 
         if comptime!(split_edge) {
             if in_bounds {
-                body::<E, EL, L, LS, ER, V, RS, A>(
+                body::<E, EL, L, ER, V, A>(
                     &mut acc_view,
                     &lhs_mat,
                     &lhs_scales,
@@ -196,7 +183,7 @@ fn nest<
                     semiring,
                 );
             } else {
-                body::<E, EL, L, LS, ER, V, RS, A>(
+                body::<E, EL, L, ER, V, A>(
                     &mut acc_view,
                     &lhs_mat,
                     &lhs_scales,
@@ -216,7 +203,7 @@ fn nest<
             }
         } else {
             let unroll = comptime!(eligible && !lhs_check && !rhs_check && !acc_check);
-            body::<E, EL, L, LS, ER, V, RS, A>(
+            body::<E, EL, L, ER, V, A>(
                 &mut acc_view,
                 &lhs_mat,
                 &lhs_scales,
@@ -241,21 +228,12 @@ fn nest<
 /// (`unroll = true`) or the checked edge fallback (`unroll = false`).
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn body<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    LS: Numeric,
-    ER: Numeric,
-    V: Size,
-    RS: Numeric,
-    A: Size,
->(
+fn body<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
     acc: &mut AccumulateView<'_, E, A>,
     lhs: &MatrixView<'_, Vector<EL, L>>,
-    lhs_scales: &ScaleLookup<LS>,
+    lhs_scales: &FactorReader,
     rhs: &MatrixView<'_, Vector<ER, V>>,
-    rhs_scales: &ScaleLookup<RS>,
+    rhs_scales: &FactorReader,
     #[comptime] lw: usize,
     #[comptime] contracted_per_step: usize,
     #[comptime] aw: usize,
@@ -269,7 +247,7 @@ fn body<
 ) {
     let mut c =
         registers::seed::<E, V, A>(acc, contracted_per_step, 1usize, aw, mr, nr, cols, unroll);
-    registers::contract::<E, EL, L, LS, ER, V, RS>(
+    registers::contract::<E, EL, L, ER, V>(
         lhs,
         lhs_scales,
         rhs,

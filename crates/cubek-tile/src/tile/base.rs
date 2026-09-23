@@ -789,8 +789,8 @@ impl<T: Numeric> Tile<T> {
     }
 
     /// This operand with a landing: a plane-owned window of shared memory the fragment leaf lands
-    /// `values ⊗ scales` in before loading them as fragments ([`mma_scaled`](Tile::mma_scaled) on a
-    /// cmma accumulator, or [`Scaled::landed`] where the kernel lands a step whole).
+    /// `values ⊗ scales` in before loading them as fragments ([`mma`](Tile::mma) on a
+    /// cmma accumulator, or [`Tile::landed`] where the kernel lands a step whole).
     ///
     /// Stated where the operand is opened, since the landing is part of its residence, like
     /// [`with_scratch`](Tile::with_scratch); sized where it lands, by the window landed, one per
@@ -1047,11 +1047,43 @@ impl<E: Numeric> Tile<E> {
     pub fn mul<S: Numeric>(&self, _scale: &Tile<S>) -> Tile<E> {
         unexpanded!()
     }
+
+    /// The factor a leaf reads these values under: the innermost level looked up per line, every
+    /// coarser one read once here. `axes` is the matrix the leaf reads the values as and `matrix`
+    /// which batch matrix; `side`, `out` and `acc_axes` are what the statement is checked against.
+    pub(crate) fn reader(
+        &self,
+        _axes: MatrixAxes,
+        _matrix: usize,
+        _side: Side,
+        _out: Space,
+        _acc_axes: MatrixAxes,
+    ) -> FactorReader {
+        unexpanded!()
+    }
+
+    /// [`mul`](Tile::mul) by a level the launch may not have bound: absent, it multiplies
+    /// nothing and emits nothing, which is scaling by one.
+    ///
+    /// What a *scheme* has; [`mul`](Tile::mul) takes what a kernel is holding.
+    pub fn mul_bound<S: Numeric>(&self, _level: &ComptimeOption<Tile<S>>) -> Tile<E> {
+        unexpanded!()
+    }
+
+    /// Refuses values carrying scales, for a leaf that has nowhere to apply them.
+    pub(crate) fn refuse_factor(&self, _site: &str) {
+        unexpanded!()
+    }
+
+    /// Whether these values carry scales at all ([`mul`](Tile::mul)).
+    pub(crate) fn scaled(&self) -> comptime_type!(bool) {
+        unexpanded!()
+    }
 }
 
 impl<E: Numeric> TileExpand<E> {
     pub fn __expand_mul_method<S: Numeric>(
-        self,
+        &self,
         scope: &Scope,
         scale: &TileExpand<S>,
     ) -> TileExpand<E> {
@@ -1064,7 +1096,7 @@ impl<E: Numeric> TileExpand<E> {
             scales.axes().collect::<Vec<_>>(),
             values.axes().collect::<Vec<_>>()
         );
-        let mut out = self;
+        let mut out = self.clone();
         match &mut out.kind {
             TileKindExpand::Memory(memory) => {
                 memory.factor = memory.factor.and(FactorExpand::of(scope, scale));
@@ -1083,11 +1115,8 @@ impl<E: Numeric> TileExpand<E> {
         out
     }
 
-    /// The factor a leaf reads these values under: the innermost level looked up per line, every
-    /// coarser one read once here. `axes` is the matrix the leaf reads the values as and `matrix`
-    /// which batch matrix; `side`, `out` and `acc_axes` are what the statement is checked against.
     pub(crate) fn __expand_reader_method(
-        self,
+        &self,
         scope: &Scope,
         axes: MatrixAxes,
         matrix: NativeExpand<usize>,
@@ -1122,6 +1151,112 @@ impl<E: Numeric> TileExpand<E> {
             axes,
             vector_size,
             matrix,
+        }
+    }
+
+    pub fn __expand_mul_bound_method<S: Numeric>(
+        &self,
+        scope: &Scope,
+        level: &ComptimeOptionExpand<Tile<S>>,
+    ) -> TileExpand<E> {
+        match level {
+            ComptimeOptionExpand::Some(level) => self.__expand_mul_method(scope, level),
+            ComptimeOptionExpand::None => self.clone(),
+        }
+    }
+
+    pub(crate) fn __expand_scaled_method(&self, _scope: &Scope) -> bool {
+        match &self.kind {
+            TileKindExpand::Memory(memory) => memory.factor.scaled(),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn __expand_refuse_factor_method(&self, _scope: &Scope, site: &str) {
+        if let TileKindExpand::Memory(memory) = &self.kind {
+            assert!(
+                !memory.factor.scaled(),
+                "{site}: this leaf takes its operands from registers, where scales have nowhere                  to land; land them first (Tile::landed) or contract in memory"
+            );
+        }
+    }
+}
+
+#[cube]
+impl<S: Numeric> Tile<S> {
+    /// Whether a read of this tile reaches the lane that asks by a plane shuffle, which the
+    /// whole plane takes part in: a reader must keep its lanes converged around it. True of the
+    /// plane's own lanes ([`Lines`]) and of nothing else.
+    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
+    pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
+        match &self.kind {
+            TileKind::Lines(_) => comptime!(true),
+            TileKind::Memory(_)
+            | TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => comptime!(false),
+        }
+    }
+
+    /// The one scale at `coords`, one entry per axis of this tile's space, through whatever
+    /// holds it: the plane's lanes are read at the coordinate itself; a memory tile serves
+    /// lines, so the coordinate names a line and the field of it the scale sits in.
+    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
+    pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
+        match &self.kind {
+            TileKind::Lines(lines) => lines.read(coords),
+            TileKind::Memory(_) => self.value_in_line(coords),
+            TileKind::PlaneTile(_)
+            | TileKind::PlanePartition(_)
+            | TileKind::TmaGmem(_)
+            | TileKind::Procedural(_) => {
+                panic!("Tile::scale_at: a scale is read from memory or from the plane's lanes")
+            }
+        }
+    }
+
+    /// The one scale covering the value at `coords` of a tile spanning `values`.
+    ///
+    /// A scale's space omits the axes one scale holds whole, so the value's own coordinate along
+    /// each axis the scales do carry names the scale, and the omitted ones contribute nothing.
+    #[allow(dead_code)] // Reached through its expand, from [`FactorRead`].
+    pub(crate) fn scale_for(&self, coords: &Coords<u32>, #[comptime] values: Space) -> S {
+        let rank = comptime!(self.place.space.rank());
+        let mut own = Coords::<u32>::new();
+        #[unroll]
+        for p in 0..rank {
+            let axis = comptime!(self.place.space.axis_at(p));
+            own.push(coords.at(comptime!(values.position(axis))));
+        }
+        self.scale_at(&own)
+    }
+
+    /// The one value at `coords` of a tile that serves lines: every coordinate but the innermost
+    /// names the line outright, and the innermost splits into the line and the field of it the
+    /// value sits in.
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
+    fn value_in_line(&self, coords: &Coords<u32>) -> S {
+        let rank = coords.len();
+        let width = self.vector_size();
+        let size!(W) = width;
+        let mut at = CoordsDyn::new();
+        let mut field = 0u32.runtime();
+        #[unroll]
+        for p in 0..rank {
+            let coord = coords.at(p);
+            if comptime!(p == rank - 1 && width > 1) {
+                field = coord.remainder(comptime!(width as u32));
+                at.push(coord.divided_by(comptime!(width as u32)));
+            } else {
+                at.push(coord);
+            }
+        }
+        let line = self.nd_packed::<W>(comptime!(Guard::Checked)).read(at);
+        if comptime!(width > 1) {
+            line.extract_dynamic(field.retyped::<usize>())
+        } else {
+            line.extract(0usize)
         }
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! A scale is a tile spanning fewer axes than the values it multiplies: "one scale per block" is
 //! what its axes say, not arithmetic. The fold side is stated ([`Scaling`](crate::Scaling)) and
-//! checked here; a read is a lookup ([`ScaleLookup`](crate::ScaleLookup)) needing nothing here.
+//! checked here; a read is a lookup ([`FactorReader`](crate::FactorReader)) needing nothing here.
 
 use crate::*;
 /// Which factor of a contraction's terms an operand is: the argument position, which the caller
@@ -41,7 +41,7 @@ pub(crate) fn check_scales_ride(side: Side, scales: &Space, output: &Space, axes
     };
     assert!(
         foreign.is_empty(),
-        "mm_scaled: the scales ride the {own} but span {foreign:?}, which only the {other} \
+        "Tile::mul: the scales ride the {own} but span {foreign:?}, which only the {other} \
          varies over; a scale over both operands' own axes is a scale of the output, not a \
          factor of either term"
     );
@@ -57,7 +57,7 @@ pub(crate) fn check_scales_omit_rather_than_divide(scales: &Projection) {
         let divisor = scales.divisor(pa).bound();
         assert!(
             divisor == 1,
-            "mm_scaled: this scales operand divides a logical axis by {divisor} to reach its \
+            "Tile::mul: this scales operand divides a logical axis by {divisor} to reach its \
              block. Spell the block as an axis of its own and omit the position inside it, so one \
              scale per block is what the operand's axes say rather than what its arithmetic does"
         );

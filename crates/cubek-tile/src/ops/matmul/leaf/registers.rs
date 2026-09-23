@@ -11,7 +11,7 @@ use crate::*;
 /// `c += lhs · rhs` over the block, one line of the contraction at a time.
 ///
 /// Each factor is its values' matrix and the scales riding it, looked up at every line's own
-/// coordinates ([`ScaleLookup`]): a factor carrying none goes through as it lies, and the walk
+/// coordinates ([`FactorReader`]): a factor carrying none goes through as it lies, and the walk
 /// is the same either way — the lines of the contraction, in order.
 ///
 /// A step consumes [`Space::contracted_per_step`] values. Past one, both operands line along the
@@ -19,19 +19,11 @@ use crate::*;
 /// rhs lines along the accumulator and the lhs is read lane by lane (comptime under `lane_fanout`).
 #[cube]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn contract<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    LS: Numeric,
-    ER: Numeric,
-    V: Size,
-    RS: Numeric,
->(
+pub(crate) fn contract<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
-    lhs_scales: &ScaleLookup<LS>,
+    lhs_scales: &FactorReader,
     rhs: &MatrixView<'_, Vector<ER, V>>,
-    rhs_scales: &ScaleLookup<RS>,
+    rhs_scales: &FactorReader,
     c: &mut Array<Vector<E, V>>,
     #[comptime] lw: usize,
     #[comptime] contracted_per_step: usize,
@@ -58,7 +50,7 @@ pub(crate) fn contract<
 
     for line in 0..lines {
         if comptime!(folded) {
-            rank1_update::<E, EL, L, LS, ER, V, RS>(
+            rank1_update::<E, EL, L, ER, V>(
                 lhs,
                 lhs_scales,
                 rhs,
@@ -78,7 +70,7 @@ pub(crate) fn contract<
         } else if comptime!(fixed) {
             #[unroll]
             for lane in 0..lw {
-                rank1_update::<E, EL, L, LS, ER, V, RS>(
+                rank1_update::<E, EL, L, ER, V>(
                     lhs,
                     lhs_scales,
                     rhs,
@@ -98,7 +90,7 @@ pub(crate) fn contract<
             }
         } else {
             for lane in 0..lw {
-                rank1_update::<E, EL, L, LS, ER, V, RS>(
+                rank1_update::<E, EL, L, ER, V>(
                     lhs,
                     lhs_scales,
                     rhs,
@@ -123,7 +115,7 @@ pub(crate) fn contract<
     // comptime too, so the tail is straight-line code rather than a second, dynamic walk.
     #[unroll]
     for lane in 0..tail {
-        rank1_update::<E, EL, L, LS, ER, V, RS>(
+        rank1_update::<E, EL, L, ER, V>(
             lhs,
             lhs_scales,
             rhs,
@@ -154,19 +146,11 @@ pub(crate) fn contract<
 /// `lane` at runtime. `k_line` stays a parameter so each lane body sees a loop-invariant index.
 #[cube]
 #[allow(clippy::too_many_arguments)]
-fn rank1_update<
-    E: Numeric,
-    EL: Numeric,
-    L: Size,
-    LS: Numeric,
-    ER: Numeric,
-    V: Size,
-    RS: Numeric,
->(
+fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
     lhs: &MatrixView<'_, Vector<EL, L>>,
-    lhs_scales: &ScaleLookup<LS>,
+    lhs_scales: &FactorReader,
     rhs: &MatrixView<'_, Vector<ER, V>>,
-    rhs_scales: &ScaleLookup<RS>,
+    rhs_scales: &FactorReader,
     c: &mut Array<Vector<E, V>>,
     b: &mut Array<Vector<E, V>>,
     k: usize,

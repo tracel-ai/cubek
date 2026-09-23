@@ -20,30 +20,28 @@ use crate::*;
 /// A scaled factor takes the 2-D nest alone: the N-D nest reads through compacted gather
 /// windows, where a step has no single scalar `k` to address a scale with.
 #[cube]
-pub(crate) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
+pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory<E>,
-    lhs: &Scaled<EL, LS>,
-    rhs: &Scaled<ER, RS>,
+    lhs: &Tile<EL>,
+    rhs: &Tile<ER>,
     #[comptime] space: Space,
     #[comptime] config: RegisterBlock,
     #[comptime] semiring: Semiring,
 ) {
-    let lhs_values = lhs.values();
-    let rhs_values = rhs.values();
-    let lhs_count = lhs.levels().len();
-    let rhs_count = rhs.levels().len();
-    let scaled = comptime!(lhs_count > 0 || rhs_count > 0);
+    let lhs_scaled = lhs.scaled();
+    let rhs_scaled = rhs.scaled();
+    let scaled = comptime!(lhs_scaled || rhs_scaled);
 
-    let lhs_gathered = lhs_values.gathered();
-    let rhs_gathered = rhs_values.gathered();
-    let lhs_procedural = lhs_values.is_procedural();
-    let rhs_procedural = rhs_values.is_procedural();
-    let lw = lhs_values.vector_size();
-    let rw = rhs_values.vector_size();
+    let lhs_gathered = lhs.gathered();
+    let rhs_gathered = rhs.gathered();
+    let lhs_procedural = lhs.is_procedural();
+    let rhs_procedural = rhs.is_procedural();
+    let lw = lhs.vector_size();
+    let rw = rhs.vector_size();
     let aw = comptime!(acc.store.vector_size);
     let contracted_per_step = comptime!(contracted_per_step(
-        &lhs_values.place.space,
-        &rhs_values.place.space,
+        &lhs.place.space,
+        &rhs.place.space,
         &space,
         lw,
         rw,
@@ -53,8 +51,8 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     // several contracted axes still form one `k` edge when the operand carries them as one run,
     // which is what a partitioned axis is.
     let shape = comptime!(ContractShape::new(
-        &lhs_values.place.space,
-        &rhs_values.place.space,
+        &lhs.place.space,
+        &rhs.place.space,
         space.clone(),
         contracted_per_step,
         lw,
@@ -63,7 +61,7 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     ));
     let flat = comptime!(
         shape
-            .matrix_axes(&lhs_values.place.space, &rhs_values.place.space)
+            .matrix_axes(&lhs.place.space, &rhs.place.space)
             .is_some()
     );
     let nd = comptime!(
@@ -81,25 +79,9 @@ pub(crate) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Nu
     ));
 
     if nd {
-        gather::contract::<E, EL, ER>(
-            acc,
-            &lhs_values,
-            &rhs_values,
-            space,
-            contracted_per_step,
-            config,
-            semiring,
-        );
+        gather::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
     } else {
-        direct::contract::<E, EL, LS, ER, RS>(
-            acc,
-            lhs,
-            rhs,
-            space,
-            contracted_per_step,
-            config,
-            semiring,
-        );
+        direct::contract::<E, EL, ER>(acc, lhs, rhs, space, contracted_per_step, config, semiring);
     }
 }
 

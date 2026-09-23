@@ -2,7 +2,7 @@
 //!
 //! A packed operand is values and nothing else, so unpacking is the whole read, not dequantization
 //! missing a scale. [`Packing::Packed`](crate::Packing::Packed) names the field and this view
-//! unpacks it; a scale is folded in by the kernel ([`Tile::mm_scaled`](crate::Tile::mm_scaled)).
+//! unpacks it; a scale is folded in where the values are read ([`Tile::mul`](crate::Tile::mul)).
 //!
 //! A line is whole words: every field of every word it reads is served, and a scales operand is
 //! no exception — the walk that reads a word of scales owns the tiles of every field in it.

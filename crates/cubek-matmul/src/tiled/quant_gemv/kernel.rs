@@ -126,10 +126,8 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
     let config = comptime!(register_block(&bp, &problem));
     let w = w
         .tile_as::<EC>(comptime!(space.clone()))
-        .scaled(&ComptimeOption::new_Some(
-            block_scale.tile_as::<ES>(comptime!(space.clone())),
-        ))
-        .scaled(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
+        .mul(&block_scale.tile_as::<ES>(comptime!(space.clone())))
+        .mul_bound(&scale_tile::<ES>(global_scale, comptime!(space.clone())));
     let x = x.tile(comptime!(space.clone()));
     let out = out.tile(comptime!(space.clone()));
     // Each lane zeroes the window it owns: the output folds every step into what it holds.
@@ -159,9 +157,9 @@ pub fn quant_gemv_kernel<EC: Numeric, EX: Numeric, ES: Numeric, EO: Numeric, VX:
             for turn in plane {
                 for lane in turn {
                     let mut out_lane = out_plane.at(&lane);
-                    out_lane.mma_scaled_with(
+                    out_lane.mma_with(
                         &w_plane.at(&lane),
-                        &x_plane.at(&lane).plain(),
+                        &x_plane.at(&lane),
                         config,
                         Semiring::SUM_PROD,
                     );

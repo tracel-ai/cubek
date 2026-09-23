@@ -77,7 +77,7 @@ impl<S: Numeric> FactorRead for TileExpand<S> {
 ///
 /// A [`CubeType`] with no runtime fields of its own: what it holds are the erased scale tiles,
 /// whose handles are the runtime state, as a procedural source holds its recipe.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Factor;
 
 #[derive(Clone, Default)]
@@ -233,6 +233,14 @@ pub struct FactorReader {
     pub(crate) matrix: usize,
 }
 
+impl FactorReader {
+    /// Whether a read of the scales reaches the lane that asks by a plane shuffle, which the
+    /// whole plane takes part in: a reader keeps its lanes converged around one.
+    pub(crate) fn by_shuffle(&self) -> bool {
+        unexpanded!()
+    }
+}
+
 #[cube]
 impl FactorReader {
     /// `value`, the line at `pos` of the values' matrix, under the scale covering it.
@@ -274,9 +282,7 @@ impl FactorReader {
 }
 
 impl FactorReaderExpand {
-    /// Whether a read of the scales reaches the lane that asks by a plane shuffle, which the
-    /// whole plane takes part in: a reader keeps its lanes converged around one.
-    pub(crate) fn by_shuffle(&self) -> bool {
+    pub(crate) fn __expand_by_shuffle_method(&self, _scope: &Scope) -> bool {
         self.inner.by_shuffle()
     }
 }

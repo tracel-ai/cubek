@@ -62,11 +62,9 @@ fn decode_gemv<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             let scale_plane = scale_cube.at(&plane);
             for lane in plane {
                 let mut out_lane = out_plane.at(&lane);
-                out_lane.mma_scaled_with(
-                    &w_plane
-                        .at(&lane)
-                        .scaled(&ComptimeOption::new_Some(scale_plane.at(&lane))),
-                    &x_plane.at(&lane).plain(),
+                out_lane.mma_with(
+                    &w_plane.at(&lane).mul(&scale_plane.at(&lane)),
+                    &x_plane.at(&lane),
                     comptime!(RegisterBlock::new(budget)),
                     Semiring::SUM_PROD,
                 );
@@ -115,11 +113,9 @@ fn decode_gemv_promoted<E: Numeric, S: Numeric, VX: Size, VO: Size>(
             let scale_plane = scale_cube.at(&plane);
             for lane in plane {
                 let mut acc_lane = acc_plane.at(&lane);
-                acc_lane.mma_scaled(
-                    &w_plane
-                        .at(&lane)
-                        .scaled(&ComptimeOption::new_Some(scale_plane.at(&lane))),
-                    &x_plane.at(&lane).plain(),
+                acc_lane.mma(
+                    &w_plane.at(&lane).mul(&scale_plane.at(&lane)),
+                    &x_plane.at(&lane),
                     Semiring::SUM_PROD,
                 );
             }

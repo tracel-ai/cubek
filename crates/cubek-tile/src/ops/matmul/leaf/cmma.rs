@@ -22,19 +22,17 @@ impl<A: Numeric> CmmaData<A> {
     /// Operands already resident as fragments execute as they are; every other operand is read
     /// into a transient `A`/`B` fragment first. A fragment load reads memory as it lies, so a
     /// factor carrying scales is folded into its plane's landing and the load reads that.
-    pub(crate) fn mma<EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
+    pub(crate) fn mma<EL: Numeric, ER: Numeric>(
         &self,
-        lhs: &Scaled<EL, LS>,
-        rhs: &Scaled<ER, RS>,
+        lhs: &Tile<EL>,
+        rhs: &Tile<ER>,
         #[comptime] out: Space,
     ) {
-        let lhs_values = lhs.values();
-        let rhs_values = rhs.values();
-        match (&lhs_values.kind, &rhs_values.kind) {
+        match (&lhs.kind, &rhs.kind) {
             (TileKind::PlaneTile(a), TileKind::PlaneTile(b)) => match (a, b) {
                 (PlaneTile::Cmma(a), PlaneTile::Cmma(b)) => {
-                    lhs.refuse_scales();
-                    rhs.refuse_scales();
+                    lhs.refuse_factor("PlaneTile::Mma");
+                    rhs.refuse_factor("PlaneTile::Mma");
                     cmma::execute(&a.matrix, &b.matrix, &self.matrix, &self.matrix)
                 }
                 _ => panic!("cmma operands must be cmma fragments"),
@@ -42,14 +40,14 @@ impl<A: Numeric> CmmaData<A> {
             _ => {
                 let a_read = comptime!(FragmentRead::new(
                     Side::Lhs,
-                    &lhs_values.place.space,
-                    &rhs_values.place.space,
+                    &lhs.place.space,
+                    &rhs.place.space,
                     &out
                 ));
                 let b_read = comptime!(FragmentRead::new(
                     Side::Rhs,
-                    &lhs_values.place.space,
-                    &rhs_values.place.space,
+                    &lhs.place.space,
+                    &rhs.place.space,
                     &out
                 ));
                 let mut a_frag = unsafe {
@@ -132,27 +130,26 @@ impl FragmentRead {
 }
 
 #[cube]
-impl<E: Numeric, S: Numeric> Scaled<E, S> {
+impl<E: Numeric> Tile<E> {
     /// This factor read into `frag`.
     ///
     /// A fragment loads a window as it lies, so the window's layout must be one the instruction
-    /// can be told: a shared one is, a global one is not. The landing ([`landed`](Scaled::landed))
+    /// can be told: a shared one is, a global one is not. The landing ([`landed`](Tile::landed))
     /// answers that: the factor's values, dense in plane-owned shared memory, loaded from there.
     ///
     /// A factor carrying scales has no other route, since its values exist only once scaled; one
     /// carrying none lands when it has a landing and is read as it lies when already shared.
     pub(crate) fn load(&self, frag: &mut Matrix<E>, #[comptime] read: FragmentRead) {
-        let values = self.values();
-        let count = self.levels().len();
-        let landed = values.has_landing();
-        let packing = values.packing();
-        if comptime!(count > 0 || landed) {
+        let scaled = self.scaled();
+        let landed = self.has_landing();
+        let packing = self.packing();
+        if comptime!(scaled || landed) {
             let landing = self.landed(comptime!(read.side), comptime!(read.out.clone()));
             landing.load_into(frag, comptime!(read.out.clone()));
             // The landing is this region's until every lane's load has read it.
             sync_plane();
         } else {
-            match &values.kind {
+            match &self.kind {
                 TileKind::Memory(m) => {
                     // A fragment loads a window as it lies, which only a shared stage
                     // guarantees: a gmem layout is unchecked.
@@ -181,17 +178,6 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
         }
     }
 
-    /// Refuse the scales this factor carries: a reader with no memory to fold them into cannot
-    /// serve one.
-    pub(crate) fn refuse_scales(&self) {
-        let count = self.levels().len();
-        comptime!(assert!(
-            count == 0,
-            "mma: an operand already resident as a fragment has no memory for a scale to fold \
-             into; scale it where it was staged"
-        ));
-    }
-
     /// This factor in its plane's landing: a shared-memory stage, dense over the window's own
     /// axes, holding `values ⊗ scales`, that fragments load from as from any shared stage. Sized
     /// to this window: a kernel landing a step whole lands it once for its partition's fragments.
@@ -203,25 +189,24 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
     /// `side` and `out` are what the scales' statement is checked against: the accumulator's
     /// space, and which factor of it this is.
     pub fn landed(&self, #[comptime] side: Side, #[comptime] out: Space) -> Tile<E> {
-        let values = self.values();
-        let lands = values.has_landing();
+        let lands = self.has_landing();
         comptime!(assert!(
             lands,
-            "mma_scaled: a scaled operand reaches a tensor-core fragment through a landing in \
+            "Tile::landed: a scaled operand reaches a tensor-core fragment through a landing in \
              shared memory; open the operand with `with_landing()`"
         ));
-        let space = comptime!(values.place.space.clone());
+        let space = comptime!(self.place.space.clone());
         let rank = comptime!(space.rank());
-        let units = values.units();
-        let planes = comptime!(plane_windows(&space, &values.place.levels));
+        let units = self.units();
+        let planes = comptime!(plane_windows(&space, &self.place.levels));
         let (stage, mut window) = Memory::<E>::landing(comptime!(space.clone()), units, planes);
-        let landing = Tile::new(stage.kind, comptime!(values.place.clone()));
+        let landing = Tile::new(stage.kind, comptime!(self.place.clone()));
 
-        let vw = values.vector_size();
+        let vw = self.vector_size();
         let size!(VW) = vw;
-        let view = values.nd_packed::<VW>(comptime!(Guard::Checked));
+        let view = self.nd_packed::<VW>(comptime!(Guard::Checked));
         let acc_axes = comptime!(accumulator_axes(side, &out, &space));
-        let scales = self.lookup(
+        let scales = self.reader(
             comptime!(MatrixAxes::trailing(&space)),
             0usize,
             side,

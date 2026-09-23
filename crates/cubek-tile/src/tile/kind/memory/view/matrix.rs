@@ -159,7 +159,7 @@ pub(crate) fn batch_matrix(
 
 /// The logical coordinate of the value line at `(row, col)` of the `i`-th batch matrix a tile
 /// reads as: one entry per axis of the tile's space, in scalars, the line's first value. What a
-/// scale covering that line is looked up at ([`ScaleLookup`](crate::ScaleLookup)).
+/// scale covering that line is looked up at ([`FactorReader`](crate::FactorReader)).
 #[cube]
 pub(crate) fn matrix_coords(
     row: u32,

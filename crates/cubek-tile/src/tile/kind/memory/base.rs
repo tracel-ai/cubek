@@ -63,7 +63,7 @@ pub struct Memory<T: Numeric> {
     /// a gathered stage, whose fill replaced out-of-bounds samples its own window cannot name.
     pub(crate) source_window: ComptimeOption<SourceWindow>,
     /// Whether this operand lands on its way to a tensor-core fragment: unpacked and scaled by the
-    /// plane's lanes into plane-owned shared memory ([`Scaled::landed`](crate::Scaled::landed)).
+    /// plane's lanes into plane-owned shared memory ([`Tile::landed`](crate::Tile::landed)).
     /// Opened by [`with_landing`](Tile::with_landing); without one the leaf takes it unscaled only.
     #[cube(comptime)]
     pub(crate) lands: bool,

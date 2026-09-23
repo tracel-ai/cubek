@@ -309,6 +309,7 @@ impl<T: Numeric> Lines<T> {
     /// along the line names.
     ///
     /// The shuffle is the whole plane's, so a caller keeps its lanes converged around this.
+    #[allow(dead_code)] // Reached through its expand, from [`Tile::scale_at`].
     pub(crate) fn read(&self, coords: &Coords<u32>) -> T {
         let rank = comptime!(self.loaded.rank());
         let mut line = 0u32.runtime();
