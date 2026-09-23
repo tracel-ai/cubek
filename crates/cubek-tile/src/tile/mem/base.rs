@@ -196,30 +196,6 @@ pub enum Write {
     Accumulate,
 }
 
-impl Write {
-    /// Refuse an accumulating write from a drain that cannot elect one writer for it.
-    ///
-    /// A hardware fragment stores through its intrinsic, over a slice of the destination or its
-    /// lanes' own positions, and neither leaves anywhere to put the election accumulating needs.
-    ///
-    /// A register block writes cell by cell and so can; a cmma partition opened with a scratch
-    /// ([`Tile::with_scratch`](crate::Tile::with_scratch)) bounces each fragment through it and
-    /// adds cell by cell too ([`CmmaData::bounce_cast_window`]); an mma tile has no bounce.
-    ///
-    /// [`CmmaData::bounce_cast_window`]: crate::CmmaData::bounce_cast_window
-    pub(crate) fn validate_fragment_drain(self, fragment: &str) {
-        match self {
-            Write::Replace => {}
-            Write::Accumulate => panic!(
-                "{fragment}: a hardware fragment stores through its own intrinsic and elects no \
-                 writer, so it cannot drain into a destination that folds. Contract through a \
-                 register block, or through a cmma partition opened with `with_scratch`, which \
-                 bounces each fragment through the scratch and adds cell by cell."
-            ),
-        }
-    }
-}
-
 /// How a store relates to the window overhanging its valid data (`origin + pos` past
 /// [`Window`]'s `bound`); where gmem and smem genuinely differ.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
