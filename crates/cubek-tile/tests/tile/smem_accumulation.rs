@@ -187,7 +187,8 @@ fn each_cube_folds_only_its_own_box() {
 // bounces through the plane's scratch and each lane writes only the cells inside.
 
 /// `c = a · b` in `16×16×16` fragments over boxes that overhang the output, drained into a plain
-/// output that replaces.
+/// output that replaces: through [`Tile::drained_into`], or where `copies` through
+/// [`Tile::copy_from`], which bounces the same way.
 #[cube(launch)]
 fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
     a: &TileArg<'_, EI, Const<1>>,
@@ -195,6 +196,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] lanes: usize,
+    #[comptime] copies: bool,
     #[define(EI)] _input: ElemType,
     #[define(E)] _output: ElemType,
 ) {
@@ -204,7 +206,7 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
     for cube in &space {
         let a_cube = a.at(&cube);
         let b_cube = b.at(&cube);
-        let c_cube = c.at(&cube);
+        let mut c_cube = c.at(&cube);
         let mut acc = c_cube
             .cmma_accumulator::<E, EI>(
                 &a_cube,
@@ -240,7 +242,11 @@ fn fragment_matmul_into_a_short_window<EI: Numeric, E: Numeric>(
                 }
             });
         });
-        acc.drained_into(&c_cube, comptime!(None));
+        if comptime!(copies) {
+            c_cube.copy_from(&acc);
+        } else {
+            acc.drained_into(&c_cube, comptime!(None));
+        }
     }
 }
 
@@ -268,6 +274,17 @@ fn contracts_f16_fragments(client: &cubecl::client::Client) -> bool {
 /// past the edge are never written, so the output reads the product and nothing else.
 #[test]
 fn a_fragment_drains_into_a_window_the_edge_cuts_short() {
+    short_window_matmul(false);
+}
+
+/// The same product stored with `copy_from`, which bounces a fragment into a short window just as
+/// the drain does.
+#[test]
+fn a_fragment_copies_into_a_window_the_edge_cuts_short() {
+    short_window_matmul(true);
+}
+
+fn short_window_matmul(copies: bool) {
     let client = cubecl::test_device().client();
     if !contracts_f16_fragments(&client) {
         return;
@@ -314,6 +331,7 @@ fn a_fragment_drains_into_a_window_the_edge_cuts_short() {
         bind(out.clone().binding(), &[M, N]).arg(),
         launcher.partitioning_arg(),
         lanes,
+        copies,
         input,
         f32::elem_type_native(),
     );

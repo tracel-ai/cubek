@@ -218,8 +218,9 @@ impl<T: Numeric> CmmaData<T> {
         match &self.scratch {
             ComptimeOption::Some(scratch) => scratch.clone(),
             ComptimeOption::None => panic!(
-                "CmmaData::{site}: a fragment folds into an accumulating store through a \
-                 scratch; open the accumulator with `with_scratch`"
+                "CmmaData::{site}: a fragment reaches a store that folds, or a window the \
+                 problem's edge cuts short, through a scratch; open the accumulator with \
+                 `with_scratch`"
             ),
         }
     }

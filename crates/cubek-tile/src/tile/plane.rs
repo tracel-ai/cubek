@@ -214,11 +214,16 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
+    /// `space` is the sink window's, read as [`store_cast_window`](Self::store_cast_window) reads
+    /// it: a cmma fragment bounces into a store that folds or a masked window here too.
     pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
         match self {
-            PlaneTile::Cmma(d) => {
-                d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
-            }
+            PlaneTile::Cmma(d) => match comptime!(FragmentDrain::of(&mem.access)) {
+                FragmentDrain::Intrinsic => {
+                    d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
+                }
+                FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
+            },
             PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`, which is the
             // same write with the cast the wider accumulator needs.
