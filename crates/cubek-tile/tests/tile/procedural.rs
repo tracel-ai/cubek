@@ -89,7 +89,7 @@ fn product_kernel_in_place<E: Float>(
     materialize(&source, output, &space, level.clone());
 }
 
-/// The same recipe materialized into shared memory first: a ring of one slot fills each region's
+/// The same recipe materialized into shared memory first: one slot fills each region's
 /// window cooperatively, and the output copies the stage. The grid must be the same either way.
 #[cube(launch)]
 fn product_kernel_staged<E: Float>(
@@ -108,8 +108,8 @@ fn product_kernel_staged<E: Float>(
     .tile();
     let output = output.tile(comptime!(space.clone()));
     let walk = source.over(&level);
-    let mut ring = Ring::smem_single(&walk, &source, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut output_region = output.at(region);
         slot.consume(|staged| {
             output_region.copy_from(staged);

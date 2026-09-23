@@ -9,7 +9,7 @@
 use cubecl::prelude::*;
 
 use crate::{
-    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Storage, Sync, Tile, TileArg,
+    AccumulateArg, AccumulateArgLaunch, Bound, Partitioning, Rendezvous, Storage, Tile, TileArg,
     TileArgLaunch, TmaOperand, TmaTileArg, TmaTileArgLaunch,
 };
 
@@ -39,10 +39,10 @@ impl Delivery {
     }
 
     /// The synchronization required to materialize this source in a staging slot.
-    pub(crate) fn rendezvous(&self) -> Sync {
+    pub(crate) fn rendezvous(&self) -> Rendezvous {
         match self {
-            Delivery::Copy | Delivery::Procedural => Sync::Cube,
-            Delivery::Tma => Sync::Barrier,
+            Delivery::Copy | Delivery::Procedural => Rendezvous::Cube,
+            Delivery::Tma => Rendezvous::Barrier,
         }
     }
 
@@ -75,7 +75,7 @@ impl Delivery {
 ///
 /// A kernel body written over `D: DeliveryFamily` runs strided, storage-tiled, TMA or accumulating
 /// unchanged; the launch entry picks the family. One family covers both operands, since
-/// [`Sync::for_deliveries`](crate::Sync::for_deliveries) rejects a mixed pair anyway.
+/// [`Rendezvous::for_deliveries`](crate::Rendezvous::for_deliveries) rejects a mixed pair anyway.
 #[cube]
 pub trait DeliveryFamily: Send + core::marker::Sync + 'static {
     /// The launchable argument carrying one operand and its spec.

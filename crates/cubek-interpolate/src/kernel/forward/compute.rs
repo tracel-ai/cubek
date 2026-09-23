@@ -5,8 +5,8 @@ use super::{
 use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
-    Axis, Factors, Partitioning, Phase, Procedural, Region, RegisterBlock, Ring, Semiring,
-    StageStorage, Tile, TileArg, affine_along, pipelined, sum_of,
+    Axis, Factors, Partitioning, Phase, Procedural, Region, RegisterBlock, Semiring, StageStorage,
+    Stages, Tile, TileArg, affine_along, pipelined, sum_of,
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -84,9 +84,9 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
         let blocks = cube.walk();
         match comptime!(stage) {
             InputStage::Smem => {
-                let mut ring =
-                    Ring::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
-                pipelined(blocks, &mut ring, |slot, block| {
+                let mut stages =
+                    Stages::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
+                pipelined(blocks, &mut stages, |slot, block| {
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
                     slot.consume(|input_block| {

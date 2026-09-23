@@ -2,16 +2,16 @@
 //! level by level.
 //!
 //! The launch lists the level methods for the grid and hands the kernel its space; each loop
-//! here names the level it walks, so the two cannot drift. Each stage is a ring the kernel
+//! here names the level it walks, so the two cannot drift. Each stage is a slot the kernel
 //! allocates, and the accumulator a bracket the kernel opens before the `K` walk and drains
 //! after it. One body serves both delivery families (strided cooperative
-//! copy or TMA bulk copy; the output is always strided): the ring's pipeline is deduced from
+//! copy or TMA bulk copy; the output is always strided): the stages' pipeline is deduced from
 //! what the operands are.
 
 use cubecl::prelude::*;
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
-    PlanePartition, Ring, Semiring, Space, StageStorage, TileArg, pipelined,
+    PlanePartition, Semiring, Space, StageStorage, Stages, TileArg, pipelined,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -129,9 +129,9 @@ pub fn cmma_kernel<
         acc.zero();
 
         // One stage of K per region, both inputs staged for it.
-        let stages = cube.walk();
-        let mut ring = Ring::smem(
-            &stages,
+        let steps = cube.walk();
+        let mut stages = Stages::smem(
+            &steps,
             &a,
             &b,
             comptime!(StageStorage::Tiled {
@@ -139,7 +139,7 @@ pub fn cmma_kernel<
             }),
             depth,
         );
-        pipelined(stages, &mut ring, |slot, stage| {
+        pipelined(steps, &mut stages, |slot, stage| {
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 for plane in stage {

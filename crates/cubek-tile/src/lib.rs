@@ -8,7 +8,7 @@
 //! a [`Region`] (the path down to `at`); a level of the kernel's own is [`Region::over`]. The
 //! launch ([`Launcher`]) reads the grid off those levels and binds the tensors to the same extents.
 //!
-//! The rest is the kernel's: operand storage ([`Ring::smem`], [`pipelined`]), accumulator
+//! The rest is the kernel's: operand storage ([`Stages::smem`], [`pipelined`]), accumulator
 //! ([`Accumulate`]), loaded fragments ([`PlanePartition::cmma_fragments`]), leaf instruction
 //! ([`Tile::mm_with`], [`Tile::mma`]).
 //!
@@ -20,16 +20,16 @@ mod algebra;
 pub mod instruction;
 mod launch;
 mod layout;
+mod load;
 mod ops;
 mod space;
-mod load;
 mod tile;
 
 pub use algebra::*;
 pub use instruction::*;
 pub use launch::*;
 pub use layout::*;
+pub use load::*;
 pub use ops::*;
 pub use space::*;
-pub use load::*;
 pub use tile::*;

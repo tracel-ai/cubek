@@ -49,8 +49,8 @@ pub struct Walk {
     steps: usize,
     /// The path above this walk: what every region it hands out is one level below.
     parent: Region,
-    /// The space the regions are cut from, which is also what a ring sizes its slots to
-    /// ([`Ring::smem`](crate::Ring::smem)).
+    /// The space the regions are cut from, which is also what stages size their slots to
+    /// ([`Stages::smem`](crate::Stages::smem)).
     #[cube(comptime)]
     pub(crate) space: Space,
     /// The level this walk steps: the statement the loop made.

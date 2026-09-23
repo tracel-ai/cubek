@@ -793,14 +793,14 @@ fn atomic_split_cmma<E: Numeric>(
             .with_scratch(Scratch::OneTile);
         acc.zero();
         let walk = cube.walk();
-        let mut ring = Ring::smem(
+        let mut stages = Stages::smem(
             &walk,
             &a_cube,
             &b_cube,
             comptime!(StageStorage::Strided),
             1usize,
         );
-        pipelined(walk, &mut ring, |slot, stage| {
+        pipelined(walk, &mut stages, |slot, stage| {
             let mut acc_s = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 acc_s.mma(a_s, b_s, Semiring::SUM_PROD);

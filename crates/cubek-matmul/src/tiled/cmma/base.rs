@@ -31,7 +31,7 @@ use crate::{
 /// blowing the cube dim.
 const MAX_PLANES_PER_AXIS: usize = 4;
 
-/// Stages the ring keeps in flight: one filling while the one before it contracts.
+/// Stages the stages keeps in flight: one filling while the one before it contracts.
 const BUFFERING: usize = 2;
 
 /// Units a cube runs, whatever the device would allow beyond it: past this a cube's planes
@@ -630,7 +630,7 @@ impl CmmaRoutine {
             let (stage_m, stage_n) = (planes_m * part_m * im, planes_n * part_n * inn);
             let row_bytes = (stage_m * d.lhs.size() + stage_n * d.rhs.size()).max(1);
             let smem = client.properties().hardware.max_shared_memory_size;
-            // And never deeper than leaves the ring a region per slot: a stage that swallows
+            // And never deeper than leaves the stages a region per slot: a stage that swallows
             // the whole `K` walk is one region, which is a pipeline with nothing in flight.
             (smem / BUFFERING / row_bytes)
                 .min(problem.k / BUFFERING)

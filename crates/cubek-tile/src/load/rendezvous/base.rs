@@ -1,6 +1,6 @@
-//! The [`Pipeline`]: the fill-vs-read rendezvous for one staging slot, and the [`Sync`] strategy
-//! deduced from the operands' delivery. [`Barrier`](Sync::Barrier) mirrors cubek-matmul's
-//! `specialized/matmul.rs`; [`Cube`](Sync::Cube) and [`Solo`](Sync::Solo) are degenerate cases.
+//! The [`Meeting`]: the fill-vs-read rendezvous for one staging slot, and the [`Rendezvous`] strategy
+//! deduced from the operands' delivery. [`Barrier`](Rendezvous::Barrier) mirrors cubek-matmul's
+//! `specialized/matmul.rs`; [`Cube`](Rendezvous::Cube) and [`Solo`](Rendezvous::Solo) are degenerate cases.
 
 use cubecl::prelude::barrier::Barrier;
 use cubecl::prelude::*;
@@ -10,7 +10,7 @@ use crate::*;
 /// How a slot rendezvouses its fill against its read; fixed comptime at construction
 /// from the operands' delivery.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Sync {
+pub enum Rendezvous {
     /// One unit fills and reads its own slot: no collective (single-plane / CPU).
     Solo,
     /// Cooperative element copy rendezvoused on one cube-wide `sync_cube` per phase. The sync sits
@@ -21,25 +21,25 @@ pub enum Sync {
     Barrier,
 }
 
-impl Sync {
+impl Rendezvous {
     /// Join the rendezvous requirements of a slot's sources, over a walk `fillers` planes fill.
     /// `Barrier` dominates `Cube` because TMA transaction completion must be in the slot's
     /// publication, while `Cube` rendezvouses on `sync_cube`, where the two roles never meet.
-    pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Sync {
+    pub(crate) fn for_deliveries(deliveries: &[Delivery], fillers: usize) -> Rendezvous {
         assert!(
             !deliveries.is_empty(),
-            "Staging: a slot must have at least one delivery"
+            "Slot: a slot must have at least one delivery"
         );
         let floor = if fillers > 0 {
-            Sync::Barrier
+            Rendezvous::Barrier
         } else {
-            Sync::Cube
+            Rendezvous::Cube
         };
         deliveries.iter().fold(floor, |sync, delivery| {
             match (sync, delivery.rendezvous()) {
-                (Sync::Barrier, _) | (_, Sync::Barrier) => Sync::Barrier,
-                (Sync::Cube, Sync::Cube) => Sync::Cube,
-                (Sync::Solo, _) | (_, Sync::Solo) => {
+                (Rendezvous::Barrier, _) | (_, Rendezvous::Barrier) => Rendezvous::Barrier,
+                (Rendezvous::Cube, Rendezvous::Cube) => Rendezvous::Cube,
+                (Rendezvous::Solo, _) | (_, Rendezvous::Solo) => {
                     unreachable!("source rendezvous is never Solo")
                 }
             }
@@ -51,15 +51,15 @@ impl Sync {
     pub(crate) fn collective_full(deliveries: &[Delivery]) -> bool {
         deliveries
             .iter()
-            .any(|delivery| delivery.rendezvous() == Sync::Cube)
+            .any(|delivery| delivery.rendezvous() == Rendezvous::Cube)
     }
 }
 
 /// The rendezvous for one slot, and every barrier it owns. The acquire/release operations live
-/// on [`Staging`]; [`fill`](Pipeline::fill) is the one op a `write` body reaches for directly.
+/// on [`Slot`]; [`fill`](Meeting::fill) is the one op a `write` body reaches for directly.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub enum Pipeline {
+pub enum Meeting {
     /// Synchronous cooperative element copy, rendezvoused on one `sync_cube` per phase.
     /// The variant (not a flag) carries the choice, so the dispatch is comptime and the
     /// rendezvous emits a bare barrier, never a branch-wrapped one.
@@ -68,7 +68,7 @@ pub enum Pipeline {
     Solo,
     /// Async producer/consumer decoupled over a `full`/`empty` mbarrier pair, one parity each,
     /// so the fill overlaps compute. TMA motivates it, but the barrier itself is
-    /// delivery-agnostic; see [`Pipeline::fill`].
+    /// delivery-agnostic; see [`Meeting::fill`].
     ///
     /// Every field here is a runtime value, including the two the construction settles once:
     /// the `CubeType` derive gives an enum variant's fields no comptime spelling. They are
@@ -81,10 +81,10 @@ pub enum Pipeline {
         /// read and freed the slot.
         empty: Shared<Barrier>,
         /// Whether `full` counts every producer's arrival or only the elected issuer's
-        /// ([`Pipeline::producers`]).
+        /// ([`Meeting::producers`]).
         all_publish: bool,
         /// The one unit that issues this slot's bulk copies and declares their bytes
-        /// ([`Pipeline::elected`]).
+        /// ([`Meeting::elected`]).
         elected: u32,
         /// `full`'s parity, flipped by the producer's release. Two parities, not one: a unit
         /// that only fills never reaches a read, so a single counter would stall at the first
@@ -96,30 +96,30 @@ pub enum Pipeline {
 }
 
 #[cube]
-impl Pipeline {
+impl Meeting {
     /// Allocate the pipeline for `sync`: the `full`/`empty` mbarrier pair, sealed by a proxy fence
-    /// before any bulk copy, for [`Barrier`](Sync::Barrier); nothing to allocate otherwise.
+    /// before any bulk copy, for [`Barrier`](Rendezvous::Barrier); nothing to allocate otherwise.
     ///
     /// Both barriers are armed and fenced before any plane takes a role, which is why the
     /// election here is unit 0 and the `sync_cube` is the whole cube's: every unit is still
     /// present.
     pub(crate) fn new(
-        #[comptime] sync: Sync,
+        #[comptime] sync: Rendezvous,
         #[comptime] collective_full: bool,
         #[comptime] fillers: usize,
-    ) -> Pipeline {
+    ) -> Meeting {
         match sync {
-            Sync::Solo => Pipeline::new_Solo(),
-            Sync::Cube => Pipeline::new_Cube(),
-            Sync::Barrier => {
+            Rendezvous::Solo => Meeting::new_Solo(),
+            Rendezvous::Cube => Meeting::new_Cube(),
+            Rendezvous::Barrier => {
                 let full =
-                    Barrier::shared(Pipeline::producers(collective_full, fillers), UNIT_POS == 0);
-                let empty = Barrier::shared(Pipeline::consumers(fillers), UNIT_POS == 0);
+                    Barrier::shared(Meeting::producers(collective_full, fillers), UNIT_POS == 0);
+                let empty = Barrier::shared(Meeting::consumers(fillers), UNIT_POS == 0);
                 sync_async_proxy_shared();
                 sync_cube();
-                let elected = Pipeline::elected(fillers);
+                let elected = Meeting::elected(fillers);
                 let all_publish = comptime!(collective_full || fillers > 0);
-                Pipeline::new_Barrier(full, empty, all_publish, elected, 0, 0)
+                Meeting::new_Barrier(full, empty, all_publish, elected, 0, 0)
             }
         }
     }
@@ -159,7 +159,7 @@ impl Pipeline {
         if comptime!(fillers == 0) {
             0u32.runtime()
         } else {
-            Pipeline::consumers(fillers)
+            Meeting::consumers(fillers)
         }
     }
 
@@ -171,7 +171,7 @@ impl Pipeline {
         // sides carry (a gathered source is addressed per axis).
         let space = comptime!(dst.place.space.clone());
         match self {
-            Pipeline::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
+            Meeting::Barrier { full, elected, .. } => match (&mut dst.kind, &src.kind) {
                 (TileKind::Memory(d), TileKind::TmaGmem(s)) => {
                     // One issuer, and the same unit that declares the bytes: the transaction
                     // count is that unit's alone, so a second issuer would over-count the stage.
@@ -183,9 +183,9 @@ impl Pipeline {
                 // A strided source under a barrier is a plain synchronous copy.
                 (TileKind::Memory(d), TileKind::Memory(s)) => d.fill_from(s, space),
                 (TileKind::Memory(d), TileKind::Procedural(s)) => d.fill_procedural(s, space),
-                _ => panic!("Pipeline::fill: unsupported kind pairing"),
+                _ => panic!("Meeting::fill: unsupported kind pairing"),
             },
-            Pipeline::Cube | Pipeline::Solo => dst.copy_from(src),
+            Meeting::Cube | Meeting::Solo => dst.copy_from(src),
         }
     }
 }
@@ -197,18 +197,18 @@ mod tests {
     #[test]
     fn procedural_and_strided_share_a_cube_pipeline() {
         assert_eq!(
-            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0),
-            Sync::Cube
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Copy], 0),
+            Rendezvous::Cube
         );
     }
 
     #[test]
     fn procedural_and_tma_share_a_barrier_pipeline() {
         assert_eq!(
-            Sync::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
-            Sync::Barrier
+            Rendezvous::for_deliveries(&[Delivery::Procedural, Delivery::Tma], 0),
+            Rendezvous::Barrier
         );
-        assert!(Sync::collective_full(&[
+        assert!(Rendezvous::collective_full(&[
             Delivery::Procedural,
             Delivery::Tma
         ]));
@@ -216,13 +216,16 @@ mod tests {
 
     #[test]
     fn pure_tma_keeps_its_single_producer_arrival() {
-        assert!(!Sync::collective_full(&[Delivery::Tma]));
+        assert!(!Rendezvous::collective_full(&[Delivery::Tma]));
     }
 
     /// `sync_cube` needs every unit of the cube, and a walk that sets planes aside to fill has
     /// none of its slots reached by all of them.
     #[test]
     fn a_filled_slot_rendezvouses_on_a_barrier_whatever_delivered_it() {
-        assert_eq!(Sync::for_deliveries(&[Delivery::Copy], 1), Sync::Barrier);
+        assert_eq!(
+            Rendezvous::for_deliveries(&[Delivery::Copy], 1),
+            Rendezvous::Barrier
+        );
     }
 }

@@ -252,7 +252,7 @@ impl Level {
     /// level and do nothing else.
     ///
     /// Those `n` sit at the *end* of the cube, so no plane position below this level changes: the
-    /// cube is `n` planes wider and nothing is renumbered. A ring built over this walk reads the
+    /// cube is `n` planes wider and nothing is renumbered. Stages built over this walk reads the
     /// count off the level and hands the two roles their own halves of each slot.
     pub(crate) fn filling(mut self, n: usize) -> Level {
         assert!(

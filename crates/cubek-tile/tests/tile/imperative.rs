@@ -1,4 +1,4 @@
-//! The walk written by the kernel: the levels are loops, the stages are rings the kernel
+//! The walk written by the kernel: the levels are loops, the stages are stages the kernel
 //! allocates, and the leaf runs under the register block the kernel states. The reference every
 //! routine's rewrite is measured against.
 #![allow(non_snake_case)]
@@ -35,8 +35,8 @@ fn ring_matmul<E: Numeric>(
 
     // The cube's walk: one block of K per region, both operands staged for it.
     let walk = space.walk();
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
             // The block's own grid of final tiles, each contracted by the leaf.
@@ -54,13 +54,13 @@ fn ring_matmul<E: Numeric>(
 }
 
 /// [`ring_matmul`] with the fill the kernel's own: same schedule, and the operands are written
-/// into the slot by this kernel rather than by the ring.
+/// into the slot by this kernel rather than by the stages.
 ///
 /// What it proves is that the two halves are separable: the prologue, the lap that prefetches one
 /// region ahead of the one it computes, and the publish on the draining consume are the part worth
 /// sharing; where the bytes come from and what happens to them on the way in is the kernel's.
 ///
-/// Here the fill is the ring's own sources and the answer is unchanged, which is the honest
+/// Here the fill is the stages' own sources and the answer is unchanged, which is the honest
 /// control: a fill that read somewhere else would be testing the caller, not the seam.
 #[cube(launch)]
 fn ring_matmul_filled_by_the_kernel<E: Numeric>(
@@ -77,10 +77,10 @@ fn ring_matmul_filled_by_the_kernel<E: Numeric>(
     c.zero();
 
     let walk = space.walk();
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
     pipelined_with(
         walk,
-        &mut ring,
+        &mut stages,
         |slot, region| {
             slot.fill(|staged, pipe| {
                 pipe.fill(&mut staged.0, &a.at(region));
@@ -104,7 +104,7 @@ fn ring_matmul_filled_by_the_kernel<E: Numeric>(
     );
 }
 
-/// The same contraction with the ring's two steps written out and the plane's role read off it:
+/// The same contraction with the stages' two steps written out and the plane's role read off it:
 /// the shape a specialized kernel takes. With no plane set aside to fill, every plane computes,
 /// so the fill arm is emitted and never entered and the compute arm does both halves itself.
 #[cube(launch)]
@@ -121,20 +121,20 @@ fn role_split_matmul<E: Numeric>(
     c.zero();
 
     let walk = space.walk();
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
 
-    match ring.role() {
+    match stages.role() {
         Role::Fill => {
             for region in space.walk() {
-                ring.fill(0usize, &region);
+                stages.fill(0usize, &region);
             }
         }
         Role::Compute => {
             for region in space.walk() {
-                ring.fill(0usize, &region);
-                ring.slot_mut(0usize).publish();
+                stages.fill(0usize, &region);
+                stages.slot_mut(0usize).publish();
                 let c_block = c.at(&region);
-                ring.consume(0usize, |a_s, b_s| {
+                stages.consume(0usize, |a_s, b_s| {
                     for cell in &region {
                         let mut c_cell = c_block.at(&cell);
                         c_cell.mma_with(
@@ -154,7 +154,7 @@ fn check_ring_matmul(m: usize, n: usize, k: usize, block_k: usize, depth: usize)
     check_ring_matmul_with(m, n, k, block_k, depth, false)
 }
 
-/// [`check_ring_matmul`], filling through the ring or through the kernel's own closure.
+/// [`check_ring_matmul`], filling through the stages or through the kernel's own closure.
 fn check_ring_matmul_with(
     m: usize,
     n: usize,
@@ -307,7 +307,7 @@ fn a_hand_written_ring_walk_triple_buffered_over_an_odd_walk() {
     check_ring_matmul(8, 8, 20, 4, 3);
 }
 
-/// The kernel's own fill through the ring's schedule, at each buffering depth.
+/// The kernel's own fill through the stages' schedule, at each buffering depth.
 ///
 /// Same walk, same answer, and the only difference is who writes the slot. A kernel that wants a
 /// third operand or a transform on the way in keeps the protocol it would otherwise have had to

@@ -43,7 +43,7 @@ impl<T: Numeric> Memory<T> {
 
     /// Allocate a fresh shared-memory tile shaped to stage one `divide()` sub-tile of `operand`,
     /// laid out as `storage` and, where `width` is stated, served in lines that wide (an axis gmem
-    /// could not vectorize still reaches the leaf in lines). Both are the ring's to state.
+    /// could not vectorize still reaches the leaf in lines). Both are the stages' to state.
     ///
     /// The stage takes the element the operand needs staged: the one it *serves* when the load
     /// decodes it ([`DequantAt::Load`], always so for a plain operand), else the one it is *stored*
@@ -179,7 +179,7 @@ impl<T: Numeric> Memory<T> {
             }
             // A tma source has no stored form to keep: it carries no scheme (`quantized` is a
             // strided-builder knob, and a tma tile is scalar), so served == stored. Giving it
-            // one must not reuse this arm; see `Staging::new`, which refuses that combination.
+            // one must not reuse this arm; see `Slot::new`, which refuses that combination.
             TileKind::TmaGmem(_) => Memory::smem(space, vector_size, storage, units),
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")
@@ -672,7 +672,7 @@ impl StageForm {
         stage: StageStorage,
         projection: &Projection,
     ) -> StageForm {
-        // `Tiled` comes from a cmma leaf, which `Staging::new` refuses a gathered operand for. The
+        // `Tiled` comes from a cmma leaf, which `Slot::new` refuses a gathered operand for. The
         // nesting has nowhere to go here, so it is refused rather than silently dropped.
         assert!(
             matches!(stage, StageStorage::Strided),

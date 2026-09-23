@@ -4,7 +4,7 @@ use crate::Axis;
 
 /// Where a stage lives and how it lays its cells out: shared memory, storage-tiled at a stated
 /// block (one contiguous block per fragment, what a cmma transaction wants) or plain strided rows;
-/// or the plane's lanes, no buffer at all. Stated at [`Ring::smem`](crate::Ring::smem).
+/// or the plane's lanes, no buffer at all. Stated at [`Stages::smem`](crate::Stages::smem).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum StageStorage {
     /// Grouped into `block`-sized tiles, the fragment the instruction reads: one edge per axis of

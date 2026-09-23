@@ -124,8 +124,8 @@ fn separable_kernel_staged<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem_single_at(&walk, &input, StageStorage::Strided, width, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut out = output.at(region);
         let weights = weights.at(region);
         slot.consume(|input| {
@@ -868,8 +868,8 @@ fn resample_kernel_masked_staged<E: Float>(
 
     let output = output.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem_single(&walk, &input, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem_single(&walk, &input, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut out = output.at(region);
         let weights = weights.at(region);
         slot.consume(|input| {

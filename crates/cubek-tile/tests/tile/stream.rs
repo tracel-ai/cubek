@@ -303,7 +303,7 @@ fn stream_matmul<E: Numeric>(
 }
 
 /// [`stream_matmul`] with the right operand staged into shared memory under the share: each
-/// region runs the level below through its own ring, so what a share does inside a region is
+/// region runs the level below through its own stages, so what a share does inside a region is
 /// what any walk does.
 #[cube(launch)]
 fn stream_matmul_staged_rhs<E: Numeric>(
@@ -333,8 +333,8 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         );
         acc.zero();
         let cells = region.over(&inner).range(from, steps);
-        let mut ring = Ring::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
-        pipelined(cells, &mut ring, |slot, cell| {
+        let mut stages = Stages::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
+        pipelined(cells, &mut stages, |slot, cell| {
             let mut acc_cell = acc.at(cell);
             let a_cell = a_region.at(cell);
             slot.consume(|b_s| {
@@ -530,7 +530,7 @@ fn folds_atomically() -> bool {
 }
 
 /// An operand staged under the distribution. A share is walked region by region, and each region
-/// runs the level below through its own ring, so what a share does inside a region is what any
+/// runs the level below through its own stages, so what a share does inside a region is what any
 /// walk does: nothing about staging changes because the regions arrived as a share.
 #[test]
 fn an_operand_stages_under_a_share_as_it_does_under_a_walk() {

@@ -228,7 +228,7 @@ fn contract_in_place<E: Numeric>(
 
 /// `c = a · b`, each cube's box of it, through `runs` of boxes where the tiling states that
 /// level: both operands staged in shared memory per region of the walk under the cube, `depth`
-/// regions in flight through the ring.
+/// regions in flight through the stages.
 #[cube(launch)]
 fn matmul_smem_ring<E: Numeric, V: Size>(
     a: &TileArg<'_, E, V>,
@@ -256,7 +256,7 @@ fn matmul_smem_ring<E: Numeric, V: Size>(
     }
 }
 
-/// One cube's box of `c = a · b`, zeroed once, then contracted through a ring staging each
+/// One cube's box of `c = a · b`, zeroed once, then contracted through stages staging each
 /// region of `steps`.
 #[cube]
 fn contract_staged<E: Numeric>(
@@ -275,8 +275,8 @@ fn contract_staged<E: Numeric>(
         c_w.zero();
     }
     let walk = owned.over(&steps);
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         slot.consume(|a_s, b_s| {
             c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -300,8 +300,8 @@ fn matmul_smem_ring_reversed<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     let walk = space.over(&level).reversed();
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         slot.consume(|a_s, b_s| {
             c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -325,8 +325,8 @@ fn matmul_smem_ring_accumulate<E: Numeric, V: Size>(
     let b = b.tile(comptime!(space.clone()));
     let c = c.tile(comptime!(space.clone()));
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         slot.consume(|a_s, b_s| {
             c_r.mma_with(a_s, b_s, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -350,8 +350,8 @@ fn matmul_lhs_smem_ring<E: Numeric, V: Size>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem_single(&walk, &a, StageStorage::Strided, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem_single(&walk, &a, StageStorage::Strided, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         let b_r = b.at(region);
         slot.consume(|a_s| {
@@ -382,14 +382,14 @@ fn matmul_padded_rhs_stage<E: Numeric>(
         c_w.zero();
     }
     let walk = space.over(&level);
-    let mut ring = Ring::smem_single_at(
+    let mut stages = Stages::smem_single_at(
         &walk,
         &b,
         StageStorage::Strided,
         comptime!(Some(width)),
         1usize,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         let a_r = a.at(region);
         slot.consume(|b_s| {
@@ -425,14 +425,14 @@ fn matmul_padded_lhs_stage_two_levels<E: Numeric>(
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
         let walk = outer.over(&inner);
-        let mut ring = Ring::smem_single_at(
+        let mut stages = Stages::smem_single_at(
             &walk,
             &a_o,
             StageStorage::Strided,
             comptime!(Some(width)),
             1usize,
         );
-        pipelined(walk, &mut ring, |slot, region| {
+        pipelined(walk, &mut stages, |slot, region| {
             let mut c_r = c_o.at(region);
             let b_r = b_o.at(region);
             slot.consume(|a_s| {
@@ -461,8 +461,8 @@ fn matmul_two_levels_smem_then_in_place<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     let walk = space.over(&outer);
-    let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             for cell in region.over(&inner) {
@@ -496,8 +496,8 @@ fn matmul_two_levels_smem_then_in_place_reversed<E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     let walk = space.over(&outer);
-    let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             for cell in region.over(&inner).reversed() {
@@ -513,7 +513,7 @@ fn matmul_two_levels_smem_then_in_place_reversed<E: Numeric>(
     });
 }
 
-/// Two levels, both staging: the inner ring restages each final tile out of the outer stage.
+/// Two levels, both staging: the inner stages restages each final tile out of the outer stage.
 #[cube(launch)]
 fn matmul_two_levels_smem_then_smem<E: Numeric>(
     a: &TileArg<'_, E, Const<1>>,
@@ -537,13 +537,13 @@ fn matmul_two_levels_smem_then_smem<E: Numeric>(
         c_w.zero();
     }
     let walk = space.over(&outer);
-    let mut ring = Ring::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, comptime!(storage.clone()), depth_outer);
+    pipelined(walk, &mut stages, |slot, region| {
         let c_o = c.at(region);
         slot.consume(|a_s, b_s| {
             let cells = region.over(&inner);
             let mut inner_ring =
-                Ring::smem(&cells, a_s, b_s, comptime!(storage.clone()), depth_inner);
+                Stages::smem(&cells, a_s, b_s, comptime!(storage.clone()), depth_inner);
             pipelined(cells, &mut inner_ring, |slot, cell| {
                 let mut c_r = c_o.at(cell);
                 slot.consume(|a_i, b_i| {
@@ -641,8 +641,8 @@ fn block_matmul_two_levels_smem_below<E: Numeric>(
         let a_o = a.at(&outer);
         let b_o = b.at(&outer);
         let walk = outer.over(&inner).unrolled();
-        let mut ring = Ring::smem(&walk, &a_o, &b_o, StageStorage::Strided, 1usize);
-        pipelined(walk, &mut ring, |slot, cell| {
+        let mut stages = Stages::smem(&walk, &a_o, &b_o, StageStorage::Strided, 1usize);
+        pipelined(walk, &mut stages, |slot, cell| {
             let mut acc_r = acc_o.at(cell);
             slot.consume(|a_s, b_s| {
                 acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
@@ -679,8 +679,8 @@ fn cmma_matmul_k_walk<E: Numeric, V: Size>(
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
@@ -711,7 +711,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(
+    let mut stages = Stages::smem(
         &walk,
         &a,
         &b,
@@ -725,7 +725,7 @@ fn cmma_matmul_k_walk_quant<I: Numeric, E: Numeric, V: Size>(
         }),
         depth,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    pipelined(walk, &mut stages, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
@@ -755,8 +755,8 @@ fn mma_matmul_k_walk<E: Numeric>(
     let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
@@ -787,8 +787,8 @@ fn mma_matmul_k_walk_quant<I: Numeric, E: Numeric>(
     let mut acc = c.mma_accumulator::<E, E>(&a, io, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);
@@ -820,7 +820,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&outer);
-    let mut ring = Ring::smem(
+    let mut stages = Stages::smem(
         &walk,
         &a,
         &b,
@@ -834,7 +834,7 @@ fn cmma_matmul_two_levels_planes<E: Numeric>(
         }),
         depth,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    pipelined(walk, &mut stages, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
             for region in region.over(&inner) {
@@ -872,7 +872,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&stage);
-    let mut ring = Ring::smem(
+    let mut stages = Stages::smem(
         &walk,
         &a,
         &b,
@@ -886,7 +886,7 @@ fn cmma_matmul_three_levels_planes_fragments<E: Numeric>(
         }),
         depth,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    pipelined(walk, &mut stages, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
             for region in region.over(&plane) {
@@ -933,7 +933,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
     let mut acc = c.cmma_accumulator::<E, E>(&a, Monoid::Sum);
     acc.zero();
     let walk = space.over(&stage);
-    let mut ring = Ring::smem(
+    let mut stages = Stages::smem(
         &walk,
         &a,
         &b,
@@ -953,7 +953,7 @@ fn cmma_matmul_five_levels<E: Numeric>(
         }),
         depth,
     );
-    pipelined(walk, &mut ring, |slot, region| {
+    pipelined(walk, &mut stages, |slot, region| {
         let acc_o = acc.at(region);
         slot.consume(|a_s, b_s| {
             for region in region.over(&plane) {
@@ -1012,8 +1012,8 @@ fn matmul_quant_lhs_smem_ring<I: Numeric, E: Numeric>(
     let mut c = c.tile(comptime!(space.clone()));
     c.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut c_r = c.at(region);
         slot.consume(|a_s, b_s| {
             c_r.mma_with(a_s, b_s, config, Semiring::SUM_PROD);
@@ -1066,8 +1066,8 @@ fn matmul_quant_rhs_smem_ring<I: Numeric, E: Numeric, V: Size>(
         let mut c = c.at(&outer);
         c.zero();
         let walk = outer.over(&inner);
-        let mut ring = Ring::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
-        pipelined(walk, &mut ring, |slot, region| {
+        let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, 1usize);
+        pipelined(walk, &mut stages, |slot, region| {
             let mut c_r = c.at(region);
             slot.consume(|a_s, b_s| {
                 c_r.mma_with(a_s, b_s, config, Semiring::SUM_PROD);
@@ -2352,7 +2352,7 @@ fn matmul_multilevel_tiled_stage() {
 }
 
 /// What the inner of two levels does with the outer stage: read its final tiles where they lie,
-/// or restage them through a ring this deep.
+/// or restage them through stages this deep.
 #[derive(Clone, Copy)]
 enum Inner {
     Direct,
@@ -2565,7 +2565,7 @@ fn matmul_a_level_that_cuts_nothing_is_kept() {
 // observed, `space::base`. Not here, for the reason `blocked.rs` gives: this one fires inside the
 // kernel, on a worker thread, where `#[should_panic]` never sees it and the launch returns zeros.
 
-// ---- vectorized operands through the rings -------------------------------------------
+// ---- vectorized operands through the stages -------------------------------------------
 
 /// Vectorized operands (2-wide lines) through the in-place path: gmem-only line-unit
 /// addressing. Regression for the line-vs-scalar unit bug (worked on cubecl-cpu only).
@@ -2620,14 +2620,14 @@ fn matmul_staged_vectorized() {
     check_matmul_vectorized((8, 8, 8), Staged::Both, 1);
 }
 
-/// The same operands through a depth-2 ring: each region's fill overlaps the previous region's
+/// The same operands through a depth-2 stages: each region's fill overlaps the previous region's
 /// compute. Depth is the only difference from the staged case above.
 #[test]
 fn matmul_double_buffered_vectorized() {
     check_matmul_vectorized((8, 8, 8), Staged::Both, 2);
 }
 
-/// Depth 3: two fills in flight over one compute. Regression for a ring whose drain leaves more
+/// Depth 3: two fills in flight over one compute. Regression for stages whose drain leaves more
 /// than one slot outstanding.
 #[test]
 fn matmul_triple_buffered_vectorized() {
@@ -2635,15 +2635,15 @@ fn matmul_triple_buffered_vectorized() {
 }
 
 /// A depth deeper than the walk has regions: the prologue runs out of regions to prime and every
-/// consume drains. Regression for the ring's `region < total` guards. Nine slots over eight
+/// consume drains. Regression for the stages' `region < total` guards. Nine slots over eight
 /// regions: two operands per slot, and Metal caps a kernel's threadgroup arguments at 31.
 #[test]
 fn matmul_buffered_deeper_than_the_walk() {
     check_matmul_vectorized((8, 8, 8), Staged::Both, 9);
 }
 
-/// A depth-2 ring whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
-/// window. It is filled once above the loop and its buffer serves both slots, `WindowMode::Reused`:
+/// A depth-2 stages whose walk cuts only `M`: `rhs` spans `K`/`N` alone, so the walk never moves its
+/// window. It is filled once above the loop and its buffer serves both slots, `Refill::Shared`:
 /// the one sound way for two slots to share a buffer, and why a stage count is derived, not stated.
 #[test]
 fn matmul_double_buffered_with_a_fixed_operand() {
@@ -2657,7 +2657,7 @@ fn matmul_triple_buffered_with_a_fixed_operand() {
 }
 
 /// One operand staged beside one read where it lies, at depth 2: the slot rendezvouses for the
-/// staged one alone while the other is read where it lies, in every slot of the ring.
+/// staged one alone while the other is read where it lies, in every slot of the stages.
 #[test]
 fn matmul_double_buffered_mixed_residence_vectorized() {
     check_matmul_vectorized((8, 8, 8), Staged::LhsOnly, 2);
@@ -2707,7 +2707,7 @@ fn matmul_double_buffered_with_only_the_lhs_staged() {
     assert_tiled_matmul(&client, c.handle(), m, n, k, tile_edge);
 }
 
-/// Which operands a ring stages.
+/// Which operands are staged.
 #[derive(Clone, Copy)]
 enum Staged {
     Both,
@@ -3103,7 +3103,7 @@ fn instruction_stated_once_runs_in_registers() {
 }
 
 /// A buffered level that *cuts* a promoted (fragment) accumulator: each region selects its own
-/// block, so the ring's walk has to unroll and hand every region comptime coordinates.
+/// block, so the stages' walk has to unroll and hand every region comptime coordinates.
 ///
 /// The regression this guards is silent in both directions: `#[unroll(flag)]` rolls the loop
 /// without complaint unless the macro sees `flag` as a comptime binding, and the lap arithmetic
@@ -4094,7 +4094,7 @@ fn cmma_matmul_staged_k_walk_vectorized() {
 
 /// The staged cmma K walk with the rhs stored `{N, K}`: the stage keeps that order and the `B`
 /// fragment loads col-major off it, so a weight contiguous along the contraction is staged in
-/// its own lines. Double-buffered, so the ring's prefetch moves that order too.
+/// its own lines. Double-buffered, so the stages' prefetch moves that order too.
 #[test]
 fn cmma_matmul_double_buffered_k_walk_transposed_rhs() {
     check_cmma_matmul_k_walk_with(32, 2, 1, StageLayout::Tiled, true);
@@ -4196,8 +4196,8 @@ fn staged_matmul_on_a_stated_instruction<E: Numeric, V: Size>(
     let mut acc = c.accumulator::<E, E, E>(&a, &b, instruction, Monoid::Sum);
     acc.zero();
     let walk = space.over(&level);
-    let mut ring = Ring::smem(&walk, &a, &b, storage, depth);
-    pipelined(walk, &mut ring, |slot, region| {
+    let mut stages = Stages::smem(&walk, &a, &b, storage, depth);
+    pipelined(walk, &mut stages, |slot, region| {
         let mut acc_r = acc.at(region);
         slot.consume(|a_s, b_s| {
             acc_r.mma(a_s, b_s, Semiring::SUM_PROD);

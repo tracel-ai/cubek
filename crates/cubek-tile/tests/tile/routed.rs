@@ -148,7 +148,7 @@ fn routed_matmul_kernel<E: Numeric>(
     }
 }
 
-/// The routed weights staged in shared memory rather than read where they lie: the ring is built
+/// The routed weights staged in shared memory rather than read where they lie: the stages are built
 /// over the routed walk, so what it fills is the expert the table named.
 #[cube(launch)]
 fn routed_staged_matmul_kernel<E: Numeric>(
@@ -169,8 +169,8 @@ fn routed_staged_matmul_kernel<E: Numeric>(
         let e = routes[tok.coord(M)] as usize;
         let experts = tok.over(&expert).routed(EXPERT, e);
 
-        let mut ring = Ring::smem_single(&experts, &w, StageStorage::Strided, 1usize);
-        pipelined(experts, &mut ring, |slot, slab| {
+        let mut stages = Stages::smem_single(&experts, &w, StageStorage::Strided, 1usize);
+        pipelined(experts, &mut stages, |slot, slab| {
             let mut o = out.at(slab);
             slot.consume(|w_s| {
                 o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -276,7 +276,7 @@ fn a_routed_walk_contracts_each_token_against_the_expert_its_table_names() {
     }
 }
 
-/// Staging under a routed coordinate: the stage is filled from the expert the route named, not
+/// Slot under a routed coordinate: the stage is filled from the expert the route named, not
 /// from the first one and then reused. A window displacement living on the operand would owe a
 /// refusal (a staged operand inherits it); here the coordinate is the walk's, the stage per region.
 #[test]

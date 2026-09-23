@@ -2,7 +2,7 @@
 //! sides. No device: the point is to answer, before a kernel is ever launched, the question a
 //! device answers by hanging.
 //!
-//! The model is [`Staging`](crate::Staging)'s acquire/release pairs read as a state machine.
+//! The model is [`Slot`](crate::Slot)'s acquire/release pairs read as a state machine.
 //! A producer unit waits `empty` on the parity its `writes` was not born at, fills if elected,
 //! arrives `full`, flips; a consumer waits `full` on its `reads`, reads, arrives `empty`, flips.
 //!
@@ -60,7 +60,7 @@ struct Slot {
 ///
 /// The parity it waits with is not here because it is not the unit's: each slot owns a parity per
 /// side, flipped by that side's release, so a unit waiting at slot `s` waits with the number of
-/// laps it has already made around the ring.
+/// laps it has already made around the stages.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Unit {
     step: usize,
@@ -75,13 +75,13 @@ impl Unit {
         }
     }
 
-    /// The parity this unit's next wait carries: one flip per lap of the ring.
+    /// The parity this unit's next wait carries: one flip per lap of the stages.
     fn parity(&self, depth: usize) -> u32 {
         ((self.step / depth) % 2) as u32
     }
 }
 
-/// The protocol's whole state: the ring's slots, the units of each side, and the walk's length.
+/// The protocol's whole state: the stages' slots, the units of each side, and the walk's length.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct State {
     slots: Vec<Slot>,
@@ -89,7 +89,7 @@ struct State {
     consumers: Vec<Unit>,
 }
 
-/// The shape of one run: how deep the ring is, how many regions the walk has, and how many units
+/// The shape of one run: how deep the stages are, how many regions the walk has, and how many units
 /// stand on each side. The first producer is the elected one, the only unit that writes; the
 /// others fill nothing and arrive only to keep step.
 #[derive(Clone, Copy, Debug)]
@@ -99,7 +99,7 @@ struct Shape {
     producers: u32,
     consumers: u32,
     /// Whether `full` counts every producer's arrival or the elected unit's alone, which is the
-    /// choice [`Pipeline::producers`](crate::Pipeline::producers) makes.
+    /// choice [`Meeting::producers`](crate::Meeting::producers) makes.
     publishes_all: bool,
 }
 
@@ -242,7 +242,7 @@ impl State {
     }
 }
 
-/// Every ring the two sides can be run over, from a single slot to one deeper than the walk.
+/// Every stages the two sides can be run over, from a single slot to one deeper than the walk.
 #[test]
 fn the_two_sides_agree_however_they_interleave() {
     for depth in 1..=3 {
@@ -261,7 +261,7 @@ fn the_two_sides_agree_however_they_interleave() {
     }
 }
 
-/// A ring of one slot admits no overlap at all: the producer and the consumer alternate, and
+/// Stages one slot deep admits no overlap at all: the producer and the consumer alternate, and
 /// each region is filled, read, and freed before the next is touched.
 #[test]
 fn a_single_slot_never_runs_ahead() {
@@ -276,7 +276,7 @@ fn a_single_slot_never_runs_ahead() {
 }
 
 /// The producer may run `depth - 1` regions ahead and no further, which is the whole point of
-/// the ring: the wait on `empty` is what stops it.
+/// the stages: the wait on `empty` is what stops it.
 #[test]
 fn the_producer_runs_at_most_a_ring_ahead() {
     let shape = Shape {

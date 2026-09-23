@@ -53,7 +53,7 @@ fn reduce_matmul_kernel<E: Numeric>(
 }
 
 /// Where the reduced input is read from across the one level these kernels walk: where it lies,
-/// or a shared-memory ring `depth` slots deep.
+/// or a shared-memory stages `depth` slots deep.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Read {
     InPlace,
@@ -82,8 +82,8 @@ fn reduce_body<E: Numeric>(
             }
         }
         Read::Smem { depth } => {
-            let mut ring = Ring::smem_single(&walk, input, StageStorage::Strided, depth);
-            pipelined(walk, &mut ring, |slot, region| {
+            let mut stages = Stages::smem_single(&walk, input, StageStorage::Strided, depth);
+            pipelined(walk, &mut stages, |slot, region| {
                 let mut out_region = output.at(region);
                 slot.consume(|input_s| {
                     out_region.reduce_axis_accumulate(input_s, monoid);
@@ -400,7 +400,7 @@ fn run_reduce(
     )
 }
 
-/// [`run_reduce`] with the input staged through a ring `depth` deep.
+/// [`run_reduce`] with the input staged through stages `depth` deep.
 #[allow(clippy::too_many_arguments)]
 fn run_reduce_staged(
     in_shape: Shape,
@@ -436,7 +436,7 @@ fn check_2d_reduce(depth: usize, m: usize, k: usize, tm: usize, tk: usize, monoi
         ),
         Form::Static,
     );
-    // Every caller of this helper stages: the ring depth is what the buffering coverage exercises.
+    // Every caller of this helper stages: the stages depth is what the buffering coverage exercises.
     let got = run_reduce_staged(
         shape![m, k],
         shape![m],
