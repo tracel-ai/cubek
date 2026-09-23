@@ -21,9 +21,7 @@ use cubecl::{
     std::tensor::layout::{Coords2d, CoordsDyn},
 };
 
-use crate::instruction::registers::contract::{
-    Side, check_scales_omit_rather_than_divide, check_scales_ride,
-};
+use crate::ops::matmul::leaf::{Side, check_scales_omit_rather_than_divide, check_scales_ride};
 use crate::*;
 
 /// A factor and the scales it carries, which are a pair and not a product: the values, and the

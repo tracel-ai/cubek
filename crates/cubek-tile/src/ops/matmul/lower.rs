@@ -7,7 +7,7 @@
 use cubecl::cmma::MatrixLayout;
 use cubecl::prelude::*;
 
-use crate::instruction::registers::contract;
+use super::leaf::memory;
 use crate::*;
 
 #[cube]
@@ -116,7 +116,7 @@ impl<Acc: Numeric> Tile<Acc> {
         let space = comptime!(self.place.space.clone());
         match &mut self.kind {
             TileKind::Memory(g) => {
-                contract::memory::<Acc, Lhs, LS, Rhs, RS>(g, lhs, rhs, space, config, semiring)
+                memory::contract::<Acc, Lhs, LS, Rhs, RS>(g, lhs, rhs, space, config, semiring)
             }
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -248,13 +248,13 @@ fn strided_2d<EL: Numeric, ER: Numeric>(
         "mma: a cmma or plane-register fragment reads one `k` edge off a directly addressed \
          operand; a gather, or a contraction these axes give no edge for, needs the manual-mma \
          leaf, or an unpromoted Gmem/Smem accumulator, whose software instruction is the \
-         `contract::memory` arm of `mma_leaf`"
+         `memory::memory` arm of `mma_leaf`"
     ));
 }
 
 /// Whether `rhs` is read col-major: a cmma fragment loaded that way, or a staged `(col, k)`
 /// window, the transpose of the role's order, read as the same matrix along the contracted edge
-/// ([`PlanePartition::store`], [`rhs_layout`](crate::instruction::rhs_layout)), like a folded step.
+/// ([`PlanePartition::store`], [`rhs_layout`](crate::ops::matmul::leaf::rhs_layout)), like a folded step.
 #[cube]
 fn transposed_rhs<EL: Numeric, ER: Numeric>(
     lhs: &Tile<EL>,
@@ -271,7 +271,7 @@ fn transposed_rhs<EL: Numeric, ER: Numeric>(
         // answers as column-major.
         TileKind::Memory(m) => comptime!(
             m.address == AddressSpace::Shared
-                && crate::instruction::rhs_layout(
+                && crate::ops::matmul::leaf::rhs_layout(
                     &rhs.place.space,
                     lhs.place.space.axis_at(lhs.place.space.rank() - 1)
                 ) == MatrixLayout::ColMajor

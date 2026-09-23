@@ -2,6 +2,7 @@
 
 use cubecl::prelude::*;
 
+use super::logsumexp;
 use crate::*;
 
 /// Logits at or below this are treated as masked (effectively -inf). Fits f16.
@@ -178,8 +179,7 @@ impl<E: Float> RowState<E> {
     /// [`update`](RowState::update). The `min_value` identity makes the first real score overwrite
     /// the state cleanly; a row that never absorbs keeps `l = 0` for the epilogue's masked guard.
     pub fn absorb(&mut self, i: usize, score: E) -> Rescale<E> {
-        let (m_new, l_new, correction, weight) =
-            instruction::logsumexp::step::<E>(self.m[i], self.l[i], score);
+        let (m_new, l_new, correction, weight) = logsumexp::step::<E>(self.m[i], self.l[i], score);
         self.m[i] = m_new;
         self.l[i] = l_new;
         Rescale::<E> { correction, weight }

@@ -2,9 +2,9 @@
 
 use cubecl::prelude::*;
 
-use super::scale::Side;
+use super::super::registers;
+use super::super::scale::Side;
 use super::shape::ContractShape;
-use crate::instruction::registers::block;
 use crate::*;
 
 /// The contraction nest for a single contracted axis: over each batch matrix, the `mr × nr` block
@@ -267,8 +267,9 @@ fn body<
     #[comptime] lane_fanout: bool,
     #[comptime] semiring: Semiring,
 ) {
-    let mut c = block::seed::<E, V, A>(acc, contracted_per_step, 1usize, aw, mr, nr, cols, unroll);
-    block::contract::<E, EL, L, LS, ER, V, RS>(
+    let mut c =
+        registers::seed::<E, V, A>(acc, contracted_per_step, 1usize, aw, mr, nr, cols, unroll);
+    registers::contract::<E, EL, L, LS, ER, V, RS>(
         lhs,
         lhs_scales,
         rhs,
@@ -283,7 +284,7 @@ fn body<
         lane_fanout,
         semiring,
     );
-    block::commit::<E, V, A>(
+    registers::commit::<E, V, A>(
         acc,
         c,
         contracted_per_step,

@@ -1,7 +1,7 @@
 //! The promoted accumulator form of the contraction nest: `acc += lhs · rhs` where the `mr × nr`
 //! block *is* the accumulator.
 //!
-//! The peer of [`memory`](super::memory), and the reason [`block`](super::super::block) takes the
+//! The peer of [`memory`](super::memory), and the reason [`block`](super::super::registers) takes the
 //! block as a parameter: the memory form round-trips its partials through the sink's element on
 //! every visit, this one keeps them in `T` across the walk and only meets memory on drain.
 //!
@@ -9,8 +9,8 @@
 
 use cubecl::prelude::*;
 
+use super::registers;
 use super::scale::Side;
-use crate::instruction::registers::block;
 use crate::*;
 
 #[cube]
@@ -131,7 +131,7 @@ impl<T: Numeric> RegisterData<T> {
             comptime!(acc_axes),
         );
 
-        block::contract::<T, EL, L, LS, ER, RA, RS>(
+        registers::contract::<T, EL, L, LS, ER, RA, RS>(
             &lhs_mat,
             &lhs_scales,
             &rhs_mat,

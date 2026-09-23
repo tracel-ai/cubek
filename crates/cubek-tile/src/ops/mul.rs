@@ -11,7 +11,7 @@
 
 use cubecl::{prelude::*, std::tensor::layout::CoordsDyn};
 
-use crate::instruction::registers::contract::resolve_nd_coords;
+use crate::ops::matmul::leaf::memory::resolve_nd_coords;
 use crate::*;
 
 #[cube]

@@ -3,13 +3,11 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::instruction::registers::block;
+use super::super::super::registers;
 use crate::*;
 
-use super::{
-    FactorReuse, GatherProblem,
-    coords::{cell_position, offset_last},
-};
+use super::base::{FactorReuse, GatherProblem};
+use super::coords::{cell_position, offset_last};
 
 /// Cache each factor's 1-D tap walk at its maximal reuse level before consuming the Cartesian
 /// product: once per block, row, column or cell. Recipe coordinate dependencies decide where a
@@ -79,7 +77,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
         let unroll =
             comptime!(problem.block.scalars() * kc <= config.budget && !rhs_check && !acc_check);
         let unroll_taps = comptime!(kc <= config.budget);
-        let mut c = block::seed::<E, V, A>(
+        let mut c = registers::seed::<E, V, A>(
             &mut acc,
             1usize,
             spread,
@@ -240,7 +238,7 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             comptime!(problem.block.reduce.clone()),
                         );
                         let value = Vector::<E, V>::cast_from(rhs_reader.view.read(base));
-                        // One semiring step, for the reason [`block::rank1_update`] gives.
+                        // One semiring step, for the reason [`registers::rank1_update`] gives.
                         c[i * nr + n] = semiring.step::<Vector<E, V>>(
                             Vector::<E, V>::cast_from(weight),
                             value,
@@ -287,13 +285,13 @@ pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric, V: Size, A: Size>(
                             comptime!(rhs_reader.rank),
                             n as u32,
                         )));
-                        // One semiring step, for the reason [`block::rank1_update`] gives.
+                        // One semiring step, for the reason [`registers::rank1_update`] gives.
                         c[i * nr + n] = semiring.step::<Vector<E, V>>(weight, value, c[i * nr + n]);
                     }
                 }
             }
         }
-        block::commit::<E, V, A>(
+        registers::commit::<E, V, A>(
             &mut acc,
             c,
             1usize,

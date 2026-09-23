@@ -9,7 +9,7 @@ mod depthwise;
 mod dequant;
 mod erased;
 mod imperative;
-mod instruction;
+mod leaf;
 mod launcher;
 mod matmul;
 mod packed;

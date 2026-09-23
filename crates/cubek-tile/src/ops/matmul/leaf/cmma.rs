@@ -12,7 +12,7 @@ use cubecl::{
     std::tensor::layout::CoordsDyn,
 };
 
-use crate::instruction::registers::contract::Side;
+use crate::ops::matmul::leaf::Side;
 use crate::*;
 
 #[cube]

@@ -5,8 +5,8 @@ use cubecl::std::tensor::layout::CoordsDyn;
 
 use crate::*;
 
-use super::{GatherProblem, LhsRole};
-use crate::instruction::registers::contract::resolve_nd_coords;
+use super::base::{GatherProblem, LhsRole};
+use crate::ops::matmul::leaf::memory::resolve_nd_coords;
 
 /// One operand read at the accumulator cell `(row, col)` of the batch matrix `batch` names.
 /// `width` is the operand's own line width, since only its innermost axis is addressed in lines.

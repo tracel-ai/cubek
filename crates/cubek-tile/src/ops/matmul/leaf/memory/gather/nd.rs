@@ -4,10 +4,11 @@
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::CoordsDyn;
 
-use crate::instruction::registers::block;
+use super::super::super::registers;
 use crate::*;
 
-use super::{GatherProblem, LhsRole, RhsRole, coords::cell_read};
+use super::base::{GatherProblem, LhsRole, RhsRole};
+use super::coords::cell_read;
 
 /// The nest at fixed line widths: `L` the lhs's, `V` the rhs's and so the block's, `A` the
 /// accumulator's.
@@ -40,9 +41,9 @@ pub(super) fn nest<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Si
     let rhs_provable = rhs.guard_provable();
     let provable = comptime!(lhs_provable && rhs_provable);
     // A spread block rounds `nr` up, so its last column addresses a line past the operands' own
-    // extent, one past the far corner [`box_in_bounds`] proves. [`block::seed`]/[`block::commit`]
+    // extent, one past the far corner [`box_in_bounds`] proves. [`registers::seed`]/[`registers::commit`]
     // mask those spare lanes; an unguarded operand read has nothing, so keep the leaf checked.
-    let spread_overhang = comptime!(block::spread_guard(
+    let spread_overhang = comptime!(registers::spread_guard(
         problem.block.spread,
         problem.block.cols
     ));
@@ -200,7 +201,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
             && problem.block.lane_index_exact()
     );
 
-    let mut c = block::seed::<E, V, A>(
+    let mut c = registers::seed::<E, V, A>(
         acc,
         contracted_per_step,
         spread,
@@ -285,7 +286,7 @@ fn walk<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size, A: Size>(
         }
     }
 
-    block::commit::<E, V, A>(
+    registers::commit::<E, V, A>(
         acc,
         c,
         contracted_per_step,
@@ -431,7 +432,7 @@ fn rank1_update<E: Numeric, EL: Numeric, L: Size, ER: Numeric, V: Size>(
                     comptime!(problem.block.vw),
                 ))
             };
-            // One semiring step, for the reason [`block::rank1_update`] gives.
+            // One semiring step, for the reason [`registers::rank1_update`] gives.
             c[i * nr + n] = semiring.step::<Vector<E, V>>(a, v, c[i * nr + n]);
         }
     }

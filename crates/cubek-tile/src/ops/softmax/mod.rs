@@ -11,6 +11,7 @@
 //! landing here is the module drifting back into a dumping ground.
 
 mod leaf;
+pub mod logsumexp;
 mod planewise;
 mod rowwise;
 mod state;

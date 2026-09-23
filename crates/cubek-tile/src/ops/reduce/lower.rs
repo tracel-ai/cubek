@@ -1,10 +1,11 @@
 //! `c.reduce_axis(input, monoid)` and its accumulating twin at a final tile: the register nest
-//! ([`instruction::registers::reduce`](crate::instruction::registers::reduce)). The levels above
+//! ([`leaf`](super::leaf)). The levels above
 //! are the kernel's own walk.
 
 use cubecl::prelude::*;
 
-use crate::{instruction::registers::reduce, *};
+use super::leaf as reduce;
+use crate::*;
 
 #[cube]
 impl<Acc: Numeric> Tile<Acc> {

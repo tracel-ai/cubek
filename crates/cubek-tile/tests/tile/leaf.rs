@@ -1,9 +1,9 @@
-//! Unit tests for the leaf instructions in `instruction/` and the 1-D register folds in
-//! `Monoid::fold_lanes` and `Monoid::fold_array`.
+//! Unit tests for the leaf steps a verb issues (the online-logsumexp update) and the 1-D
+//! register folds in `Monoid::fold_lanes` and `Monoid::fold_array`.
 
 use cubecl::{client::Client, prelude::*, zspace::Shape};
 use cubek_test_utils::{HostData, HostDataType, TestInput};
-use cubek_tile::{LaneShare, Monoid, instruction::logsumexp};
+use cubek_tile::{LaneShare, Monoid, logsumexp};
 
 #[cube(launch)]
 fn test_hsum_kernel(input: &Tensor<f32>, output: &mut Tensor<f32>) {

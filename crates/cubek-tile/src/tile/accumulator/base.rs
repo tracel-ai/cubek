@@ -11,7 +11,7 @@
 
 use cubecl::prelude::*;
 
-use crate::instruction::registers::contract;
+use crate::ops::matmul::leaf::memory;
 use crate::*;
 
 /// The shape a plane-resident accumulator is opened at: the `tiles` one plane holds, each `m × n`
@@ -289,7 +289,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
         let lw = lhs.vector_size();
         let rw = rhs.vector_size();
         let aw = self.vector_size();
-        let fold = comptime!(contract::contracted_per_step(
+        let fold = comptime!(memory::contracted_per_step(
             &lhs.place.space,
             &rhs.place.space,
             &self.place.space,

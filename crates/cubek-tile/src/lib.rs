@@ -17,7 +17,6 @@
 //! a page per logical one) and [`Tile::within`] puts a window at an element and bounds its reads.
 
 mod algebra;
-pub mod instruction;
 mod launch;
 mod layout;
 mod load;
@@ -26,7 +25,6 @@ mod space;
 mod tile;
 
 pub use algebra::*;
-pub use instruction::*;
 pub use launch::*;
 pub use layout::*;
 pub use load::*;

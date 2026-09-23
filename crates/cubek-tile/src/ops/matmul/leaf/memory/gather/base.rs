@@ -2,13 +2,11 @@
 //! filters. The execution schedules live separately because their opposite loop orders are their
 //! principal performance invariant.
 
-mod coords;
-mod nd;
-mod separable;
-
 use cubecl::prelude::*;
 
-use super::shape::ContractShape;
+use super::{coords, nd, separable};
+
+use super::super::shape::ContractShape;
 use crate::*;
 
 /// How the lhs varies over the accumulator's axes, which is what decides how much one read of
@@ -18,7 +16,7 @@ use crate::*;
 /// what a gathered or batched operand degenerates to, and they differ in whether one read still
 /// covers a whole cell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(super) enum LhsRole {
+pub(crate) enum LhsRole {
     /// Free of the accumulator's innermost axis, so one read serves every cell of a row.
     FreeOfColumn,
     /// Lined *along* that axis: the line it reads is the cell, every lane a different column,
@@ -32,7 +30,7 @@ pub(super) enum LhsRole {
 
 /// The same for the rhs, over the row the outer product assumes it is free of.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(super) enum RhsRole {
+pub(crate) enum RhsRole {
     /// Free of the row: its `nr` lines are read once per step and reused down every row.
     FreeOfRow,
     /// Varies down the rows, but still holds for a whole row of cells.
@@ -47,7 +45,7 @@ pub(super) enum RhsRole {
 /// [`Tile::invariant_over`](crate::Tile): the axes a value does not vary over are the ones one
 /// read serves, so how far the read lifts. A factor answers through its recipe, not a projection.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(super) enum FactorReuse {
+pub(crate) enum FactorReuse {
     /// Once for the entire accumulator block.
     Block,
     /// Once for each accumulator row.
@@ -60,7 +58,7 @@ pub(super) enum FactorReuse {
 
 impl FactorReuse {
     /// The scope a factor varying over these two axes can be cached at.
-    pub(super) fn of(varies_row: bool, varies_col: bool) -> Self {
+    pub(crate) fn of(varies_row: bool, varies_col: bool) -> Self {
         match (varies_row, varies_col) {
             (false, false) => FactorReuse::Block,
             (true, false) => FactorReuse::Row,
@@ -77,7 +75,7 @@ impl FactorReuse {
 /// define that geometry together prevents a call site from accidentally mixing spaces, reduce
 /// axes, or block dimensions derived under different widths.
 #[derive(Clone, Debug)]
-pub(super) struct GatherProblem {
+pub(crate) struct GatherProblem {
     pub block: ContractShape,
     pub lhs_space: Space,
     pub rhs_space: Space,
@@ -267,7 +265,7 @@ fn masked_bound_depends_on(
 /// walked in 1-D per cell, not over their Cartesian product, where a procedural filter's cost is.
 /// Rank is the recipe's, so one stated factor takes it too: its row cache saves `nr` evaluations.
 #[cube]
-pub(super) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
+pub(crate) fn contract<E: Numeric, EL: Numeric, ER: Numeric>(
     acc: &mut Memory<E>,
     lhs: &Tile<EL>,
     rhs: &Tile<ER>,

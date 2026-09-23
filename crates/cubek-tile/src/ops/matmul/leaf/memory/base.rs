@@ -20,7 +20,7 @@ use crate::*;
 /// A scaled factor takes the 2-D nest alone: the N-D nest reads through compacted gather
 /// windows, where a step has no single scalar `k` to address a scale with.
 #[cube]
-pub(crate) fn memory<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
+pub(crate) fn contract<E: Numeric, EL: Numeric, LS: Numeric, ER: Numeric, RS: Numeric>(
     acc: &mut Memory<E>,
     lhs: &Scaled<EL, LS>,
     rhs: &Scaled<ER, RS>,
