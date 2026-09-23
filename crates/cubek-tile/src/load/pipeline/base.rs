@@ -96,97 +96,83 @@ pub trait StagesFill {
     fn publish(&mut self, scope: &Scope, slot: usize);
 }
 
-/// Walk `walk`'s regions through `stages`, `compute` consuming each region out of its slot, the
-/// stages filling from its own sources. The closure sees the slot (already this region's) and the
-/// region, and reads the slot through [`consume`](Slot::consume).
-///
-/// Unrolling is the walk's statement ([`Walk::unrolled`]): a fragment output or a fragment read
-/// needs constant coordinates, and the kernel that allocated either says so on the walk.
-///
-/// To fill some other way — a third operand, a transform on the way in — keep this schedule and
-/// bring the fill: [`pipelined_with`].
-pub fn pipelined<T: CubeType, F>(_walk: Walk, _ring: &mut Stages<T>, _compute: F)
+impl<T: CubeType> Stages<T> {
+    /// Walk `walk`'s regions through these stages, `compute` consuming each region out of its
+    /// slot, the stages filling from their own sources. The closure sees the slot (already this
+    /// region's) and the region, and reads the slot through [`consume`](Slot::consume).
+    ///
+    /// Unrolling is the walk's statement ([`Walk::unrolled`]): a fragment output or a fragment
+    /// read needs constant coordinates, and the kernel that allocated either says so on the walk.
+    ///
+    /// To fill some other way -- a third operand, a transform on the way in -- keep this schedule
+    /// and bring the fill: [`pipelined_with`](Stages::pipelined_with).
+    pub fn pipelined<F>(&mut self, _walk: Walk, _compute: F)
+    where
+        F: FnMut(&mut Slot<T>, &Region),
+    {
+        unexpanded!()
+    }
+
+    /// [`pipelined`](Stages::pipelined) with the fill the caller's too: `fill` writes a slot for a
+    /// region, `compute` reads it back.
+    ///
+    /// **The schedule is the part worth sharing, not the fill.** The prologue, the lap prefetching
+    /// one region ahead of the one it computes, and which consume publishes a slot no later fill
+    /// will, are the protocol. What a fill *does* is the kernel's, written through [`Slot::fill`].
+    ///
+    /// # Panics
+    ///
+    /// Stages with a fixed operand (one whose window the walk leaves invariant, filled once above
+    /// the loop): hoisting that fill is the stages reading their own sources, which this entry
+    /// hands over, so the two cannot both be true. Stream every operand, or use
+    /// [`pipelined`](Stages::pipelined).
+    pub fn pipelined_with<Fill, F>(&mut self, _walk: Walk, _fill: Fill, _compute: F)
+    where
+        Fill: FnMut(&mut Slot<T>, &Region),
+        F: FnMut(&mut Slot<T>, &Region),
+    {
+        unexpanded!()
+    }
+}
+
+impl<T: CubeType> StagesExpand<T>
 where
-    F: FnMut(&mut Slot<T>, &Region),
+    StagesExpand<T>: StagesFill,
 {
-    unexpanded!()
-}
-
-/// [`pipelined`] with the fill the caller's too: `fill` writes a slot for a region, `compute`
-/// reads it back.
-///
-/// **The schedule is the part worth sharing, not the fill.** The prologue, the lap prefetching
-/// one region ahead of the one it computes, and which consume publishes a slot no later fill
-/// will, are the protocol. What a fill *does* is the kernel's, written through [`Slot::fill`].
-///
-/// # Panics
-///
-/// Stages with a fixed operand (one whose window the walk leaves invariant, filled once above
-/// the loop): hoisting that fill is the stages reading its own sources, which this entry hands
-/// over, so the two cannot both be true. Stream every operand, or use [`pipelined`].
-pub fn pipelined_with<T: CubeType, Fill, F>(
-    _walk: Walk,
-    _ring: &mut Stages<T>,
-    _fill: Fill,
-    _compute: F,
-) where
-    Fill: FnMut(&mut Slot<T>, &Region),
-    F: FnMut(&mut Slot<T>, &Region),
-{
-    unexpanded!()
-}
-
-/// The expand of [`pipelined`], spelled at expand level so the compute body can be a closure.
-pub mod pipelined {
-    use super::schedule::run;
-    use super::*;
-
-    pub fn expand<T: CubeType, F>(
-        scope: &Scope,
-        walk: WalkExpand,
-        stages: &mut StagesExpand<T>,
-        compute: F,
-    ) where
-        StagesExpand<T>: StagesFill,
+    pub fn __expand_pipelined_method<F>(&mut self, scope: &Scope, walk: WalkExpand, compute: F)
+    where
         F: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
     {
         // The stages' own fill, which is what makes this the convenience entry.
-        run(
+        schedule::run(
             scope,
             walk,
-            stages,
+            self,
             |scope, stages, slot, region| stages.fill_streamed(scope, slot, region),
             compute,
         )
     }
-}
 
-/// The expand of [`pipelined_with`].
-pub mod pipelined_with {
-    use super::schedule::run;
-    use super::*;
-
-    pub fn expand<T: CubeType, Fill, F>(
+    pub fn __expand_pipelined_with_method<Fill, F>(
+        &mut self,
         scope: &Scope,
         walk: WalkExpand,
-        stages: &mut StagesExpand<T>,
         mut fill: Fill,
         compute: F,
     ) where
-        StagesExpand<T>: StagesFill,
         Fill: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
         F: FnMut(&Scope, &mut SlotExpand<T>, &RegionExpand),
     {
         assert!(
-            !stages.has_fixed(scope),
-            "pipelined_with: this stages holds an operand the walk leaves fixed, which the \
-             schedule fills once from the stages' own sources — the one thing a caller's fill \
+            !self.has_fixed(scope),
+            "Stages::pipelined_with: these stages hold an operand the walk leaves fixed, which \
+             the schedule fills once from their own sources -- the one thing a caller's fill \
              cannot be handed. Stream every operand, or use `pipelined`."
         );
-        run(
+        schedule::run(
             scope,
             walk,
-            stages,
+            self,
             move |scope, stages, slot, region| {
                 let slot = stages.__expand_slot_mut_method(scope, slot);
                 fill(scope, slot, region)

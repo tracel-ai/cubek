@@ -800,7 +800,7 @@ fn atomic_split_cmma<E: Numeric>(
             comptime!(StageStorage::Strided),
             1usize,
         );
-        pipelined(walk, &mut stages, |slot, stage| {
+        stages.pipelined(walk, |slot, stage| {
             let mut acc_s = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 acc_s.mma(a_s, b_s, Semiring::SUM_PROD);

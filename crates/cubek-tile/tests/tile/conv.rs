@@ -86,7 +86,7 @@ fn conv_kernel_smem<E: Numeric, V: Size>(
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, config, Semiring::SUM_PROD);
@@ -119,7 +119,7 @@ fn conv_kernel_smem_padded<E: Numeric>(
         comptime!(Some(width)),
         depth,
     );
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         let weight = weight.at(region);
         slot.consume(|input| {
@@ -179,7 +179,7 @@ fn conv_kernel_two_levels_smem<E: Numeric, V: Size>(
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&outer);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, depth);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let out_outer = out.at(region);
         slot.consume(|input, weight| {
             for inner in region.over(&inner) {
@@ -1311,7 +1311,7 @@ fn conv_kernel_dynamic_padding_smem<E: Numeric>(
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -1378,7 +1378,7 @@ fn conv_kernel_all_dynamic_smem<E: Numeric>(
     let out = out.tile(comptime!(space.clone()));
     let walk = space.over(&level);
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut out_region = out.at(region);
         slot.consume(|input, weight| {
             out_region.mm_with(input, weight, REGISTER_BLOCK, Semiring::SUM_PROD);
@@ -2386,7 +2386,7 @@ fn conv_mma_kernel<E: Numeric>(
     // The walk selects fragments by coordinate, so it is unrolled.
     let walk = space.over(&level).unrolled();
     let mut stages = Stages::smem(&walk, &input, &weight, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut acc_region = acc.at(region);
         slot.consume(|input, weight| {
             acc_region.mma(input, weight, Semiring::SUM_PROD);

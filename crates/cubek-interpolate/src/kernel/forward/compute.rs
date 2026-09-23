@@ -6,7 +6,7 @@ use crate::InputStage;
 use cubecl::{ir::ElemType, prelude::*};
 use cubek_tile::{
     Axis, Factors, Partitioning, Phase, Procedural, Region, RegisterBlock, Semiring, StageStorage,
-    Stages, Tile, TileArg, affine_along, pipelined, sum_of,
+    Stages, Tile, TileArg, affine_along, sum_of,
 };
 
 /// The distance from a tap to the source coordinate the output position lands on.
@@ -86,7 +86,7 @@ pub fn interpolate_tile_kernel<E: Float, V: Size, F: SeparableFilterFamily>(
             InputStage::Smem => {
                 let mut stages =
                     Stages::smem_single_at(&blocks, &input, StageStorage::Strided, padded, 1usize);
-                pipelined(blocks, &mut stages, |slot, block| {
+                stages.pipelined(blocks, |slot, block| {
                     let output_block = output.at(block);
                     let weights_block = weights.at(block);
                     slot.consume(|input_block| {

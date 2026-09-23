@@ -83,7 +83,7 @@ fn reduce_body<E: Numeric>(
         }
         Read::Smem { depth } => {
             let mut stages = Stages::smem_single(&walk, input, StageStorage::Strided, depth);
-            pipelined(walk, &mut stages, |slot, region| {
+            stages.pipelined(walk, |slot, region| {
                 let mut out_region = output.at(region);
                 slot.consume(|input_s| {
                     out_region.reduce_axis_accumulate(input_s, monoid);

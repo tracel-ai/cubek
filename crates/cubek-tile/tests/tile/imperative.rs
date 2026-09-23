@@ -36,7 +36,7 @@ fn ring_matmul<E: Numeric>(
     // The cube's walk: one block of K per region, both operands staged for it.
     let walk = space.walk();
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let c_block = c.at(region);
         slot.consume(|a_s, b_s| {
             // The block's own grid of final tiles, each contracted by the leaf.
@@ -78,9 +78,8 @@ fn ring_matmul_filled_by_the_kernel<E: Numeric>(
 
     let walk = space.walk();
     let mut stages = Stages::smem(&walk, &a, &b, StageStorage::Strided, depth);
-    pipelined_with(
+    stages.pipelined_with(
         walk,
-        &mut stages,
         |slot, region| {
             slot.fill(|staged, pipe| {
                 pipe.fill(&mut staged.0, &a.at(region));

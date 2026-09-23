@@ -11,7 +11,7 @@
 use cubecl::prelude::*;
 use cubek_tile::{
     Accumulate, AccumulateExpand, Axis, DeliveryFamily, Level, Levels, Monoid, Partitioning,
-    PlanePartition, Semiring, Space, StageStorage, Stages, TileArg, pipelined,
+    PlanePartition, Semiring, Space, StageStorage, Stages, TileArg,
 };
 
 use crate::tiled::{K, M, N, cmma::base::CmmaBlueprint};
@@ -139,7 +139,7 @@ pub fn cmma_kernel<
             }),
             depth,
         );
-        pipelined(steps, &mut stages, |slot, stage| {
+        stages.pipelined(steps, |slot, stage| {
             let acc_stage = acc.at(stage);
             slot.consume(|a_s, b_s| {
                 for plane in stage {

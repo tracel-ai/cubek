@@ -170,7 +170,7 @@ fn routed_staged_matmul_kernel<E: Numeric>(
         let experts = tok.over(&expert).routed(EXPERT, e);
 
         let mut stages = Stages::smem_single(&experts, &w, StageStorage::Strided, 1usize);
-        pipelined(experts, &mut stages, |slot, slab| {
+        stages.pipelined(experts, |slot, slab| {
             let mut o = out.at(slab);
             slot.consume(|w_s| {
                 o.mm_with(&x.at(slab), w_s, REGISTER_BLOCK, Semiring::SUM_PROD);

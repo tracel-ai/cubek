@@ -109,7 +109,7 @@ fn product_kernel_staged<E: Float>(
     let output = output.tile(comptime!(space.clone()));
     let walk = source.over(&level);
     let mut stages = Stages::smem_single(&walk, &source, StageStorage::Strided, 1usize);
-    pipelined(walk, &mut stages, |slot, region| {
+    stages.pipelined(walk, |slot, region| {
         let mut output_region = output.at(region);
         slot.consume(|staged| {
             output_region.copy_from(staged);

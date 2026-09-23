@@ -43,7 +43,7 @@ fn staged_matmul_quant_rhs<I: Numeric, E: Numeric, VA: Size, VB: Size, VC: Size>
         let c = c.at(&cube);
         let steps = cube.walk();
         let mut stages = Stages::smem(&steps, &a, &b, StageStorage::Strided, 1usize);
-        pipelined(steps, &mut stages, |slot, step| {
+        stages.pipelined(steps, |slot, step| {
             let c_step = c.at(step);
             slot.consume(|a_s, b_s| {
                 for lane in step {

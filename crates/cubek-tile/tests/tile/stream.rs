@@ -334,7 +334,7 @@ fn stream_matmul_staged_rhs<E: Numeric>(
         acc.zero();
         let cells = region.over(&inner).range(from, steps);
         let mut stages = Stages::smem_single(&cells, &b_region, StageStorage::Strided, 1usize);
-        pipelined(cells, &mut stages, |slot, cell| {
+        stages.pipelined(cells, |slot, cell| {
             let mut acc_cell = acc.at(cell);
             let a_cell = a_region.at(cell);
             slot.consume(|b_s| {
