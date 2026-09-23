@@ -219,7 +219,7 @@ impl<T: Numeric> PlaneTile<T> {
             PlaneTile::Cmma(d) => {
                 d.store_window(mem, comptime!(MatrixAxes::edges(&space).row_split))
             }
-            PlaneTile::Mma(d) => d.store_window(mem),
+            PlaneTile::Mma(d) => d.store_window(mem, space),
             // Same-type store; the block drains through `store_cast_window`, which is the
             // same write with the cast the wider accumulator needs.
             PlaneTile::Register(d) => d.store_cast_window(mem, space),
@@ -239,9 +239,9 @@ impl<T: Numeric> PlaneTile<T> {
         }
     }
 
-    /// `space` is the sink window's: a hardware fragment is exactly the instruction's shape and
-    /// stores through its own intrinsic, so only the software block and a cmma fragment draining
-    /// into a store that folds read it.
+    /// `space` is the sink window's: only the software block, a manual mma fragment (whose lanes
+    /// write their own cells through it) and a cmma fragment bouncing into a store that folds or
+    /// a masked window read it.
     pub(crate) fn store_cast_window<Out: Numeric>(
         &self,
         mem: &mut MemData<Out>,
@@ -254,10 +254,7 @@ impl<T: Numeric> PlaneTile<T> {
                 }
                 FragmentDrain::Bounce => d.bounce_cast_window(mem, space),
             },
-            PlaneTile::Mma(d) => {
-                comptime!(mem.access.write.validate_fragment_drain("PlaneTile::Mma"));
-                d.store_cast_window(mem)
-            }
+            PlaneTile::Mma(d) => d.store_cast_window(mem, space),
             PlaneTile::Register(d) => d.store_cast_window(mem, space),
         }
     }

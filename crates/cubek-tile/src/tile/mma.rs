@@ -146,28 +146,29 @@ impl<T: Numeric> MmaData<T> {
         }
     }
 
-    /// Drain this (accumulator) fragment into `mem`'s window.
-    pub(crate) fn store_window(&self, mem: &mut MemData<T>) {
-        self.store_cast_window::<T>(mem)
+    /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's.
+    pub(crate) fn store_window(&self, mem: &mut MemData<T>, #[comptime] space: Space) {
+        self.store_cast_window::<T>(mem, space)
     }
 
-    /// Drain this (accumulator) fragment into `mem`'s window, casting `T` down to the sink element.
-    pub(crate) fn store_cast_window<Out: Numeric>(&self, mem: &mut MemData<Out>) {
+    /// Drain this (accumulator) fragment into `mem`'s window, `space` being the window's, casting
+    /// `T` down to the sink element: each lane writing its own cells through the destination's
+    /// write, which masks a cell past the window's edge and adds into a destination that folds. A
+    /// lane knows which cells it holds, so every cell has one writer and no scratch is needed to
+    /// elect it. The `stmatrix` transport does not reach a memory window, so the store is always
+    /// this one, whatever [`MmaIOConfig::store_method`] says.
+    pub(crate) fn store_cast_window<Out: Numeric>(
+        &self,
+        mem: &mut MemData<Out>,
+        #[comptime] space: Space,
+    ) {
         let m = comptime!(self.m);
         let n = comptime!(self.n);
         let k = comptime!(self.k);
         let layout = comptime!(self.layout);
-        let io = comptime!(self.io);
         let def = MmaDefinition::<T, T, T>::new(m, n, k);
         match &self.fragment {
-            MmaFragment::Acc(f) => store_fragment::<T, Out, T, T, T>(
-                mem,
-                f,
-                &def,
-                MatrixIdent::Accumulator,
-                layout,
-                io,
-            ),
+            MmaFragment::Acc(f) => store_cells::<T, Out, T, T, T>(mem, f, &def, layout, space),
             MmaFragment::Lhs(_) | MmaFragment::Rhs(_) => {
                 panic!("MmaData::store: only an accumulator fragment drains to memory")
             }
@@ -289,58 +290,44 @@ fn load_manual<T: Numeric, W: Size, N: Size, A: Numeric, B: Numeric, CD: Numeric
     }
 }
 
-/// Store `fragment` (accumulator) into `mem`'s window, casting to `Out`. `stmatrix` is refused
-/// like `ldmatrix` (see [`load_fragment`]).
+/// Each lane's accumulator cells written through `mem`'s own write, one element at a time: the
+/// write masks a cell past the window's edge and adds into a destination that folds. A cell is one
+/// lane's, so each is written once.
 #[cube]
-fn store_fragment<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
+fn store_cells<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
     mem: &mut MemData<Out>,
     fragment: &Array<Vector<T, NA>>,
     def: &MmaDefinition<A, B, CD>,
-    #[comptime] ident: MatrixIdent,
     #[comptime] layout: MatrixLayout,
-    #[comptime] io: MmaIOConfig,
+    #[comptime] space: Space,
 ) {
-    match io.store_method() {
-        StoreMethod::Manual => store_manual::<T, Out, A, B, CD>(mem, fragment, def, ident, layout),
-        StoreMethod::StoreMatrix => {
-            comptime!(panic!(
-                "MmaData::store: the stmatrix fast path is not yet wired for MemData windows; \
-                 state the register stage with MmaIOConfig::manual()"
-            ))
-        }
-    }
-}
-
-/// Manual store: each register's element(s) written to their hardware position in the row-major
-/// window, cast to the sink element.
-#[cube]
-fn store_manual<T: Numeric, Out: Numeric, A: Numeric, B: Numeric, CD: Numeric>(
-    mem: &mut MemData<Out>,
-    fragment: &Array<Vector<T, NA>>,
-    def: &MmaDefinition<A, B, CD>,
-    #[comptime] ident: MatrixIdent,
-    #[comptime] layout: MatrixLayout,
-) {
-    let num_vectors = def.vectors_per_lane(ident);
-    let vector_size = def.vector_size(ident);
+    comptime!(assert!(
+        mem.store.vector_size == 1,
+        "MmaData: a fragment drained cell by cell writes one element at a time, and its \
+         destination is bound {} wide; bind it one element wide",
+        mem.store.vector_size
+    ));
+    let num_vectors = def.vectors_per_lane(MatrixIdent::Accumulator);
+    let vector_size = def.vector_size(MatrixIdent::Accumulator);
     let lane_id = UNIT_POS_PLANE;
-
-    let stride = mem.row_stride();
-    let (stride_row, stride_col) = match comptime!(layout) {
-        MatrixLayout::RowMajor => (stride, 1u32),
-        MatrixLayout::ColMajor => (1u32, stride),
-        MatrixLayout::Undefined => panic!("mma: a stage layout must be row- or col-major"),
-    };
-    let window = mem.window_slice_mut();
+    let axes = comptime!(MatrixAxes::trailing_pair(&space));
+    let mut sink = mem.matrix_mut::<Const<1>>(0usize, axes, space);
 
     #[unroll]
     for i in 0..num_vectors {
         #[unroll]
         for e in 0..vector_size {
             let elem_idx = i * vector_size + e;
-            let (row, col) = def.position_of_nth(lane_id, elem_idx as u32, ident);
-            let offset = row * stride_row + col * stride_col;
-            window[offset as usize] = Out::cast_from(fragment[i].extract(e));
+            let (row, col) =
+                def.position_of_nth(lane_id, elem_idx as u32, MatrixIdent::Accumulator);
+            let at = match comptime!(layout) {
+                MatrixLayout::RowMajor => (row, col),
+                MatrixLayout::ColMajor => (col, row),
+                MatrixLayout::Undefined => panic!("mma: a stage layout must be row- or col-major"),
+            };
+            let mut value = Vector::<Out, Const<1>>::empty();
+            value.insert(0usize, Out::cast_from(fragment[i].extract(e)));
+            sink.write(at, value);
         }
     }
 }
