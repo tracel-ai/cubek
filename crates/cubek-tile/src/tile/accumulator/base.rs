@@ -373,7 +373,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             | TileKind::PlaneTile(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lanes(_) => {
+            | TileKind::Lines(_) => {
                 panic!("Tile::with_scratch: a scratch backs a plane-resident accumulator")
             }
         }
@@ -430,7 +430,7 @@ impl<Acc: Numeric> Accumulate<Acc> for Tile<Acc> {
             TileKind::Memory(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lanes(_) => {
+            | TileKind::Lines(_) => {
                 panic!("Tile::drained_into: a plane-resident accumulator drains; nothing else does")
             }
         }

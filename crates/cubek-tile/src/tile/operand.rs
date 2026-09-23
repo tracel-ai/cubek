@@ -272,10 +272,10 @@ impl<S: Numeric> ScaleLookup<S> {
 impl<S: Numeric> Tile<S> {
     /// Whether a read of this tile reaches the lane that asks by a plane shuffle, which the
     /// whole plane takes part in: a reader must keep its lanes converged around it. True of the
-    /// plane's own lanes ([`Lanes`]) and of nothing else.
+    /// plane's own lanes ([`Lines`]) and of nothing else.
     pub(crate) fn by_shuffle(&self) -> comptime_type!(bool) {
         match &self.kind {
-            TileKind::Lanes(_) => comptime!(true),
+            TileKind::Lines(_) => comptime!(true),
             TileKind::Memory(_)
             | TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)
@@ -289,7 +289,7 @@ impl<S: Numeric> Tile<S> {
     /// lines, so the coordinate names a line and the field of it the scale sits in.
     pub(crate) fn scale_at(&self, coords: &Coords<u32>) -> S {
         match &self.kind {
-            TileKind::Lanes(lines) => lines.read(coords),
+            TileKind::Lines(lines) => lines.read(coords),
             TileKind::Memory(_) => self.value_in_line(coords),
             TileKind::PlaneTile(_)
             | TileKind::PlanePartition(_)

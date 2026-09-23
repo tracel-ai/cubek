@@ -1832,7 +1832,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     space: Partitioning,
     #[comptime] instruction: Instruction,
     #[comptime] chunks: Level,
-    #[comptime] reach: Reach,
+    #[comptime] read: LaneRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     // Both factors land where the instruction reads a window as it lies, and neither does where
@@ -1856,7 +1856,7 @@ fn chunked_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = Memory::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Lanes { reach }),
+                comptime!(StageStorage::Lines { read }),
                 comptime!(None),
             );
             let mut sum =
@@ -2138,7 +2138,7 @@ enum Arm {
 /// On the register arm a lane holds one column over one block a step, the plane's lanes are a
 /// tile's columns by two blocks, and a chunk is sixteen steps. On the tensor cores a plane holds
 /// one fragment, eight rows by half a tile's columns, and walks a chunk one fragment depth a step.
-fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
+fn check_chunked(arm: Arm, scales: TileScales, read: LaneRead) {
     let (rows, n_tiles, chunk, chunks) = (8, 2, 32, 2);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
@@ -2191,40 +2191,40 @@ fn check_chunked(arm: Arm, scales: TileScales, reach: Reach) {
         launcher.partitioning_arg(),
         instruction,
         chunks_level,
-        reach,
+        read,
         [dtype, dtype, stored],
     );
     w.check(&client, c, &format!("{arm:?} {scales:?}"));
 }
 
-/// Every arm and every scale element, **at both reaches**: what the lanes hold is the same
+/// Every arm and every scale element, **read both ways**: what the lanes hold is the same
 /// either way, so a value read by shuffle and a value read out of the plane's window are the
 /// same value or one of the two is wrong.
 #[test]
 fn a_plane_holds_its_scales_in_its_lanes() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_chunked(Arm::Registers, TileScales::F32, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_chunked(Arm::Registers, TileScales::F32, read);
     }
 }
 
 #[test]
 fn a_plane_holds_its_byte_scales_in_its_lanes() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_chunked(Arm::Registers, TileScales::Ue4m3, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_chunked(Arm::Registers, TileScales::Ue4m3, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_chunked(Arm::Landing, TileScales::F32, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_chunked(Arm::Landing, TileScales::F32, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_byte_scales() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_chunked(Arm::Landing, TileScales::Ue4m3, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_chunked(Arm::Landing, TileScales::Ue4m3, read);
     }
 }
 
@@ -2243,7 +2243,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
     c: &TileArg<'_, E, Const<1>>,
     space: Partitioning,
     #[comptime] chunks: Level,
-    #[comptime] reach: Reach,
+    #[comptime] read: LaneRead,
     #[define(E, S, SS)] _dtypes: [ElemType; 3],
 ) {
     let a = a.tile(comptime!(space.clone())).with_landing();
@@ -2264,7 +2264,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
             let mut lines = Memory::<S>::stage(
                 &scale_plane,
                 comptime!(chunks.clone()),
-                comptime!(StageStorage::Lanes { reach }),
+                comptime!(StageStorage::Lines { read }),
                 comptime!(None),
             );
             let mut sum = c_plane.cmma_accumulator::<E, E>(&a_plane, Monoid::Sum);
@@ -2301,7 +2301,7 @@ fn partitioned_scaled_matmul<E: Numeric, S: Numeric, SS: Numeric>(
 /// **A tile-ordered weight lands on the tensor cores under a partition.** Sixteen rows: a plane
 /// holds two fragments of rows by two of columns and walks the contraction two blocks a step,
 /// two instructions a block, landing every step's window once.
-fn check_partitioned(scales: TileScales, reach: Reach) {
+fn check_partitioned(scales: TileScales, read: LaneRead) {
     let (rows, n_tiles, chunk, chunks, fragment) = (16, 2, 32, 2, 8);
     let w = TileOrdered::new(rows, n_tiles, chunk * chunks);
     let client = cubecl::test_device().client();
@@ -2340,7 +2340,7 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
         w.c_op(&launcher, &c).arg(),
         launcher.partitioning_arg(),
         chunks_level,
-        reach,
+        read,
         [dtype, dtype, stored],
     );
     w.check(&client, c, &format!("partition {scales:?}"));
@@ -2348,14 +2348,14 @@ fn check_partitioned(scales: TileScales, reach: Reach) {
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_partitioned(TileScales::F32, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_partitioned(TileScales::F32, read);
     }
 }
 
 #[test]
 fn a_tile_ordered_weight_lands_on_the_tensor_cores_under_a_partition_with_byte_scales() {
-    for reach in [Reach::Shuffle, Reach::Window] {
-        check_partitioned(TileScales::Ue4m3, reach);
+    for read in [LaneRead::Shuffle, LaneRead::PlaneShared] {
+        check_partitioned(TileScales::Ue4m3, read);
     }
 }

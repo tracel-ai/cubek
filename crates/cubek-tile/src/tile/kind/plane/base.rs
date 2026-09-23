@@ -191,7 +191,7 @@ impl<T: Numeric> PlaneTile<T> {
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
-                | TileKind::Lanes(_) => {
+                | TileKind::Lines(_) => {
                     panic!("PlaneTile::load_window: a cmma fragment loads from memory")
                 }
             },

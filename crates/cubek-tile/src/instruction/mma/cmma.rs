@@ -174,7 +174,7 @@ impl<E: Numeric, S: Numeric> Scaled<E, S> {
                 | TileKind::PlanePartition(_)
                 | TileKind::TmaGmem(_)
                 | TileKind::Procedural(_)
-                | TileKind::Lanes(_) => {
+                | TileKind::Lines(_) => {
                     panic!("mma: an operand reaches a fragment from a memory window")
                 }
             }
@@ -288,7 +288,7 @@ impl<E: Numeric> Tile<E> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lanes(_) => panic!("mma: a fragment loads from a shared window"),
+            | TileKind::Lines(_) => panic!("mma: a fragment loads from a shared window"),
         }
     }
 }

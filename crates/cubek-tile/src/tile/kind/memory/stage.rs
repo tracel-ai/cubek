@@ -58,11 +58,11 @@ impl<T: Numeric> Memory<T> {
             // The lanes are not memory: the plane holds them, at the depth one region of
             // `level` sits, so the regions below the level window them as they window the
             // operand.
-            StageStorage::Lanes { reach } => Tile::<T> {
-                kind: TileKind::new_Lanes(Lanes::<T>::new(
+            StageStorage::Lines { read } => Tile::<T> {
+                kind: TileKind::new_Lines(Lines::<T>::new(
                     operand,
                     comptime!(level.clone()),
-                    comptime!(reach),
+                    comptime!(read),
                 )),
                 place: comptime!(Placement::new(
                     level.child(&operand.place.space),
@@ -184,7 +184,7 @@ impl<T: Numeric> Memory<T> {
             TileKind::PlaneTile(_) | TileKind::PlanePartition(_) => {
                 panic!("Memory::smem_stored: a fragment is not a stage source")
             }
-            TileKind::Procedural(_) | TileKind::Lanes(_) => {
+            TileKind::Procedural(_) | TileKind::Lines(_) => {
                 panic!(
                     "Memory::smem_stored: a procedural tile and the plane's lanes are not a stage source"
                 )
@@ -771,8 +771,8 @@ impl StageStorage {
     /// tile, so it stays plain whatever the layout asks for.
     pub(crate) fn nesting(&self, space: &Space) -> Vec<Space> {
         match self {
-            StageStorage::Lanes { .. } => {
-                panic!("StageStorage::Lanes: the plane's lanes are not shared memory")
+            StageStorage::Lines { .. } => {
+                panic!("StageStorage::Lines: the plane's lanes are not shared memory")
             }
             StageStorage::Tiled { block } => {
                 let nested = Space::new(

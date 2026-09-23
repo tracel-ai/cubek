@@ -33,18 +33,18 @@ fn register_line_words(#[comptime] words: usize) {
 /// The lines a plane holds in its lanes, and where inside them a window sits.
 #[derive(CubeType, Clone)]
 #[expand(derive(Clone))]
-pub struct Lanes<T: Numeric> {
+pub struct Lines<T: Numeric> {
     /// This lane's line, as the words it lies in: lane `t` holds line `t`. One entry, held in an
-    /// array so a load can replace it. Filled under [`Reach::Shuffle`], where the lanes are
+    /// array so a load can replace it. Filled under [`LaneRead::Shuffle`], where the lanes are
     /// where the lines stay.
-    lanes: Array<Vector<u32, LW>>,
+    line: Array<Vector<u32, LW>>,
     /// Every line one after the other, in a window of shared memory this plane owns. Filled
-    /// under [`Reach::Window`], absent otherwise.
+    /// under [`LaneRead::PlaneShared`], absent otherwise.
     window: ComptimeOption<Shared<[u32]>>,
     /// Where this window starts inside the box, in scalars, one entry per axis of it.
     origin: Coords<u32>,
     /// The box the lines were loaded as: the lines' axes, then the line's. The tile's own space
-    /// narrows as [`at`](Lanes::at) windows it; this stays what was loaded.
+    /// narrows as [`at`](Lines::at) windows it; this stays what was loaded.
     #[cube(comptime)]
     loaded: Space,
     /// What a coordinate along each axis of the box counts in lines: the product of the
@@ -67,12 +67,12 @@ pub struct Lanes<T: Numeric> {
     words: usize,
     /// How a value gets from the lane that loaded its line to the lane that asks.
     #[cube(comptime)]
-    reach: Reach,
+    read: LaneRead,
     #[cube(comptime)]
     _served: PhantomData<T>,
 }
 
-impl<T: Numeric> Lanes<T> {
+impl<T: Numeric> Lines<T> {
     /// How `loaded` counts in lines: what a coordinate along each of its axes is worth, row-major
     /// over the axes `projection` addresses above the line and zero along the rest, and how many
     /// lines that leaves. The count is the last stride the walk writes, so one pass gives both.
@@ -93,23 +93,23 @@ impl<T: Numeric> Lanes<T> {
 }
 
 #[cube]
-impl<T: Numeric> Lanes<T> {
+impl<T: Numeric> Lines<T> {
     /// The box one region of `level` over `operand` fills, held one line to a lane, empty until
     /// [`load`](Self::load).
     pub(crate) fn new(
         operand: &Tile<T>,
         #[comptime] level: Level,
-        #[comptime] reach: Reach,
-    ) -> Lanes<T> {
+        #[comptime] read: LaneRead,
+    ) -> Lines<T> {
         let loaded = comptime!(level.child(&operand.place.space));
         let rank = comptime!(loaded.rank());
         let line = comptime!(loaded.extent_at(rank - 1));
         let projection = operand.projection();
         comptime!(assert!(
             projection.addresses(loaded.axis_at(rank - 1)),
-            "Lanes: the line runs along the operand's innermost axis, which it must address"
+            "Lines: the line runs along the operand's innermost axis, which it must address"
         ));
-        let (strides, lines) = comptime!(Lanes::<T>::line_strides(&loaded, &projection));
+        let (strides, lines) = comptime!(Lines::<T>::line_strides(&loaded, &projection));
         let packing = operand.packing();
         let served = elem_type_of::<T>();
         // The lines are held as words: a packed operand's as they lie, a plain one's as the
@@ -119,24 +119,24 @@ impl<T: Numeric> Lanes<T> {
             Packing::Plain => match served {
                 ElemType::Float(kind) if Field::float_bits(kind) == 32 => Field::Float(kind),
                 other => panic!(
-                    "Lanes: a plain operand is held as whole 32-bit words, and {other:?} is not \
+                    "Lines: a plain operand is held as whole 32-bit words, and {other:?} is not \
                      one; bind the operand packed, or serve it as `f32`"
                 ),
             },
-            Packing::Native => panic!("Lanes: a native store has no words to hold"),
+            Packing::Native => panic!("Lines: a native store has no words to hold"),
         });
         let per_word = comptime!(field.per_word());
         comptime!(assert!(
             line.is_multiple_of(per_word),
-            "Lanes: a line of {line} values is not whole words of {per_word}"
+            "Lines: a line of {line} values is not whole words of {per_word}"
         ));
         let words = comptime!(line / per_word);
         register_line_words(words);
         // One window per plane of the cube, this plane's found by the walk's own decode of the
         // hardware position, as a landing is.
-        let window = match comptime!(reach) {
-            Reach::Shuffle => ComptimeOption::new_None(),
-            Reach::Window => {
+        let window = match comptime!(read) {
+            LaneRead::Shuffle => ComptimeOption::new_None(),
+            LaneRead::PlaneShared => {
                 let planes = comptime!(plane_windows(&operand.place.space, &operand.place.levels));
                 let cells = comptime!(lines * words);
                 let start = Takers::position(Takers::Planes) * cells;
@@ -152,8 +152,8 @@ impl<T: Numeric> Lanes<T> {
         for _axis in 0..rank {
             origin.push(0u32.runtime());
         }
-        Lanes::<T> {
-            lanes: Array::<Vector<u32, LW>>::new(1usize),
+        Lines::<T> {
+            line: Array::<Vector<u32, LW>>::new(1usize),
             window,
             origin,
             loaded,
@@ -162,7 +162,7 @@ impl<T: Numeric> Lanes<T> {
             projection,
             field,
             words,
-            reach,
+            read,
             _served: PhantomData,
         }
     }
@@ -190,7 +190,7 @@ impl<T: Numeric> Lanes<T> {
 
     /// Load from `src`, the memory window of the box: lane `t` reads line `t`, whole — in one
     /// read where the source serves a line at a time, else in the few consecutive reads a line
-    /// takes. Lanes past the lines read nothing.
+    /// takes. Lines past the lines read nothing.
     pub(crate) fn load(&mut self, src: &Tile<T>) {
         let rank = comptime!(self.loaded.rank());
         let line = self.line();
@@ -198,7 +198,7 @@ impl<T: Numeric> Lanes<T> {
         let served = src.vector_size();
         comptime!(assert!(
             line.is_multiple_of(served),
-            "Lanes::load: a lane reads its line of {line} values in whole reads, and the source \
+            "Lines::load: a lane reads its line of {line} values in whole reads, and the source \
              serves {served} a read"
         ));
         let reads = comptime!(line / served);
@@ -242,7 +242,7 @@ impl<T: Numeric> Lanes<T> {
                         }
                         bits
                     }
-                    Packing::Native => panic!("Lanes::load: a native store has no words"),
+                    Packing::Native => panic!("Lines::load: a native store has no words"),
                 };
                 #[unroll]
                 for j in 0..per_read {
@@ -250,11 +250,11 @@ impl<T: Numeric> Lanes<T> {
                 }
             }
         }
-        match comptime!(self.reach) {
+        match comptime!(self.read) {
             // The lines stay where they were loaded; every read reaches them by shuffle.
-            Reach::Shuffle => self.lanes[0usize] = held,
+            LaneRead::Shuffle => self.line[0usize] = held,
             // Written once, read by index for the rest of the region, at one plane barrier.
-            Reach::Window =>
+            LaneRead::PlaneShared =>
             {
                 #[comptime]
                 match &mut self.window {
@@ -276,7 +276,7 @@ impl<T: Numeric> Lanes<T> {
 
     /// This window one level down, to `step`'s box: the origin moves, in scalars, and nothing is
     /// cropped.
-    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Lanes<T> {
+    pub(crate) fn at(&self, step: &Step, #[comptime] space: Space) -> Lines<T> {
         let rank = comptime!(space.rank());
         let mut origin = Coords::<u32>::new();
         #[unroll]
@@ -289,8 +289,8 @@ impl<T: Numeric> Lanes<T> {
                     .plus(step.coord(axis).times(edge).retyped::<u32>()),
             );
         }
-        Lanes::<T> {
-            lanes: self.lanes,
+        Lines::<T> {
+            line: self.line,
             window: self.window.clone(),
             origin,
             loaded: comptime!(self.loaded.clone()),
@@ -299,7 +299,7 @@ impl<T: Numeric> Lanes<T> {
             projection: comptime!(self.projection.clone()),
             field: comptime!(self.field),
             words: comptime!(self.words),
-            reach: comptime!(self.reach),
+            read: comptime!(self.read),
             _served: PhantomData,
         }
     }
@@ -324,12 +324,12 @@ impl<T: Numeric> Lanes<T> {
         let words = comptime!(self.words);
         let word = byte.divided_by(comptime!(per_word as u32));
         let field = byte.remainder(comptime!(per_word as u32));
-        let held = match comptime!(self.reach) {
-            Reach::Shuffle => {
+        let held = match comptime!(self.read) {
+            LaneRead::Shuffle => {
                 // Every lane offers its word `j`; the lane that asked receives line `line`'s.
                 // Which word is wanted is a runtime coordinate, so all of them are fetched and
                 // one is kept — `words` shuffles for the one word a value sits in.
-                let mine = self.lanes[0usize];
+                let mine = self.line[0usize];
                 let mut got = Vector::<u32, LW>::empty();
                 #[unroll]
                 for j in 0..words {
@@ -341,14 +341,14 @@ impl<T: Numeric> Lanes<T> {
                     got.extract(0usize)
                 }
             }
-            Reach::Window =>
+            LaneRead::PlaneShared =>
             {
                 #[comptime]
                 match &self.window {
                     ComptimeOption::Some(window) => {
                         window[(line.times(comptime!(words as u32)).plus(word)) as usize]
                     }
-                    ComptimeOption::None => panic!("Lanes: no window was opened"),
+                    ComptimeOption::None => panic!("Lines: no window was opened"),
                 }
             }
         };

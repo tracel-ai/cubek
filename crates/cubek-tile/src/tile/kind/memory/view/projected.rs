@@ -121,7 +121,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
-            TileKind::Lanes(_) => {
+            TileKind::Lines(_) => {
                 panic!("Tile::nd: the plane's lanes are read at a coordinate (`scale_at`)")
             }
         }
@@ -144,7 +144,7 @@ impl<T: Numeric> Tile<T> {
                 panic!("Tile::nd: a plane tile has no memory view")
             }
             TileKind::TmaGmem(_) => panic!("Tile::nd: a tma source has no element view"),
-            TileKind::Lanes(_) => {
+            TileKind::Lines(_) => {
                 panic!("Tile::nd: the plane's lanes are read at a coordinate (`scale_at`)")
             }
         }
@@ -173,7 +173,7 @@ impl<T: Numeric> Tile<T> {
             | TileKind::PlanePartition(_)
             | TileKind::TmaGmem(_)
             | TileKind::Procedural(_)
-            | TileKind::Lanes(_) => comptime!(true),
+            | TileKind::Lines(_) => comptime!(true),
         }
     }
 }
@@ -237,7 +237,7 @@ impl<T: Numeric> Tile<T> {
                 ),
                 comptime!(g.projection.physical_rank()),
             ),
-            TileKind::Procedural(_) | TileKind::Lanes(_) => Gathered::new(
+            TileKind::Procedural(_) | TileKind::Lines(_) => Gathered::new(
                 axis_projection(
                     comptime!(space.clone()),
                     comptime!(Projection::direct_over(&space)),
